@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
+	"github.com/wiebe-xyz/spanbarn/internal/alert"
 	"github.com/wiebe-xyz/spanbarn/internal/api"
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
@@ -121,6 +122,14 @@ func run() error {
 	defer retentionCancel()
 	go retentionWorker.Run(retentionCtx)
 
+	// 7b. Create and start alert runner.
+	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
+	alertEval := alert.NewEvaluator(repo, alertNotifier, logger)
+	alertRunner := alert.NewRunner(alertEval, repo, time.Minute, logger)
+	alertCtx, alertCancel := context.WithCancel(ctx)
+	defer alertCancel()
+	go alertRunner.Run(alertCtx)
+
 	// 8. Create auth components.
 	authorizer := auth.NewAuthorizer(cfg.APIKeySHA256, &keyLookupAdapter{repo: repo}, logger)
 	_ = authorizer // used indirectly via cfg.APIKey in the server
@@ -141,7 +150,7 @@ func run() error {
 		IngestRate:     cfg.IngestRatePerMinute,
 		APIRate:        cfg.APIRatePerMinute,
 	}
-	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger)
+	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, api.WithRepository(repo))
 
 	// 11. Build the final HTTP handler, adding login/logout routes.
 	mux := http.NewServeMux()
@@ -183,6 +192,7 @@ func run() error {
 		logger.Error("http server shutdown error", "error", err)
 	}
 
+	alertCancel()
 	retentionCancel()
 	ingestHandler.Stop()
 	workerCancel()

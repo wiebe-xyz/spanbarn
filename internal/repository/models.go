@@ -85,3 +85,19 @@ type AggregateFilter struct {
 	Limit     int
 	Offset    int
 }
+
+type Alert struct {
+	ID               int64
+	ProjectID        int64
+	Service          string
+	Operation        string
+	Type             string
+	Threshold        float64
+	ComparisonWindow int
+	CooldownMinutes  int
+	WebhookURL       string
+	Email            string
+	Enabled          bool
+	LastTriggeredAt  sql.NullTime
+	CreatedAt        time.Time
+}

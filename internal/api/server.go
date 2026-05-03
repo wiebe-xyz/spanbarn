@@ -8,6 +8,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
+	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
@@ -37,7 +38,18 @@ type Server struct {
 	ingest         *ingest.Handler
 	querySvc       *service.QueryService
 	sessionMgr     *auth.SessionManager
+	repo           *repository.Repository
 	logger         *slog.Logger
+}
+
+// ServerOption configures optional Server dependencies.
+type ServerOption func(*Server)
+
+// WithRepository attaches a repository for alert CRUD endpoints.
+func WithRepository(repo *repository.Repository) ServerOption {
+	return func(s *Server) {
+		s.repo = repo
+	}
 }
 
 // NewServer creates a new HTTP server with the given configuration.
@@ -78,7 +90,7 @@ func NewServer(cfg ServerConfig, ingestHandler *ingest.Handler, logger *slog.Log
 }
 
 // NewServerWithQuery creates a new HTTP server with query service support.
-func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySvc *service.QueryService, sm *auth.SessionManager, logger *slog.Logger) *Server {
+func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySvc *service.QueryService, sm *auth.SessionManager, logger *slog.Logger, opts ...ServerOption) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -99,6 +111,10 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		querySvc:       querySvc,
 		sessionMgr:     sm,
 		logger:         logger,
+	}
+
+	for _, opt := range opts {
+		opt(s)
 	}
 
 	s.registerRoutes()

@@ -517,6 +517,113 @@ func (r *Repository) DeleteErrorSamplesOlderThan(cutoff time.Time) (int64, error
 	return res.RowsAffected()
 }
 
+// --- Alerts ---
+
+func (r *Repository) ListAlerts(projectID int64) ([]Alert, error) {
+	rows, err := r.db.Query(
+		`SELECT id, project_id, service, operation, type, threshold,
+			comparison_window, cooldown_minutes, COALESCE(webhook_url,''), COALESCE(email,''),
+			enabled, last_triggered_at, created_at
+		FROM alerts WHERE project_id = ? ORDER BY id`,
+		projectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Alert
+	for rows.Next() {
+		var a Alert
+		var enabled int
+		if err := rows.Scan(
+			&a.ID, &a.ProjectID, &a.Service, &a.Operation, &a.Type, &a.Threshold,
+			&a.ComparisonWindow, &a.CooldownMinutes, &a.WebhookURL, &a.Email,
+			&enabled, &a.LastTriggeredAt, &a.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		a.Enabled = enabled != 0
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) CreateAlert(a Alert) (int64, error) {
+	enabled := 0
+	if a.Enabled {
+		enabled = 1
+	}
+	res, err := r.db.Exec(
+		`INSERT INTO alerts (project_id, service, operation, type, threshold,
+			comparison_window, cooldown_minutes, webhook_url, email, enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ProjectID, a.Service, a.Operation, a.Type, a.Threshold,
+		a.ComparisonWindow, a.CooldownMinutes, a.WebhookURL, a.Email, enabled,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (r *Repository) UpdateAlert(a Alert) error {
+	enabled := 0
+	if a.Enabled {
+		enabled = 1
+	}
+	res, err := r.db.Exec(
+		`UPDATE alerts SET service = ?, operation = ?, type = ?, threshold = ?,
+			comparison_window = ?, cooldown_minutes = ?, webhook_url = ?, email = ?, enabled = ?
+		WHERE id = ?`,
+		a.Service, a.Operation, a.Type, a.Threshold,
+		a.ComparisonWindow, a.CooldownMinutes, a.WebhookURL, a.Email, enabled,
+		a.ID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("alert %d not found", a.ID)
+	}
+	return nil
+}
+
+func (r *Repository) DeleteAlert(id int64) error {
+	res, err := r.db.Exec("DELETE FROM alerts WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("alert %d not found", id)
+	}
+	return nil
+}
+
+func (r *Repository) UpdateAlertLastTriggered(id int64, at time.Time) error {
+	_, err := r.db.Exec("UPDATE alerts SET last_triggered_at = ? WHERE id = ?", at, id)
+	return err
+}
+
+// ListProjectIDs returns all project IDs (used by the alert runner).
+func (r *Repository) ListProjectIDs() ([]int64, error) {
+	rows, err := r.db.Query("SELECT id FROM projects ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (r *Repository) scanErrorSamples(query string, args ...any) ([]Span, error) {
 	rows, err := r.db.Query(query, args...)
 	if err != nil {

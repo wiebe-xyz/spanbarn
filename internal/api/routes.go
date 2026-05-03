@@ -36,4 +36,13 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/dependencies", apiRL(sessionAuth(http.HandlerFunc(qh.handleDependencies))))
 	}
 
+	// Alert endpoints — rate limited + session auth required.
+	if s.repo != nil && s.sessionMgr != nil {
+		ah := &alertHandlers{repo: s.repo}
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+
+		s.mux.Handle("/api/v1/alerts", apiRL(sessionAuth(ah)))
+		s.mux.Handle("/api/v1/alerts/", apiRL(sessionAuth(ah)))
+	}
+
 }
