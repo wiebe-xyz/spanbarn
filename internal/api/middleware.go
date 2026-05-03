@@ -54,7 +54,7 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 		if strings.HasPrefix(path, "/api/v1/spans") || strings.HasPrefix(path, "/v1/traces") {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-SpanBarn-Api-Key")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-SpanBarn-Api-Key, Authorization")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -95,6 +95,30 @@ func apiKeyAuth(apiKey string, next http.Handler) http.Handler {
 		key := r.Header.Get("X-SpanBarn-Api-Key")
 		if key == "" {
 			writeError(w, http.StatusUnauthorized, "missing API key", "set X-SpanBarn-Api-Key header")
+			return
+		}
+		if key != apiKey {
+			writeError(w, http.StatusUnauthorized, "invalid API key", "")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// apiKeyOrBearerAuth validates X-SpanBarn-Api-Key or Authorization: Bearer header.
+// This supports both the native SpanBarn header and the common OTel Bearer pattern.
+func apiKeyOrBearerAuth(apiKey string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("X-SpanBarn-Api-Key")
+		if key == "" {
+			// Fall back to Authorization: Bearer.
+			auth := r.Header.Get("Authorization")
+			if strings.HasPrefix(auth, "Bearer ") {
+				key = strings.TrimPrefix(auth, "Bearer ")
+			}
+		}
+		if key == "" {
+			writeError(w, http.StatusUnauthorized, "missing API key", "set X-SpanBarn-Api-Key or Authorization: Bearer header")
 			return
 		}
 		if key != apiKey {
