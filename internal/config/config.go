@@ -1,0 +1,103 @@
+package config
+
+import (
+	"os"
+	"strconv"
+	"strings"
+)
+
+// Config holds all SPANBARN_* environment variables with sensible defaults.
+type Config struct {
+	Addr                   string
+	PublicURL              string
+	DBPath                 string
+	SpoolDir               string
+	APIKey                 string
+	APIKeySHA256           string
+	AdminUsername          string
+	AdminPassword          string
+	AdminPasswordBcrypt    string
+	SessionSecret          string
+	SessionTTLSeconds      int
+	MaxBodyBytes           int64
+	MaxSpoolBytes          int64
+	RetentionFullHours     int
+	RetentionAggregatedDays int
+	RetentionErrorDays     int
+	SlowThresholdMS        int
+	AggregationInterval    string
+	AllowedOrigins         []string
+	SelfEndpoint           string
+	SelfAPIKey             string
+	Environment            string
+	LoginRatePerMinute     int
+	IngestRatePerMinute    int
+	APIRatePerMinute       int
+	MetricsToken           string
+}
+
+// Load reads configuration from SPANBARN_* environment variables with defaults.
+func Load() Config {
+	cfg := Config{
+		Addr:                    getenv("SPANBARN_ADDR", ":8080"),
+		PublicURL:               os.Getenv("SPANBARN_PUBLIC_URL"),
+		DBPath:                  getenv("SPANBARN_DB_PATH", ".data/spanbarn.db"),
+		SpoolDir:                getenv("SPANBARN_SPOOL_DIR", ".data/spool"),
+		APIKey:                  os.Getenv("SPANBARN_API_KEY"),
+		APIKeySHA256:            os.Getenv("SPANBARN_API_KEY_SHA256"),
+		AdminUsername:           os.Getenv("SPANBARN_ADMIN_USERNAME"),
+		AdminPassword:           os.Getenv("SPANBARN_ADMIN_PASSWORD"),
+		AdminPasswordBcrypt:     os.Getenv("SPANBARN_ADMIN_PASSWORD_BCRYPT"),
+		SessionSecret:           os.Getenv("SPANBARN_SESSION_SECRET"),
+		SessionTTLSeconds:       getenvInt("SPANBARN_SESSION_TTL_SECONDS", 43200),
+		MaxBodyBytes:            getenvInt64("SPANBARN_MAX_BODY_BYTES", 1<<20),
+		MaxSpoolBytes:           getenvInt64("SPANBARN_MAX_SPOOL_BYTES", 0),
+		RetentionFullHours:      getenvInt("SPANBARN_RETENTION_FULL_HOURS", 72),
+		RetentionAggregatedDays: getenvInt("SPANBARN_RETENTION_AGGREGATED_DAYS", 30),
+		RetentionErrorDays:      getenvInt("SPANBARN_RETENTION_ERROR_DAYS", 90),
+		SlowThresholdMS:         getenvInt("SPANBARN_SLOW_THRESHOLD_MS", 500),
+		AggregationInterval:     getenv("SPANBARN_AGGREGATION_INTERVAL", "1m"),
+		SelfEndpoint:            os.Getenv("SPANBARN_SELF_ENDPOINT"),
+		SelfAPIKey:              os.Getenv("SPANBARN_SELF_API_KEY"),
+		Environment:             getenv("SPANBARN_ENVIRONMENT", "development"),
+		LoginRatePerMinute:      getenvInt("SPANBARN_LOGIN_RATE_PER_MINUTE", 10),
+		IngestRatePerMinute:     getenvInt("SPANBARN_INGEST_RATE_PER_MINUTE", 1000),
+		APIRatePerMinute:        getenvInt("SPANBARN_API_RATE_PER_MINUTE", 300),
+		MetricsToken:            os.Getenv("SPANBARN_METRICS_TOKEN"),
+	}
+
+	if raw := os.Getenv("SPANBARN_ALLOWED_ORIGINS"); raw != "" {
+		for _, o := range strings.Split(raw, ",") {
+			if trimmed := strings.TrimSpace(o); trimmed != "" {
+				cfg.AllowedOrigins = append(cfg.AllowedOrigins, trimmed)
+			}
+		}
+	}
+
+	return cfg
+}
+
+func getenv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func getenvInt(key string, fallback int) int {
+	if raw := os.Getenv(key); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func getenvInt64(key string, fallback int64) int64 {
+	if raw := os.Getenv(key); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return fallback
+}

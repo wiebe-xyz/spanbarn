@@ -1,0 +1,21 @@
+[Unit]
+Description=SpanBarn telemetry aggregator
+Documentation=https://github.com/wiebe-xyz/spanbarn
+After=network.target
+
+[Service]
+Type=simple
+User=spanbarn
+Group=spanbarn
+# The leading '-' means systemd won't fail if the file doesn't exist.
+EnvironmentFile=-/etc/spanbarn/spanbarn.conf
+ExecStart=/usr/bin/spanbarn
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spanbarn
+WorkingDirectory=/var/lib/spanbarn
+
+[Install]
+WantedBy=multi-user.target
