@@ -13,8 +13,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
+	"github.com/wiebe-xyz/spanbarn/internal/api"
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
+	"github.com/wiebe-xyz/spanbarn/internal/ingest"
+	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/retention"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/spool"
+	"github.com/wiebe-xyz/spanbarn/internal/worker"
 )
 
 // Version and BuildTime are injected at build time via -ldflags.
@@ -59,54 +67,187 @@ func run() error {
 		slog.Warn("SPANBARN_SESSION_SECRET is not set; sessions will not persist across restarts")
 	}
 
-	// TODO: Open SQLite storage
-	// store, err := storage.Open(cfg.DBPath)
-	// if err != nil { return err }
-	// defer store.Close()
-	slog.Info("storage", "path", cfg.DBPath)
+	// 1. Open SQLite database and run migrations.
+	db, err := repository.NewDB(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
 
-	// TODO: Initialize spool
-	// eventSpool, err := spool.NewWithLimit(cfg.SpoolDir, cfg.MaxSpoolBytes)
-	// if err != nil { return err }
-	// defer eventSpool.Close()
-	slog.Info("spool", "dir", cfg.SpoolDir)
+	if err := repository.Migrate(db.DB); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+	logger.Info("storage", "path", cfg.DBPath)
+
+	// 2. Create repository.
+	repo := repository.NewRepository(db.DB)
+
+	// 3. Create spool.
+	eventSpool, err := spool.NewSpool(cfg.SpoolDir, cfg.MaxSpoolBytes)
+	if err != nil {
+		return fmt.Errorf("create spool: %w", err)
+	}
+	defer eventSpool.Close()
+	logger.Info("spool", "dir", cfg.SpoolDir)
+
+	// 4. Create ingest queue and handler.
+	queue := ingest.NewQueue(32768)
+	ingestHandler := ingest.NewHandler(queue, eventSpool, 5*time.Millisecond, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// TODO: Start background worker
-	// go runBackgroundWorker(ctx, eventSpool, cfg.SpoolDir, store)
+	// 5. Start ingest handler background goroutine.
+	ingestHandler.Start(ctx)
 
-	// TODO: Start HTTP server with real handler
+	// 6. Create and start the spool-to-DB worker.
+	w := worker.NewWorker(eventSpool, &workerRepoAdapter{repo: repo}, logger)
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	defer workerCancel()
+	go w.Run(workerCtx)
+
+	// 7. Create aggregator and retention worker.
+	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
+	aggregator := aggregation.NewAggregator(repo, aggInterval, logger)
+
+	retentionCfg := retention.Config{
+		FullRetentionHours:     cfg.RetentionFullHours,
+		ErrorRetentionDays:     cfg.RetentionErrorDays,
+		AggregateRetentionDays: cfg.RetentionAggregatedDays,
+		SlowThresholdUS:        int64(cfg.SlowThresholdMS) * 1000,
+	}
+	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
+	retentionCtx, retentionCancel := context.WithCancel(ctx)
+	defer retentionCancel()
+	go retentionWorker.Run(retentionCtx)
+
+	// 8. Create auth components.
+	authorizer := auth.NewAuthorizer(cfg.APIKeySHA256, &keyLookupAdapter{repo: repo}, logger)
+	_ = authorizer // used indirectly via cfg.APIKey in the server
+	userAuth := auth.NewUserAuthenticator(&userLookupAdapter{repo: repo}, logger)
+	sessionMgr := auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
+
+	// 9. Create query service.
+	querySvc := service.NewQueryService(repo, logger)
+
+	// 10. Create API server.
+	serverCfg := api.ServerConfig{
+		APIKey:         cfg.APIKey,
+		MaxBodyBytes:   cfg.MaxBodyBytes,
+		AllowedOrigins: cfg.AllowedOrigins,
+		Version:        Version,
+		MetricsToken:   cfg.MetricsToken,
+		LoginRate:      cfg.LoginRatePerMinute,
+		IngestRate:     cfg.IngestRatePerMinute,
+		APIRate:        cfg.APIRatePerMinute,
+	}
+	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger)
+
+	// 11. Build the final HTTP handler, adding login/logout routes.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/healthcheck", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","version":"%s"}`, Version)
-	})
+	loginRL := api.RateLimitMiddleware(api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), "login")
+	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr)))
+	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+	mux.Handle("/", apiServer.Handler())
 
-	server := &http.Server{
-		Addr:    cfg.Addr,
-		Handler: mux,
+	httpServer := &http.Server{
+		Addr:         cfg.Addr,
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "addr", cfg.Addr)
-		errCh <- server.ListenAndServe()
+		logger.Info("listening", "addr", cfg.Addr)
+		errCh <- httpServer.ListenAndServe()
 	}()
 
+	// 12. Wait for shutdown signal or server error.
 	select {
 	case <-ctx.Done():
-		slog.Info("shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return server.Shutdown(shutdownCtx)
+		logger.Info("shutting down")
 	case err := <-errCh:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+		if !errors.Is(err, http.ErrServerClosed) {
+			return err
 		}
-		return err
+		return nil
 	}
+
+	// 13. Graceful shutdown sequence.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error("http server shutdown error", "error", err)
+	}
+
+	retentionCancel()
+	ingestHandler.Stop()
+	workerCancel()
+	// eventSpool.Close() and db.Close() handled by defers.
+
+	logger.Info("shutdown complete")
+	return nil
+}
+
+// parseAggregationInterval parses a duration string with a fallback of 1 minute.
+func parseAggregationInterval(s string) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return time.Minute
+	}
+	return d
+}
+
+// --- Adapters to bridge repository types to package-specific interfaces ---
+
+// workerRepoAdapter adapts *repository.Repository to worker.Repository.
+type workerRepoAdapter struct {
+	repo *repository.Repository
+}
+
+func (a *workerRepoAdapter) InsertSpans(_ context.Context, spans []repository.Span) error {
+	return a.repo.InsertSpans(spans)
+}
+
+// keyLookupAdapter adapts *repository.Repository to auth.KeyLookup.
+type keyLookupAdapter struct {
+	repo *repository.Repository
+}
+
+func (a *keyLookupAdapter) GetAPIKeyByHash(keyHash string) (auth.APIKeyRecord, error) {
+	k, err := a.repo.GetAPIKeyByHash(keyHash)
+	if err != nil {
+		return auth.APIKeyRecord{}, err
+	}
+	return auth.APIKeyRecord{
+		ID:        k.ID,
+		ProjectID: k.ProjectID,
+		Scope:     k.Scope,
+	}, nil
+}
+
+func (a *keyLookupAdapter) TouchAPIKey(id int64) error {
+	return a.repo.TouchAPIKey(id)
+}
+
+// userLookupAdapter adapts *repository.Repository to auth.UserLookup.
+type userLookupAdapter struct {
+	repo *repository.Repository
+}
+
+func (a *userLookupAdapter) GetUserByUsername(username string) (auth.UserRecord, error) {
+	u, err := a.repo.GetUserByUsername(username)
+	if err != nil {
+		return auth.UserRecord{}, err
+	}
+	return auth.UserRecord{
+		ID:           u.ID,
+		Username:     u.Username,
+		PasswordHash: u.PasswordHash,
+	}, nil
 }
 
 // --- User subcommand ---
