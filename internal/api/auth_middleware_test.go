@@ -124,36 +124,23 @@ func TestSessionMiddlewareNoSession(t *testing.T) {
 }
 
 func TestSessionMiddlewareExpired(t *testing.T) {
-	sm := auth.NewSessionManager("test-secret", 1)
+	// Create a token signed by one secret and validate with a different manager,
+	// or use an expired token. Since the now field is unexported, we use
+	// auth.NewExpiredToken helper to get a pre-expired token.
+	sm := auth.NewSessionManager("test-secret", 3600)
+	expiredToken := auth.MakeExpiredToken("test-secret", "admin")
 
-	// Create an already-expired token by manipulating the clock.
-	import_time := sm.now
-	_ = import_time
-	// We need to create a token that's already expired. Override the now func.
-	origNow := sm.now
-	_ = origNow
-	// SessionManager fields are unexported, so we create a short-lived token
-	// and validate after expiry. Use a manager with 1s TTL and time manipulation
-	// isn't possible from outside the package. Instead, we'll use a known-expired approach.
-
-	// Actually, the SessionManager's now and ttl are unexported. Let's just
-	// create a token with the auth package's test helper by making a token
-	// from a different manager that we can control... but we can't.
-	// The simplest approach: create a valid token with a very short TTL,
-	// then construct a middleware test.
-
-	// Since we can't easily expire from outside, let's test with an invalid token.
 	handler := SessionMiddleware(sm)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: "session", Value: "invalid.token"})
+	req.AddCookie(&http.Cookie{Name: "session", Value: expiredToken})
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401 for invalid session, got %d", rec.Code)
+		t.Errorf("expected 401 for expired session, got %d", rec.Code)
 	}
 }
