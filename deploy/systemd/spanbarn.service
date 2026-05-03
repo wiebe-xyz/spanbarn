@@ -16,6 +16,7 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=spanbarn
 WorkingDirectory=/var/lib/spanbarn
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target

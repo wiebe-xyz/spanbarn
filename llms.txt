@@ -1,0 +1,25 @@
+SpanBarn — self-hosted telemetry aggregator with intelligent span retention.
+
+Architecture: Go binary (cmd/spanbarn), SQLite + Litestream, React + Vite frontend.
+Ingest: OTLP/HTTP (POST /v1/traces) and native JSON (POST /api/v1/spans).
+Pipeline: in-memory queue → NDJSON spool → background worker → SQLite.
+Retention: full spans for N hours, then aggregate to percentile timeseries.
+Error/slow spans sampled to error_samples table.
+Auth: bcrypt users + HMAC sessions + SHA256 API keys.
+SDKs: JavaScript, Go, Python.
+
+Key packages:
+- internal/repository — SQLite storage (goose migrations)
+- internal/ingest — non-blocking queue + handler
+- internal/spool — durable NDJSON WAL
+- internal/worker — spool processor
+- internal/aggregation — percentile computation + bucketing
+- internal/retention — span lifecycle management
+- internal/api — HTTP handlers (net/http stdlib)
+- internal/auth — API key + user + session auth
+- internal/service — query business logic
+- internal/alert — performance regression detection
+- web/ — React + Vite + TypeScript dashboard
+- sdks/js — @spanbarn/js npm package
+- sdks/go — github.com/wiebe-xyz/spanbarn-go
+- sdks/python — spanbarn PyPI package
