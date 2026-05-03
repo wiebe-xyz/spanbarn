@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spanbarn-config
+data:
+  SPANBARN_ADDR: ":8080"
+  SPANBARN_DB_PATH: "/var/lib/spanbarn/spanbarn.db"
+  SPANBARN_SPOOL_DIR: "/var/lib/spanbarn/spool"
+  SPANBARN_RETENTION_FULL_HOURS: "4"
+  SPANBARN_RETENTION_ERROR_DAYS: "30"
+  SPANBARN_RETENTION_AGGREGATED_DAYS: "365"

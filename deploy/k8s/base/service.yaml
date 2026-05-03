@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: spanbarn
+spec:
+  selector:
+    app.kubernetes.io/name: spanbarn
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
