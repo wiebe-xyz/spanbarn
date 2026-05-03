@@ -1,0 +1,169 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      production_version:
+        description: 'Version to deploy (e.g. v0.1.0) — must already be on staging'
+        required: true
+        type: string
+      confirmed:
+        description: 'I confirm this version is validated on staging'
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SERVICE_IMAGE: ghcr.io/wiebe-xyz/spanbarn/service
+  WEB_IMAGE: ghcr.io/wiebe-xyz/spanbarn/web
+  K3S_HOST: layer7.wiebe.xyz
+  K3S_USER: deployer
+  NAMESPACE: spanbarn-production
+
+jobs:
+  preflight:
+    runs-on: [self-hosted, build]
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    env:
+      HOME: /Users/wiebe
+      PATH: /Users/wiebe/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+    steps:
+      - name: Require confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirmed }}" != "true" ]; then
+            echo "ERROR: Set 'confirmed' to true to proceed with production deploy"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version tag to SHA and verify images in GHCR
+        id: resolve
+        run: |
+          set -euo pipefail
+          VERSION="${{ github.event.inputs.production_version }}"
+          SHA=$(git rev-list -n1 "${VERSION}" 2>/dev/null) || \
+            { echo "ERROR: Tag ${VERSION} not found in repo"; exit 1; }
+          echo "Resolved ${VERSION} -> ${SHA}"
+          DOCKER_CONFIG_DIR="${RUNNER_TEMP}/docker-config-${GITHUB_RUN_ID}"
+          mkdir -p "$DOCKER_CONFIG_DIR"
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' \
+            "$(printf '%s:%s' '${{ github.actor }}' '${{ secrets.GITHUB_TOKEN }}' | base64)" \
+            > "$DOCKER_CONFIG_DIR/config.json"
+          export DOCKER_CONFIG="$DOCKER_CONFIG_DIR"
+          docker manifest inspect "${SERVICE_IMAGE}:${SHA}" > /dev/null || \
+            { echo "ERROR: ${SERVICE_IMAGE}:${SHA} not found in GHCR (for ${VERSION})"; exit 1; }
+          docker manifest inspect "${WEB_IMAGE}:${SHA}" > /dev/null || \
+            { echo "ERROR: ${WEB_IMAGE}:${SHA} not found in GHCR (for ${VERSION})"; exit 1; }
+          echo "Images verified for ${VERSION} (${SHA})"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: preflight
+    runs-on: [self-hosted, build]
+    timeout-minutes: 20
+    env:
+      HOME: /Users/wiebe
+      PATH: /Users/wiebe/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Transfer manifests
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+            "rm -rf /tmp/spanbarn-deploy && mkdir -p /tmp/spanbarn-deploy"
+          scp -o StrictHostKeyChecking=no -r deploy \
+            "${K3S_USER}@${K3S_HOST}:/tmp/spanbarn-deploy/deploy"
+
+      - name: Ensure namespace exists
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+            "kubectl apply -f /tmp/spanbarn-deploy/deploy/k8s/production/namespace.yaml"
+
+      - name: Decrypt and apply secrets
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY_PRODUCTION }}
+        run: |
+          set -euo pipefail
+          sops -d deploy/k8s/production/secret.yaml | \
+            ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+            "kubectl apply -f -"
+
+      - name: Create GHCR pull secret
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
+            kubectl create secret docker-registry ghcr-secret \
+              --docker-server=ghcr.io \
+              --docker-username='${{ github.actor }}' \
+              --docker-password='${{ secrets.GITHUB_TOKEN }}' \
+              --namespace=${NAMESPACE} \
+              --dry-run=client -o yaml | kubectl apply -f -
+          "
+
+      - name: Apply manifests and roll out
+        run: |
+          set -euo pipefail
+          SHA="${{ needs.preflight.outputs.sha }}"
+          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
+            set -euo pipefail
+            kubectl apply -k /tmp/spanbarn-deploy/deploy/k8s/production
+            kubectl -n ${NAMESPACE} set image deployment/spanbarn \
+              spanbarn=${SERVICE_IMAGE}:${SHA}
+            kubectl -n ${NAMESPACE} set image deployment/spanbarn-web \
+              spanbarn-web=${WEB_IMAGE}:${SHA}
+            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn --timeout=180s
+            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-web --timeout=180s
+          "
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
+            kubectl -n ${NAMESPACE} rollout undo deployment/spanbarn || true
+            kubectl -n ${NAMESPACE} rollout undo deployment/spanbarn-web || true
+            echo 'Rollback triggered'
+          " || true
+
+      - name: Post release marker to BugBarn
+        if: vars.BUGBARN_ENDPOINT != ''
+        env:
+          BUGBARN_ENDPOINT: ${{ vars.BUGBARN_ENDPOINT }}
+          BUGBARN_API_KEY: ${{ secrets.SPANBARN_BUGBARN_API_KEY }}
+        run: |
+          curl -sf -X POST "${BUGBARN_ENDPOINT}/api/v1/releases" \
+            -H "Content-Type: application/json" \
+            -H "X-BugBarn-Api-Key: ${BUGBARN_API_KEY}" \
+            -d "{
+              \"name\": \"${{ github.event.inputs.production_version }}\",
+              \"environment\": \"production\",
+              \"version\": \"${{ github.event.inputs.production_version }}\",
+              \"url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${{ github.event.inputs.production_version }}\",
+              \"notes\": \"Deployed by GitHub Actions run #${GITHUB_RUN_NUMBER}\"
+            }" || echo "BugBarn release marker skipped"
+
+      - name: Summary
+        run: |
+          echo "## Production Deploy Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| | |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Version | \`${{ github.event.inputs.production_version }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| URL | https://spanbarn.wiebe.xyz |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Namespace | \`${NAMESPACE}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Cluster | \`${K3S_HOST}\` |" >> "$GITHUB_STEP_SUMMARY"

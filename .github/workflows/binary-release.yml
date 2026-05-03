@@ -1,0 +1,224 @@
+name: Binary Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  tag:
+    name: Create Release Tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next_version.outputs.version }}
+      version_num: ${{ steps.next_version.outputs.version_num }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest tag
+        id: latest_tag
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "tag=${LATEST_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Calculate next version
+        id: next_version
+        run: |
+          LATEST_TAG=${{ steps.latest_tag.outputs.tag }}
+          VERSION=${LATEST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          PATCH=$((PATCH + 1))
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "version_num=${MAJOR}.${MINOR}.${PATCH}" >> $GITHUB_OUTPUT
+
+      - name: Create tag
+        run: |
+          NEW_VERSION=${{ steps.next_version.outputs.version }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${NEW_VERSION}" -m "Release ${NEW_VERSION}"
+          git push origin "${NEW_VERSION}"
+
+  publish-npm:
+    needs: [tag]
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci
+      - run: npm run build
+      - name: Publish to npm
+        if: env.NPM_TOKEN != ''
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-pypi:
+    needs: [tag]
+    runs-on: ubuntu-latest
+    env:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install build twine
+      - run: python -m build
+      - name: Publish to PyPI
+        if: env.PYPI_TOKEN != ''
+        run: twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+
+  build-debs:
+    name: Build .deb Packages (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    needs: tag
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Install nfpm
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Build binary
+        env:
+          GOOS: linux
+          VERSION: ${{ needs.tag.outputs.version_num }}
+        run: |
+          GOARCH="${{ matrix.arch }}"
+          export GOARCH
+          BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          LDFLAGS="-X main.Version=v${VERSION} -X main.BuildTime=${BUILD_TIME}"
+          mkdir -p dist
+          go build -ldflags "${LDFLAGS}" -o dist/spanbarn-linux-${GOARCH} ./cmd/spanbarn
+
+      - name: Build .deb package
+        env:
+          VERSION: ${{ needs.tag.outputs.version_num }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p debs
+          envsubst < nfpm-spanbarn.yaml > nfpm-spanbarn-processed.yaml
+          nfpm package \
+            --config nfpm-spanbarn-processed.yaml \
+            --packager deb \
+            --target debs/
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: debs-${{ matrix.arch }}
+          path: debs/*.deb
+          retention-days: 30
+
+  build-darwin-tarballs:
+    name: Build macOS Tarballs (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    needs: tag
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Build macOS binary
+        env:
+          GOOS: darwin
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.tag.outputs.version_num }}
+        run: |
+          BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          LDFLAGS="-X main.Version=v${VERSION} -X main.BuildTime=${BUILD_TIME}"
+          mkdir -p dist
+          go build -ldflags "${LDFLAGS}" -o dist/spanbarn ./cmd/spanbarn
+          TARBALL="spanbarn-darwin-${{ matrix.arch }}-${VERSION}.tar.gz"
+          tar -czvf dist/${TARBALL} -C dist spanbarn
+          rm dist/spanbarn
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          for f in *.tar.gz; do sha256sum "$f" > "${f}.sha256"; done
+
+      - name: Upload tarball artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: darwin-${{ matrix.arch }}
+          path: dist/*.tar.gz*
+          retention-days: 30
+
+  attach-to-release:
+    name: Attach Artifacts to Release
+    runs-on: ubuntu-latest
+    needs: [tag, build-debs, build-darwin-tarballs]
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -name "*.deb" -exec cp {} release/ \;
+          find artifacts -name "*.tar.gz" -exec cp {} release/ \;
+          find artifacts -name "*.sha256" -exec cp {} release/ \;
+          cd release && sha256sum *.deb > checksums-deb.txt 2>/dev/null || true
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag.outputs.version }}
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger rapid-root APT repository update
+        env:
+          GH_TOKEN: ${{ secrets.RAPID_ROOT_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/wiebe-xyz/rapid-root/dispatches \
+            --method POST \
+            --field event_type=apt-package-update \
+            --field 'client_payload[repo]=wiebe-xyz/spanbarn' \
+            --field 'client_payload[tag]=${{ needs.tag.outputs.version }}' \
+            --field 'client_payload[asset_pattern]=*.deb'

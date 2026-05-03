@@ -1,0 +1,33 @@
+name: spanbarn
+arch: ${GOARCH}
+platform: linux
+version: ${VERSION}
+maintainer: Wiebe Zweers <wiebe.zweers@gmail.com>
+description: Self-hosted telemetry aggregator with intelligent span retention
+vendor: wiebe.xyz
+homepage: https://github.com/wiebe-xyz/spanbarn
+license: MIT
+
+contents:
+  - src: dist/spanbarn-linux-${GOARCH}
+    dst: /usr/bin/spanbarn
+    file_info:
+      mode: 0755
+
+  - src: deploy/systemd/spanbarn.service
+    dst: /etc/systemd/system/spanbarn.service
+    type: config
+
+  - src: .env.example
+    dst: /etc/spanbarn/spanbarn.conf.example
+    type: config
+
+  - dst: /var/lib/spanbarn
+    type: dir
+    file_info:
+      mode: 0750
+      owner: spanbarn
+      group: spanbarn
+
+scripts:
+  postinstall: deploy/scripts/postinstall.sh

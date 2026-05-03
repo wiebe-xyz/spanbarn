@@ -1,0 +1,213 @@
+name: Build and Deploy Testing
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-testing
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SERVICE_IMAGE: ghcr.io/wiebe-xyz/spanbarn/service
+  WEB_IMAGE: ghcr.io/wiebe-xyz/spanbarn/web
+  K3S_HOST: k3s1.nijmegen.wiebe.xyz
+  K3S_USER: root
+  NAMESPACE: spanbarn-testing
+
+jobs:
+  build:
+    runs-on: [self-hosted, build]
+    timeout-minutes: 30
+    env:
+      HOME: /Users/wiebe
+      PATH: /Users/wiebe/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+
+      - name: Build and push images
+        run: |
+          set -euo pipefail
+          DOCKER_CONFIG_DIR="${RUNNER_TEMP}/docker-config-${GITHUB_RUN_ID}"
+          mkdir -p "$DOCKER_CONFIG_DIR"
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}\n' \
+            "$(printf '%s:%s' '${{ github.actor }}' '${{ secrets.GITHUB_TOKEN }}' | base64)" \
+            > "$DOCKER_CONFIG_DIR/config.json"
+          export DOCKER_CONFIG="$DOCKER_CONFIG_DIR"
+          docker buildx build \
+            --platform linux/amd64 \
+            --push \
+            -f deploy/docker/service.Dockerfile \
+            -t "${SERVICE_IMAGE}:${{ github.sha }}" \
+            .
+          docker buildx build \
+            --platform linux/amd64 \
+            --push \
+            -f deploy/docker/web.Dockerfile \
+            -t "${WEB_IMAGE}:${{ github.sha }}" \
+            .
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - name: Run Go tests with coverage
+        run: go test -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: coverage.out
+
+  quality-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@latest && staticcheck ./...
+      - name: go vet
+        run: go vet ./...
+      - name: Go tests with race detector
+        run: go test -race -count=1 ./...
+      - name: Coverage gate (service + repository)
+        run: |
+          go test -coverprofile=coverage.out ./internal/service/... ./internal/repository 2>/dev/null || go test -coverprofile=coverage.out ./internal/service/... ./internal/repository
+          go tool cover -func=coverage.out | tail -1 | awk '{pct=$3+0; if(pct<60){printf "Coverage %.1f%% is below 60%% threshold\n", pct; exit 1}}'
+
+  frontend-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: TypeScript typecheck
+        run: npm run lint
+      - name: ESLint
+        run: npm run lint:eslint
+
+  frontend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Run Vitest
+        run: npm test
+
+  deploy:
+    needs: [build, test, quality-backend, frontend-lint, frontend-test]
+    runs-on: [self-hosted, build]
+    timeout-minutes: 15
+    env:
+      HOME: /Users/wiebe
+      PATH: /Users/wiebe/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Transfer manifests
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+            "rm -rf /tmp/spanbarn-deploy && mkdir -p /tmp/spanbarn-deploy"
+          scp -o StrictHostKeyChecking=no -r deploy \
+            "${K3S_USER}@${K3S_HOST}:/tmp/spanbarn-deploy/deploy"
+
+      - name: Ensure namespace exists
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+            "kubectl apply -f /tmp/spanbarn-deploy/deploy/k8s/testing/namespace.yaml"
+
+      - name: Decrypt and apply secret
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY_TESTING }}
+        run: |
+          set -euo pipefail
+          sops -d deploy/k8s/testing/secret.yaml | \
+            ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+            "kubectl apply -f -"
+
+      - name: Create GHCR pull secret
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
+            kubectl create secret docker-registry ghcr-secret \
+              --docker-server=ghcr.io \
+              --docker-username='${{ github.actor }}' \
+              --docker-password='${{ secrets.GITHUB_TOKEN }}' \
+              --namespace=${NAMESPACE} \
+              --dry-run=client -o yaml | kubectl apply -f -
+          "
+
+      - name: Apply manifests and roll out
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
+            set -euo pipefail
+            kubectl apply -k /tmp/spanbarn-deploy/deploy/k8s/testing
+            kubectl -n ${NAMESPACE} set image deployment/spanbarn \
+              spanbarn=${SERVICE_IMAGE}:${{ github.sha }}
+            kubectl -n ${NAMESPACE} set image deployment/spanbarn-web \
+              spanbarn-web=${WEB_IMAGE}:${{ github.sha }}
+            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn --timeout=360s
+            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-web --timeout=360s
+          "
+
+      - name: Post release marker to BugBarn
+        if: vars.BUGBARN_ENDPOINT != ''
+        env:
+          BUGBARN_ENDPOINT: ${{ vars.BUGBARN_ENDPOINT }}
+          BUGBARN_API_KEY: ${{ secrets.SPANBARN_BUGBARN_API_KEY }}
+        run: |
+          curl -sf -X POST "${BUGBARN_ENDPOINT}/api/v1/releases" \
+            -H "Content-Type: application/json" \
+            -H "X-BugBarn-Api-Key: ${BUGBARN_API_KEY}" \
+            -d "{
+              \"name\": \"${GITHUB_SHA:0:7}\",
+              \"environment\": \"testing\",
+              \"version\": \"${GITHUB_SHA}\",
+              \"url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}\",
+              \"notes\": \"Deployed by GitHub Actions run #${GITHUB_RUN_NUMBER}\"
+            }" || echo "BugBarn release marker skipped"

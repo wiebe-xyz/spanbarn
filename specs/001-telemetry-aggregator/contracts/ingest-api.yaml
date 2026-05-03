@@ -1,0 +1,314 @@
+openapi: 3.1.0
+info:
+  title: SpanBarn Ingest API
+  version: 0.1.0
+  description: Span ingestion endpoints for SpanBarn telemetry aggregator
+
+servers:
+  - url: http://localhost:8080
+
+paths:
+  /api/v1/spans:
+    post:
+      summary: Ingest spans (native JSON format)
+      operationId: ingestSpans
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpanBatch'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: integer
+        '400':
+          description: Invalid payload
+        '401':
+          description: Missing or invalid API key
+        '413':
+          description: Payload too large
+        '429':
+          description: Rate limited
+
+  /v1/traces:
+    post:
+      summary: Ingest traces (OTLP/HTTP)
+      operationId: ingestOTLP
+      description: |
+        Accepts OpenTelemetry Protocol (OTLP) trace export requests.
+        Supports both protobuf and JSON encoding.
+      security:
+        - apiKey: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema:
+              type: string
+              format: binary
+          application/json:
+            schema:
+              type: object
+              description: OTLP ExportTraceServiceRequest JSON encoding
+      responses:
+        '200':
+          description: Accepted (OTLP convention)
+        '400':
+          description: Invalid payload
+        '401':
+          description: Missing or invalid credentials
+
+  /api/v1/health:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  version:
+                    type: string
+
+  /api/v1/services:
+    get:
+      summary: List services with metrics summary
+      operationId: listServices
+      security:
+        - session: []
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Service list with metrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServiceSummary'
+
+  /api/v1/services/{service}/operations:
+    get:
+      summary: List operations for a service with metrics
+      operationId: listOperations
+      security:
+        - session: []
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Operation list with metrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OperationSummary'
+
+  /api/v1/traces/{traceId}:
+    get:
+      summary: Get full trace by ID
+      operationId: getTrace
+      security:
+        - session: []
+      parameters:
+        - name: traceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Trace with all spans
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trace'
+        '404':
+          description: Trace not found
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-SpanBarn-Api-Key
+    bearerAuth:
+      type: http
+      scheme: bearer
+    session:
+      type: apiKey
+      in: cookie
+      name: session
+
+  schemas:
+    SpanBatch:
+      type: object
+      required:
+        - spans
+      properties:
+        spans:
+          type: array
+          items:
+            $ref: '#/components/schemas/Span'
+
+    Span:
+      type: object
+      required:
+        - traceId
+        - spanId
+        - name
+        - service
+        - startTime
+        - duration
+      properties:
+        traceId:
+          type: string
+          description: 32-character hex trace identifier
+        spanId:
+          type: string
+          description: 16-character hex span identifier
+        parentSpanId:
+          type: string
+          nullable: true
+        name:
+          type: string
+          description: Operation name (e.g. GET /api/users)
+        service:
+          type: string
+        resource:
+          type: string
+          description: Route, query, or target identifier
+        kind:
+          type: string
+          enum: [server, client, internal, producer, consumer]
+          default: internal
+        status:
+          type: string
+          enum: [ok, error, unset]
+          default: unset
+        startTime:
+          type: integer
+          format: int64
+          description: Unix timestamp in microseconds
+        duration:
+          type: integer
+          format: int64
+          description: Duration in microseconds
+        attributes:
+          type: object
+          additionalProperties: true
+        events:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              time:
+                type: integer
+                format: int64
+              attributes:
+                type: object
+                additionalProperties: true
+
+    ServiceSummary:
+      type: object
+      properties:
+        service:
+          type: string
+        spanCount:
+          type: integer
+        errorCount:
+          type: integer
+        errorRate:
+          type: number
+          format: float
+        p50Us:
+          type: integer
+        p95Us:
+          type: integer
+        p99Us:
+          type: integer
+
+    OperationSummary:
+      type: object
+      properties:
+        operation:
+          type: string
+        resource:
+          type: string
+        kind:
+          type: string
+        spanCount:
+          type: integer
+        errorCount:
+          type: integer
+        errorRate:
+          type: number
+          format: float
+        p50Us:
+          type: integer
+        p95Us:
+          type: integer
+        p99Us:
+          type: integer
+
+    Trace:
+      type: object
+      properties:
+        traceId:
+          type: string
+        spans:
+          type: array
+          items:
+            $ref: '#/components/schemas/Span'
+        duration:
+          type: integer
+          description: Total trace duration in microseconds
+        service:
+          type: string
+          description: Root span service
+        name:
+          type: string
+          description: Root span name

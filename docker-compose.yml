@@ -1,0 +1,36 @@
+name: spanbarn
+
+services:
+  service:
+    build:
+      context: .
+      dockerfile: deploy/docker/service.Dockerfile
+    image: spanbarn/service:local
+    ports:
+      - "8080:8080"
+    environment:
+      SPANBARN_ADDR: :8080
+      SPANBARN_API_KEY: local-dev-key
+      SPANBARN_SPOOL_DIR: /var/lib/spanbarn/spool
+      SPANBARN_DB_PATH: /var/lib/spanbarn/spanbarn.db
+      SPANBARN_ADMIN_USERNAME: admin
+      SPANBARN_ADMIN_PASSWORD: admin
+      SPANBARN_RETENTION_FULL_HOURS: 4
+      SPANBARN_RETENTION_ERROR_DAYS: 30
+      SPANBARN_RETENTION_AGGREGATED_DAYS: 365
+    volumes:
+      - spanbarn-data:/var/lib/spanbarn
+
+  web:
+    profiles: ["web"]
+    build:
+      context: .
+      dockerfile: deploy/docker/web.Dockerfile
+    image: spanbarn/web:local
+    ports:
+      - "3000:3000"
+    depends_on:
+      - service
+
+volumes:
+  spanbarn-data:

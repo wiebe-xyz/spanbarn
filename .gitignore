@@ -1,0 +1,62 @@
+# Operating system noise
+.DS_Store
+Thumbs.db
+
+# Editor settings
+.idea/
+.vscode/
+.playwright-mcp/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Go
+bin/
+*.test
+*.out
+*.cover
+*.coverprofile
+
+# Node
+node_modules/
+dist/
+build/
+coverage/
+*.tgz
+.npm/
+.pnpm-store/
+.turbo/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ci-venv/
+.venv/
+venv/
+env/
+.tox/
+.nox/
+htmlcov/
+*.egg-info/
+
+# Local runtime data
+.cache/
+tmp/
+var/
+/data/
+/storage/
+/spool/
+/runtime/
+*.log
+*.pid
+*.sqlite
+*.sqlite3
+*.db
+
+# Docker and compose state
+docker-compose.override.yml

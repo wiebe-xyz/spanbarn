@@ -1,0 +1,57 @@
+{
+  "spans": [
+    {
+      "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "spanId": "00f067aa0ba902b7",
+      "name": "GET /api/users",
+      "service": "api-gateway",
+      "resource": "/api/users",
+      "kind": "server",
+      "status": "ok",
+      "startTime": 1714000000000000,
+      "duration": 42000,
+      "attributes": {
+        "http.method": "GET",
+        "http.route": "/api/users",
+        "http.status_code": 200,
+        "http.url": "https://api.example.com/api/users"
+      },
+      "events": []
+    },
+    {
+      "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "spanId": "a1b2c3d4e5f60718",
+      "parentSpanId": "00f067aa0ba902b7",
+      "name": "SELECT users",
+      "service": "api-gateway",
+      "resource": "SELECT * FROM users WHERE active = $1",
+      "kind": "client",
+      "status": "ok",
+      "startTime": 1714000000005000,
+      "duration": 12000,
+      "attributes": {
+        "db.system": "postgresql",
+        "db.name": "myapp",
+        "db.statement": "SELECT * FROM users WHERE active = $1"
+      }
+    },
+    {
+      "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "spanId": "b2c3d4e5f6071829",
+      "parentSpanId": "00f067aa0ba902b7",
+      "name": "S3 GetObject",
+      "service": "api-gateway",
+      "resource": "my-bucket/avatars/user-123.jpg",
+      "kind": "client",
+      "status": "ok",
+      "startTime": 1714000000020000,
+      "duration": 8000,
+      "attributes": {
+        "aws.service": "S3",
+        "aws.operation": "GetObject",
+        "aws.s3.bucket": "my-bucket",
+        "aws.s3.key": "avatars/user-123.jpg"
+      }
+    }
+  ]
+}
