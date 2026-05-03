@@ -14,4 +14,18 @@ func (s *Server) registerRoutes() {
 	// OTLP/HTTP endpoint — API key or Bearer auth required.
 	otlpHandler := apiKeyOrBearerAuth(s.apiKey, http.HandlerFunc(s.handleOTLP))
 	s.mux.Handle("/v1/traces", otlpHandler)
+
+	// Query endpoints — session auth required.
+	if s.querySvc != nil && s.sessionMgr != nil {
+		qh := &queryHandlers{svc: s.querySvc}
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+
+		// Use a single catch-all for /api/v1/services/ with trailing slash
+		// and the exact /api/v1/services path, plus traces and dependencies.
+		s.mux.Handle("/api/v1/services", sessionAuth(http.HandlerFunc(qh.handleServices)))
+		s.mux.Handle("/api/v1/services/", sessionAuth(qh))
+		s.mux.Handle("/api/v1/traces", sessionAuth(http.HandlerFunc(qh.handleTraces)))
+		s.mux.Handle("/api/v1/traces/", sessionAuth(qh))
+		s.mux.Handle("/api/v1/dependencies", sessionAuth(http.HandlerFunc(qh.handleDependencies)))
+	}
 }

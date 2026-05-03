@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 // ServerConfig holds configuration for the HTTP server.
@@ -26,6 +28,8 @@ type Server struct {
 	allowedOrigins []string
 	version        string
 	ingest         *ingest.Handler
+	querySvc       *service.QueryService
+	sessionMgr     *auth.SessionManager
 	logger         *slog.Logger
 }
 
@@ -45,6 +49,40 @@ func NewServer(cfg ServerConfig, ingestHandler *ingest.Handler, logger *slog.Log
 		allowedOrigins: cfg.AllowedOrigins,
 		version:        cfg.Version,
 		ingest:         ingestHandler,
+		logger:         logger,
+	}
+
+	s.registerRoutes()
+
+	// Build middleware chain: recovery -> logging -> CORS -> maxBodyBytes -> routes.
+	var h http.Handler = s.mux
+	h = maxBodyBytesMiddleware(s.maxBodyBytes, h)
+	h = corsMiddleware(s.allowedOrigins, h)
+	h = loggingMiddleware(logger, h)
+	h = recoveryMiddleware(logger, h)
+	s.handler = h
+
+	return s
+}
+
+// NewServerWithQuery creates a new HTTP server with query service support.
+func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySvc *service.QueryService, sm *auth.SessionManager, logger *slog.Logger) *Server {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if cfg.MaxBodyBytes <= 0 {
+		cfg.MaxBodyBytes = 4 << 20 // 4 MiB default
+	}
+
+	s := &Server{
+		mux:            http.NewServeMux(),
+		apiKey:         cfg.APIKey,
+		maxBodyBytes:   cfg.MaxBodyBytes,
+		allowedOrigins: cfg.AllowedOrigins,
+		version:        cfg.Version,
+		ingest:         ingestHandler,
+		querySvc:       querySvc,
+		sessionMgr:     sm,
 		logger:         logger,
 	}
 
