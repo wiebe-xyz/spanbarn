@@ -17,6 +17,11 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
+// DB returns the underlying *sql.DB, useful for testing.
+func (r *Repository) DB() *sql.DB {
+	return r.db
+}
+
 // --- Projects ---
 
 func (r *Repository) CreateProject(slug, name string) (Project, error) {
@@ -253,6 +258,24 @@ func (r *Repository) GetTraceByID(traceID string) ([]Span, error) {
 		"SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at FROM spans WHERE trace_id = ? ORDER BY start_time_us",
 		traceID,
 	)
+}
+
+func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	q := "DELETE FROM spans WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	res, err := r.db.Exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
