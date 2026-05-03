@@ -17,6 +17,10 @@ type ServerConfig struct {
 	MaxBodyBytes   int64
 	AllowedOrigins []string
 	Version        string
+	MetricsToken   string // Bearer token for /metrics; empty = no auth
+	LoginRate      int    // per-minute rate limit for login; 0 = default (10)
+	IngestRate     int    // per-minute rate limit for ingest; 0 = default (600)
+	APIRate        int    // per-minute rate limit for API queries; 0 = default (120)
 }
 
 // Server is the HTTP server for SpanBarn.
@@ -27,6 +31,9 @@ type Server struct {
 	maxBodyBytes   int64
 	allowedOrigins []string
 	version        string
+	metricsToken   string
+	rateLimiter    *RateLimiter
+	metrics        *Metrics
 	ingest         *ingest.Handler
 	querySvc       *service.QueryService
 	sessionMgr     *auth.SessionManager
@@ -48,17 +55,22 @@ func NewServer(cfg ServerConfig, ingestHandler *ingest.Handler, logger *slog.Log
 		maxBodyBytes:   cfg.MaxBodyBytes,
 		allowedOrigins: cfg.AllowedOrigins,
 		version:        cfg.Version,
+		metricsToken:   cfg.MetricsToken,
+		rateLimiter:    NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
+		metrics:        NewMetrics(),
 		ingest:         ingestHandler,
 		logger:         logger,
 	}
 
 	s.registerRoutes()
 
-	// Build middleware chain: recovery -> logging -> CORS -> maxBodyBytes -> routes.
+	// Build middleware chain: recovery -> security -> metrics -> logging -> CORS -> maxBodyBytes -> routes.
 	var h http.Handler = s.mux
 	h = maxBodyBytesMiddleware(s.maxBodyBytes, h)
 	h = corsMiddleware(s.allowedOrigins, h)
 	h = loggingMiddleware(logger, h)
+	h = MetricsMiddleware(s.metrics)(h)
+	h = SecurityHeaders(h)
 	h = recoveryMiddleware(logger, h)
 	s.handler = h
 
@@ -80,6 +92,9 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		maxBodyBytes:   cfg.MaxBodyBytes,
 		allowedOrigins: cfg.AllowedOrigins,
 		version:        cfg.Version,
+		metricsToken:   cfg.MetricsToken,
+		rateLimiter:    NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
+		metrics:        NewMetrics(),
 		ingest:         ingestHandler,
 		querySvc:       querySvc,
 		sessionMgr:     sm,
@@ -88,15 +103,24 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 
 	s.registerRoutes()
 
-	// Build middleware chain: recovery -> logging -> CORS -> maxBodyBytes -> routes.
+	// Build middleware chain: recovery -> security -> metrics -> logging -> CORS -> maxBodyBytes -> routes.
 	var h http.Handler = s.mux
 	h = maxBodyBytesMiddleware(s.maxBodyBytes, h)
 	h = corsMiddleware(s.allowedOrigins, h)
 	h = loggingMiddleware(logger, h)
+	h = MetricsMiddleware(s.metrics)(h)
+	h = SecurityHeaders(h)
 	h = recoveryMiddleware(logger, h)
 	s.handler = h
 
 	return s
+}
+
+func defaultRate(v, fallback int) int {
+	if v <= 0 {
+		return fallback
+	}
+	return v
 }
 
 // Handler returns the fully wrapped http.Handler for use with httptest or http.Server.
