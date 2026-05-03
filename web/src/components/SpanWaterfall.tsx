@@ -1,73 +1,73 @@
-import React, { useState } from "react";
-import { SpanDetail } from "./SpanDetail";
+import React, { useState } from 'react'
+import type { Span } from '../api/types'
+import { SpanDetail } from './SpanDetail'
 import {
-  type Span,
   type FlatSpan,
   buildSpanTree,
   flattenTree,
   formatDuration,
   kindClass,
   kindColor,
-} from "./utils";
-import "./SpanTimeline.css";
+} from '../utils/spanTree'
+import './SpanTimeline.css'
 
 type Props = {
-  spans: Span[];
-  totalDurationUs: number;
-};
+  spans: Span[]
+  totalDurationUs: number
+}
 
 export function SpanWaterfall({ spans, totalDurationUs }: Props) {
-  const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
-  const [hoveredSpanId, setHoveredSpanId] = useState<string | null>(null);
-  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null)
+  const [hoveredSpanId, setHoveredSpanId] = useState<string | null>(null)
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 })
 
-  const tree = buildSpanTree(spans);
-  const flatSpans = flattenTree(tree);
+  const tree = buildSpanTree(spans)
+  const flatSpans = flattenTree(tree)
 
   const traceStartTimeUs =
     spans.length > 0
       ? Math.min(...spans.map((s) => s.startTimeUs))
-      : 0;
+      : 0
 
-  const safeDuration = totalDurationUs > 0 ? totalDurationUs : 1;
+  const safeDuration = totalDurationUs > 0 ? totalDurationUs : 1
 
   const handleRowClick = (spanId: string) => {
-    setSelectedSpanId(selectedSpanId === spanId ? null : spanId);
-  };
+    setSelectedSpanId(selectedSpanId === spanId ? null : spanId)
+  }
 
   const handleMouseMove = (e: React.MouseEvent, span: Span) => {
-    setHoveredSpanId(span.spanId);
-    setTooltipPos({ x: e.clientX + 12, y: e.clientY + 12 });
-  };
+    setHoveredSpanId(span.spanId)
+    setTooltipPos({ x: e.clientX + 12, y: e.clientY + 12 })
+  }
 
   const handleMouseLeave = () => {
-    setHoveredSpanId(null);
-  };
+    setHoveredSpanId(null)
+  }
 
   return (
     <div className="waterfall-container" data-testid="span-waterfall">
       {/* Header */}
       <div className="waterfall-header">
-        <span style={{ flex: "0 0 300px", paddingLeft: 8 }}>Service / Operation</span>
+        <span style={{ flex: '0 0 300px', paddingLeft: 8 }}>Service / Operation</span>
         <span style={{ flex: 1 }}>Timeline</span>
-        <span style={{ flex: "0 0 80px", textAlign: "right", paddingRight: 8 }}>
+        <span style={{ flex: '0 0 80px', textAlign: 'right', paddingRight: 8 }}>
           Duration
         </span>
       </div>
 
       {/* Span rows */}
       {flatSpans.map((flat: FlatSpan) => {
-        const { span, depth } = flat;
+        const { span, depth } = flat
         const leftPct =
-          ((span.startTimeUs - traceStartTimeUs) / safeDuration) * 100;
-        const widthPct = (span.durationUs / safeDuration) * 100;
-        const isError = span.status?.toLowerCase() === "error";
-        const isSelected = selectedSpanId === span.spanId;
+          ((span.startTimeUs - traceStartTimeUs) / safeDuration) * 100
+        const widthPct = (span.durationUs / safeDuration) * 100
+        const isError = span.status?.toLowerCase() === 'error'
+        const isSelected = selectedSpanId === span.spanId
 
         return (
           <React.Fragment key={span.spanId}>
             <div
-              className={`waterfall-row ${isSelected ? "waterfall-row--selected" : ""} ${isError ? "waterfall-row--error" : ""}`}
+              className={`waterfall-row ${isSelected ? 'waterfall-row--selected' : ''} ${isError ? 'waterfall-row--error' : ''}`}
               onClick={() => handleRowClick(span.spanId)}
               onMouseMove={(e) => handleMouseMove(e, span)}
               onMouseLeave={handleMouseLeave}
@@ -87,7 +87,7 @@ export function SpanWaterfall({ spans, totalDurationUs }: Props) {
               {/* Timeline bar */}
               <div className="waterfall-timeline" data-testid={`waterfall-timeline-${span.spanId}`}>
                 <div
-                  className={`waterfall-bar waterfall-bar--${kindClass(span.kind)} ${isError ? "waterfall-bar--error" : ""}`}
+                  className={`waterfall-bar waterfall-bar--${kindClass(span.kind)} ${isError ? 'waterfall-bar--error' : ''}`}
                   data-testid={`waterfall-bar-${span.spanId}`}
                   style={{
                     left: `${Math.max(0, Math.min(leftPct, 100))}%`,
@@ -112,7 +112,7 @@ export function SpanWaterfall({ spans, totalDurationUs }: Props) {
               />
             )}
           </React.Fragment>
-        );
+        )
       })}
 
       {/* Tooltip */}
@@ -122,8 +122,8 @@ export function SpanWaterfall({ spans, totalDurationUs }: Props) {
           style={{ left: tooltipPos.x, top: tooltipPos.y }}
         >
           {(() => {
-            const span = spans.find((s) => s.spanId === hoveredSpanId);
-            if (!span) return null;
+            const span = spans.find((s) => s.spanId === hoveredSpanId)
+            if (!span) return null
             return (
               <>
                 <div className="waterfall-tooltip-row">
@@ -143,14 +143,14 @@ export function SpanWaterfall({ spans, totalDurationUs }: Props) {
                 <div className="waterfall-tooltip-row">
                   <span className="waterfall-tooltip-label">Kind</span>
                   <span className="waterfall-tooltip-value">
-                    {span.kind || "internal"}
+                    {span.kind || 'internal'}
                   </span>
                 </div>
               </>
-            );
+            )
           })()}
         </div>
       )}
     </div>
-  );
+  )
 }

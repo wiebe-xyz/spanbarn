@@ -1,40 +1,40 @@
-import React, { useState } from "react";
+import { useState } from 'react'
+import type { Span } from '../api/types'
 import {
-  type Span,
   formatDuration,
   kindColor,
   parseAttributes,
   parseEvents,
   statusColor,
-} from "./utils";
-import "./SpanTimeline.css";
+} from '../utils/spanTree'
+import './SpanTimeline.css'
 
 type Props = {
-  span: Span;
-  traceStartTimeUs: number;
-};
+  span: Span
+  traceStartTimeUs: number
+}
 
-type Tab = "overview" | "attributes" | "events";
+type Tab = 'overview' | 'attributes' | 'events'
 
 export function SpanDetail({ span, traceStartTimeUs }: Props) {
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const [activeTab, setActiveTab] = useState<Tab>('overview')
 
-  const attributes = parseAttributes(span.attributes);
-  const events = parseEvents(span.events);
-  const relativeStartUs = span.startTimeUs - traceStartTimeUs;
+  const attributes = parseAttributes(span.attributes)
+  const events = parseEvents(span.events)
+  const relativeStartUs = span.startTimeUs - traceStartTimeUs
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "overview", label: "Overview" },
-    { key: "attributes", label: `Attributes (${Object.keys(attributes).length})` },
-    { key: "events", label: `Events (${events.length})` },
-  ];
+    { key: 'overview', label: 'Overview' },
+    { key: 'attributes', label: `Attributes (${Object.keys(attributes).length})` },
+    { key: 'events', label: `Events (${events.length})` },
+  ]
 
   return (
     <div className="span-detail" data-testid="span-detail">
       <div className="span-detail-header">
         <span className="span-detail-title">{span.name}</span>
         <span style={{ color: kindColor(span.kind), fontSize: 12 }}>
-          {span.kind || "internal"}
+          {span.kind || 'internal'}
         </span>
       </div>
 
@@ -42,7 +42,7 @@ export function SpanDetail({ span, traceStartTimeUs }: Props) {
         {tabs.map((tab) => (
           <button
             key={tab.key}
-            className={`span-detail-tab ${activeTab === tab.key ? "span-detail-tab--active" : ""}`}
+            className={`span-detail-tab ${activeTab === tab.key ? 'span-detail-tab--active' : ''}`}
             onClick={() => setActiveTab(tab.key)}
           >
             {tab.label}
@@ -50,7 +50,7 @@ export function SpanDetail({ span, traceStartTimeUs }: Props) {
         ))}
       </div>
 
-      {activeTab === "overview" && (
+      {activeTab === 'overview' && (
         <div className="span-detail-grid">
           <span className="span-detail-label">Service</span>
           <span className="span-detail-value">{span.service}</span>
@@ -59,14 +59,14 @@ export function SpanDetail({ span, traceStartTimeUs }: Props) {
           <span className="span-detail-value">{span.name}</span>
 
           <span className="span-detail-label">Kind</span>
-          <span className="span-detail-value">{span.kind || "internal"}</span>
+          <span className="span-detail-value">{span.kind || 'internal'}</span>
 
           <span className="span-detail-label">Status</span>
           <span
             className="span-detail-value"
             style={{ color: statusColor(span.status) }}
           >
-            {span.status || "ok"}
+            {span.status || 'ok'}
           </span>
 
           <span className="span-detail-label">Duration</span>
@@ -103,7 +103,7 @@ export function SpanDetail({ span, traceStartTimeUs }: Props) {
         </div>
       )}
 
-      {activeTab === "attributes" && (
+      {activeTab === 'attributes' && (
         <table className="span-detail-table">
           <thead>
             <tr>
@@ -118,7 +118,7 @@ export function SpanDetail({ span, traceStartTimeUs }: Props) {
                 <tr key={key}>
                   <td>{key}</td>
                   <td>
-                    {typeof value === "object"
+                    {typeof value === 'object'
                       ? JSON.stringify(value)
                       : String(value)}
                   </td>
@@ -126,7 +126,7 @@ export function SpanDetail({ span, traceStartTimeUs }: Props) {
               ))}
             {Object.keys(attributes).length === 0 && (
               <tr>
-                <td colSpan={2} style={{ color: "#6b7280", fontStyle: "italic" }}>
+                <td colSpan={2} style={{ color: '#6b7280', fontStyle: 'italic' }}>
                   No attributes
                 </td>
               </tr>
@@ -135,15 +135,15 @@ export function SpanDetail({ span, traceStartTimeUs }: Props) {
         </table>
       )}
 
-      {activeTab === "events" && (
+      {activeTab === 'events' && (
         <div>
           {events.length === 0 && (
-            <div style={{ color: "#6b7280", fontStyle: "italic", fontSize: 12 }}>
+            <div style={{ color: '#6b7280', fontStyle: 'italic', fontSize: 12 }}>
               No events
             </div>
           )}
           {events.map((event, i) => {
-            const offsetUs = event.timeUs - traceStartTimeUs;
+            const offsetUs = event.timeUs - traceStartTimeUs
             return (
               <div className="event-item" key={i}>
                 <span className="event-time">
@@ -157,17 +157,17 @@ export function SpanDetail({ span, traceStartTimeUs }: Props) {
                         {Object.entries(event.attributes)
                           .map(
                             ([k, v]) =>
-                              `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`
+                              `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`,
                           )
-                          .join(", ")}
+                          .join(', ')}
                       </div>
                     )}
                 </div>
               </div>
-            );
+            )
           })}
         </div>
       )}
     </div>
-  );
+  )
 }
