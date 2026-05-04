@@ -8,6 +8,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
@@ -76,12 +77,13 @@ func NewServer(cfg ServerConfig, ingestHandler *ingest.Handler, logger *slog.Log
 
 	s.registerRoutes()
 
-	// Build middleware chain: recovery -> security -> metrics -> logging -> CORS -> maxBodyBytes -> routes.
+	// Build middleware chain: recovery -> security -> tracing -> metrics -> logging -> CORS -> maxBodyBytes -> routes.
 	var h http.Handler = s.mux
 	h = maxBodyBytesMiddleware(s.maxBodyBytes, h)
 	h = corsMiddleware(s.allowedOrigins, h)
 	h = loggingMiddleware(logger, h)
 	h = MetricsMiddleware(s.metrics)(h)
+	h = observability.TracingMiddleware(h)
 	h = SecurityHeaders(h)
 	h = recoveryMiddleware(logger, h)
 	s.handler = h
@@ -119,12 +121,13 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 
 	s.registerRoutes()
 
-	// Build middleware chain: recovery -> security -> metrics -> logging -> CORS -> maxBodyBytes -> routes.
+	// Build middleware chain: recovery -> security -> tracing -> metrics -> logging -> CORS -> maxBodyBytes -> routes.
 	var h http.Handler = s.mux
 	h = maxBodyBytesMiddleware(s.maxBodyBytes, h)
 	h = corsMiddleware(s.allowedOrigins, h)
 	h = loggingMiddleware(logger, h)
 	h = MetricsMiddleware(s.metrics)(h)
+	h = observability.TracingMiddleware(h)
 	h = SecurityHeaders(h)
 	h = recoveryMiddleware(logger, h)
 	s.handler = h

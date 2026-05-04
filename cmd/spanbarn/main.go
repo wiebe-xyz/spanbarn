@@ -19,6 +19,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
@@ -41,10 +42,9 @@ func main() {
 
 // run owns process wiring: it opens storage, starts the worker, and serves the API.
 func run() error {
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	logger, shutdownObservability := observability.Setup(Version)
 	slog.SetDefault(logger)
+	defer shutdownObservability()
 
 	cfg := config.Load()
 

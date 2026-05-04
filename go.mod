@@ -5,11 +5,14 @@ go 1.25.7
 require (
 	github.com/pressly/goose/v3 v3.27.1
 	github.com/prometheus/client_golang v1.23.2
+	github.com/wiebe-xyz/spanbarn-go v0.0.0
 	go.opentelemetry.io/proto/otlp v1.10.0
 	golang.org/x/crypto v0.50.0
 	google.golang.org/protobuf v1.36.11
 	modernc.org/sqlite v1.50.0
 )
+
+replace github.com/wiebe-xyz/spanbarn-go => ./sdks/go
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
