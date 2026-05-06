@@ -26,7 +26,7 @@ export function ServicesPage(): ReactElement {
   }, [range])
 
   useEffect(() => {
-    setLoading(true)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     void fetchData()
   }, [fetchData])
 

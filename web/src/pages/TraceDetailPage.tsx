@@ -17,8 +17,6 @@ export function TraceDetailPage(): ReactElement {
 
   useEffect(() => {
     if (!traceId) return
-    setLoading(true)
-    setError(null)
     fetch(`${apiBase}/traces/${traceId}`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
@@ -26,6 +24,7 @@ export function TraceDetailPage(): ReactElement {
       })
       .then((data: TraceDetail) => {
         setTrace(data)
+        setError(null)
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : 'Failed to load trace')

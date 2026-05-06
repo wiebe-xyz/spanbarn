@@ -34,7 +34,7 @@ export function TracesPage(): ReactElement {
   const [filters, setFilters] = useState<Filters>(defaultFilters)
   const [traces, setTraces] = useState<TraceSummary[]>([])
   const [services, setServices] = useState<string[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [offset, setOffset] = useState(0)
 
@@ -93,7 +93,7 @@ export function TracesPage(): ReactElement {
 
   // Initial search
   useEffect(() => {
-    search(0)
+    search(0) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateFilter = (key: keyof Filters, value: string) => {
