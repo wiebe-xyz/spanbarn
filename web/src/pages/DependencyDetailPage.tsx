@@ -129,10 +129,10 @@ export function DependencyDetailPanel({ dependency, range, onClose }: Dependency
       <div className="card" style={{ marginBottom: '1.5rem' }}>
         <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>Latency (ms)</div>
         <ResponsiveContainer width="100%" height={180}>
-          <LineChart data={summaryData}>
+          <LineChart data={summaryData} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
-            <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
+            <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} width={40} />
             <Tooltip
               contentStyle={{
                 background: 'var(--surface)',
