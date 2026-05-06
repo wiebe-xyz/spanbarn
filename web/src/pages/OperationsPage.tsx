@@ -12,7 +12,8 @@ import {
 } from 'recharts'
 import { api } from '../api/client'
 import type { OperationSummary, TimeseriesBucket } from '../api/types'
-import { TimeRangeSelector, getTimeRange } from '../components/TimeRangeSelector'
+import { TimeRangeSelector } from '../components/TimeRangeSelector'
+import { getTimeRange } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
 
