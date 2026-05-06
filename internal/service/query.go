@@ -23,6 +23,7 @@ type QueryRepository interface {
 	QuerySpans(filter repository.SpanFilter) ([]repository.Span, error)
 	GetTraceByID(traceID string) ([]repository.Span, error)
 	QueryErrorSamples(filter repository.SpanFilter) ([]repository.Span, error)
+	QueryServiceStatsFromSpans(projectID int64, from, to time.Time) ([]repository.ServiceStats, error)
 }
 
 // QueryService implements query logic for the dashboard API.
@@ -40,10 +41,13 @@ func NewQueryService(repo QueryRepository, logger *slog.Logger) *QueryService {
 }
 
 // ListServices returns aggregated metrics per service for the given time range.
+// It queries both the aggregates table (for older data) and the raw spans table
+// (for recent data not yet aggregated), then merges the results.
 func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, to time.Time) ([]ServiceSummary, error) {
 	_, span := tracer.Start(ctx, "query.list_services")
 	defer span.End()
 
+	// Query pre-computed aggregates.
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: projectID,
 		From:      from,
@@ -54,7 +58,7 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 		return nil, err
 	}
 
-	// Group by service.
+	// Group aggregates by service.
 	type svcStats struct {
 		count      int64
 		errorCount int64
@@ -78,22 +82,73 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 		st.buckets += a.Count
 	}
 
-	result := make([]ServiceSummary, 0, len(byService))
+	// Also query recent raw spans for services not yet aggregated.
+	spanStats, err := s.repo.QueryServiceStatsFromSpans(projectID, from, to)
+	if err != nil {
+		s.logger.Warn("failed to query service stats from spans", "error", err)
+		// Fall through with aggregate-only data.
+	}
+
+	// Merge span stats into the result. For services that appear in both,
+	// we combine the counts. The raw span data has accurate percentiles
+	// while the aggregate data uses weighted averages.
+	type mergedStats struct {
+		count      int64
+		errorCount int64
+		// From aggregates (weighted).
+		aggP50Sum int64
+		aggP95Sum int64
+		aggP99Sum int64
+		aggCount  int64
+		// From raw spans (exact durations for percentile computation).
+		spanDurations []int64
+	}
+	merged := make(map[string]*mergedStats)
+
 	for svc, st := range byService {
+		merged[svc] = &mergedStats{
+			count:      st.count,
+			errorCount: st.errorCount,
+			aggP50Sum:  st.p50Sum,
+			aggP95Sum:  st.p95Sum,
+			aggP99Sum:  st.p99Sum,
+			aggCount:   st.buckets,
+		}
+	}
+
+	for _, ss := range spanStats {
+		ms, ok := merged[ss.Service]
+		if !ok {
+			ms = &mergedStats{}
+			merged[ss.Service] = ms
+		}
+		ms.count += ss.Count
+		ms.errorCount += ss.ErrorCount
+		ms.spanDurations = ss.Durations
+	}
+
+	result := make([]ServiceSummary, 0, len(merged))
+	for svc, ms := range merged {
 		var errorRate float64
-		if st.count > 0 {
-			errorRate = float64(st.errorCount) / float64(st.count)
+		if ms.count > 0 {
+			errorRate = float64(ms.errorCount) / float64(ms.count)
 		}
+
 		var p50, p95, p99 int64
-		if st.buckets > 0 {
-			p50 = st.p50Sum / st.buckets
-			p95 = st.p95Sum / st.buckets
-			p99 = st.p99Sum / st.buckets
+		if len(ms.spanDurations) > 0 {
+			// Prefer exact percentiles from raw spans when available.
+			p50, p95, p99 = computePercentiles(ms.spanDurations)
+		} else if ms.aggCount > 0 {
+			// Fall back to weighted average from aggregates.
+			p50 = ms.aggP50Sum / ms.aggCount
+			p95 = ms.aggP95Sum / ms.aggCount
+			p99 = ms.aggP99Sum / ms.aggCount
 		}
+
 		result = append(result, ServiceSummary{
 			Service:    svc,
-			SpanCount:  st.count,
-			ErrorCount: st.errorCount,
+			SpanCount:  ms.count,
+			ErrorCount: ms.errorCount,
 			ErrorRate:  errorRate,
 			P50Us:      p50,
 			P95Us:      p95,
@@ -461,16 +516,7 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 	}
 	byDep := make(map[depKey]*depStats)
 
-	for _, sp := range spans {
-		if sp.Kind != "client" {
-			continue
-		}
-
-		target, targetType := extractDependencyTarget(sp.Attributes)
-		if target == "" {
-			continue
-		}
-
+	addDep := func(target, targetType string, sp repository.Span) {
 		k := depKey{target, targetType}
 		st, ok := byDep[k]
 		if !ok {
@@ -482,6 +528,35 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 			st.errorCount++
 		}
 		st.durations = append(st.durations, sp.DurationUs)
+	}
+
+	for _, sp := range spans {
+		if sp.Kind == "client" || sp.Kind == "CLIENT" {
+			target, targetType := extractDependencyTarget(sp.Attributes)
+			if target != "" {
+				addDep(target, targetType, sp)
+			}
+		}
+	}
+
+	// Extract cross-service dependencies from parent-child relationships.
+	// Build a map of spanID -> span for lookup.
+	spanByID := make(map[string]*repository.Span, len(spans))
+	for i := range spans {
+		spanByID[spans[i].SpanID] = &spans[i]
+	}
+	// Track service-to-service edges we've already counted per span to avoid duplicates.
+	for _, sp := range spans {
+		if sp.ParentSpanID == "" {
+			continue
+		}
+		parent, ok := spanByID[sp.ParentSpanID]
+		if !ok {
+			continue
+		}
+		if parent.Service != "" && sp.Service != "" && parent.Service != sp.Service {
+			addDep(sp.Service, "service", *parent)
+		}
 	}
 
 	result := make([]DependencySummary, 0, len(byDep))
@@ -521,20 +596,57 @@ func extractDependencyTarget(attrJSON string) (target, targetType string) {
 		return "", ""
 	}
 
-	// Check in priority order.
+	// Check in priority order — most specific first.
+
+	// Database systems.
 	if v, ok := getStringAttr(attrs, "db.system"); ok {
 		return v, "database"
 	}
+	if v, ok := getStringAttr(attrs, "db.name"); ok {
+		return v, "database"
+	}
+
+	// Peer service (OTel semantic convention for the logical remote service).
+	if v, ok := getStringAttr(attrs, "peer.service"); ok {
+		return v, "service"
+	}
+
+	// RPC services.
+	if v, ok := getStringAttr(attrs, "rpc.service"); ok {
+		return v, "rpc"
+	}
+
+	// Messaging systems.
+	if v, ok := getStringAttr(attrs, "messaging.system"); ok {
+		return v, "messaging"
+	}
+
+	// Cloud provider services.
+	if v, ok := getStringAttr(attrs, "aws.service"); ok {
+		return v, "aws"
+	}
+
+	// HTTP targets — try multiple attribute names.
 	if v, ok := getStringAttr(attrs, "http.url"); ok {
 		if host := extractHost(v); host != "" {
 			return host, "http"
 		}
 	}
-	if v, ok := getStringAttr(attrs, "rpc.service"); ok {
-		return v, "rpc"
+	if v, ok := getStringAttr(attrs, "url.full"); ok {
+		if host := extractHost(v); host != "" {
+			return host, "http"
+		}
 	}
-	if v, ok := getStringAttr(attrs, "aws.service"); ok {
-		return v, "aws"
+	if v, ok := getStringAttr(attrs, "http.host"); ok {
+		return v, "http"
+	}
+
+	// Network-level peer identification (OTel semantic conventions).
+	if v, ok := getStringAttr(attrs, "server.address"); ok {
+		return v, "network"
+	}
+	if v, ok := getStringAttr(attrs, "net.peer.name"); ok {
+		return v, "network"
 	}
 
 	return "", ""

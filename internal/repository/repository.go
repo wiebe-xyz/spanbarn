@@ -636,6 +636,104 @@ func (r *Repository) ListProjectIDs() ([]int64, error) {
 	return ids, rows.Err()
 }
 
+// ServiceStats holds per-service metrics computed from raw spans.
+type ServiceStats struct {
+	Service    string
+	Count      int64
+	ErrorCount int64
+	Durations  []int64
+}
+
+// QueryServiceStatsFromSpans computes per-service summary stats directly from the spans table.
+func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.Time) ([]ServiceStats, error) {
+	var where []string
+	var args []any
+
+	if projectID != 0 {
+		where = append(where, "project_id = ?")
+		args = append(args, projectID)
+	}
+	if !from.IsZero() {
+		where = append(where, "ingested_at >= ?")
+		args = append(args, from)
+	}
+	if !to.IsZero() {
+		where = append(where, "ingested_at <= ?")
+		args = append(args, to)
+	}
+
+	q := "SELECT service, COUNT(*) as cnt, SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as err_cnt FROM spans"
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " GROUP BY service"
+
+	rows, err := r.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	statsMap := make(map[string]*ServiceStats)
+	var order []string
+	for rows.Next() {
+		var svc string
+		var cnt, errCnt int64
+		if err := rows.Scan(&svc, &cnt, &errCnt); err != nil {
+			return nil, err
+		}
+		statsMap[svc] = &ServiceStats{Service: svc, Count: cnt, ErrorCount: errCnt}
+		order = append(order, svc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Now fetch durations per service for percentile computation.
+	for _, svc := range order {
+		dq := "SELECT duration_us FROM spans WHERE service = ?"
+		dargs := []any{svc}
+		if projectID != 0 {
+			dq += " AND project_id = ?"
+			dargs = append(dargs, projectID)
+		}
+		if !from.IsZero() {
+			dq += " AND ingested_at >= ?"
+			dargs = append(dargs, from)
+		}
+		if !to.IsZero() {
+			dq += " AND ingested_at <= ?"
+			dargs = append(dargs, to)
+		}
+		dq += " ORDER BY duration_us"
+
+		drows, err := r.db.Query(dq, dargs...)
+		if err != nil {
+			return nil, err
+		}
+		var durations []int64
+		for drows.Next() {
+			var d int64
+			if err := drows.Scan(&d); err != nil {
+				drows.Close()
+				return nil, err
+			}
+			durations = append(durations, d)
+		}
+		drows.Close()
+		if err := drows.Err(); err != nil {
+			return nil, err
+		}
+		statsMap[svc].Durations = durations
+	}
+
+	result := make([]ServiceStats, 0, len(order))
+	for _, svc := range order {
+		result = append(result, *statsMap[svc])
+	}
+	return result, nil
+}
+
 func (r *Repository) scanErrorSamples(query string, args ...any) ([]Span, error) {
 	rows, err := r.db.Query(query, args...)
 	if err != nil {

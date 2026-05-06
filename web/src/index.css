@@ -208,3 +208,26 @@ label {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
+
+/* Mobile tab bar — hidden by default, shown on small screens */
+.mobile-tab-bar {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  /* Hide sidebar on mobile */
+  .sidebar {
+    display: none !important;
+  }
+
+  /* Show mobile tab bar */
+  .mobile-tab-bar {
+    display: flex !important;
+  }
+
+  /* Adjust main content for mobile */
+  .main-content {
+    padding: 1rem !important;
+    padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px) + 1rem) !important;
+  }
+}

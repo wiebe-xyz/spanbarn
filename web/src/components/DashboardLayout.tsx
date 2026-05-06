@@ -2,6 +2,8 @@ import { type ReactElement } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { Activity, GitBranch, Search, LogOut } from 'lucide-react'
 import { api } from '../api/client'
+import { MobileTabBar } from './MobileTabBar'
+import { PWAInstallBanner } from './PWAInstallBanner'
 
 const navItems = [
   { to: '/', icon: Activity, label: 'Services' },
@@ -22,9 +24,10 @@ export function DashboardLayout(): ReactElement {
   }
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh' }}>
-      {/* Sidebar */}
+    <div className="dashboard-layout" style={{ display: 'flex', minHeight: '100vh' }}>
+      {/* Sidebar — hidden on mobile via CSS */}
       <aside
+        className="sidebar"
         style={{
           width: 220,
           background: 'var(--surface)',
@@ -98,9 +101,13 @@ export function DashboardLayout(): ReactElement {
       </aside>
 
       {/* Main content */}
-      <main style={{ flex: 1, padding: '1.5rem 2rem', overflowY: 'auto' }}>
+      <main className="main-content" style={{ flex: 1, padding: '1.5rem 2rem', overflowY: 'auto' }}>
         <Outlet />
       </main>
+
+      {/* Mobile tab bar — shown on mobile via CSS */}
+      <MobileTabBar />
+      <PWAInstallBanner />
     </div>
   )
 }
