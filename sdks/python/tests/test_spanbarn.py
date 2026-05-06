@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import threading
 import time
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -425,7 +422,6 @@ class TestWSGIMiddleware:
     def test_basic_request(self):
         spans_collected: list[SpanData] = []
         client = _make_client()
-        original_enqueue = client.enqueue
         client.enqueue = lambda sd: spans_collected.append(sd)
 
         def app(environ, start_response):
@@ -461,7 +457,7 @@ class TestWSGIMiddleware:
         middleware = SpanBarnWSGIMiddleware(app, client=client)
         environ = self._make_environ()
 
-        result = middleware(environ, lambda s, h, e=None: None)
+        middleware(environ, lambda s, h, e=None: None)
         assert spans_collected[0].status == "error"
         assert spans_collected[0].attributes["http.status_code"] == 500
 
