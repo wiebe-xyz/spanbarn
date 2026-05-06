@@ -48,9 +48,9 @@ export function SpanWaterfall({ spans, totalDurationUs }: Props) {
     <div className="waterfall-container" data-testid="span-waterfall">
       {/* Header */}
       <div className="waterfall-header">
-        <span style={{ flex: '0 0 300px', paddingLeft: 8 }}>Service / Operation</span>
+        <span className="waterfall-label" style={{ paddingLeft: 8 }}>Service / Operation</span>
         <span style={{ flex: 1 }}>Timeline</span>
-        <span style={{ flex: '0 0 80px', textAlign: 'right', paddingRight: 8 }}>
+        <span className="waterfall-duration" style={{ textAlign: 'right', paddingRight: 8 }}>
           Duration
         </span>
       </div>

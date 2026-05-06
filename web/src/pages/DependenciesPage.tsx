@@ -6,12 +6,13 @@ import { getTimeRange } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
 import { DependencyDetailPanel } from './DependencyDetailPage'
+import { useTimeRange } from '../contexts/TimeRangeContext'
 
 type SortField = 'target' | 'targetType' | 'callCount' | 'errorCount' | 'errorRate' | 'p50Us' | 'p95Us' | 'p99Us'
 type SortDir = 'asc' | 'desc'
 
 export function DependenciesPage(): ReactElement {
-  const [range, setRange] = useState('1h')
+  const { range, setRange } = useTimeRange()
   const [refreshInterval, setRefreshInterval] = useState(0)
   const [serviceFilter, setServiceFilter] = useState('')
   const [dependencies, setDependencies] = useState<DependencySummary[]>([])
@@ -104,6 +105,7 @@ export function DependenciesPage(): ReactElement {
 
       {/* Table */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
         <table>
           <thead>
             <tr>
@@ -198,6 +200,7 @@ export function DependenciesPage(): ReactElement {
                   ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Detail panel */}

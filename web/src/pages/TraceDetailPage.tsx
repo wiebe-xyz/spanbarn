@@ -81,7 +81,7 @@ export function TraceDetailPage(): ReactElement {
   const uniqueServices = new Set(trace.spans.map((s) => s.service))
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       {/* Back button */}
       <button onClick={onBack} style={backButtonStyle}>
         Back to Traces
@@ -92,75 +92,61 @@ export function TraceDetailPage(): ReactElement {
         style={{
           marginTop: 16,
           marginBottom: 24,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'start',
-          flexWrap: 'wrap',
-          gap: 16,
         }}
       >
-        <div>
-          <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>
-            {trace.name || 'Trace Detail'}
-          </h1>
-          <div
+        <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>
+          {trace.name || 'Trace Detail'}
+        </h1>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 13,
+            color: '#9ca3af',
+            marginBottom: 12,
+            flexWrap: 'wrap',
+          }}
+        >
+          <code style={{ fontSize: 12, wordBreak: 'break-all' }}>{traceId}</code>
+          <button
+            onClick={copyTraceId}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              fontSize: 13,
+              background: 'transparent',
+              border: '1px solid #374151',
+              borderRadius: 4,
+              padding: '2px 8px',
               color: '#9ca3af',
+              fontSize: 11,
+              cursor: 'pointer',
+              flexShrink: 0,
             }}
           >
-            <code style={{ fontSize: 12 }}>{traceId}</code>
-            <button
-              onClick={copyTraceId}
-              style={{
-                background: 'transparent',
-                border: '1px solid #374151',
-                borderRadius: 4,
-                padding: '2px 8px',
-                color: '#9ca3af',
-                fontSize: 11,
-                cursor: 'pointer',
-              }}
-            >
-              {copied ? 'Copied!' : 'Copy'}
-            </button>
-          </div>
+            {copied ? 'Copied!' : 'Copy'}
+          </button>
         </div>
 
         {/* Summary stats */}
-        <div style={{ display: 'flex', gap: 24, fontSize: 13 }}>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ color: '#9ca3af', fontSize: 11, marginBottom: 2 }}>
-              Duration
-            </div>
-            <div style={{ fontWeight: 600, color: '#e5e7eb' }}>
-              {formatDuration(trace.durationUs)}
-            </div>
+        <div style={{ display: 'flex', gap: 16, fontSize: 13 }}>
+          <div>
+            <span style={{ color: '#9ca3af', fontSize: 11, marginRight: 6 }}>Duration</span>
+            <span style={{ fontWeight: 600, color: '#e5e7eb' }}>{formatDuration(trace.durationUs)}</span>
           </div>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ color: '#9ca3af', fontSize: 11, marginBottom: 2 }}>
-              Services
-            </div>
-            <div style={{ fontWeight: 600, color: '#e5e7eb' }}>
-              {uniqueServices.size}
-            </div>
+          <div>
+            <span style={{ color: '#9ca3af', fontSize: 11, marginRight: 6 }}>Services</span>
+            <span style={{ fontWeight: 600, color: '#e5e7eb' }}>{uniqueServices.size}</span>
           </div>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ color: '#9ca3af', fontSize: 11, marginBottom: 2 }}>
-              Spans
-            </div>
-            <div style={{ fontWeight: 600, color: '#e5e7eb' }}>
-              {trace.spans.length}
-            </div>
+          <div>
+            <span style={{ color: '#9ca3af', fontSize: 11, marginRight: 6 }}>Spans</span>
+            <span style={{ fontWeight: 600, color: '#e5e7eb' }}>{trace.spans.length}</span>
           </div>
         </div>
       </div>
 
       {/* Waterfall */}
-      <SpanWaterfall spans={trace.spans} totalDurationUs={trace.durationUs} />
+      <div style={{ overflowX: 'auto' }}>
+        <SpanWaterfall spans={trace.spans} totalDurationUs={trace.durationUs} />
+      </div>
     </div>
   )
 }

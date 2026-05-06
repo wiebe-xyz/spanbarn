@@ -230,4 +230,14 @@ label {
     padding: 1rem !important;
     padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px) + 1rem) !important;
   }
+
+  /* Stack charts on mobile */
+  .charts-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Dependency detail panel full width on mobile */
+  .dep-detail-panel {
+    width: 100vw !important;
+  }
 }

@@ -16,11 +16,12 @@ import { TimeRangeSelector } from '../components/TimeRangeSelector'
 import { getTimeRange } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
+import { useTimeRange } from '../contexts/TimeRangeContext'
 
 export function OperationsPage(): ReactElement {
   const { service } = useParams<{ service: string }>()
   const navigate = useNavigate()
-  const [range, setRange] = useState('1h')
+  const { range, setRange } = useTimeRange()
   const [refreshInterval, setRefreshInterval] = useState(0)
   const [operations, setOperations] = useState<OperationSummary[]>([])
   const [_timeseries, setTimeseries] = useState<TimeseriesBucket[]>([])
@@ -112,6 +113,7 @@ export function OperationsPage(): ReactElement {
 
       {/* Operations table */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
         <table>
           <thead>
             <tr>
@@ -182,6 +184,7 @@ export function OperationsPage(): ReactElement {
                   ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )

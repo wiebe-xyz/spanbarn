@@ -19,11 +19,12 @@ import type { TimeseriesBucket, TraceSummary } from '../api/types'
 import { TimeRangeSelector } from '../components/TimeRangeSelector'
 import { getTimeRange } from '../utils/timeRange'
 import { formatDuration } from '../utils/format'
+import { useTimeRange } from '../contexts/TimeRangeContext'
 
 export function OperationDetailPage(): ReactElement {
   const { service, operation } = useParams<{ service: string; operation: string }>()
   const navigate = useNavigate()
-  const [range, setRange] = useState('1h')
+  const { range, setRange } = useTimeRange()
   const [timeseries, setTimeseries] = useState<TimeseriesBucket[]>([])
   const [traces, setTraces] = useState<TraceSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -96,7 +97,7 @@ export function OperationDetailPage(): ReactElement {
       </div>
 
       {/* Charts grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+      <div className="charts-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
         {/* Latency chart */}
         <div className="card">
           <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>
@@ -174,6 +175,7 @@ export function OperationDetailPage(): ReactElement {
         <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)' }}>
           <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>Recent Traces</span>
         </div>
+        <div style={{ overflowX: 'auto' }}>
         <table>
           <thead>
             <tr>
@@ -235,6 +237,7 @@ export function OperationDetailPage(): ReactElement {
             )}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )

@@ -6,10 +6,11 @@ import { TimeRangeSelector } from '../components/TimeRangeSelector'
 import { getTimeRange } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
+import { useTimeRange } from '../contexts/TimeRangeContext'
 
 export function ServicesPage(): ReactElement {
   const navigate = useNavigate()
-  const [range, setRange] = useState('1h')
+  const { range, setRange } = useTimeRange()
   const [refreshInterval, setRefreshInterval] = useState(0)
   const [services, setServices] = useState<ServiceSummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -53,6 +54,7 @@ export function ServicesPage(): ReactElement {
 
       {/* Table */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
         <table>
           <thead>
             <tr>
@@ -115,6 +117,7 @@ export function ServicesPage(): ReactElement {
                   ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )

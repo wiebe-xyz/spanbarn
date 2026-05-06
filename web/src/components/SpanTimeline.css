@@ -262,3 +262,29 @@
   color: var(--text-primary, #e5e7eb);
   font-weight: 500;
 }
+
+@media (max-width: 768px) {
+  .waterfall-label {
+    flex: 0 0 160px;
+    font-size: 11px;
+  }
+
+  .waterfall-duration {
+    flex: 0 0 60px;
+    font-size: 11px;
+  }
+
+  .span-detail-grid {
+    grid-template-columns: 100px 1fr;
+  }
+
+  .span-detail {
+    padding: 12px;
+    margin: 4px 4px 8px;
+  }
+
+  .event-time {
+    flex: 0 0 60px;
+    font-size: 11px;
+  }
+}
