@@ -72,6 +72,21 @@ type DependencySummary struct {
 	P99Us      int64   `json:"p99Us"`
 }
 
+// DatabaseQuerySummary holds metrics for a single normalized query pattern.
+type DatabaseQuerySummary struct {
+	Pattern     string  `json:"pattern"`
+	Operation   string  `json:"operation"`
+	DBSystem    string  `json:"dbSystem"`
+	DBName      string  `json:"dbName"`
+	CallCount   int64   `json:"callCount"`
+	ErrorCount  int64   `json:"errorCount"`
+	ErrorRate   float64 `json:"errorRate"`
+	P50Us       int64   `json:"p50Us"`
+	P95Us       int64   `json:"p95Us"`
+	P99Us       int64   `json:"p99Us"`
+	TotalTimeUs int64   `json:"totalTimeUs"`
+}
+
 // TraceSearchFilter holds parameters for searching traces.
 type TraceSearchFilter struct {
 	ProjectID     int64

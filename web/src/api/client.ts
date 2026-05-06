@@ -5,6 +5,7 @@ import type {
   TraceSummary,
   TraceDetail,
   DependencySummary,
+  DatabaseQuerySummary,
   HealthResponse,
   TraceSearchParams,
 } from './types'
@@ -109,6 +110,11 @@ export const api = {
   getDependencies: (from: string, to: string, service?: string) =>
     fetchJSON<DependencySummary[]>(
       `/api/v1/dependencies${qs({ from, to, service })}`,
+    ),
+
+  getDatabaseQueries: (from: string, to: string, service?: string) =>
+    fetchJSON<DatabaseQuerySummary[]>(
+      `/api/v1/database${qs({ from, to, service })}`,
     ),
 
   getHealth: () => fetchJSON<HealthResponse>('/api/v1/health'),

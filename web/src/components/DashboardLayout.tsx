@@ -1,6 +1,6 @@
 import { type ReactElement } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { Activity, GitBranch, Search, Settings, LogOut } from 'lucide-react'
+import { Activity, GitBranch, Search, Database, Settings, LogOut } from 'lucide-react'
 import { api } from '../api/client'
 import { MobileTabBar } from './MobileTabBar'
 import { PWAInstallBanner } from './PWAInstallBanner'
@@ -9,6 +9,7 @@ const navItems = [
   { to: '/', icon: Activity, label: 'Services' },
   { to: '/traces', icon: Search, label: 'Traces' },
   { to: '/dependencies', icon: GitBranch, label: 'Dependencies' },
+  { to: '/database', icon: Database, label: 'Database' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 

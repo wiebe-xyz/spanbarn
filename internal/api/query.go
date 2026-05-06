@@ -178,6 +178,29 @@ func (h *queryHandlers) handleDependencies(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, deps)
 }
 
+func (h *queryHandlers) handleDatabaseQueries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	from, to, err := parseTimeRange(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+		return
+	}
+
+	svcFilter := r.URL.Query().Get("service")
+
+	queries, err := h.svc.ListDatabaseQueries(r.Context(), 0, from, to, svcFilter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, queries)
+}
+
 // routeQuery is a handler that dispatches query routes based on URL path pattern.
 // It handles the following patterns:
 //
@@ -228,6 +251,12 @@ func (h *queryHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "dependencies":
 		if len(parts) == 3 {
 			h.handleDependencies(w, r)
+		} else {
+			writeError(w, http.StatusNotFound, "not found", "")
+		}
+	case "database":
+		if len(parts) == 3 {
+			h.handleDatabaseQueries(w, r)
 		} else {
 			writeError(w, http.StatusNotFound, "not found", "")
 		}

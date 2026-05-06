@@ -1,12 +1,13 @@
 import { useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, Search, GitBranch, MoreHorizontal, Settings, LogOut } from 'lucide-react'
+import { Activity, Search, GitBranch, Database, MoreHorizontal, Settings, LogOut } from 'lucide-react'
 import { api } from '../api/client'
 
 const tabs = [
   { to: '/', icon: Activity, label: 'Services' },
   { to: '/traces', icon: Search, label: 'Traces' },
   { to: '/dependencies', icon: GitBranch, label: 'Deps' },
+  { to: '/database', icon: Database, label: 'DB' },
 ]
 
 export function MobileTabBar(): ReactElement {

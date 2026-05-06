@@ -83,6 +83,21 @@ export type DependencySummary = {
   p99Us: number
 }
 
+/** Database query pattern metrics. */
+export type DatabaseQuerySummary = {
+  pattern: string
+  operation: string
+  dbSystem: string
+  dbName: string
+  callCount: number
+  errorCount: number
+  errorRate: number
+  p50Us: number
+  p95Us: number
+  p99Us: number
+  totalTimeUs: number
+}
+
 /** Health check response. */
 export type HealthResponse = {
   status: string

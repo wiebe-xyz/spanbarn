@@ -6,6 +6,7 @@ import { OperationDetailPage } from './pages/OperationDetailPage'
 import { TracesPage } from './pages/TracesPage'
 import { TraceDetailPage } from './pages/TraceDetailPage'
 import { DependenciesPage } from './pages/DependenciesPage'
+import { DatabasePage } from './pages/DatabasePage'
 import { SettingsPage } from './pages/SettingsPage'
 import { DashboardLayout } from './components/DashboardLayout'
 import { TimeRangeProvider } from './contexts/TimeRangeContext'
@@ -23,6 +24,7 @@ function App() {
             <Route path="traces" element={<TracesPage />} />
             <Route path="traces/:traceId" element={<TraceDetailPage />} />
             <Route path="dependencies" element={<DependenciesPage />} />
+            <Route path="database" element={<DatabasePage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>
