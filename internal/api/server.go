@@ -43,6 +43,7 @@ type Server struct {
 	ingest         *ingest.Handler
 	querySvc       *service.QueryService
 	sessionMgr     *auth.SessionManager
+	authorizer     *auth.Authorizer
 	repo           *repository.Repository
 	logger         *slog.Logger
 }
@@ -54,6 +55,13 @@ type ServerOption func(*Server)
 func WithRepository(repo *repository.Repository) ServerOption {
 	return func(s *Server) {
 		s.repo = repo
+	}
+}
+
+// WithAuthorizer attaches an Authorizer for DB-backed API key validation.
+func WithAuthorizer(a *auth.Authorizer) ServerOption {
+	return func(s *Server) {
+		s.authorizer = a
 	}
 }
 

@@ -17,12 +17,18 @@ func (s *Server) registerRoutes() {
 	}
 
 	// Ingest endpoint — rate limited + API key auth required.
-	ingestHandler := ingestRL(apiKeyAuth(s.apiKey, http.HandlerFunc(s.handleIngest)))
-	s.mux.Handle("/api/v1/spans", ingestHandler)
+	var ingestAuth, otlpAuth func(http.Handler) http.Handler
+	if s.authorizer != nil {
+		ingestAuth = func(next http.Handler) http.Handler { return authorizerOrBearerAuth(s.authorizer, next) }
+		otlpAuth = ingestAuth
+	} else {
+		ingestAuth = func(next http.Handler) http.Handler { return apiKeyAuth(s.apiKey, next) }
+		otlpAuth = func(next http.Handler) http.Handler { return apiKeyOrBearerAuth(s.apiKey, next) }
+	}
+	s.mux.Handle("/api/v1/spans", ingestRL(ingestAuth(http.HandlerFunc(s.handleIngest))))
 
 	// OTLP/HTTP endpoint — rate limited + API key or Bearer auth required.
-	otlpHandler := ingestRL(apiKeyOrBearerAuth(s.apiKey, http.HandlerFunc(s.handleOTLP)))
-	s.mux.Handle("/v1/traces", otlpHandler)
+	s.mux.Handle("/v1/traces", ingestRL(otlpAuth(http.HandlerFunc(s.handleOTLP))))
 
 	// Query endpoints — rate limited + session auth required.
 	if s.querySvc != nil && s.sessionMgr != nil {

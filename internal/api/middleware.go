@@ -7,6 +7,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/auth"
 )
 
 // loggingMiddleware logs every request with method, path, status, and duration.
@@ -122,6 +124,30 @@ func apiKeyOrBearerAuth(apiKey string, next http.Handler) http.Handler {
 			return
 		}
 		if key != apiKey {
+			writeError(w, http.StatusUnauthorized, "invalid API key", "")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// authorizerOrBearerAuth validates X-SpanBarn-Api-Key or Authorization: Bearer
+// against the Authorizer (static + DB keys).
+func authorizerOrBearerAuth(a *auth.Authorizer, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("X-SpanBarn-Api-Key")
+		if key == "" {
+			ah := r.Header.Get("Authorization")
+			if strings.HasPrefix(ah, "Bearer ") {
+				key = strings.TrimPrefix(ah, "Bearer ")
+			}
+		}
+		if key == "" {
+			writeError(w, http.StatusUnauthorized, "missing API key", "set X-SpanBarn-Api-Key or Authorization: Bearer header")
+			return
+		}
+		_, _, err := a.Authorize(key)
+		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid API key", "")
 			return
 		}
