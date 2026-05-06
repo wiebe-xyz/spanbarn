@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { TimeRangeSelector, getTimeRange } from './TimeRangeSelector'
+import { TimeRangeSelector } from './TimeRangeSelector'
+import { getTimeRange } from '../utils/timeRange'
 
 describe('TimeRangeSelector', () => {
   it('renders all range options', () => {

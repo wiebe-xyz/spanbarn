@@ -11,7 +11,7 @@ import {
 } from 'recharts'
 import { api } from '../api/client'
 import type { DependencySummary, TraceSummary } from '../api/types'
-import { getTimeRange } from '../components/TimeRangeSelector'
+import { getTimeRange } from '../utils/timeRange'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
 
 type DependencyDetailPanelProps = {
@@ -43,7 +43,7 @@ export function DependencyDetailPanel({ dependency, range, onClose }: Dependency
   }, [dependency.target, range])
 
   useEffect(() => {
-    setLoading(true)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchTraces()
   }, [fetchTraces])
 

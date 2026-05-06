@@ -16,7 +16,8 @@ import {
 } from 'recharts'
 import { api } from '../api/client'
 import type { TimeseriesBucket, TraceSummary } from '../api/types'
-import { TimeRangeSelector, getTimeRange } from '../components/TimeRangeSelector'
+import { TimeRangeSelector } from '../components/TimeRangeSelector'
+import { getTimeRange } from '../utils/timeRange'
 import { formatDuration } from '../utils/format'
 
 export function OperationDetailPage(): ReactElement {
