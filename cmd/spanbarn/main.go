@@ -83,6 +83,20 @@ func run() error {
 	// 2. Create repository.
 	repo := repository.NewRepository(db.DB)
 
+	// 2b. Bootstrap admin user from env vars if configured.
+	if cfg.AdminUsername != "" && cfg.AdminPassword != "" {
+		if _, err := repo.GetUserByUsername(cfg.AdminUsername); err != nil {
+			hash, hashErr := auth.HashPassword(cfg.AdminPassword)
+			if hashErr != nil {
+				return fmt.Errorf("hash admin password: %w", hashErr)
+			}
+			if createErr := repo.CreateUser(cfg.AdminUsername, hash); createErr != nil {
+				return fmt.Errorf("create admin user: %w", createErr)
+			}
+			logger.Info("bootstrapped admin user", "username", cfg.AdminUsername)
+		}
+	}
+
 	// 3. Create spool.
 	eventSpool, err := spool.NewSpool(cfg.SpoolDir, cfg.MaxSpoolBytes)
 	if err != nil {
