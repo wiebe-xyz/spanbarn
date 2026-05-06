@@ -126,9 +126,14 @@ func Setup(version string) (*slog.Logger, func()) {
 
 	logger := slog.New(handler)
 
+	selfAPIKey := os.Getenv("SPANBARN_SELF_API_KEY")
+	if selfAPIKey == "" {
+		selfAPIKey = os.Getenv("SPANBARN_API_KEY")
+	}
+
 	shutdownTracing := InitTracing(TracingConfig{
 		Endpoint:    os.Getenv("SPANBARN_SELF_ENDPOINT"),
-		APIKey:      os.Getenv("SPANBARN_SELF_API_KEY"),
+		APIKey:      selfAPIKey,
 		Service:     "spanbarn",
 		Environment: env,
 	})
