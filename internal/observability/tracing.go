@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -33,13 +34,25 @@ func InitTracing(cfg TracingConfig) func() {
 
 	ctx := context.Background()
 
-	exporter, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpoint(cfg.Endpoint),
+	endpoint := cfg.Endpoint
+	opts := []otlptracehttp.Option{
 		otlptracehttp.WithHeaders(map[string]string{
 			"X-SpanBarn-Api-Key": cfg.APIKey,
 		}),
-		otlptracehttp.WithInsecure(),
-	)
+	}
+
+	if u, err := url.Parse(endpoint); err == nil && u.Host != "" {
+		endpoint = u.Host
+		if u.Scheme != "https" {
+			opts = append(opts, otlptracehttp.WithInsecure())
+		}
+	} else {
+		opts = append(opts, otlptracehttp.WithInsecure())
+	}
+
+	opts = append(opts, otlptracehttp.WithEndpoint(endpoint))
+
+	exporter, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {
 		slog.Error("failed to create OTLP exporter", "error", err)
 		return func() {}
