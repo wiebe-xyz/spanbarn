@@ -219,11 +219,10 @@ export function SettingsPage(): ReactElement {
                 border: '1px solid var(--border)',
                 borderRadius: 8,
                 padding: '0.5rem 0.75rem',
-                flexWrap: 'wrap',
               }}
             >
-              <code style={{ fontSize: '0.8125rem', color: 'var(--accent)', flex: 1 }}>
-                {window.location.origin}/api/v1/setup/your-project-slug
+              <code style={{ fontSize: '0.8125rem', color: 'var(--accent)', flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
+                {window.location.origin}/api/v1/setup/<strong>your-project-slug</strong>
               </code>
               <CopyButton value={`${window.location.origin}/api/v1/setup/your-project-slug`} />
             </div>
