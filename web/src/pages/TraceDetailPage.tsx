@@ -88,34 +88,29 @@ export function TraceDetailPage(): ReactElement {
       </button>
 
       {/* Header */}
-      <div
-        style={{
-          marginTop: 16,
-          marginBottom: 24,
-        }}
-      >
-        <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>
+      <div style={{ marginTop: 8, marginBottom: 12 }}>
+        <h1 style={{ fontSize: 18, fontWeight: 600, marginBottom: 2 }}>
           {trace.name || 'Trace Detail'}
         </h1>
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 8,
-            fontSize: 13,
+            gap: 6,
+            fontSize: 12,
             color: '#9ca3af',
-            marginBottom: 12,
+            marginBottom: 6,
             flexWrap: 'wrap',
           }}
         >
-          <code style={{ fontSize: 12, wordBreak: 'break-all' }}>{traceId}</code>
+          <code style={{ fontSize: 11, wordBreak: 'break-all' }}>{traceId}</code>
           <button
             onClick={copyTraceId}
             style={{
               background: 'transparent',
               border: '1px solid #374151',
               borderRadius: 4,
-              padding: '2px 8px',
+              padding: '1px 6px',
               color: '#9ca3af',
               fontSize: 11,
               cursor: 'pointer',
@@ -127,17 +122,17 @@ export function TraceDetailPage(): ReactElement {
         </div>
 
         {/* Summary stats */}
-        <div style={{ display: 'flex', gap: 16, fontSize: 13 }}>
+        <div style={{ display: 'flex', gap: 12, fontSize: 12 }}>
           <div>
-            <span style={{ color: '#9ca3af', fontSize: 11, marginRight: 6 }}>Duration</span>
+            <span style={{ color: '#9ca3af', fontSize: 11, marginRight: 4 }}>Duration</span>
             <span style={{ fontWeight: 600, color: '#e5e7eb' }}>{formatDuration(trace.durationUs)}</span>
           </div>
           <div>
-            <span style={{ color: '#9ca3af', fontSize: 11, marginRight: 6 }}>Services</span>
+            <span style={{ color: '#9ca3af', fontSize: 11, marginRight: 4 }}>Services</span>
             <span style={{ fontWeight: 600, color: '#e5e7eb' }}>{uniqueServices.size}</span>
           </div>
           <div>
-            <span style={{ color: '#9ca3af', fontSize: 11, marginRight: 6 }}>Spans</span>
+            <span style={{ color: '#9ca3af', fontSize: 11, marginRight: 4 }}>Spans</span>
             <span style={{ fontWeight: 600, color: '#e5e7eb' }}>{trace.spans.length}</span>
           </div>
         </div>
@@ -155,8 +150,8 @@ const backButtonStyle: React.CSSProperties = {
   background: 'transparent',
   border: '1px solid #374151',
   borderRadius: 6,
-  padding: '6px 12px',
+  padding: '4px 10px',
   color: '#9ca3af',
-  fontSize: 13,
+  fontSize: 12,
   cursor: 'pointer',
 }

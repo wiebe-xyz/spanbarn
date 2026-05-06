@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, Search, GitBranch, MoreHorizontal, LogOut, X } from 'lucide-react'
+import { Activity, Search, GitBranch, MoreHorizontal, LogOut } from 'lucide-react'
 import { api } from '../api/client'
 
 const tabs = [
@@ -77,27 +77,6 @@ export function MobileTabBar(): ReactElement {
           >
             <LogOut size={18} />
             Logout
-          </button>
-          <button
-            onClick={() => setMoreOpen(false)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
-          >
-            <X size={18} />
-            Close
           </button>
         </div>
       )}
