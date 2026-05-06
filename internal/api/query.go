@@ -27,7 +27,7 @@ func (h *queryHandlers) handleServices(w http.ResponseWriter, r *http.Request) {
 
 	projectID := parseInt64Param(r, "project_id", 0)
 
-	services, err := h.svc.ListServices(projectID, from, to)
+	services, err := h.svc.ListServices(r.Context(), projectID, from, to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
 		return
@@ -54,7 +54,7 @@ func (h *queryHandlers) handleOperations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ops, err := h.svc.ListOperations(0, svcName, from, to)
+	ops, err := h.svc.ListOperations(r.Context(), 0, svcName, from, to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
 		return
@@ -84,7 +84,7 @@ func (h *queryHandlers) handleTimeseries(w http.ResponseWriter, r *http.Request)
 
 	interval := parseInterval(r.URL.Query().Get("interval"))
 
-	ts, err := h.svc.GetTimeseries(0, svcName, opName, from, to, interval)
+	ts, err := h.svc.GetTimeseries(r.Context(), 0, svcName, opName, from, to, interval)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
 		return
@@ -121,7 +121,7 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 		Offset:        parseIntParam(r, "offset", 0),
 	}
 
-	traces, err := h.svc.SearchTraces(filter)
+	traces, err := h.svc.SearchTraces(r.Context(), filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
 		return
@@ -142,7 +142,7 @@ func (h *queryHandlers) handleTraceDetail(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	detail, err := h.svc.GetTrace(traceID)
+	detail, err := h.svc.GetTrace(r.Context(), traceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
 		return
@@ -169,7 +169,7 @@ func (h *queryHandlers) handleDependencies(w http.ResponseWriter, r *http.Reques
 
 	svcFilter := r.URL.Query().Get("service")
 
-	deps, err := h.svc.ListDependencies(0, from, to, svcFilter)
+	deps, err := h.svc.ListDependencies(r.Context(), 0, from, to, svcFilter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
 		return

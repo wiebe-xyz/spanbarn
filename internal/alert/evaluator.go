@@ -6,8 +6,15 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
+
+var alertTracer = otel.Tracer("spanbarn/alert")
 
 // AlertRepository defines the data access methods needed by the evaluator.
 type AlertRepository interface {
@@ -18,8 +25,8 @@ type AlertRepository interface {
 
 // Notifier defines how alert notifications are delivered.
 type Notifier interface {
-	SendWebhook(url string, payload AlertPayload) error
-	SendEmail(to string, subject string, body string) error
+	SendWebhook(ctx context.Context, url string, payload AlertPayload) error
+	SendEmail(ctx context.Context, to string, subject string, body string) error
 }
 
 // AlertPayload is the JSON payload sent in webhook notifications.
@@ -57,13 +64,21 @@ func NewEvaluator(repo AlertRepository, notifier Notifier, logger *slog.Logger) 
 
 // Evaluate checks all enabled alerts for a project and sends notifications for triggered ones.
 func (e *Evaluator) Evaluate(ctx context.Context, projectID int64) error {
+	ctx, span := alertTracer.Start(ctx, "alert.evaluate_project")
+	span.SetAttributes(attribute.Int64("project_id", projectID))
+	defer span.End()
+
 	alerts, err := e.repo.ListAlerts(projectID)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("list alerts: %w", err)
 	}
 
+	span.SetAttributes(attribute.Int("alert_count", len(alerts)))
 	now := e.now()
 
+	var evaluated int
 	for _, a := range alerts {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -73,7 +88,6 @@ func (e *Evaluator) Evaluate(ctx context.Context, projectID int64) error {
 			continue
 		}
 
-		// Check cooldown.
 		if a.LastTriggeredAt.Valid {
 			cooldownEnd := a.LastTriggeredAt.Time.Add(time.Duration(a.CooldownMinutes) * time.Minute)
 			if now.Before(cooldownEnd) {
@@ -84,12 +98,23 @@ func (e *Evaluator) Evaluate(ctx context.Context, projectID int64) error {
 		if err := e.evaluateAlert(ctx, a, now); err != nil {
 			e.logger.Error("evaluate alert", "alertID", a.ID, "error", err)
 		}
+		evaluated++
 	}
 
+	span.SetAttributes(attribute.Int("evaluated_count", evaluated))
 	return nil
 }
 
-func (e *Evaluator) evaluateAlert(_ context.Context, a repository.Alert, now time.Time) error {
+func (e *Evaluator) evaluateAlert(ctx context.Context, a repository.Alert, now time.Time) error {
+	_, span := alertTracer.Start(ctx, "alert.evaluate_single")
+	span.SetAttributes(
+		attribute.Int64("alert_id", a.ID),
+		attribute.String("type", a.Type),
+		attribute.String("service", a.Service),
+		attribute.String("operation", a.Operation),
+	)
+	defer span.End()
+
 	// Query the current (most recent) bucket aggregate.
 	currentAggs, err := e.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: a.ProjectID,
@@ -163,7 +188,12 @@ func (e *Evaluator) evaluateAlert(_ context.Context, a repository.Alert, now tim
 		}
 	}
 
-	// Alert triggered — send notifications.
+	span.AddEvent("alert.triggered", trace.WithAttributes(
+		attribute.Float64("current", currentVal),
+		attribute.Float64("average", avgVal),
+		attribute.Float64("threshold", a.Threshold),
+	))
+
 	payload := AlertPayload{
 		AlertID:     a.ID,
 		Service:     a.Service,
@@ -176,7 +206,7 @@ func (e *Evaluator) evaluateAlert(_ context.Context, a repository.Alert, now tim
 	}
 
 	if a.WebhookURL != "" {
-		if err := e.notify.SendWebhook(a.WebhookURL, payload); err != nil {
+		if err := e.notify.SendWebhook(ctx, a.WebhookURL, payload); err != nil {
 			e.logger.Error("send webhook", "alertID", a.ID, "error", err)
 		}
 	}
@@ -187,7 +217,7 @@ func (e *Evaluator) evaluateAlert(_ context.Context, a repository.Alert, now tim
 			"Alert triggered for %s/%s\n\nType: %s\nCurrent: %.2f\nAverage: %.2f\nThreshold: %.2f\nTriggered at: %s",
 			a.Service, a.Operation, a.Type, currentVal, avgVal, a.Threshold, now.Format(time.RFC3339),
 		)
-		if err := e.notify.SendEmail(a.Email, subject, body); err != nil {
+		if err := e.notify.SendEmail(ctx, a.Email, subject, body); err != nil {
 			e.logger.Error("send email", "alertID", a.ID, "error", err)
 		}
 	}

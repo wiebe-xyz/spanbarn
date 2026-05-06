@@ -1,11 +1,18 @@
 package observability
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
 
-	spanbarn "github.com/wiebe-xyz/spanbarn-go"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 // TracingConfig holds self-instrumentation settings.
@@ -16,35 +23,66 @@ type TracingConfig struct {
 	Environment string
 }
 
-// InitTracing sets up SpanBarn self-instrumentation (dogfooding).
+// InitTracing sets up OpenTelemetry self-instrumentation (dogfooding).
+// It configures an OTLP HTTP exporter pointed at SpanBarn's own /v1/traces endpoint.
 // Returns a shutdown function that flushes pending spans.
 func InitTracing(cfg TracingConfig) func() {
 	if cfg.Endpoint == "" || cfg.APIKey == "" {
 		return func() {}
 	}
 
-	spanbarn.Init(spanbarn.Config{
-		Endpoint:    cfg.Endpoint,
-		APIKey:      cfg.APIKey,
-		Service:     cfg.Service,
-		Environment: cfg.Environment,
-	})
+	ctx := context.Background()
+
+	exporter, err := otlptracehttp.New(ctx,
+		otlptracehttp.WithEndpoint(cfg.Endpoint),
+		otlptracehttp.WithHeaders(map[string]string{
+			"X-SpanBarn-Api-Key": cfg.APIKey,
+		}),
+		otlptracehttp.WithInsecure(),
+	)
+	if err != nil {
+		slog.Error("failed to create OTLP exporter", "error", err)
+		return func() {}
+	}
+
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
+			semconv.ServiceName(cfg.Service),
+			semconv.DeploymentEnvironment(cfg.Environment),
+		),
+	)
+	if err != nil {
+		slog.Error("failed to create OTel resource", "error", err)
+		return func() {}
+	}
+
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(res),
+	)
+
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
 
 	return func() {
-		_ = spanbarn.Shutdown()
+		_ = tp.Shutdown(context.Background())
 	}
 }
 
-// TracingMiddleware returns the SpanBarn HTTP middleware for incoming requests.
+// TracingMiddleware returns OTel HTTP middleware for incoming requests.
 // It filters out high-frequency health/metrics endpoints to avoid noise.
 func TracingMiddleware(next http.Handler) http.Handler {
+	otelHandler := otelhttp.NewHandler(next, "http.request")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if path == "/api/v1/health" || path == "/metrics" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		spanbarn.HTTPMiddleware(next).ServeHTTP(w, r)
+		otelHandler.ServeHTTP(w, r)
 	})
 }
 

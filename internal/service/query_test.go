@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func TestListServices(t *testing.T) {
 	from := bucket.Add(-time.Hour)
 	to := bucket.Add(time.Hour)
 
-	result, err := svc.ListServices(1, from, to)
+	result, err := svc.ListServices(context.Background(), 1, from, to)
 	if err != nil {
 		t.Fatalf("ListServices: %v", err)
 	}
@@ -98,7 +99,7 @@ func TestListOperations(t *testing.T) {
 	from := bucket.Add(-time.Hour)
 	to := bucket.Add(time.Hour)
 
-	result, err := svc.ListOperations(1, "web", from, to)
+	result, err := svc.ListOperations(context.Background(), 1, "web", from, to)
 	if err != nil {
 		t.Fatalf("ListOperations: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestGetTimeseries(t *testing.T) {
 	from := base.Add(-time.Minute)
 	to := base.Add(5 * time.Minute)
 
-	result, err := svc.GetTimeseries(1, "web", "GET /", from, to, time.Minute)
+	result, err := svc.GetTimeseries(context.Background(), 1, "web", "GET /", from, to, time.Minute)
 	if err != nil {
 		t.Fatalf("GetTimeseries: %v", err)
 	}
@@ -188,7 +189,7 @@ func TestSearchTraces(t *testing.T) {
 	}
 
 	// Search all traces.
-	result, err := svc.SearchTraces(TraceSearchFilter{
+	result, err := svc.SearchTraces(context.Background(), TraceSearchFilter{
 		Service: "web",
 		Limit:   50,
 	})
@@ -200,7 +201,7 @@ func TestSearchTraces(t *testing.T) {
 	}
 
 	// Search with status filter.
-	errorTraces, err := svc.SearchTraces(TraceSearchFilter{
+	errorTraces, err := svc.SearchTraces(context.Background(), TraceSearchFilter{
 		Service: "web",
 		Status:  "error",
 		Limit:   50,
@@ -216,7 +217,7 @@ func TestSearchTraces(t *testing.T) {
 	}
 
 	// Search with min duration filter.
-	slowTraces, err := svc.SearchTraces(TraceSearchFilter{
+	slowTraces, err := svc.SearchTraces(context.Background(), TraceSearchFilter{
 		MinDurationUs: 2000,
 		Limit:         50,
 	})
@@ -256,7 +257,7 @@ func TestGetTrace(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	detail, err := svc.GetTrace("trace-abc")
+	detail, err := svc.GetTrace(context.Background(),"trace-abc")
 	if err != nil {
 		t.Fatalf("GetTrace: %v", err)
 	}
@@ -280,7 +281,7 @@ func TestGetTrace(t *testing.T) {
 	}
 
 	// Non-existent trace.
-	notFound, err := svc.GetTrace("non-existent")
+	notFound, err := svc.GetTrace(context.Background(),"non-existent")
 	if err != nil {
 		t.Fatalf("GetTrace non-existent: %v", err)
 	}
@@ -322,7 +323,7 @@ func TestListDependencies(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	deps, err := svc.ListDependencies(1, time.Time{}, time.Time{}, "")
+	deps, err := svc.ListDependencies(context.Background(), 1, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("ListDependencies: %v", err)
 	}

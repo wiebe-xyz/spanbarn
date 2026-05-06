@@ -2,12 +2,17 @@ package alert
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/smtp"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // DefaultNotifier sends alerts via webhook HTTP POST and SMTP email.
@@ -49,7 +54,10 @@ func NewDefaultNotifier(cfg NotifierConfig, logger *slog.Logger) *DefaultNotifie
 }
 
 // SendWebhook POSTs the alert payload as JSON to the given URL.
-func (n *DefaultNotifier) SendWebhook(url string, payload AlertPayload) error {
+func (n *DefaultNotifier) SendWebhook(ctx context.Context, url string, payload AlertPayload) error {
+	_, span := alertTracer.Start(ctx, "alert.send_webhook", trace.WithSpanKind(trace.SpanKindClient))
+	defer span.End()
+
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
@@ -63,19 +71,29 @@ func (n *DefaultNotifier) SendWebhook(url string, payload AlertPayload) error {
 
 	resp, err := n.httpClient.Do(req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("webhook request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
+		err := fmt.Errorf("webhook returned status %d", resp.StatusCode)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
 	}
 
 	return nil
 }
 
 // SendEmail sends an alert email via SMTP. If SMTP is not configured, it logs instead.
-func (n *DefaultNotifier) SendEmail(to, subject, body string) error {
+func (n *DefaultNotifier) SendEmail(ctx context.Context, to, subject, body string) error {
+	_, span := alertTracer.Start(ctx, "alert.send_email", trace.WithSpanKind(trace.SpanKindClient))
+	span.SetAttributes(attribute.String("email.to", to))
+	defer span.End()
+
 	if n.smtpHost == "" {
 		n.logger.Info("email notification (SMTP not configured)",
 			"to", to,
@@ -94,6 +112,8 @@ func (n *DefaultNotifier) SendEmail(to, subject, body string) error {
 	}
 
 	if err := smtp.SendMail(addr, auth, n.smtpFrom, []string{to}, []byte(msg)); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("send email: %w", err)
 	}
 

@@ -6,9 +6,15 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
+
+var tracer = otel.Tracer("spanbarn/ingest")
 
 // DefaultFlushInterval is the default interval between queue-to-spool flushes.
 const DefaultFlushInterval = 5 * time.Millisecond
@@ -85,7 +91,12 @@ func (h *Handler) flush() {
 	if len(records) == 0 {
 		return
 	}
+	_, span := tracer.Start(context.Background(), "ingest.flush_to_spool")
+	span.SetAttributes(attribute.Int("record_count", len(records)))
 	if err := h.spool.Write(records); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		h.logger.Error("failed to flush queue to spool", "count", len(records), "error", err)
 	}
+	span.End()
 }

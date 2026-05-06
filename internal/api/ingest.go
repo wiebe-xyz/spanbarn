@@ -6,10 +6,16 @@ import (
 	"net/http"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 )
 
 func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
+	_, span := apiTracer.Start(r.Context(), "api.ingest.receive", trace.WithSpanKind(trace.SpanKindServer))
+	defer span.End()
+
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
@@ -63,7 +69,8 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enqueue all records.
+	span.SetAttributes(attribute.Int("span_count", len(records)))
+
 	for _, rec := range records {
 		s.ingest.Enqueue(rec)
 	}

@@ -5,9 +5,15 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
+
+var tracer = otel.Tracer("spanbarn/retention")
 
 const defaultBatchSize = 5000
 
@@ -92,6 +98,9 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 //  3. Aggregate all spans and persist aggregates
 //  4. Delete old spans, error_samples, and aggregates
 func (w *RetentionWorker) RunOnce(ctx context.Context) error {
+	ctx, span := tracer.Start(ctx, "retention.cycle")
+	defer span.End()
+
 	now := time.Now().UTC()
 	spanCutoff := now.Add(-time.Duration(w.cfg.FullRetentionHours) * time.Hour)
 	errorCutoff := now.Add(-time.Duration(w.cfg.ErrorRetentionDays) * 24 * time.Hour)
@@ -130,12 +139,15 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 			totalSampled += int64(len(samples))
 		}
 
-		// Aggregate all spans in this batch.
-		aggs, err := w.aggregator.AggregateSpans(batch)
+		aggs, err := w.aggregator.AggregateSpans(ctx, batch)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return err
 		}
-		if err := w.aggregator.Persist(aggs); err != nil {
+		if err := w.aggregator.Persist(ctx, aggs); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return err
 		}
 		totalAggregated += int64(len(batch))
@@ -169,6 +181,14 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	span.SetAttributes(
+		attribute.Int64("spans_aggregated", totalAggregated),
+		attribute.Int64("errors_sampled", totalSampled),
+		attribute.Int64("spans_deleted", spansDeleted),
+		attribute.Int64("error_samples_deleted", errorSamplesDeleted),
+		attribute.Int64("aggregates_deleted", aggregatesDeleted),
+	)
 
 	w.logger.Info("retention cycle complete",
 		"spans_aggregated", totalAggregated,

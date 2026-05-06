@@ -1,12 +1,19 @@
 package aggregation
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
+
+var tracer = otel.Tracer("spanbarn/aggregation")
 
 // AggregateWriter is the subset of repository methods needed to persist aggregates.
 type AggregateWriter interface {
@@ -41,12 +48,15 @@ type groupKey struct {
 
 // AggregateSpans groups the given spans by (project_id, service, name, resource, kind)
 // and time bucket, computing count, error_count, percentiles, max, and sum for each group.
-func (a *Aggregator) AggregateSpans(spans []repository.Span) ([]repository.Aggregate, error) {
+func (a *Aggregator) AggregateSpans(ctx context.Context, spans []repository.Span) ([]repository.Aggregate, error) {
 	if len(spans) == 0 {
 		return nil, nil
 	}
 
-	// Group spans by key + bucket.
+	_, span := tracer.Start(ctx, "aggregation.aggregate_spans")
+	span.SetAttributes(attribute.Int("input_span_count", len(spans)))
+	defer span.End()
+
 	groups := make(map[groupKey][]repository.Span)
 	for _, s := range spans {
 		bucket := TruncateToBucket(time.UnixMicro(s.StartTimeUs), a.interval)
@@ -60,6 +70,8 @@ func (a *Aggregator) AggregateSpans(spans []repository.Span) ([]repository.Aggre
 		}
 		groups[k] = append(groups[k], s)
 	}
+
+	span.SetAttributes(attribute.Int("bucket_count", len(groups)))
 
 	out := make([]repository.Aggregate, 0, len(groups))
 	for k, bucket := range groups {
@@ -100,9 +112,15 @@ func (a *Aggregator) AggregateSpans(spans []repository.Span) ([]repository.Aggre
 }
 
 // Persist writes each aggregate to the repository via UpsertAggregate.
-func (a *Aggregator) Persist(aggregates []repository.Aggregate) error {
+func (a *Aggregator) Persist(ctx context.Context, aggregates []repository.Aggregate) error {
+	_, span := tracer.Start(ctx, "aggregation.persist")
+	span.SetAttributes(attribute.Int("aggregate_count", len(aggregates)))
+	defer span.End()
+
 	for _, agg := range aggregates {
 		if err := a.repo.UpsertAggregate(agg); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return fmt.Errorf("upsert aggregate for %s/%s bucket %s: %w",
 				agg.Service, agg.Operation, agg.Bucket.Format(time.RFC3339), err)
 		}

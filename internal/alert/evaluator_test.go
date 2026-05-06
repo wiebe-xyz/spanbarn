@@ -27,12 +27,12 @@ type emailCall struct {
 	body    string
 }
 
-func (m *mockNotifier) SendWebhook(url string, payload AlertPayload) error {
+func (m *mockNotifier) SendWebhook(_ context.Context, url string, payload AlertPayload) error {
 	m.webhooks = append(m.webhooks, webhookCall{url: url, payload: payload})
 	return nil
 }
 
-func (m *mockNotifier) SendEmail(to, subject, body string) error {
+func (m *mockNotifier) SendEmail(_ context.Context, to, subject, body string) error {
 	m.emails = append(m.emails, emailCall{to: to, subject: subject, body: body})
 	return nil
 }

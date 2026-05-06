@@ -1,6 +1,7 @@
 package aggregation
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 	"time"
@@ -52,7 +53,7 @@ func TestAggregateSpans(t *testing.T) {
 		spans = append(spans, baseSpan("svc-b", "op2", startUs+int64(i), 200, "ok"))
 	}
 
-	result, err := agg.AggregateSpans(spans)
+	result, err := agg.AggregateSpans(context.Background(), spans)
 	if err != nil {
 		t.Fatalf("AggregateSpans: %v", err)
 	}
@@ -82,7 +83,7 @@ func TestAggregateSpansErrorCount(t *testing.T) {
 		baseSpan("svc", "op", startUs+4, 100, "ok"),
 	}
 
-	result, err := agg.AggregateSpans(spans)
+	result, err := agg.AggregateSpans(context.Background(), spans)
 	if err != nil {
 		t.Fatalf("AggregateSpans: %v", err)
 	}
@@ -110,7 +111,7 @@ func TestAggregateSpansPercentiles(t *testing.T) {
 		spans[i] = baseSpan("svc", "op", startUs+int64(i), int64((i+1)*10), "ok")
 	}
 
-	result, err := agg.AggregateSpans(spans)
+	result, err := agg.AggregateSpans(context.Background(), spans)
 	if err != nil {
 		t.Fatalf("AggregateSpans: %v", err)
 	}
@@ -140,7 +141,7 @@ func TestAggregateSpansMultipleBuckets(t *testing.T) {
 		baseSpan("svc", "op", bucket2.UnixMicro()+1, 400, "ok"),
 	}
 
-	result, err := agg.AggregateSpans(spans)
+	result, err := agg.AggregateSpans(context.Background(), spans)
 	if err != nil {
 		t.Fatalf("AggregateSpans: %v", err)
 	}
@@ -160,7 +161,7 @@ func TestAggregateSpansMultipleBuckets(t *testing.T) {
 func TestAggregateSpansEmptyInput(t *testing.T) {
 	agg := newTestAggregator(&mockWriter{})
 
-	result, err := agg.AggregateSpans(nil)
+	result, err := agg.AggregateSpans(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("AggregateSpans: %v", err)
 	}
@@ -179,7 +180,7 @@ func TestPersist(t *testing.T) {
 		{Service: "svc-b", Operation: "op3", Bucket: time.Now()},
 	}
 
-	if err := agg.Persist(aggregates); err != nil {
+	if err := agg.Persist(context.Background(), aggregates); err != nil {
 		t.Fatalf("Persist: %v", err)
 	}
 
