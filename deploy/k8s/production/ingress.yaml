@@ -3,9 +3,9 @@ kind: Ingress
 metadata:
   name: spanbarn
   annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-cloudflare
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
   ingressClassName: traefik
   rules:
@@ -29,3 +29,4 @@ spec:
   tls:
     - hosts:
         - spanbarn.wiebe.xyz
+      secretName: spanbarn-wiebe-xyz-tls
