@@ -157,8 +157,21 @@ export function OperationsPage(): ReactElement {
                         )
                       }
                     >
-                      <td>
-                        <span style={{ fontWeight: 600, color: 'var(--accent)' }}>{op.operation}</span>
+                      <td style={{ maxWidth: 300 }}>
+                        <span
+                          style={{
+                            fontWeight: 600,
+                            color: 'var(--accent)',
+                            display: 'block',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            maxWidth: 300,
+                          }}
+                          title={op.operation}
+                        >
+                          {op.operation}
+                        </span>
                       </td>
                       <td className="text-muted">{op.resource || '-'}</td>
                       <td className="text-muted">{op.kind || '-'}</td>
