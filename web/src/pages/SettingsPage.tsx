@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, type ReactElement } from 'react'
-import { CheckCircle, ExternalLink, Copy, Check } from 'lucide-react'
+import { CheckCircle, ExternalLink, Copy, Check, Key, ChevronDown, ChevronRight, Zap } from 'lucide-react'
 import { fetchJSON } from '../api/client'
 
 type Project = {
@@ -7,6 +7,15 @@ type Project = {
   slug: string
   name: string
   status: string
+  createdAt: string
+}
+
+type APIKey = {
+  id: number
+  projectId: number
+  name: string
+  scope: string
+  lastUsedAt: string | null
   createdAt: string
 }
 
@@ -28,6 +37,102 @@ function CopyButton({ value }: { value: string }) {
     >
       {copied ? <Check size={13} /> : <Copy size={13} />}
     </button>
+  )
+}
+
+function ProjectAPIKeys({ projectId }: { projectId: number }) {
+  const [keys, setKeys] = useState<APIKey[]>([])
+  const [expanded, setExpanded] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  const fetchKeys = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await fetchJSON<APIKey[]>(`/api/v1/projects/${projectId}/apikeys`)
+      setKeys(data ?? [])
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false)
+    }
+  }, [projectId])
+
+  useEffect(() => {
+    if (expanded && keys.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
+      void fetchKeys()
+    }
+  }, [expanded, keys.length, fetchKeys])
+
+  return (
+    <div>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          background: 'none',
+          border: 'none',
+          color: 'var(--accent)',
+          cursor: 'pointer',
+          fontSize: '0.8125rem',
+          fontFamily: 'inherit',
+          padding: 0,
+        }}
+      >
+        <Key size={12} />
+        {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        API Keys
+      </button>
+      {expanded && (
+        <div style={{ marginTop: 8 }}>
+          {loading ? (
+            <div className="skeleton" style={{ height: 40 }} />
+          ) : keys.length === 0 ? (
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+              No API keys
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {keys.map((k) => (
+                <div
+                  key={k.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: '0.75rem',
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <span style={{ fontWeight: 500 }}>{k.name}</span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      background: k.scope === 'ingest' ? 'rgba(59,130,246,0.1)' : 'rgba(168,85,247,0.1)',
+                      color: k.scope === 'ingest' ? '#3b82f6' : '#a855f7',
+                      border: `1px solid ${k.scope === 'ingest' ? 'rgba(59,130,246,0.3)' : 'rgba(168,85,247,0.3)'}`,
+                      borderRadius: 99,
+                      padding: '0.05rem 0.4rem',
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {k.scope}
+                  </span>
+                  {k.lastUsedAt && (
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      last used {new Date(k.lastUsedAt).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -86,6 +191,49 @@ export function SettingsPage(): ReactElement {
           {error}
         </div>
       )}
+
+      {/* LLM Setup reference */}
+      <div
+        className="card"
+        style={{
+          border: '1px solid rgba(59,130,246,0.3)',
+          marginBottom: '1.5rem',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <Zap size={20} color="#3b82f6" style={{ flexShrink: 0, marginTop: 2 }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: '0.875rem', marginBottom: 4 }}>
+              Quick Setup
+            </div>
+            <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: 12 }}>
+              Point an LLM or developer at the setup page to auto-configure a project with an ingest API key.
+              The page returns a markdown guide with OTel integration examples.
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                background: 'var(--bg)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                padding: '0.5rem 0.75rem',
+                flexWrap: 'wrap',
+              }}
+            >
+              <code style={{ fontSize: '0.8125rem', color: 'var(--accent)', flex: 1 }}>
+                {window.location.origin}/api/v1/setup/your-project-slug
+              </code>
+              <CopyButton value={`${window.location.origin}/api/v1/setup/your-project-slug`} />
+            </div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 8 }}>
+              Replace <code style={{ color: 'var(--text)' }}>your-project-slug</code> with the desired project name.
+              The project will appear below as &quot;pending&quot; until you approve it.
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Pending projects */}
       {pendingProjects.length > 0 && (
@@ -160,12 +308,6 @@ export function SettingsPage(): ReactElement {
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <span
-                  className="mono"
-                  style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}
-                >
-                  /api/v1/setup/{p.slug}
-                </span>
                 <CopyButton value={`${window.location.origin}/api/v1/setup/${p.slug}`} />
                 <a
                   href={`/api/v1/setup/${p.slug}`}
@@ -175,7 +317,7 @@ export function SettingsPage(): ReactElement {
                   style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
                 >
                   <ExternalLink size={13} />
-                  Open
+                  Setup
                 </a>
                 <button
                   onClick={() => handleApprove(p.id)}
@@ -204,7 +346,7 @@ export function SettingsPage(): ReactElement {
         </div>
       )}
 
-      {/* Active projects */}
+      {/* Active projects with API keys */}
       <div className="card" style={{ padding: 0 }}>
         <div
           style={{
@@ -223,75 +365,51 @@ export function SettingsPage(): ReactElement {
               fontSize: '0.875rem',
             }}
           >
-            No projects yet. Use the setup page to create one:
-            <code
-              style={{
-                display: 'block',
-                marginTop: 8,
-                color: 'var(--accent)',
-                fontSize: '0.8125rem',
-              }}
-            >
-              /api/v1/setup/your-project-slug
-            </code>
+            No projects yet. Use the setup URL above to create one.
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Slug</th>
-                  <th>Status</th>
-                  <th>Setup URL</th>
-                  <th>Created</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activeProjects.map((p) => (
-                  <tr key={p.id}>
-                    <td style={{ fontWeight: 500 }}>{p.name}</td>
-                    <td className="mono text-muted" style={{ fontSize: '0.8125rem' }}>
-                      {p.slug}
-                    </td>
-                    <td>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          padding: '0.125rem 0.5rem',
-                          borderRadius: '1rem',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          background: 'rgba(34,197,94,0.15)',
-                          color: '#22c55e',
-                        }}
-                      >
-                        {p.status}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <CopyButton
-                          value={`${window.location.origin}/api/v1/setup/${p.slug}`}
-                        />
-                        <a
-                          href={`/api/v1/setup/${p.slug}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ color: 'var(--accent)', fontSize: '0.8125rem' }}
-                        >
-                          Open
-                        </a>
-                      </div>
-                    </td>
-                    <td className="text-muted" style={{ fontSize: '0.8125rem' }}>
-                      {new Date(p.createdAt).toLocaleDateString()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          activeProjects.map((p) => (
+            <div
+              key={p.id}
+              style={{
+                padding: '1rem 1.25rem',
+                borderBottom: '1px solid var(--border)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{p.name}</span>
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    background: 'rgba(34,197,94,0.15)',
+                    color: '#22c55e',
+                    borderRadius: 99,
+                    padding: '0.1rem 0.5rem',
+                  }}
+                >
+                  {p.status}
+                </span>
+                <span className="mono text-muted" style={{ fontSize: '0.75rem' }}>
+                  {p.slug}
+                </span>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <CopyButton value={`${window.location.origin}/api/v1/setup/${p.slug}`} />
+                  <a
+                    href={`/api/v1/setup/${p.slug}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-sm"
+                    style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <ExternalLink size={13} />
+                    Setup
+                  </a>
+                </div>
+              </div>
+              <ProjectAPIKeys projectId={p.id} />
+            </div>
+          ))
         )}
       </div>
     </div>
