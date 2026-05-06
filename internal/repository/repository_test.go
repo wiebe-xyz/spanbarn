@@ -450,6 +450,141 @@ func TestDeleteAggregatesOlderThan(t *testing.T) {
 	}
 }
 
+func TestDeleteProject(t *testing.T) {
+	repo := setupTestDB(t)
+
+	p, _ := repo.CreateProject("proj", "Proj")
+	_, _ = repo.CreateAPIKey(p.ID, "k1", "h1", "ingest")
+	_, _ = repo.CreateAPIKey(p.ID, "k2", "h2", "read")
+
+	if err := repo.DeleteProject(p.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+
+	_, err := repo.GetProjectBySlug("proj")
+	if err != sql.ErrNoRows {
+		t.Fatalf("expected ErrNoRows after delete, got %v", err)
+	}
+
+	keys, err := repo.ListAPIKeys(p.ID)
+	if err != nil {
+		t.Fatalf("ListAPIKeys: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("expected 0 keys after project delete, got %d", len(keys))
+	}
+
+	if err := repo.DeleteProject(9999); err != sql.ErrNoRows {
+		t.Fatalf("expected ErrNoRows for nonexistent, got %v", err)
+	}
+}
+
+func TestQueryOperationStatsFromSpans(t *testing.T) {
+	repo := setupTestDB(t)
+	p, _ := repo.CreateProject("proj", "Proj")
+
+	spans := []Span{
+		makeSpan(p.ID, "t1", "s1", "web", "GET /api", "ok", 1000),
+		makeSpan(p.ID, "t1", "s2", "web", "GET /api", "error", 5000),
+		makeSpan(p.ID, "t2", "s3", "web", "POST /api", "ok", 200),
+	}
+	if err := repo.InsertSpans(spans); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+
+	stats, err := repo.QueryOperationStatsFromSpans(p.ID, "web", time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("QueryOperationStatsFromSpans: %v", err)
+	}
+	if len(stats) != 2 {
+		t.Fatalf("expected 2 operations, got %d", len(stats))
+	}
+
+	var getAPI *OperationStats
+	for i := range stats {
+		if stats[i].Operation == "GET /api" {
+			getAPI = &stats[i]
+		}
+	}
+	if getAPI == nil {
+		t.Fatal("GET /api not found")
+	}
+	if getAPI.Count != 2 || getAPI.ErrorCount != 1 {
+		t.Fatalf("unexpected stats: count=%d errors=%d", getAPI.Count, getAPI.ErrorCount)
+	}
+	if len(getAPI.Durations) != 2 {
+		t.Fatalf("expected 2 durations, got %d", len(getAPI.Durations))
+	}
+}
+
+func TestQuerySpanTimeseries(t *testing.T) {
+	repo := setupTestDB(t)
+	p, _ := repo.CreateProject("proj", "Proj")
+
+	spans := []Span{
+		makeSpan(p.ID, "t1", "s1", "web", "GET /api", "ok", 1000),
+		makeSpan(p.ID, "t1", "s2", "web", "GET /api", "error", 5000),
+		makeSpan(p.ID, "t2", "s3", "web", "GET /api", "ok", 200),
+	}
+	if err := repo.InsertSpans(spans); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+
+	buckets, err := repo.QuerySpanTimeseries(p.ID, "web", "GET /api", time.Time{}, time.Time{}, 3600)
+	if err != nil {
+		t.Fatalf("QuerySpanTimeseries: %v", err)
+	}
+	if len(buckets) == 0 {
+		t.Fatal("expected at least one bucket")
+	}
+
+	var totalCount int64
+	var totalDurations int
+	for _, b := range buckets {
+		totalCount += b.Count
+		totalDurations += len(b.Durations)
+	}
+	if totalCount != 3 {
+		t.Fatalf("expected 3 total count, got %d", totalCount)
+	}
+	if totalDurations != 3 {
+		t.Fatalf("expected 3 total durations, got %d", totalDurations)
+	}
+}
+
+func TestEnsureProjectPendingAndApprove(t *testing.T) {
+	repo := setupTestDB(t)
+
+	p, err := repo.EnsureProjectPending("test-app", "Test App")
+	if err != nil {
+		t.Fatalf("EnsureProjectPending: %v", err)
+	}
+	if p.Status != "pending" {
+		t.Fatalf("expected pending status, got %q", p.Status)
+	}
+
+	p2, err := repo.EnsureProjectPending("test-app", "Test App")
+	if err != nil {
+		t.Fatalf("EnsureProjectPending idempotent: %v", err)
+	}
+	if p2.ID != p.ID {
+		t.Fatal("expected same project on second call")
+	}
+
+	approved, err := repo.ApproveProject(p.ID)
+	if err != nil {
+		t.Fatalf("ApproveProject: %v", err)
+	}
+	if approved.Status != "active" {
+		t.Fatalf("expected active status, got %q", approved.Status)
+	}
+
+	_, err = repo.ApproveProject(9999)
+	if err != sql.ErrNoRows {
+		t.Fatalf("expected ErrNoRows for nonexistent, got %v", err)
+	}
+}
+
 func TestInsertAndQueryErrorSamples(t *testing.T) {
 	repo := setupTestDB(t)
 	p, _ := repo.CreateProject("proj", "Proj")

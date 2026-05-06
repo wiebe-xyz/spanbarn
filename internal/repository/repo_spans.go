@@ -350,3 +350,74 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 	}
 	return result, nil
 }
+
+type SpanBucket struct {
+	Bucket     time.Time
+	Count      int64
+	ErrorCount int64
+	Durations  []int64
+}
+
+func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation string, from, to time.Time, intervalSec int64) ([]SpanBucket, error) {
+	var where []string
+	var args []any
+
+	where = append(where, "service = ?", "name = ?")
+	args = append(args, service, operation)
+
+	if projectID != 0 {
+		where = append(where, "project_id = ?")
+		args = append(args, projectID)
+	}
+	if !from.IsZero() {
+		where = append(where, "ingested_at >= ?")
+		args = append(args, from)
+	}
+	if !to.IsZero() {
+		where = append(where, "ingested_at <= ?")
+		args = append(args, to)
+	}
+
+	q := fmt.Sprintf(`SELECT
+		datetime((strftime('%%s', ingested_at) / %d) * %d, 'unixepoch') as bucket,
+		duration_us,
+		CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END as is_error
+		FROM spans WHERE %s
+		ORDER BY bucket, duration_us`,
+		intervalSec, intervalSec, strings.Join(where, " AND "))
+
+	rows, err := r.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	bucketMap := make(map[time.Time]*SpanBucket)
+	var order []time.Time
+	for rows.Next() {
+		var bucketStr string
+		var dur, isError int64
+		if err := rows.Scan(&bucketStr, &dur, &isError); err != nil {
+			return nil, err
+		}
+		t, _ := time.Parse("2006-01-02 15:04:05", bucketStr)
+		sb, ok := bucketMap[t]
+		if !ok {
+			sb = &SpanBucket{Bucket: t}
+			bucketMap[t] = sb
+			order = append(order, t)
+		}
+		sb.Count++
+		sb.ErrorCount += isError
+		sb.Durations = append(sb.Durations, dur)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]SpanBucket, 0, len(order))
+	for _, t := range order {
+		result = append(result, *bucketMap[t])
+	}
+	return result, nil
+}
