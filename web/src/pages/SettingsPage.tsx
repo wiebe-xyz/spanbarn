@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, type ReactElement } from 'react'
-import { CheckCircle, ExternalLink, Copy, Check, Key, ChevronDown, ChevronRight, Zap } from 'lucide-react'
+import { CheckCircle, XCircle, ExternalLink, Copy, Check, Key, ChevronDown, ChevronRight, Zap } from 'lucide-react'
 import { fetchJSON } from '../api/client'
 
 type Project = {
@@ -140,6 +140,7 @@ export function SettingsPage(): ReactElement {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [approvingProject, setApprovingProject] = useState<number | null>(null)
+  const [rejectingProject, setRejectingProject] = useState<number | null>(null)
   const [error, setError] = useState('')
 
   const fetchProjects = useCallback(async () => {
@@ -167,6 +168,18 @@ export function SettingsPage(): ReactElement {
       setError(String(e))
     } finally {
       setApprovingProject(null)
+    }
+  }
+
+  const handleReject = async (id: number) => {
+    setRejectingProject(id)
+    try {
+      await fetchJSON(`/api/v1/projects/${id}`, { method: 'DELETE' })
+      await fetchProjects()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setRejectingProject(null)
     }
   }
 
@@ -306,7 +319,7 @@ export function SettingsPage(): ReactElement {
                   {p.slug}
                 </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <CopyButton value={`${window.location.origin}/api/v1/setup/${p.slug}`} />
                 <a
                   href={`/api/v1/setup/${p.slug}`}
@@ -318,6 +331,27 @@ export function SettingsPage(): ReactElement {
                   <ExternalLink size={13} />
                   Setup
                 </a>
+                <button
+                  onClick={() => handleReject(p.id)}
+                  disabled={rejectingProject === p.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    background: 'rgba(239,68,68,0.1)',
+                    border: '1px solid rgba(239,68,68,0.3)',
+                    borderRadius: '0.5rem',
+                    color: 'var(--error)',
+                    padding: '0.375rem 0.75rem',
+                    cursor: rejectingProject === p.id ? 'not-allowed' : 'pointer',
+                    fontSize: '0.8125rem',
+                    fontWeight: 700,
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  <XCircle size={13} />
+                  {rejectingProject === p.id ? 'Rejecting...' : 'Reject'}
+                </button>
                 <button
                   onClick={() => handleApprove(p.id)}
                   disabled={approvingProject === p.id}

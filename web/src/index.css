@@ -229,6 +229,7 @@ label {
   .main-content {
     padding: 1rem !important;
     padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px) + 1rem) !important;
+    overflow-x: hidden;
   }
 
   /* Stack charts on mobile */

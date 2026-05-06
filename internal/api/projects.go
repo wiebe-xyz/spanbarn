@@ -33,23 +33,30 @@ func (h *projectHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(parts) == 2 {
-		switch parts[1] {
-		case "approve":
-			if r.Method == http.MethodPost {
-				h.handleApprove(w, r, id)
-				return
-			}
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-			return
-		case "apikeys":
-			if r.Method == http.MethodGet {
-				h.handleListAPIKeys(w, r, id)
-				return
-			}
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+	if len(parts) == 1 {
+		if r.Method == http.MethodDelete {
+			h.handleDelete(w, r, id)
 			return
 		}
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	switch parts[1] {
+	case "approve":
+		if r.Method == http.MethodPost {
+			h.handleApprove(w, r, id)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	case "apikeys":
+		if r.Method == http.MethodGet {
+			h.handleListAPIKeys(w, r, id)
+			return
+		}
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
 	}
 
 	writeError(w, http.StatusNotFound, "not found", "")
@@ -66,6 +73,14 @@ func (h *projectHandlers) handleList(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(projects)
+}
+
+func (h *projectHandlers) handleDelete(w http.ResponseWriter, _ *http.Request, id int64) {
+	if err := h.repo.DeleteProject(id); err != nil {
+		writeError(w, http.StatusNotFound, "project not found", "")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *projectHandlers) handleApprove(w http.ResponseWriter, _ *http.Request, id int64) {

@@ -53,12 +53,33 @@ curl -X POST http://localhost:8080/api/v1/spans \
 
 ### OTLP-compatible ingest
 
-SpanBarn accepts OTLP/HTTP (protobuf and JSON) on `/v1/traces`, so any OpenTelemetry SDK can export directly:
+SpanBarn accepts OTLP/HTTP on `/v1/traces`, so any OpenTelemetry SDK can export directly:
 
 ```bash
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
 export OTEL_EXPORTER_OTLP_HEADERS="x-spanbarn-api-key=local-dev-key"
 ```
+
+#### HTTP vs gRPC
+
+The OpenTelemetry spec defines two equivalent transports for OTLP:
+
+| | OTLP/HTTP (port 4318) | OTLP/gRPC (port 4317) |
+|---|---|---|
+| **Protocol** | HTTP/1.1 | HTTP/2 |
+| **Encoding** | Protobuf or JSON | Protobuf only |
+| **Proxy support** | Works through any reverse proxy | Requires HTTP/2-aware proxy |
+| **SDK support** | All OTel SDKs | All OTel SDKs |
+
+**SpanBarn supports OTLP/HTTP only.** This is a deliberate choice: HTTP works behind Caddy, Nginx, and standard load balancers without extra configuration, and the payload format is identical — same protobuf messages, same semantics, same signal fidelity. The JSON encoding option makes debugging easier (pipe requests through `jq`, inspect in browser dev tools).
+
+gRPC's only advantage is slightly lower overhead on persistent streaming connections at very high throughput. For a self-hosted single-binary tool, HTTP is the simpler and more portable choice.
+
+Both content types are supported:
+- `application/x-protobuf` (default) — binary protobuf, used by most SDKs
+- `application/json` — JSON encoding via protojson, useful for debugging and `curl`
+
+The response format is content-negotiated via the `Accept` header.
 
 ## SDKs
 

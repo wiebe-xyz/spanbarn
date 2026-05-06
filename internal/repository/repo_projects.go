@@ -87,6 +87,26 @@ func (r *Repository) ApproveProject(id int64) (Project, error) {
 	return r.getProjectByID(id)
 }
 
+func (r *Repository) DeleteProject(id int64) error {
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM api_keys WHERE project_id = ?", id); err != nil {
+		return err
+	}
+	res, err := tx.Exec("DELETE FROM projects WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
+}
+
 func (r *Repository) EnsureSetupAPIKey(projectID int64, keySHA256 string) error {
 	_, err := r.db.Exec(
 		`INSERT OR IGNORE INTO api_keys (project_id, name, key_hash, scope) VALUES (?, 'setup', ?, 'ingest')`,
