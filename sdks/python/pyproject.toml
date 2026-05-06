@@ -9,7 +9,7 @@ description = "SpanBarn telemetry SDK for Python"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
-authors = [{name = "Wiebe Zweers", email = "wiebe.zweers@gmail.com"}]
+authors = [{name = "Wiebe Zweers", email = "wiebe@webwiebe.nl"}]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",

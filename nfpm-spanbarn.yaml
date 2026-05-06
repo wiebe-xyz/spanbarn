@@ -2,7 +2,7 @@ name: spanbarn
 arch: ${GOARCH}
 platform: linux
 version: ${VERSION}
-maintainer: Wiebe Zweers <wiebe.zweers@gmail.com>
+maintainer: Wiebe Zweers <wiebe@webwiebe.nl>
 description: Self-hosted telemetry aggregator with intelligent span retention
 vendor: wiebe.xyz
 homepage: https://github.com/wiebe-xyz/spanbarn
