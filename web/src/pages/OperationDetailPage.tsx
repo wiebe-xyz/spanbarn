@@ -139,7 +139,7 @@ export function OperationDetailPage(): ReactElement {
                   borderRadius: 8,
                   color: 'var(--text)',
                 }}
-                formatter={(value: number) => [`${value.toFixed(2)} ms`]}
+                formatter={(value) => [`${Number(value).toFixed(2)} ms`]}
               />
               <Legend
                 verticalAlign="top"
