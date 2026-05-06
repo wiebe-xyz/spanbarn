@@ -6,10 +6,16 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
+
+var tracer = otel.Tracer("spanbarn/worker")
 
 const (
 	// DefaultBatchSize is the maximum number of records to process per tick.
@@ -89,10 +95,14 @@ func (w *Worker) GetMetrics() (processed, errors int64, duration time.Duration) 
 }
 
 func (w *Worker) processBatch(ctx context.Context) {
+	ctx, span := tracer.Start(ctx, "worker.process_batch")
+	defer span.End()
 	start := time.Now()
 
 	cursor, err := w.spool.LoadCursor()
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		w.logger.Error("worker: load cursor", "error", err)
 		w.metrics.mu.Lock()
 		w.metrics.ErrorCount++
@@ -102,6 +112,8 @@ func (w *Worker) processBatch(ctx context.Context) {
 
 	records, nextCursor, err := w.spool.Read(cursor, DefaultBatchSize)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		w.logger.Error("worker: read spool", "error", err)
 		w.metrics.mu.Lock()
 		w.metrics.ErrorCount++
@@ -110,11 +122,15 @@ func (w *Worker) processBatch(ctx context.Context) {
 	}
 
 	if len(records) == 0 {
+		span.SetAttributes(attribute.Bool("batch.empty", true))
 		return
 	}
 
+	span.SetAttributes(attribute.Int("batch.size", len(records)))
+
 	spans := convertRecords(records)
 
+	_, insertSpan := tracer.Start(ctx, "worker.insert_spans")
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		if err := w.repo.InsertSpans(ctx, spans); err != nil {
@@ -129,8 +145,15 @@ func (w *Worker) processBatch(ctx context.Context) {
 		lastErr = nil
 		break
 	}
+	if lastErr != nil {
+		insertSpan.RecordError(lastErr)
+		insertSpan.SetStatus(codes.Error, lastErr.Error())
+		insertSpan.SetAttributes(attribute.Bool("retries_exhausted", true))
+	}
+	insertSpan.End()
 
 	if lastErr != nil {
+		span.SetAttributes(attribute.Int("dead_lettered", len(spans)))
 		w.logger.Error("worker: dead-lettering batch after retries",
 			"count", len(spans),
 			"error", lastErr,
@@ -144,12 +167,12 @@ func (w *Worker) processBatch(ctx context.Context) {
 		w.metrics.mu.Unlock()
 	}
 
-	// Advance cursor regardless — don't get stuck on bad records.
 	if err := w.spool.SaveCursor(nextCursor); err != nil {
 		w.logger.Error("worker: save cursor", "error", err)
 	}
 
 	elapsed := time.Since(start)
+	span.SetAttributes(attribute.Int64("duration_ms", elapsed.Milliseconds()))
 	w.metrics.mu.Lock()
 	w.metrics.ProcessingDuration += elapsed
 	w.metrics.mu.Unlock()

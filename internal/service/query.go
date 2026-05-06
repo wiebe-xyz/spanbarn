@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/url"
@@ -8,8 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
+
+var tracer = otel.Tracer("spanbarn/query")
 
 // QueryRepository defines the data access methods needed by QueryService.
 type QueryRepository interface {
@@ -34,7 +40,10 @@ func NewQueryService(repo QueryRepository, logger *slog.Logger) *QueryService {
 }
 
 // ListServices returns aggregated metrics per service for the given time range.
-func (s *QueryService) ListServices(projectID int64, from, to time.Time) ([]ServiceSummary, error) {
+func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, to time.Time) ([]ServiceSummary, error) {
+	_, span := tracer.Start(ctx, "query.list_services")
+	defer span.End()
+
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: projectID,
 		From:      from,
@@ -100,7 +109,11 @@ func (s *QueryService) ListServices(projectID int64, from, to time.Time) ([]Serv
 }
 
 // ListOperations returns aggregated metrics per operation for a service.
-func (s *QueryService) ListOperations(projectID int64, service string, from, to time.Time) ([]OperationSummary, error) {
+func (s *QueryService) ListOperations(ctx context.Context, projectID int64, service string, from, to time.Time) ([]OperationSummary, error) {
+	_, span := tracer.Start(ctx, "query.list_operations")
+	span.SetAttributes(attribute.String("service", service))
+	defer span.End()
+
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: projectID,
 		Service:   service,
@@ -173,7 +186,14 @@ func (s *QueryService) ListOperations(projectID int64, service string, from, to 
 }
 
 // GetTimeseries returns bucketed timeseries data for a specific operation.
-func (s *QueryService) GetTimeseries(projectID int64, service, operation string, from, to time.Time, interval time.Duration) ([]TimeseriesBucket, error) {
+func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, service, operation string, from, to time.Time, interval time.Duration) ([]TimeseriesBucket, error) {
+	_, span := tracer.Start(ctx, "query.get_timeseries")
+	span.SetAttributes(
+		attribute.String("service", service),
+		attribute.String("operation", operation),
+	)
+	defer span.End()
+
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: projectID,
 		Service:   service,
@@ -237,7 +257,15 @@ func (s *QueryService) GetTimeseries(projectID int64, service, operation string,
 }
 
 // SearchTraces searches for traces matching the given filter.
-func (s *QueryService) SearchTraces(filter TraceSearchFilter) ([]TraceSummary, error) {
+func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilter) ([]TraceSummary, error) {
+	_, span := tracer.Start(ctx, "query.search_traces")
+	span.SetAttributes(
+		attribute.String("service", filter.Service),
+		attribute.String("operation", filter.Operation),
+		attribute.Int("limit", filter.Limit),
+	)
+	defer span.End()
+
 	sf := repository.SpanFilter{
 		ProjectID:   filter.ProjectID,
 		Service:     filter.Service,
@@ -341,7 +369,11 @@ func (s *QueryService) SearchTraces(filter TraceSearchFilter) ([]TraceSummary, e
 }
 
 // GetTrace returns full trace detail for a given trace ID.
-func (s *QueryService) GetTrace(traceID string) (*TraceDetail, error) {
+func (s *QueryService) GetTrace(ctx context.Context, traceID string) (*TraceDetail, error) {
+	_, span := tracer.Start(ctx, "query.get_trace")
+	span.SetAttributes(attribute.String("trace_id", traceID))
+	defer span.End()
+
 	spans, err := s.repo.GetTraceByID(traceID)
 	if err != nil {
 		return nil, err
@@ -400,7 +432,10 @@ func (s *QueryService) GetTrace(traceID string) (*TraceDetail, error) {
 }
 
 // ListDependencies extracts dependency information from client-kind spans.
-func (s *QueryService) ListDependencies(projectID int64, from, to time.Time, service string) ([]DependencySummary, error) {
+func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, from, to time.Time, service string) ([]DependencySummary, error) {
+	_, span := tracer.Start(ctx, "query.list_dependencies")
+	defer span.End()
+
 	sf := repository.SpanFilter{
 		ProjectID: projectID,
 		Service:   service,

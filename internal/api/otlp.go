@@ -7,6 +7,10 @@ import (
 	"net/http"
 	"strings"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 
 	collectorpb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -16,7 +20,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+var apiTracer = otel.Tracer("spanbarn/api")
+
 func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.otlp.receive", trace.WithSpanKind(trace.SpanKindServer))
+	defer span.End()
+
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
@@ -49,9 +58,13 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	records := otlpToSpanRecords(&req)
+	span.SetAttributes(attribute.Int("span_count", len(records)))
+
+	_, enqueueSpan := apiTracer.Start(ctx, "api.otlp.enqueue")
 	for _, rec := range records {
 		s.ingest.Enqueue(rec)
 	}
+	enqueueSpan.End()
 
 	// Return ExportTraceServiceResponse.
 	resp := &collectorpb.ExportTraceServiceResponse{}

@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/alert"
 	"github.com/wiebe-xyz/spanbarn/internal/api"
@@ -85,15 +87,21 @@ func run() error {
 
 	// 2b. Bootstrap admin user from env vars if configured.
 	if cfg.AdminUsername != "" && cfg.AdminPassword != "" {
-		if _, err := repo.GetUserByUsername(cfg.AdminUsername); err != nil {
-			hash, hashErr := auth.HashPassword(cfg.AdminPassword)
-			if hashErr != nil {
-				return fmt.Errorf("hash admin password: %w", hashErr)
-			}
+		hash, hashErr := auth.HashPassword(cfg.AdminPassword)
+		if hashErr != nil {
+			return fmt.Errorf("hash admin password: %w", hashErr)
+		}
+		existing, err := repo.GetUserByUsername(cfg.AdminUsername)
+		if err != nil {
 			if createErr := repo.CreateUser(cfg.AdminUsername, hash); createErr != nil {
 				return fmt.Errorf("create admin user: %w", createErr)
 			}
 			logger.Info("bootstrapped admin user", "username", cfg.AdminUsername)
+		} else if bcrypt.CompareHashAndPassword([]byte(existing.PasswordHash), []byte(cfg.AdminPassword)) != nil {
+			if updateErr := repo.UpdateUserPassword(cfg.AdminUsername, hash); updateErr != nil {
+				return fmt.Errorf("update admin password: %w", updateErr)
+			}
+			logger.Info("updated admin password from env", "username", cfg.AdminUsername)
 		}
 	}
 

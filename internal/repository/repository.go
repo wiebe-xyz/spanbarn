@@ -78,6 +78,18 @@ func (r *Repository) GetUserByUsername(username string) (User, error) {
 	return u, err
 }
 
+func (r *Repository) UpdateUserPassword(username, passwordHash string) error {
+	res, err := r.db.Exec("UPDATE users SET password_hash = ? WHERE username = ?", passwordHash, username)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (r *Repository) DeleteUser(username string) error {
 	res, err := r.db.Exec("DELETE FROM users WHERE username = ?", username)
 	if err != nil {

@@ -1,0 +1,352 @@
+---
+# GitHub Actions Runner setup for macOS (Apple Silicon)
+
+- name: Apply GitHub runner tasks only if runners are defined
+  block:
+    - name: Check if Homebrew is installed
+      stat:
+        path: /opt/homebrew/bin/brew
+      register: homebrew_check
+
+    - name: Fail if Homebrew is not installed
+      fail:
+        msg: "Homebrew is not installed. Please install it first: /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+      when: not homebrew_check.stat.exists
+
+    - name: Update Homebrew
+      shell: brew update
+      become: false
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Install dependencies via Homebrew
+      shell: /opt/homebrew/bin/brew install {{ item }} 2>&1 || true
+      become: false
+      changed_when: false
+      loop:
+        - curl
+        - jq
+
+    - name: Set default values for runners if not specified
+      set_fact:
+        github_runners: "{{ github_runners | default([{'name': 'runner-1'}]) }}"
+
+    - name: Create runner base directory
+      file:
+        path: "{{ github_runner_base_dir }}"
+        state: directory
+        owner: "{{ github_runner_user | default('deployer') }}"
+        group: staff
+        mode: '0755'
+      become: true
+
+    - name: Create directories for GitHub runners
+      file:
+        path: "{{ github_runner_base_dir }}/{{ item.name }}"
+        state: directory
+        owner: "{{ github_runner_user | default('deployer') }}"
+        group: staff
+        mode: '0755'
+      become: true
+      loop: "{{ github_runners }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Download GitHub Actions runner binary (macOS ARM64)
+      get_url:
+        url: "https://github.com/actions/runner/releases/download/v{{ github_runner_version }}/actions-runner-osx-arm64-{{ github_runner_version }}.tar.gz"
+        dest: /tmp/actions-runner-osx-arm64-{{ github_runner_version }}.tar.gz
+        mode: '0644'
+
+    - name: Extract GitHub Actions runner for each instance
+      shell: |
+        rm -rf {{ github_runner_base_dir }}/{{ item.name }}/bin {{ github_runner_base_dir }}/{{ item.name }}/externals
+        tar -xzf /tmp/actions-runner-osx-arm64-{{ github_runner_version }}.tar.gz -C {{ github_runner_base_dir }}/{{ item.name }}
+      become: true
+      loop: "{{ github_runners }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Set ownership of runner directories
+      file:
+        path: "{{ github_runner_base_dir }}/{{ item.name }}"
+        state: directory
+        owner: "{{ github_runner_user | default('deployer') }}"
+        group: staff
+        recurse: yes
+      become: true
+      loop: "{{ github_runners }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Check if runner is already configured
+      stat:
+        path: "{{ github_runner_base_dir }}/{{ item.name }}/.runner"
+      loop: "{{ github_runners }}"
+      register: runner_config_check
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Get registration token and configure unconfigured runners
+      include_tasks: configure-runner.yml
+      vars:
+        runner_name: "{{ item.item.name }}"
+        runner_repo: "{{ item.item.repo }}"
+        runner_labels: "{{ item.item.labels | default(github_runner_default_labels | default('')) }}"
+      loop: "{{ runner_config_check.results }}"
+      when: not item.stat.exists
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Create LaunchAgents directory for runner user
+      file:
+        path: /Users/{{ github_runner_user }}/Library/LaunchAgents
+        state: directory
+        owner: "{{ github_runner_user }}"
+        group: staff
+        mode: '0755'
+      become: true
+
+    - name: Create GitHub Actions runner launchd plist files
+      copy:
+        dest: "/Users/{{ github_runner_user }}/Library/LaunchAgents/com.github.actions.{{ item.name }}.plist"
+        owner: "{{ github_runner_user }}"
+        group: staff
+        mode: '0644'
+        content: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>Label</key>
+              <string>com.github.actions.{{ item.name }}</string>
+              <key>ProgramArguments</key>
+              <array>
+                  <string>{{ github_runner_base_dir }}/{{ item.name }}/run.sh</string>
+              </array>
+              <key>WorkingDirectory</key>
+              <string>{{ github_runner_base_dir }}/{{ item.name }}</string>
+              <key>RunAtLoad</key>
+              <true/>
+              <key>KeepAlive</key>
+              <true/>
+              <key>StandardOutPath</key>
+              <string>{{ github_runner_base_dir }}/{{ item.name }}/stdout.log</string>
+              <key>StandardErrorPath</key>
+              <string>{{ github_runner_base_dir }}/{{ item.name }}/stderr.log</string>
+              <key>EnvironmentVariables</key>
+              <dict>
+                  <key>HOME</key>
+                  <string>/Users/{{ github_runner_user }}</string>
+                  <key>PATH</key>
+                  <string>/Users/{{ github_runner_user }}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+                  <key>RUNNER_TOOL_CACHE</key>
+                  <string>/Users/{{ github_runner_user }}/.runner-tool-cache</string>
+                  <key>GIT_CONFIG_NOSYSTEM</key>
+                  <string>1</string>
+              </dict>
+          </dict>
+          </plist>
+      become: true
+      loop: "{{ github_runners }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: launchd_plist_changed
+
+    - name: Check runner configuration status (post-config)
+      stat:
+        path: "{{ github_runner_base_dir }}/{{ item.name }}/.runner"
+      loop: "{{ github_runners }}"
+      register: runner_config_final
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Get runner user UID
+      shell: id -u {{ github_runner_user }}
+      register: runner_uid
+      changed_when: false
+
+    # ── Non-battery-aware (mac-mini): load and start runners via launchd ──────
+    - name: Load GitHub Actions runner launchd services (configured only)
+      shell: |
+        launchctl bootout gui/{{ runner_uid.stdout }}/com.github.actions.{{ item.item.name }} 2>/dev/null || true
+        launchctl bootstrap gui/{{ runner_uid.stdout }} /Users/{{ github_runner_user }}/Library/LaunchAgents/com.github.actions.{{ item.item.name }}.plist 2>/dev/null || \
+        launchctl enable gui/{{ runner_uid.stdout }}/com.github.actions.{{ item.item.name }} 2>/dev/null || true
+      become: true
+      loop: "{{ runner_config_final.results }}"
+      when:
+        - item.stat.exists
+        - not (github_runner_battery_aware | default(false))
+      loop_control:
+        label: "{{ item.item.name }}"
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Create runner startup script
+      copy:
+        dest: "{{ github_runner_base_dir }}/start-all-runners.sh"
+        mode: '0755'
+        owner: "{{ github_runner_user | default('deployer') }}"
+        group: staff
+        content: |
+          #!/bin/bash
+          # Start all GitHub Actions runners
+          RUNNER_BASE="{{ github_runner_base_dir }}"
+
+          {% for runner in github_runners %}
+          if pgrep -f "{{ runner.name }}/bin/Runner.Listener" > /dev/null 2>&1; then
+            echo "{{ runner.name }} already running"
+          else
+            echo "Starting {{ runner.name }}..."
+            cd "$RUNNER_BASE/{{ runner.name }}"
+            ./run.sh > stdout.log 2> stderr.log &
+            sleep 2
+          fi
+          {% endfor %}
+
+          echo "All runners started. Check status with: pgrep -f Runner.Listener"
+      become: true
+
+    - name: Start runners directly
+      shell: |
+        if pgrep -f "{{ item.item.name }}/bin/Runner.Listener" > /dev/null 2>&1; then
+          echo "{{ item.item.name }} already running"
+        else
+          cd {{ github_runner_base_dir }}/{{ item.item.name }}
+          sudo -u {{ github_runner_user | default('deployer') }} ./run.sh > stdout.log 2> stderr.log &
+          sleep 3
+          if pgrep -f "{{ item.item.name }}/bin/Runner.Listener" > /dev/null 2>&1; then
+            echo "Started {{ item.item.name }}"
+          else
+            echo "Failed to start {{ item.item.name }}"
+          fi
+        fi
+      become: true
+      loop: "{{ runner_config_final.results }}"
+      when:
+        - item.stat.exists
+        - not (github_runner_battery_aware | default(false))
+      loop_control:
+        label: "{{ item.item.name }}"
+      register: runner_start
+      changed_when: "'Started' in runner_start.stdout | default('')"
+
+    # ── Battery-aware (mac-laptop): power monitor manages runner lifecycle ────
+    - name: Create power-aware runner manager script
+      copy:
+        dest: "{{ github_runner_base_dir }}/power-monitor.sh"
+        mode: '0755'
+        owner: "{{ github_runner_user | default('deployer') }}"
+        group: staff
+        content: |
+          #!/bin/bash
+          # Starts GitHub Actions runners when on AC power, stops them on battery.
+          # Runs every 60 s via launchd (com.github.actions.runner-power-monitor).
+
+          RUNNER_USER_UID=$(id -u {{ github_runner_user }})
+          LAUNCHAGENTS_DIR="/Users/{{ github_runner_user }}/Library/LaunchAgents"
+
+          log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
+
+          {% for runner in github_runners %}
+          if pmset -g batt | grep -q 'AC Power'; then
+            if ! pgrep -f "{{ runner.name }}/bin/Runner.Listener" > /dev/null 2>&1; then
+              log "AC power: starting {{ runner.name }}"
+              launchctl bootstrap gui/${RUNNER_USER_UID} \
+                "${LAUNCHAGENTS_DIR}/com.github.actions.{{ runner.name }}.plist" 2>/dev/null || true
+            fi
+          else
+            if pgrep -f "{{ runner.name }}/bin/Runner.Listener" > /dev/null 2>&1; then
+              log "Battery power: stopping {{ runner.name }}"
+              launchctl bootout gui/${RUNNER_USER_UID}/com.github.actions.{{ runner.name }} 2>/dev/null || true
+            fi
+          fi
+          {% endfor %}
+      become: true
+      when: github_runner_battery_aware | default(false)
+
+    - name: Create power monitor launchd plist
+      copy:
+        dest: "/Users/{{ github_runner_user }}/Library/LaunchAgents/com.github.actions.runner-power-monitor.plist"
+        owner: "{{ github_runner_user }}"
+        group: staff
+        mode: '0644'
+        content: |
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>Label</key>
+              <string>com.github.actions.runner-power-monitor</string>
+              <key>ProgramArguments</key>
+              <array>
+                  <string>{{ github_runner_base_dir }}/power-monitor.sh</string>
+              </array>
+              <key>StartInterval</key>
+              <integer>60</integer>
+              <key>RunAtLoad</key>
+              <true/>
+              <key>StandardOutPath</key>
+              <string>{{ github_runner_base_dir }}/power-monitor.log</string>
+              <key>StandardErrorPath</key>
+              <string>{{ github_runner_base_dir }}/power-monitor.log</string>
+              <key>EnvironmentVariables</key>
+              <dict>
+                  <key>HOME</key>
+                  <string>/Users/{{ github_runner_user }}</string>
+                  <key>PATH</key>
+                  <string>/Users/{{ github_runner_user }}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+              </dict>
+          </dict>
+          </plist>
+      become: true
+      when: github_runner_battery_aware | default(false)
+      register: power_monitor_plist
+
+    - name: Load power monitor launchd service
+      shell: |
+        launchctl bootout gui/{{ runner_uid.stdout }}/com.github.actions.runner-power-monitor 2>/dev/null || true
+        launchctl bootstrap gui/{{ runner_uid.stdout }} \
+          /Users/{{ github_runner_user }}/Library/LaunchAgents/com.github.actions.runner-power-monitor.plist 2>/dev/null || true
+      become: true
+      when:
+        - github_runner_battery_aware | default(false)
+        - power_monitor_plist.changed
+      changed_when: false
+
+    # Unload unconfigured runner services
+    - name: Stop unconfigured runners
+      shell: |
+        pkill -f "{{ item.item.name }}/run.sh" || true
+        launchctl bootout gui/{{ runner_uid.stdout }}/com.github.actions.{{ item.item.name }} 2>/dev/null || true
+      become: true
+      loop: "{{ runner_config_final.results }}"
+      when: not item.stat.exists
+      loop_control:
+        label: "{{ item.item.name }}"
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Fix safe_sleep.sh busy-wait CPU issue
+      include_tasks: fix-safe-sleep.yml
+
+    # Runner work-dir cleanup script (hourly cron, skips runner-internal dirs)
+    - name: Deploy runner cleanup script
+      copy:
+        src: cleanup.sh
+        dest: "{{ github_runner_base_dir }}/cleanup.sh"
+        mode: '0755'
+        owner: "{{ github_runner_user | default('deployer') }}"
+        group: staff
+      become: true
+
+    - name: Install runner cleanup cron job
+      cron:
+        name: "GitHub Actions runner cleanup"
+        minute: "0"
+        hour: "*"
+        job: "{{ github_runner_base_dir }}/cleanup.sh"
+        user: "{{ github_runner_user | default('deployer') }}"
+      become: true
+
+  when: github_runner_enabled | default(false)

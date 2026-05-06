@@ -4,6 +4,9 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // ProjectLister provides a list of all projects for the runner to evaluate.
@@ -54,11 +57,18 @@ func (r *Runner) Run(ctx context.Context) {
 }
 
 func (r *Runner) tick(ctx context.Context) {
+	ctx, span := alertTracer.Start(ctx, "alert.runner_tick")
+	defer span.End()
+
 	ids, err := r.projects.ListProjectIDs()
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		r.logger.Error("list projects for alert evaluation", "error", err)
 		return
 	}
+
+	span.SetAttributes(attribute.Int("project_count", len(ids)))
 
 	for _, id := range ids {
 		if ctx.Err() != nil {

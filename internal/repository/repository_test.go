@@ -103,6 +103,29 @@ func TestCreateAndGetUser(t *testing.T) {
 	}
 }
 
+func TestUpdateUserPassword(t *testing.T) {
+	repo := setupTestDB(t)
+
+	_ = repo.CreateUser("admin", "oldhash")
+
+	if err := repo.UpdateUserPassword("admin", "newhash"); err != nil {
+		t.Fatalf("UpdateUserPassword: %v", err)
+	}
+
+	u, err := repo.GetUserByUsername("admin")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if u.PasswordHash != "newhash" {
+		t.Fatalf("expected newhash, got %q", u.PasswordHash)
+	}
+
+	// Non-existent user returns error.
+	if err := repo.UpdateUserPassword("nobody", "x"); err != sql.ErrNoRows {
+		t.Fatalf("expected ErrNoRows for nonexistent user, got %v", err)
+	}
+}
+
 func TestCreateAndGetAPIKey(t *testing.T) {
 	repo := setupTestDB(t)
 

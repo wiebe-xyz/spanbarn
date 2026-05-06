@@ -77,6 +77,36 @@ func TestAuthenticateNonexistentUser(t *testing.T) {
 	}
 }
 
+func TestPasswordChangeDetection(t *testing.T) {
+	oldPassword := "old-password"
+	newPassword := "new-password"
+
+	oldHash, _ := HashPassword(oldPassword)
+	newHash, _ := HashPassword(newPassword)
+
+	repo := newMockUserLookup()
+	repo.users["admin"] = UserRecord{ID: 1, Username: "admin", PasswordHash: oldHash}
+	ua := NewUserAuthenticator(repo, nil)
+
+	// Old password works.
+	if err := ua.Authenticate("admin", oldPassword); err != nil {
+		t.Fatalf("old password should work: %v", err)
+	}
+
+	// Simulate bootstrap: detect mismatch and update.
+	repo.users["admin"] = UserRecord{ID: 1, Username: "admin", PasswordHash: newHash}
+
+	// New password works.
+	if err := ua.Authenticate("admin", newPassword); err != nil {
+		t.Fatalf("new password should work after update: %v", err)
+	}
+
+	// Old password no longer works.
+	if err := ua.Authenticate("admin", oldPassword); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("old password should fail after update, got %v", err)
+	}
+}
+
 func TestAuthenticateEmptyCredentials(t *testing.T) {
 	repo := newMockUserLookup()
 	ua := NewUserAuthenticator(repo, nil)

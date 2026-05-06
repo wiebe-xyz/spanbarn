@@ -1,6 +1,7 @@
 package alert
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -34,7 +35,7 @@ func TestSendWebhook(t *testing.T) {
 		TriggeredAt: time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC),
 	}
 
-	err := notifier.SendWebhook(srv.URL, payload)
+	err := notifier.SendWebhook(context.Background(), srv.URL, payload)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -66,7 +67,7 @@ func TestSendWebhookFailure(t *testing.T) {
 		Type:    "latency",
 	}
 
-	err := notifier.SendWebhook(srv.URL, payload)
+	err := notifier.SendWebhook(context.Background(), srv.URL, payload)
 	if err == nil {
 		t.Fatal("expected error for 500 response")
 	}
