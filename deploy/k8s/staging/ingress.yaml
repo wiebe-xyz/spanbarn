@@ -9,7 +9,7 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-    - host: spanbarn-staging.wiebe.xyz
+    - host: spanbarn-staging.nijmegen.wiebe.xyz
       http:
         paths:
           - path: /api
@@ -28,4 +28,4 @@ spec:
                   name: http
   tls:
     - hosts:
-        - spanbarn-staging.wiebe.xyz
+        - spanbarn-staging.nijmegen.wiebe.xyz
