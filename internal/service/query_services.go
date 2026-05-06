@@ -133,7 +133,10 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 		operation, resource, kind string
 	}
 	type opStats struct {
-		count, errorCount, p50Sum, p95Sum, p99Sum, total int64
+		count, errorCount              int64
+		aggP50Sum, aggP95Sum, aggP99Sum int64
+		aggCount                       int64
+		spanDurations                  []int64
 	}
 	byOp := make(map[opKey]*opStats)
 	for _, a := range aggs {
@@ -145,10 +148,26 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 		}
 		st.count += a.Count
 		st.errorCount += a.ErrorCount
-		st.p50Sum += a.P50Us * a.Count
-		st.p95Sum += a.P95Us * a.Count
-		st.p99Sum += a.P99Us * a.Count
-		st.total += a.Count
+		st.aggP50Sum += a.P50Us * a.Count
+		st.aggP95Sum += a.P95Us * a.Count
+		st.aggP99Sum += a.P99Us * a.Count
+		st.aggCount += a.Count
+	}
+
+	spanStats, err := s.repo.QueryOperationStatsFromSpans(projectID, service, from, to)
+	if err != nil {
+		s.logger.Warn("failed to query operation stats from spans", "error", err)
+	}
+	for _, ss := range spanStats {
+		k := opKey{ss.Operation, ss.Resource, ss.Kind}
+		st, ok := byOp[k]
+		if !ok {
+			st = &opStats{}
+			byOp[k] = st
+		}
+		st.count += ss.Count
+		st.errorCount += ss.ErrorCount
+		st.spanDurations = ss.Durations
 	}
 
 	result := make([]OperationSummary, 0, len(byOp))
@@ -158,10 +177,12 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 			errorRate = float64(st.errorCount) / float64(st.count)
 		}
 		var p50, p95, p99 int64
-		if st.total > 0 {
-			p50 = st.p50Sum / st.total
-			p95 = st.p95Sum / st.total
-			p99 = st.p99Sum / st.total
+		if len(st.spanDurations) > 0 {
+			p50, p95, p99 = computePercentiles(st.spanDurations)
+		} else if st.aggCount > 0 {
+			p50 = st.aggP50Sum / st.aggCount
+			p95 = st.aggP95Sum / st.aggCount
+			p99 = st.aggP99Sum / st.aggCount
 		}
 		result = append(result, OperationSummary{
 			Operation:  k.operation,

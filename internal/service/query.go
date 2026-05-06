@@ -21,6 +21,7 @@ type QueryRepository interface {
 	GetTraceByID(traceID string) ([]repository.Span, error)
 	QueryErrorSamples(filter repository.SpanFilter) ([]repository.Span, error)
 	QueryServiceStatsFromSpans(projectID int64, from, to time.Time) ([]repository.ServiceStats, error)
+	QueryOperationStatsFromSpans(projectID int64, service string, from, to time.Time) ([]repository.OperationStats, error)
 }
 
 // QueryService implements query logic for the dashboard API.

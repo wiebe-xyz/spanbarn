@@ -250,3 +250,103 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 	}
 	return result, nil
 }
+
+type OperationStats struct {
+	Operation  string
+	Resource   string
+	Kind       string
+	Count      int64
+	ErrorCount int64
+	Durations  []int64
+}
+
+func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service string, from, to time.Time) ([]OperationStats, error) {
+	var where []string
+	var args []any
+
+	where = append(where, "service = ?")
+	args = append(args, service)
+
+	if projectID != 0 {
+		where = append(where, "project_id = ?")
+		args = append(args, projectID)
+	}
+	if !from.IsZero() {
+		where = append(where, "ingested_at >= ?")
+		args = append(args, from)
+	}
+	if !to.IsZero() {
+		where = append(where, "ingested_at <= ?")
+		args = append(args, to)
+	}
+
+	q := `SELECT name, resource, kind, COUNT(*) as cnt,
+		SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as err_cnt
+		FROM spans WHERE ` + strings.Join(where, " AND ") + ` GROUP BY name, resource, kind`
+
+	rows, err := r.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type opKey struct{ name, resource, kind string }
+	statsMap := make(map[opKey]*OperationStats)
+	var order []opKey
+	for rows.Next() {
+		var name, resource, kind string
+		var cnt, errCnt int64
+		if err := rows.Scan(&name, &resource, &kind, &cnt, &errCnt); err != nil {
+			return nil, err
+		}
+		k := opKey{name, resource, kind}
+		statsMap[k] = &OperationStats{Operation: name, Resource: resource, Kind: kind, Count: cnt, ErrorCount: errCnt}
+		order = append(order, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, k := range order {
+		dq := "SELECT duration_us FROM spans WHERE service = ? AND name = ? AND resource = ? AND kind = ?"
+		dargs := []any{service, k.name, k.resource, k.kind}
+		if projectID != 0 {
+			dq += " AND project_id = ?"
+			dargs = append(dargs, projectID)
+		}
+		if !from.IsZero() {
+			dq += " AND ingested_at >= ?"
+			dargs = append(dargs, from)
+		}
+		if !to.IsZero() {
+			dq += " AND ingested_at <= ?"
+			dargs = append(dargs, to)
+		}
+		dq += " ORDER BY duration_us"
+
+		drows, err := r.db.Query(dq, dargs...)
+		if err != nil {
+			return nil, err
+		}
+		var durations []int64
+		for drows.Next() {
+			var d int64
+			if err := drows.Scan(&d); err != nil {
+				drows.Close()
+				return nil, err
+			}
+			durations = append(durations, d)
+		}
+		drows.Close()
+		if err := drows.Err(); err != nil {
+			return nil, err
+		}
+		statsMap[k].Durations = durations
+	}
+
+	result := make([]OperationStats, 0, len(order))
+	for _, k := range order {
+		result = append(result, *statsMap[k])
+	}
+	return result, nil
+}
