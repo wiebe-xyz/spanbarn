@@ -226,7 +226,10 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 	}
 
 	type bucketStats struct {
-		count, errorCount, p50Sum, p95Sum, p99Sum, total int64
+		count, errorCount              int64
+		aggP50Sum, aggP95Sum, aggP99Sum int64
+		aggCount                       int64
+		spanDurations                  []int64
 	}
 	byBucket := make(map[time.Time]*bucketStats)
 	for _, a := range aggs {
@@ -238,19 +241,38 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 		}
 		st.count += a.Count
 		st.errorCount += a.ErrorCount
-		st.p50Sum += a.P50Us * a.Count
-		st.p95Sum += a.P95Us * a.Count
-		st.p99Sum += a.P99Us * a.Count
-		st.total += a.Count
+		st.aggP50Sum += a.P50Us * a.Count
+		st.aggP95Sum += a.P95Us * a.Count
+		st.aggP99Sum += a.P99Us * a.Count
+		st.aggCount += a.Count
+	}
+
+	spanBuckets, err := s.repo.QuerySpanTimeseries(projectID, svcName, operation, from, to, int64(interval.Seconds()))
+	if err != nil {
+		s.logger.Warn("failed to query span timeseries", "error", err)
+	}
+	for _, sb := range spanBuckets {
+		b := sb.Bucket.Truncate(interval)
+		st, ok := byBucket[b]
+		if !ok {
+			st = &bucketStats{}
+			byBucket[b] = st
+		}
+		st.count += sb.Count
+		st.errorCount += sb.ErrorCount
+		st.spanDurations = append(st.spanDurations, sb.Durations...)
 	}
 
 	result := make([]TimeseriesBucket, 0, len(byBucket))
 	for b, st := range byBucket {
 		var p50, p95, p99 int64
-		if st.total > 0 {
-			p50 = st.p50Sum / st.total
-			p95 = st.p95Sum / st.total
-			p99 = st.p99Sum / st.total
+		if len(st.spanDurations) > 0 {
+			sort.Slice(st.spanDurations, func(i, j int) bool { return st.spanDurations[i] < st.spanDurations[j] })
+			p50, p95, p99 = computePercentiles(st.spanDurations)
+		} else if st.aggCount > 0 {
+			p50 = st.aggP50Sum / st.aggCount
+			p95 = st.aggP95Sum / st.aggCount
+			p99 = st.aggP99Sum / st.aggCount
 		}
 		result = append(result, TimeseriesBucket{
 			Bucket:     b,

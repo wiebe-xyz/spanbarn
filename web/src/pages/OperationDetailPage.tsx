@@ -102,104 +102,108 @@ export function OperationDetailPage(): ReactElement {
         <TimeRangeSelector value={range} onChange={setRange} />
       </div>
 
-      {/* Duration stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
-        {[
-          { label: 'p50', value: avgP50, color: '#3b82f6' },
-          { label: 'p95', value: avgP95, color: '#eab308' },
-          { label: 'p99', value: avgP99, color: '#ef4444' },
-        ].map((s) => (
-          <div key={s.label} className="card" style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
-              {s.label}
+      {/* Duration stats — only show when we have data */}
+      {chartData.length > 0 && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
+            {[
+              { label: 'p50', value: avgP50, color: '#3b82f6' },
+              { label: 'p95', value: avgP95, color: '#eab308' },
+              { label: 'p99', value: avgP99, color: '#ef4444' },
+            ].map((s) => (
+              <div key={s.label} className="card" style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                  {s.label}
+                </div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 700, color: s.color, fontFamily: "'SF Mono', 'Fira Code', monospace" }}>
+                  {formatDuration(s.value)}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Charts grid */}
+          <div className="charts-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+            {/* Latency chart */}
+            <div className="card">
+              <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>
+                Latency (ms)
+              </div>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="time" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
+                  <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} width={40} />
+                  <Tooltip
+                    contentStyle={{
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 8,
+                      color: 'var(--text)',
+                    }}
+                    formatter={(value) => [`${Number(value).toFixed(2)} ms`]}
+                  />
+                  <Legend
+                    verticalAlign="top"
+                    align="right"
+                    iconType="line"
+                    wrapperStyle={{ fontSize: 11, paddingBottom: 4 }}
+                  />
+                  <Line type="monotone" dataKey="p99" name="p99" stroke="#ef4444" dot={false} strokeWidth={2} />
+                  <Line type="monotone" dataKey="p95" name="p95" stroke="#eab308" dot={false} strokeWidth={2} />
+                  <Line type="monotone" dataKey="p50" name="p50" stroke="#3b82f6" dot={false} strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 700, color: s.color, fontFamily: "'SF Mono', 'Fira Code', monospace" }}>
-              {formatDuration(s.value)}
+
+            {/* Throughput chart */}
+            <div className="card">
+              <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>
+                Throughput (requests)
+              </div>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="time" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
+                  <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} width={40} />
+                  <Tooltip
+                    contentStyle={{
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 8,
+                      color: 'var(--text)',
+                    }}
+                  />
+                  <Bar dataKey="count" fill="#3b82f6" radius={[2, 2, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </div>
-        ))}
-      </div>
 
-      {/* Charts grid */}
-      <div className="charts-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
-        {/* Latency chart */}
-        <div className="card">
-          <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>
-            Latency (ms)
+          {/* Error rate chart */}
+          <div className="card" style={{ marginBottom: '1.5rem' }}>
+            <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>
+              Error Rate (%)
+            </div>
+            <ResponsiveContainer width="100%" height={150}>
+              <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="time" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
+                <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} width={40} />
+                <Tooltip
+                  contentStyle={{
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    color: 'var(--text)',
+                  }}
+                />
+                <Area type="monotone" dataKey="errorRate" stroke="#ef4444" fill="#ef444440" />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="time" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
-              <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} width={40} />
-              <Tooltip
-                contentStyle={{
-                  background: 'var(--surface)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  color: 'var(--text)',
-                }}
-                formatter={(value) => [`${Number(value).toFixed(2)} ms`]}
-              />
-              <Legend
-                verticalAlign="top"
-                align="right"
-                iconType="line"
-                wrapperStyle={{ fontSize: 11, paddingBottom: 4 }}
-              />
-              <Line type="monotone" dataKey="p99" name="p99" stroke="#ef4444" dot={false} strokeWidth={2} />
-              <Line type="monotone" dataKey="p95" name="p95" stroke="#eab308" dot={false} strokeWidth={2} />
-              <Line type="monotone" dataKey="p50" name="p50" stroke="#3b82f6" dot={false} strokeWidth={2} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Throughput chart */}
-        <div className="card">
-          <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>
-            Throughput (requests)
-          </div>
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="time" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
-              <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} width={40} />
-              <Tooltip
-                contentStyle={{
-                  background: 'var(--surface)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  color: 'var(--text)',
-                }}
-              />
-              <Bar dataKey="count" fill="#3b82f6" radius={[2, 2, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* Error rate chart */}
-      <div className="card" style={{ marginBottom: '1.5rem' }}>
-        <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>
-          Error Rate (%)
-        </div>
-        <ResponsiveContainer width="100%" height={150}>
-          <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="time" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
-            <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} width={40} />
-            <Tooltip
-              contentStyle={{
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                color: 'var(--text)',
-              }}
-            />
-            <Area type="monotone" dataKey="errorRate" stroke="#ef4444" fill="#ef444440" />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
+        </>
+      )}
 
       {/* Recent traces */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
