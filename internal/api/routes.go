@@ -45,4 +45,18 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/alerts/", apiRL(sessionAuth(ah)))
 	}
 
+	// Setup endpoint — public, no auth required.
+	if s.repo != nil {
+		s.mux.HandleFunc("/api/v1/setup/{slug}", s.handleSetup)
+	}
+
+	// Project endpoints — rate limited + session auth required.
+	if s.repo != nil && s.sessionMgr != nil {
+		ph := &projectHandlers{repo: s.repo}
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+
+		s.mux.Handle("/api/v1/projects", apiRL(sessionAuth(ph)))
+		s.mux.Handle("/api/v1/projects/", apiRL(sessionAuth(ph)))
+	}
+
 }

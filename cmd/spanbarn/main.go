@@ -142,6 +142,8 @@ func run() error {
 		LoginRate:      cfg.LoginRatePerMinute,
 		IngestRate:     cfg.IngestRatePerMinute,
 		APIRate:        cfg.APIRatePerMinute,
+		SessionSecret:  cfg.SessionSecret,
+		PublicURL:      cfg.PublicURL,
 	}
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, api.WithRepository(repo))
 

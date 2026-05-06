@@ -23,6 +23,8 @@ type ServerConfig struct {
 	LoginRate      int    // per-minute rate limit for login; 0 = default (10)
 	IngestRate     int    // per-minute rate limit for ingest; 0 = default (600)
 	APIRate        int    // per-minute rate limit for API queries; 0 = default (120)
+	SessionSecret  string
+	PublicURL      string
 }
 
 // Server is the HTTP server for SpanBarn.
@@ -34,6 +36,8 @@ type Server struct {
 	allowedOrigins []string
 	version        string
 	metricsToken   string
+	sessionSecret  string
+	publicURL      string
 	rateLimiter    *RateLimiter
 	metrics        *Metrics
 	ingest         *ingest.Handler
@@ -107,6 +111,8 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		allowedOrigins: cfg.AllowedOrigins,
 		version:        cfg.Version,
 		metricsToken:   cfg.MetricsToken,
+		sessionSecret:  cfg.SessionSecret,
+		publicURL:      cfg.PublicURL,
 		rateLimiter:    NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
 		metrics:        NewMetrics(),
 		ingest:         ingestHandler,
