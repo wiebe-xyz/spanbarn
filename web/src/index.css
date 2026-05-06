@@ -236,6 +236,11 @@ label {
     grid-template-columns: 1fr !important;
   }
 
+  /* Tighter card padding on mobile */
+  .card {
+    padding: 0.75rem;
+  }
+
   /* Dependency detail panel full width on mobile */
   .dep-detail-panel {
     width: 100vw !important;

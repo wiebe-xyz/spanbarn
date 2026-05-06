@@ -198,7 +198,10 @@
   padding: 4px 8px;
   color: var(--text-primary, #e5e7eb);
   border-bottom: 1px solid var(--border, #1f2937);
-  word-break: break-all;
+}
+
+.span-detail-table td:first-child {
+  white-space: nowrap;
 }
 
 .span-detail-table tr:hover td {

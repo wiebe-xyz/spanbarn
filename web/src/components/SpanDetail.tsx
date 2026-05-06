@@ -104,7 +104,8 @@ export function SpanDetail({ span, traceStartTimeUs }: Props) {
       )}
 
       {activeTab === 'attributes' && (
-        <table className="span-detail-table">
+        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <table className="span-detail-table" style={{ minWidth: 400 }}>
           <thead>
             <tr>
               <th>Key</th>
@@ -133,6 +134,7 @@ export function SpanDetail({ span, traceStartTimeUs }: Props) {
             )}
           </tbody>
         </table>
+        </div>
       )}
 
       {activeTab === 'events' && (

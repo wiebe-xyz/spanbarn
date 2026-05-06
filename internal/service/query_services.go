@@ -1,0 +1,249 @@
+package service
+
+import (
+	"context"
+	"sort"
+	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository"
+)
+
+// ListServices returns aggregated metrics per service for the given time range.
+func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, to time.Time) ([]ServiceSummary, error) {
+	_, span := tracer.Start(ctx, "query.list_services")
+	defer span.End()
+
+	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
+		ProjectID: projectID,
+		From:      from,
+		To:        to,
+		Limit:     10000,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	type svcStats struct {
+		count, errorCount, p50Sum, p95Sum, p99Sum, buckets int64
+	}
+	byService := make(map[string]*svcStats)
+	for _, a := range aggs {
+		st, ok := byService[a.Service]
+		if !ok {
+			st = &svcStats{}
+			byService[a.Service] = st
+		}
+		st.count += a.Count
+		st.errorCount += a.ErrorCount
+		st.p50Sum += a.P50Us * a.Count
+		st.p95Sum += a.P95Us * a.Count
+		st.p99Sum += a.P99Us * a.Count
+		st.buckets += a.Count
+	}
+
+	spanStats, err := s.repo.QueryServiceStatsFromSpans(projectID, from, to)
+	if err != nil {
+		s.logger.Warn("failed to query service stats from spans", "error", err)
+	}
+
+	type mergedStats struct {
+		count, errorCount              int64
+		aggP50Sum, aggP95Sum, aggP99Sum int64
+		aggCount                       int64
+		spanDurations                  []int64
+	}
+	merged := make(map[string]*mergedStats)
+
+	for svc, st := range byService {
+		merged[svc] = &mergedStats{
+			count:      st.count,
+			errorCount: st.errorCount,
+			aggP50Sum:  st.p50Sum,
+			aggP95Sum:  st.p95Sum,
+			aggP99Sum:  st.p99Sum,
+			aggCount:   st.buckets,
+		}
+	}
+
+	for _, ss := range spanStats {
+		ms, ok := merged[ss.Service]
+		if !ok {
+			ms = &mergedStats{}
+			merged[ss.Service] = ms
+		}
+		ms.count += ss.Count
+		ms.errorCount += ss.ErrorCount
+		ms.spanDurations = ss.Durations
+	}
+
+	result := make([]ServiceSummary, 0, len(merged))
+	for svc, ms := range merged {
+		var errorRate float64
+		if ms.count > 0 {
+			errorRate = float64(ms.errorCount) / float64(ms.count)
+		}
+
+		var p50, p95, p99 int64
+		if len(ms.spanDurations) > 0 {
+			p50, p95, p99 = computePercentiles(ms.spanDurations)
+		} else if ms.aggCount > 0 {
+			p50 = ms.aggP50Sum / ms.aggCount
+			p95 = ms.aggP95Sum / ms.aggCount
+			p99 = ms.aggP99Sum / ms.aggCount
+		}
+
+		result = append(result, ServiceSummary{
+			Service:    svc,
+			SpanCount:  ms.count,
+			ErrorCount: ms.errorCount,
+			ErrorRate:  errorRate,
+			P50Us:      p50,
+			P95Us:      p95,
+			P99Us:      p99,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].SpanCount > result[j].SpanCount
+	})
+
+	return result, nil
+}
+
+// ListOperations returns aggregated metrics per operation for a service.
+func (s *QueryService) ListOperations(ctx context.Context, projectID int64, service string, from, to time.Time) ([]OperationSummary, error) {
+	_, span := tracer.Start(ctx, "query.list_operations")
+	span.SetAttributes(attribute.String("service", service))
+	defer span.End()
+
+	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
+		ProjectID: projectID,
+		Service:   service,
+		From:      from,
+		To:        to,
+		Limit:     10000,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	type opKey struct {
+		operation, resource, kind string
+	}
+	type opStats struct {
+		count, errorCount, p50Sum, p95Sum, p99Sum, total int64
+	}
+	byOp := make(map[opKey]*opStats)
+	for _, a := range aggs {
+		k := opKey{a.Operation, a.Resource, a.Kind}
+		st, ok := byOp[k]
+		if !ok {
+			st = &opStats{}
+			byOp[k] = st
+		}
+		st.count += a.Count
+		st.errorCount += a.ErrorCount
+		st.p50Sum += a.P50Us * a.Count
+		st.p95Sum += a.P95Us * a.Count
+		st.p99Sum += a.P99Us * a.Count
+		st.total += a.Count
+	}
+
+	result := make([]OperationSummary, 0, len(byOp))
+	for k, st := range byOp {
+		var errorRate float64
+		if st.count > 0 {
+			errorRate = float64(st.errorCount) / float64(st.count)
+		}
+		var p50, p95, p99 int64
+		if st.total > 0 {
+			p50 = st.p50Sum / st.total
+			p95 = st.p95Sum / st.total
+			p99 = st.p99Sum / st.total
+		}
+		result = append(result, OperationSummary{
+			Operation:  k.operation,
+			Resource:   k.resource,
+			Kind:       k.kind,
+			SpanCount:  st.count,
+			ErrorCount: st.errorCount,
+			ErrorRate:  errorRate,
+			P50Us:      p50,
+			P95Us:      p95,
+			P99Us:      p99,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].SpanCount > result[j].SpanCount
+	})
+
+	return result, nil
+}
+
+// GetTimeseries returns bucketed timeseries data for a specific operation.
+func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcName, operation string, from, to time.Time, interval time.Duration) ([]TimeseriesBucket, error) {
+	_, span := tracer.Start(ctx, "query.get_timeseries")
+	span.SetAttributes(
+		attribute.String("service", svcName),
+		attribute.String("operation", operation),
+	)
+	defer span.End()
+
+	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
+		ProjectID: projectID,
+		Service:   svcName,
+		Operation: operation,
+		From:      from,
+		To:        to,
+		Limit:     100000,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	type bucketStats struct {
+		count, errorCount, p50Sum, p95Sum, p99Sum, total int64
+	}
+	byBucket := make(map[time.Time]*bucketStats)
+	for _, a := range aggs {
+		b := a.Bucket.Truncate(interval)
+		st, ok := byBucket[b]
+		if !ok {
+			st = &bucketStats{}
+			byBucket[b] = st
+		}
+		st.count += a.Count
+		st.errorCount += a.ErrorCount
+		st.p50Sum += a.P50Us * a.Count
+		st.p95Sum += a.P95Us * a.Count
+		st.p99Sum += a.P99Us * a.Count
+		st.total += a.Count
+	}
+
+	result := make([]TimeseriesBucket, 0, len(byBucket))
+	for b, st := range byBucket {
+		var p50, p95, p99 int64
+		if st.total > 0 {
+			p50 = st.p50Sum / st.total
+			p95 = st.p95Sum / st.total
+			p99 = st.p99Sum / st.total
+		}
+		result = append(result, TimeseriesBucket{
+			Bucket:     b,
+			Count:      st.count,
+			ErrorCount: st.errorCount,
+			P50Us:      p50,
+			P95Us:      p95,
+			P99Us:      p99,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Bucket.Before(result[j].Bucket)
+	})
+
+	return result, nil
+}
