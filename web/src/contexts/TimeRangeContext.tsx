@@ -1,11 +1,11 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { createContext, useState, type ReactNode } from 'react'
 
-type TimeRangeContextType = {
+export type TimeRangeContextType = {
   range: string
   setRange: (range: string) => void
 }
 
-const TimeRangeContext = createContext<TimeRangeContextType>({
+export const TimeRangeContext = createContext<TimeRangeContextType>({
   range: '1h',
   setRange: () => {},
 })
@@ -17,8 +17,4 @@ export function TimeRangeProvider({ children }: { children: ReactNode }) {
       {children}
     </TimeRangeContext.Provider>
   )
-}
-
-export function useTimeRange() {
-  return useContext(TimeRangeContext)
 }

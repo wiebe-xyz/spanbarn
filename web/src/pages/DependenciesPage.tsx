@@ -6,7 +6,7 @@ import { getTimeRange } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
 import { DependencyDetailPanel } from './DependencyDetailPage'
-import { useTimeRange } from '../contexts/TimeRangeContext'
+import { useTimeRange } from '../contexts/useTimeRange'
 
 type SortField = 'target' | 'targetType' | 'callCount' | 'errorCount' | 'errorRate' | 'p50Us' | 'p95Us' | 'p99Us'
 type SortDir = 'asc' | 'desc'

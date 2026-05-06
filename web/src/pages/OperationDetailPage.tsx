@@ -19,7 +19,7 @@ import type { TimeseriesBucket, TraceSummary } from '../api/types'
 import { TimeRangeSelector } from '../components/TimeRangeSelector'
 import { getTimeRange } from '../utils/timeRange'
 import { formatDuration } from '../utils/format'
-import { useTimeRange } from '../contexts/TimeRangeContext'
+import { useTimeRange } from '../contexts/useTimeRange'
 
 export function OperationDetailPage(): ReactElement {
   const { service, operation } = useParams<{ service: string; operation: string }>()

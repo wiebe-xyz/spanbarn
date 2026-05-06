@@ -6,7 +6,7 @@ import { TimeRangeSelector } from '../components/TimeRangeSelector'
 import { getTimeRange } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
-import { useTimeRange } from '../contexts/TimeRangeContext'
+import { useTimeRange } from '../contexts/useTimeRange'
 
 export function ServicesPage(): ReactElement {
   const navigate = useNavigate()
