@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import sys
 import threading
 import time
 import urllib.request
 import urllib.error
-from contextlib import contextmanager
 from contextvars import ContextVar
 from queue import Empty, Queue
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -495,7 +493,7 @@ class SpanBarnWSGIMiddleware:
                 else:
                     span.set_status("ok")
                 return response
-        except Exception as exc:
+        except Exception:
             span.set_attribute("http.status_code", status_code)
             raise
 
