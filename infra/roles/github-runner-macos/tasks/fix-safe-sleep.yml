@@ -1,0 +1,25 @@
+---
+# Fix the GitHub Actions runner safe_sleep.sh busy-wait issue
+# The default script uses a busy-wait loop that causes 100% CPU usage
+
+- name: Find safe_sleep.sh files
+  find:
+    paths: "{{ github_runner_base_dir }}"
+    patterns: "safe_sleep.sh"
+    recurse: yes
+  register: safe_sleep_files
+
+- name: Replace safe_sleep.sh with proper sleep implementation
+  copy:
+    dest: "{{ item.path }}"
+    content: |
+      #!/bin/bash
+      # Fixed safe_sleep.sh - uses proper sleep instead of busy-wait
+      sleep "${1:-1}"
+    mode: '0755'
+    owner: "{{ github_runner_user | default('deployer') }}"
+    group: staff
+  become: true
+  loop: "{{ safe_sleep_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"

@@ -1,0 +1,26 @@
+---
+# Configure a GitHub Actions runner on macOS
+
+- name: Get registration token from GitHub API
+  uri:
+    url: "https://api.github.com/repos/{{ runner_repo }}/actions/runners/registration-token"
+    method: POST
+    headers:
+      Authorization: "token {{ github_runner_token }}"
+      Accept: "application/vnd.github.v3+json"
+    status_code: 201
+  register: registration_token_response
+
+- name: Configure GitHub Actions runner
+  shell: |
+    cd {{ github_runner_base_dir }}/{{ runner_name }}
+    sudo -u {{ github_runner_user | default('deployer') }} ./config.sh \
+      --url https://github.com/{{ runner_repo }} \
+      --token {{ registration_token_response.json.token }} \
+      --unattended \
+      --replace \
+      --name {{ inventory_hostname }}-{{ runner_name }} \
+      --labels {{ runner_labels }}
+  become: true
+  register: runner_config_result
+  failed_when: runner_config_result.rc != 0 and "already configured" not in runner_config_result.stderr | default('')

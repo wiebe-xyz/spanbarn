@@ -4,6 +4,7 @@
 
 - hosts: macos_runners
   become: yes
+  serial: 1
 
   vars:
     github_runner_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"

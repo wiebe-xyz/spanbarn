@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-ANSIBLE_ROLES_PATH ?= ../rapid-root/infra/roles
+ANSIBLE_ROLES_PATH ?= roles:../rapid-root/infra/roles
 INVENTORY ?= inventory.ini
 
 setup-runners:
