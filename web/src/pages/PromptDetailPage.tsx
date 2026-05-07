@@ -30,21 +30,18 @@ export function PromptDetailPage(): ReactElement {
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
-  const fetchData = useCallback(async () => {
-    if (!name) return
+  const fetchData = useCallback(() => {
+    if (!name) return Promise.resolve()
     const { from, to } = getTimeRange(range)
-    try {
-      const data = await api.getPromptDetail(from, to, decodeURIComponent(name), model || undefined, service || undefined)
+    return api.getPromptDetail(from, to, decodeURIComponent(name), model || undefined, service || undefined).then((data) => {
       setRecords(data ?? [])
-    } catch {
-      // handled by client
-    } finally {
-      setLoading(false)
-    }
+    }).catch(() => {})
   }, [name, model, service, range])
 
   useEffect(() => {
-    void fetchData()
+    let cancelled = false
+    fetchData().finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [fetchData])
 
   const avgDuration = records.length > 0

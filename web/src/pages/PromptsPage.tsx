@@ -45,20 +45,17 @@ export function PromptsPage(): ReactElement {
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const navigate = useNavigate()
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(() => {
     const { from, to } = getTimeRange(range)
-    try {
-      const data = await api.getPrompts(from, to, serviceFilter || undefined)
+    return api.getPrompts(from, to, serviceFilter || undefined).then((data) => {
       setPrompts(data ?? [])
-    } catch {
-      // handled by client
-    } finally {
-      setLoading(false)
-    }
+    }).catch(() => {})
   }, [range, serviceFilter])
 
   useEffect(() => {
-    void fetchData()
+    let cancelled = false
+    fetchData().finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [fetchData])
 
   const handleSort = (field: SortField) => {
