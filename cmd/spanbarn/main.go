@@ -132,7 +132,11 @@ func run() error {
 	defer alertCancel()
 	safeGo("alert-runner", func() { alertRunner.Run(alertCtx) })
 
-	authorizer := auth.NewAuthorizer(cfg.APIKeySHA256, &keyLookupAdapter{repo: repo}, logger)
+	apiKeyHash := cfg.APIKeySHA256
+	if apiKeyHash == "" && cfg.APIKey != "" {
+		apiKeyHash = auth.HashKey(cfg.APIKey)
+	}
+	authorizer := auth.NewAuthorizer(apiKeyHash, &keyLookupAdapter{repo: repo}, logger)
 	_ = authorizer
 	userAuth := auth.NewUserAuthenticator(&userLookupAdapter{repo: repo}, logger)
 	sessionMgr := auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
