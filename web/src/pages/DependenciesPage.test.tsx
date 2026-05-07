@@ -41,6 +41,7 @@ const mockDependencies: DependencySummary[] = [
 vi.mock('../api/client', () => ({
   api: {
     getDependencies: vi.fn(),
+    getServices: vi.fn().mockResolvedValue([]),
     searchTraces: vi.fn(),
   },
 }))

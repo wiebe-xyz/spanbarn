@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, type ReactElement } from 're
 import { api } from '../api/client'
 import type { DatabaseQuerySummary } from '../api/types'
 import { TimeRangeSelector } from '../components/TimeRangeSelector'
+import { ServiceSelect } from '../components/ServiceSelect'
 import { getTimeRange } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
@@ -96,17 +97,7 @@ export function DatabasePage(): ReactElement {
       >
         <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Database</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <input
-            type="text"
-            placeholder="Filter by service..."
-            value={serviceFilter}
-            onChange={(e) => setServiceFilter(e.target.value)}
-            style={{
-              padding: '0.25rem 0.5rem',
-              fontSize: '0.8125rem',
-              width: 160,
-            }}
-          />
+          <ServiceSelect value={serviceFilter} onChange={setServiceFilter} range={range} />
           <AutoRefresh value={refreshInterval} onChange={setRefreshInterval} onRefresh={fetchData} />
           <TimeRangeSelector value={range} onChange={setRange} />
         </div>
