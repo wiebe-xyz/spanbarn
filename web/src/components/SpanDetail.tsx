@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import type { Span } from '../api/types'
 import {
   formatDuration,
@@ -12,11 +12,19 @@ import './SpanTimeline.css'
 type Props = {
   span: Span
   traceStartTimeUs: number
+  onNavigateToSpan?: (spanId: string) => void
 }
 
 type Tab = 'overview' | 'attributes' | 'events'
 
-export function SpanDetail({ span, traceStartTimeUs }: Props) {
+const spanLinkStyle: React.CSSProperties = {
+  color: '#60a5fa',
+  cursor: 'pointer',
+  textDecoration: 'underline',
+  textUnderlineOffset: 2,
+}
+
+export function SpanDetail({ span, traceStartTimeUs, onNavigateToSpan }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('overview')
 
   const attributes = parseAttributes(span.attributes)
@@ -90,7 +98,13 @@ export function SpanDetail({ span, traceStartTimeUs }: Props) {
           {span.parentSpanId && (
             <>
               <span className="span-detail-label">Parent Span ID</span>
-              <span className="span-detail-value">{span.parentSpanId}</span>
+              <span className="span-detail-value">
+                {onNavigateToSpan ? (
+                  <span style={spanLinkStyle} onClick={() => onNavigateToSpan(span.parentSpanId)}>
+                    {span.parentSpanId}
+                  </span>
+                ) : span.parentSpanId}
+              </span>
             </>
           )}
 
