@@ -110,6 +110,7 @@ export type TraceSearchParams = {
   operation?: string
   status?: string
   minDurationUs?: number
+  minSpans?: number
   from: string
   to: string
   limit?: number

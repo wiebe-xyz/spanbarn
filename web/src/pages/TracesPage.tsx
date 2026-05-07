@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import type { TraceSummary } from '../api/types'
 import {
   durationColor,
@@ -16,6 +16,7 @@ type Filters = {
   operation: string
   status: string
   minDurationMs: string
+  minSpans: string
   from: string
   to: string
 }
@@ -25,18 +26,48 @@ const defaultFilters = (): Filters => ({
   operation: '',
   status: '',
   minDurationMs: '',
+  minSpans: '',
   from: new Date(Date.now() - 3600_000).toISOString().slice(0, 16),
   to: new Date().toISOString().slice(0, 16),
 })
 
+function filtersFromParams(params: URLSearchParams): Filters {
+  const defaults = defaultFilters()
+  return {
+    service: params.get('service') ?? defaults.service,
+    operation: params.get('operation') ?? defaults.operation,
+    status: params.get('status') ?? defaults.status,
+    minDurationMs: params.get('minDurationMs') ?? defaults.minDurationMs,
+    minSpans: params.get('minSpans') ?? defaults.minSpans,
+    from: params.get('from') ?? defaults.from,
+    to: params.get('to') ?? defaults.to,
+  }
+}
+
+function filtersToParams(filters: Filters): URLSearchParams {
+  const params = new URLSearchParams()
+  if (filters.service) params.set('service', filters.service)
+  if (filters.operation) params.set('operation', filters.operation)
+  if (filters.status) params.set('status', filters.status)
+  if (filters.minDurationMs) params.set('minDurationMs', filters.minDurationMs)
+  if (filters.minSpans) params.set('minSpans', filters.minSpans)
+  params.set('from', filters.from)
+  params.set('to', filters.to)
+  return params
+}
+
 export function TracesPage(): ReactElement {
   const navigate = useNavigate()
-  const [filters, setFilters] = useState<Filters>(defaultFilters)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [filters, setFilters] = useState<Filters>(() => filtersFromParams(searchParams))
   const [traces, setTraces] = useState<TraceSummary[]>([])
   const [services, setServices] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [offset, setOffset] = useState(0)
+  const [offset, setOffset] = useState(() => {
+    const o = searchParams.get('offset')
+    return o ? parseInt(o, 10) || 0 : 0
+  })
 
   const apiBase = '/api/v1'
 
@@ -75,12 +106,20 @@ export function TracesPage(): ReactElement {
           const us = parseFloat(filters.minDurationMs) * 1000
           if (us > 0) params.set('min_duration_us', String(Math.round(us)))
         }
+        if (filters.minSpans) {
+          const n = parseInt(filters.minSpans, 10)
+          if (n > 0) params.set('min_spans', String(n))
+        }
 
         const resp = await fetch(`${apiBase}/traces?${params}`)
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
         const data: TraceSummary[] = await resp.json()
         setTraces(data)
         setOffset(newOffset)
+
+        const urlParams = filtersToParams(filters)
+        if (newOffset > 0) urlParams.set('offset', String(newOffset))
+        setSearchParams(urlParams, { replace: true })
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Search failed')
         setTraces([])
@@ -88,12 +127,12 @@ export function TracesPage(): ReactElement {
         setLoading(false)
       }
     },
-    [filters],
+    [filters, setSearchParams],
   )
 
   // Initial search
   useEffect(() => {
-    search(0) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
+    search(offset) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateFilter = (key: keyof Filters, value: string) => {
@@ -168,6 +207,21 @@ export function TracesPage(): ReactElement {
             value={filters.minDurationMs}
             onChange={(e) => updateFilter('minDurationMs', e.target.value)}
             style={{ ...inputStyle, width: 100 }}
+          />
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: 12, color: '#9ca3af' }}>
+            Min Spans
+          </span>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            placeholder="0"
+            value={filters.minSpans}
+            onChange={(e) => updateFilter('minSpans', e.target.value)}
+            style={{ ...inputStyle, width: 80 }}
           />
         </label>
 

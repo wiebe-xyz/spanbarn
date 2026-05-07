@@ -115,6 +115,7 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 		Operation:     r.URL.Query().Get("operation"),
 		Status:        r.URL.Query().Get("status"),
 		MinDurationUs: parseInt64Param(r, "min_duration_us", 0),
+		MinSpans:      parseIntParam(r, "min_spans", 0),
 		From:          from,
 		To:            to,
 		Limit:         limit,

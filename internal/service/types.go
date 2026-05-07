@@ -94,6 +94,7 @@ type TraceSearchFilter struct {
 	Operation     string
 	Status        string
 	MinDurationUs int64
+	MinSpans      int
 	From          time.Time
 	To            time.Time
 	Limit         int

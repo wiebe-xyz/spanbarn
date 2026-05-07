@@ -89,12 +89,17 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 			seenSpans[sp.SpanID] = true
 		}
 
+		spanCount := len(seenSpans)
+		if filter.MinSpans > 0 && spanCount < filter.MinSpans {
+			continue
+		}
+
 		result = append(result, TraceSummary{
 			TraceID:      traceID,
 			RootSpanName: root.Name,
 			RootService:  root.Service,
 			DurationUs:   root.DurationUs,
-			SpanCount:    len(seenSpans),
+			SpanCount:    spanCount,
 			Status:       status,
 			StartTime:    time.UnixMicro(root.StartTimeUs),
 		})
