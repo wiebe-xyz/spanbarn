@@ -114,7 +114,18 @@ export function OperationsPage(): ReactElement {
       {/* Operations table */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
-        <table>
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <colgroup>
+            <col style={{ width: '30%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '10%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '8%' }} />
+          </colgroup>
           <thead>
             <tr>
               <th>Operation</th>
@@ -157,23 +168,18 @@ export function OperationsPage(): ReactElement {
                         )
                       }
                     >
-                      <td style={{ maxWidth: 300 }}>
+                      <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         <span
                           style={{
                             fontWeight: 600,
                             color: 'var(--accent)',
-                            display: 'block',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            maxWidth: 300,
                           }}
                           title={op.operation}
                         >
                           {op.operation}
                         </span>
                       </td>
-                      <td className="text-muted">{op.resource || '-'}</td>
+                      <td className="text-muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={op.resource || undefined}>{op.resource || '-'}</td>
                       <td className="text-muted">{op.kind || '-'}</td>
                       <td style={{ textAlign: 'right' }} className="mono">
                         {formatCount(op.spanCount)}
