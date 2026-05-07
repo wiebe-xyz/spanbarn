@@ -53,6 +53,8 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/traces/", apiRL(sessionAuth(qh)))
 		s.mux.Handle("/api/v1/dependencies", apiRL(sessionAuth(http.HandlerFunc(qh.handleDependencies))))
 		s.mux.Handle("/api/v1/database", apiRL(sessionAuth(http.HandlerFunc(qh.handleDatabaseQueries))))
+		s.mux.Handle("/api/v1/prompts", apiRL(sessionAuth(http.HandlerFunc(qh.handlePrompts))))
+		s.mux.Handle("/api/v1/prompts/detail", apiRL(sessionAuth(http.HandlerFunc(qh.handlePromptDetail))))
 	}
 
 	// Alert endpoints — rate limited + session auth required.

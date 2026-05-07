@@ -261,6 +261,15 @@ func (h *queryHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			writeError(w, http.StatusNotFound, "not found", "")
 		}
+	case "prompts":
+		switch {
+		case len(parts) == 3:
+			h.handlePrompts(w, r)
+		case len(parts) == 4 && parts[3] == "detail":
+			h.handlePromptDetail(w, r)
+		default:
+			writeError(w, http.StatusNotFound, "not found", "")
+		}
 	default:
 		writeError(w, http.StatusNotFound, "not found", "")
 	}
