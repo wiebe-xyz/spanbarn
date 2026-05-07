@@ -21,14 +21,19 @@ type Filters = {
   to: string
 }
 
+function toLocalDatetime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 const defaultFilters = (): Filters => ({
   service: '',
   operation: '',
   status: '',
   minDurationMs: '',
   minSpans: '',
-  from: new Date(Date.now() - 3600_000).toISOString().slice(0, 16),
-  to: new Date().toISOString().slice(0, 16),
+  from: toLocalDatetime(new Date(Date.now() - 3600_000)),
+  to: toLocalDatetime(new Date()),
 })
 
 function filtersFromParams(params: URLSearchParams): Filters {
