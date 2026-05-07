@@ -1,6 +1,191 @@
 import { useState, useEffect, useCallback, type ReactElement } from 'react'
-import { CheckCircle, XCircle, ExternalLink, Copy, Check, Key, ChevronDown, ChevronRight, Zap } from 'lucide-react'
+import { CheckCircle, XCircle, ExternalLink, Copy, Check, Key, ChevronDown, ChevronRight, Zap, HardDrive, MemoryStick } from 'lucide-react'
 import { fetchJSON } from '../api/client'
+
+type SystemStats = {
+  db: {
+    dbSizeBytes: number
+    spanCount: number
+    aggregateCount: number
+    errorSampleCount: number
+    spoolSizeBytes: number
+  }
+  memory: {
+    allocBytes: number
+    sysBytes: number
+    numGC: number
+  }
+}
+
+type RetentionSettings = {
+  retention_full_hours: string
+  retention_aggregated_days: string
+  retention_error_days: string
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+function formatNumber(n: number): string {
+  return n.toLocaleString()
+}
+
+function SystemHealthPanel() {
+  const [stats, setStats] = useState<SystemStats | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetchJSON<SystemStats>('/api/v1/stats')
+      .then(setStats)
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="skeleton" style={{ height: 120 }} />
+  if (!stats) return null
+
+  return (
+    <div className="card" style={{ marginBottom: '1.5rem' }}>
+      <div style={{ fontWeight: 700, fontSize: '0.875rem', marginBottom: '0.75rem' }}>
+        System Health
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <HardDrive size={14} color="var(--accent)" />
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Database</span>
+          </div>
+          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatBytes(stats.db.dbSizeBytes)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Spool</div>
+          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatBytes(stats.db.spoolSizeBytes)}</div>
+        </div>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <MemoryStick size={14} color="var(--accent)" />
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Memory</span>
+          </div>
+          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatBytes(stats.memory.allocBytes)}</div>
+          <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>of {formatBytes(stats.memory.sysBytes)} sys</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Spans</div>
+          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatNumber(stats.db.spanCount)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Aggregates</div>
+          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatNumber(stats.db.aggregateCount)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Error Samples</div>
+          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatNumber(stats.db.errorSampleCount)}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RetentionSettingsPanel() {
+  const [settings, setSettings] = useState<RetentionSettings>({
+    retention_full_hours: '72',
+    retention_aggregated_days: '30',
+    retention_error_days: '90',
+  })
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetchJSON<Record<string, string>>('/api/v1/settings')
+      .then((data) => {
+        if (data) {
+          setSettings((prev) => ({ ...prev, ...data }))
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await fetchJSON('/api/v1/settings', {
+        method: 'PUT',
+        body: JSON.stringify(settings),
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch {
+      // ignore
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) return <div className="skeleton" style={{ height: 100 }} />
+
+  const fieldStyle: React.CSSProperties = {
+    padding: '0.375rem 0.5rem',
+    fontSize: '0.8125rem',
+    width: 80,
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: '1.5rem' }}>
+      <div style={{ fontWeight: 700, fontSize: '0.875rem', marginBottom: '0.75rem' }}>
+        Retention
+      </div>
+      <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'end' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Span retention (hours)</span>
+          <input
+            type="number"
+            min="1"
+            value={settings.retention_full_hours}
+            onChange={(e) => setSettings((s) => ({ ...s, retention_full_hours: e.target.value }))}
+            style={fieldStyle}
+          />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Aggregate retention (days)</span>
+          <input
+            type="number"
+            min="1"
+            value={settings.retention_aggregated_days}
+            onChange={(e) => setSettings((s) => ({ ...s, retention_aggregated_days: e.target.value }))}
+            style={fieldStyle}
+          />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Error sample retention (days)</span>
+          <input
+            type="number"
+            min="1"
+            value={settings.retention_error_days}
+            onChange={(e) => setSettings((s) => ({ ...s, retention_error_days: e.target.value }))}
+            style={fieldStyle}
+          />
+        </label>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="btn"
+          style={{ fontSize: '0.8125rem' }}
+        >
+          {saved ? 'Saved!' : saving ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+      <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 8 }}>
+        Spans older than the retention window are aggregated and deleted. Changes take effect on the next retention cycle (~5 min).
+      </div>
+    </div>
+  )
+}
 
 type Project = {
   id: number
@@ -204,6 +389,10 @@ export function SettingsPage(): ReactElement {
           {error}
         </div>
       )}
+
+      {/* System health + retention */}
+      <SystemHealthPanel />
+      <RetentionSettingsPanel />
 
       {/* LLM Setup reference */}
       <div

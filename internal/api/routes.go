@@ -52,6 +52,15 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/alerts/", apiRL(sessionAuth(ah)))
 	}
 
+	// Settings + stats endpoints — rate limited + session auth required.
+	if s.repo != nil && s.sessionMgr != nil {
+		sh := &settingsHandlers{repo: s.repo, dbPath: s.dbPath, spoolDir: s.spoolDir}
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+
+		s.mux.Handle("/api/v1/settings", apiRL(sessionAuth(sh)))
+		s.mux.Handle("/api/v1/stats", apiRL(sessionAuth(sh)))
+	}
+
 	// Setup endpoint — public, no auth required.
 	if s.repo != nil {
 		s.mux.HandleFunc("/api/v1/setup/{slug}", s.handleSetup)

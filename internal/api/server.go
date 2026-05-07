@@ -45,6 +45,8 @@ type Server struct {
 	sessionMgr     *auth.SessionManager
 	authorizer     *auth.Authorizer
 	repo           *repository.Repository
+	dbPath         string
+	spoolDir       string
 	logger         *slog.Logger
 }
 
@@ -62,6 +64,14 @@ func WithRepository(repo *repository.Repository) ServerOption {
 func WithAuthorizer(a *auth.Authorizer) ServerOption {
 	return func(s *Server) {
 		s.authorizer = a
+	}
+}
+
+// WithPaths sets the database and spool directory paths for stats reporting.
+func WithPaths(dbPath, spoolDir string) ServerOption {
+	return func(s *Server) {
+		s.dbPath = dbPath
+		s.spoolDir = spoolDir
 	}
 }
 

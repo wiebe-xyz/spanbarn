@@ -3,6 +3,7 @@ package retention
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -25,6 +26,7 @@ type Repository interface {
 	InsertErrorSamples(spans []repository.Span) error
 	DeleteErrorSamplesOlderThan(cutoff time.Time) (int64, error)
 	DeleteAggregatesOlderThan(cutoff time.Time) (int64, error)
+	GetSetting(key string) (string, error)
 }
 
 // Config controls the retention worker's behaviour.
@@ -97,14 +99,37 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 //  2. Separate error/slow spans and insert into error_samples
 //  3. Aggregate all spans and persist aggregates
 //  4. Delete old spans, error_samples, and aggregates
+// effectiveConfig returns the retention config, overriding with DB settings where present.
+func (w *RetentionWorker) effectiveConfig() Config {
+	cfg := w.cfg
+	if v, err := w.repo.GetSetting("retention_full_hours"); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.FullRetentionHours = n
+		}
+	}
+	if v, err := w.repo.GetSetting("retention_aggregated_days"); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.AggregateRetentionDays = n
+		}
+	}
+	if v, err := w.repo.GetSetting("retention_error_days"); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.ErrorRetentionDays = n
+		}
+	}
+	return cfg
+}
+
 func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "retention.cycle")
 	defer span.End()
 
+	cfg := w.effectiveConfig()
+
 	now := time.Now().UTC()
-	spanCutoff := now.Add(-time.Duration(w.cfg.FullRetentionHours) * time.Hour)
-	errorCutoff := now.Add(-time.Duration(w.cfg.ErrorRetentionDays) * 24 * time.Hour)
-	aggCutoff := now.Add(-time.Duration(w.cfg.AggregateRetentionDays) * 24 * time.Hour)
+	spanCutoff := now.Add(-time.Duration(cfg.FullRetentionHours) * time.Hour)
+	errorCutoff := now.Add(-time.Duration(cfg.ErrorRetentionDays) * 24 * time.Hour)
+	aggCutoff := now.Add(-time.Duration(cfg.AggregateRetentionDays) * 24 * time.Hour)
 
 	var totalAggregated int64
 	var totalSampled int64
