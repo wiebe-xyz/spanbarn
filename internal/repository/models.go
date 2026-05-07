@@ -87,6 +87,51 @@ type AggregateFilter struct {
 	Offset    int
 }
 
+type PromptRecord struct {
+	ID                 int64        `json:"id"`
+	ProjectID          int64        `json:"projectId"`
+	TraceID            string       `json:"traceId"`
+	SpanID             string       `json:"spanId"`
+	ParentSpanID       string       `json:"parentSpanId"`
+	Service            string       `json:"service"`
+	Name               string       `json:"name"`
+	GenAISystem        string       `json:"genAiSystem"`
+	Model              string       `json:"model"`
+	Temperature        *float64     `json:"temperature"`
+	MaxTokens          *int64       `json:"maxTokens"`
+	PromptBody         string       `json:"promptBody"`
+	ResponseBody       string       `json:"responseBody"`
+	InputTokens        int64        `json:"inputTokens"`
+	OutputTokens       int64        `json:"outputTokens"`
+	TotalTokens        int64        `json:"totalTokens"`
+	CostUSD            float64      `json:"costUsd"`
+	DurationUs         int64        `json:"durationUs"`
+	Status             string       `json:"status"`
+	FinishReason       string       `json:"finishReason"`
+	PromptTemplate     string       `json:"promptTemplate"`
+	PromptHash         string       `json:"promptHash"`
+	Outcome            string       `json:"outcome"`
+	QualityScore       *float64     `json:"qualityScore"`
+	FeatureFlagKey     string       `json:"featureFlagKey"`
+	FeatureFlagVariant string       `json:"featureFlagVariant"`
+	StartTimeUs        int64        `json:"startTimeUs"`
+	IngestedAt         time.Time    `json:"ingestedAt"`
+}
+
+type PromptFilter struct {
+	ProjectID    int64
+	Service      string
+	Model        string
+	GenAISystem  string
+	Status       string
+	PromptHash   string
+	MinDuration  int64
+	From         time.Time
+	To           time.Time
+	Limit        int
+	Offset       int
+}
+
 type Alert struct {
 	ID               int64        `json:"id"`
 	ProjectID        int64        `json:"projectId"`

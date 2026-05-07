@@ -1,13 +1,13 @@
 import { useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, Search, GitBranch, Database, MoreHorizontal, Settings, LogOut } from 'lucide-react'
+import { Activity, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, LogOut } from 'lucide-react'
 import { api } from '../api/client'
 
 const tabs = [
   { to: '/', icon: Activity, label: 'Services' },
   { to: '/traces', icon: Search, label: 'Traces' },
   { to: '/dependencies', icon: GitBranch, label: 'Deps' },
-  { to: '/database', icon: Database, label: 'DB' },
+  { to: '/prompts', icon: BrainCircuit, label: 'Prompts' },
 ]
 
 export function MobileTabBar(): ReactElement {
@@ -55,6 +55,25 @@ export function MobileTabBar(): ReactElement {
             boxShadow: '0 -4px 24px rgba(0, 0, 0, 0.4)',
           }}
         >
+          <NavLink
+            to="/database"
+            onClick={() => setMoreOpen(false)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.625rem',
+              width: '100%',
+              padding: '0.625rem 0.75rem',
+              borderRadius: '0.5rem',
+              fontSize: '0.875rem',
+              fontWeight: 500,
+              color: 'var(--text-muted)',
+              textDecoration: 'none',
+            }}
+          >
+            <Database size={18} />
+            Database
+          </NavLink>
           <NavLink
             to="/settings"
             onClick={() => setMoreOpen(false)}

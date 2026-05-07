@@ -32,6 +32,10 @@ func (m *mockRepo) InsertSpans(_ context.Context, spans []repository.Span) error
 	return nil
 }
 
+func (m *mockRepo) InsertPromptRecords(_ context.Context, _ []repository.PromptRecord) error {
+	return nil
+}
+
 func (m *mockRepo) getSpans() []repository.Span {
 	m.mu.Lock()
 	defer m.mu.Unlock()

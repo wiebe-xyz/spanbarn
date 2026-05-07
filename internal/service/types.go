@@ -87,6 +87,24 @@ type DatabaseQuerySummary struct {
 	TotalTimeUs int64   `json:"totalTimeUs"`
 }
 
+// PromptSummary holds aggregated metrics for a single prompt operation.
+type PromptSummary struct {
+	Name         string  `json:"name"`
+	GenAISystem  string  `json:"genAiSystem"`
+	Model        string  `json:"model"`
+	Service      string  `json:"service"`
+	CallCount    int64   `json:"callCount"`
+	ErrorCount   int64   `json:"errorCount"`
+	ErrorRate    float64 `json:"errorRate"`
+	P50Us        int64   `json:"p50Us"`
+	P95Us        int64   `json:"p95Us"`
+	P99Us        int64   `json:"p99Us"`
+	TotalTimeUs  int64   `json:"totalTimeUs"`
+	InputTokens  int64   `json:"inputTokens"`
+	OutputTokens int64   `json:"outputTokens"`
+	TotalCostUSD float64 `json:"totalCostUsd"`
+}
+
 // TraceSearchFilter holds parameters for searching traces.
 type TraceSearchFilter struct {
 	ProjectID     int64

@@ -98,6 +98,56 @@ export type DatabaseQuerySummary = {
   totalTimeUs: number
 }
 
+/** Aggregated metrics for a single prompt operation. */
+export type PromptSummary = {
+  name: string
+  genAiSystem: string
+  model: string
+  service: string
+  callCount: number
+  errorCount: number
+  errorRate: number
+  p50Us: number
+  p95Us: number
+  p99Us: number
+  totalTimeUs: number
+  inputTokens: number
+  outputTokens: number
+  totalCostUsd: number
+}
+
+/** A single prompt record with full detail. */
+export type PromptRecord = {
+  id: number
+  projectId: number
+  traceId: string
+  spanId: string
+  parentSpanId: string
+  service: string
+  name: string
+  genAiSystem: string
+  model: string
+  temperature: number | null
+  maxTokens: number | null
+  promptBody: string
+  responseBody: string
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  costUsd: number
+  durationUs: number
+  status: string
+  finishReason: string
+  promptTemplate: string
+  promptHash: string
+  outcome: string
+  qualityScore: number | null
+  featureFlagKey: string
+  featureFlagVariant: string
+  startTimeUs: number
+  ingestedAt: string
+}
+
 /** Health check response. */
 export type HealthResponse = {
   status: string

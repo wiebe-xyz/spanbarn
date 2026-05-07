@@ -236,6 +236,10 @@ func (a *workerRepoAdapter) InsertSpans(_ context.Context, spans []repository.Sp
 	return a.repo.InsertSpans(spans)
 }
 
+func (a *workerRepoAdapter) InsertPromptRecords(_ context.Context, records []repository.PromptRecord) error {
+	return a.repo.InsertPromptRecords(records)
+}
+
 type keyLookupAdapter struct {
 	repo *repository.Repository
 }

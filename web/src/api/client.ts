@@ -6,6 +6,8 @@ import type {
   TraceDetail,
   DependencySummary,
   DatabaseQuerySummary,
+  PromptSummary,
+  PromptRecord,
   HealthResponse,
   TraceSearchParams,
 } from './types'
@@ -115,6 +117,16 @@ export const api = {
   getDatabaseQueries: (from: string, to: string, service?: string) =>
     fetchJSON<DatabaseQuerySummary[]>(
       `/api/v1/database${qs({ from, to, service })}`,
+    ),
+
+  getPrompts: (from: string, to: string, service?: string, model?: string) =>
+    fetchJSON<PromptSummary[]>(
+      `/api/v1/prompts${qs({ from, to, service, model })}`,
+    ),
+
+  getPromptDetail: (from: string, to: string, name: string, model?: string, service?: string) =>
+    fetchJSON<PromptRecord[]>(
+      `/api/v1/prompts/detail${qs({ from, to, name, model, service })}`,
     ),
 
   getHealth: () => fetchJSON<HealthResponse>('/api/v1/health'),

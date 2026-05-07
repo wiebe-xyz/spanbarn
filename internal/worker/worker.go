@@ -29,6 +29,7 @@ const (
 // Repository is the interface the worker needs to persist spans.
 type Repository interface {
 	InsertSpans(ctx context.Context, spans []repository.Span) error
+	InsertPromptRecords(ctx context.Context, records []repository.PromptRecord) error
 }
 
 // Metrics tracks worker processing stats.
@@ -165,6 +166,12 @@ func (w *Worker) processBatch(ctx context.Context) {
 		w.metrics.mu.Lock()
 		w.metrics.ProcessedCount += int64(len(spans))
 		w.metrics.mu.Unlock()
+
+		if promptRecs := extractPromptRecords(spans); len(promptRecs) > 0 {
+			if err := w.repo.InsertPromptRecords(ctx, promptRecs); err != nil {
+				w.logger.Warn("worker: insert prompt records", "count", len(promptRecs), "error", err)
+			}
+		}
 	}
 
 	if err := w.spool.SaveCursor(nextCursor); err != nil {
