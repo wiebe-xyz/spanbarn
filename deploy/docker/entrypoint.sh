@@ -5,6 +5,13 @@ if [ -z "${LITESTREAM_ACCESS_KEY_ID:-}" ] || [ "${SPANBARN_MODE:-}" = "ingest" ]
   exec spanbarn
 fi
 
+case "$LITESTREAM_ACCESS_KEY_ID" in
+  REPLACE*|CHANGEME*|TODO*|PLACEHOLDER*)
+    echo "WARNING: LITESTREAM_ACCESS_KEY_ID looks like a placeholder ('$LITESTREAM_ACCESS_KEY_ID'), skipping Litestream."
+    exec spanbarn
+    ;;
+esac
+
 if [ ! -f "$SPANBARN_DB_PATH" ]; then
   echo "Restoring database from Litestream replica (${LITESTREAM_REPLICA_PATH})..."
   litestream restore \
