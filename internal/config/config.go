@@ -36,6 +36,8 @@ type Config struct {
 	IngestRatePerMinute    int
 	APIRatePerMinute       int
 	MetricsToken           string
+	Mode                   string // "writer" (default) or "ingest"
+	WriterURL              string // URL of writer pod, used when Mode=ingest
 }
 
 // Load reads configuration from SPANBARN_* environment variables with defaults.
@@ -68,6 +70,8 @@ func Load() Config {
 		IngestRatePerMinute:     getenvInt("SPANBARN_INGEST_RATE_PER_MINUTE", 1000),
 		APIRatePerMinute:        getenvInt("SPANBARN_API_RATE_PER_MINUTE", 300),
 		MetricsToken:            os.Getenv("SPANBARN_METRICS_TOKEN"),
+		Mode:                    getenv("SPANBARN_MODE", "writer"),
+		WriterURL:               os.Getenv("SPANBARN_WRITER_URL"),
 	}
 
 	if raw := os.Getenv("SPANBARN_ALLOWED_ORIGINS"); raw != "" {

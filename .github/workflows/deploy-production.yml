@@ -125,9 +125,12 @@ jobs:
             kubectl apply -k /tmp/spanbarn-deploy/deploy/k8s/production
             kubectl -n ${NAMESPACE} set image deployment/spanbarn \
               spanbarn=${SERVICE_IMAGE}:${SHA}
+            kubectl -n ${NAMESPACE} set image deployment/spanbarn-ingest \
+              spanbarn-ingest=${SERVICE_IMAGE}:${SHA}
             kubectl -n ${NAMESPACE} set image deployment/spanbarn-web \
               spanbarn-web=${WEB_IMAGE}:${SHA}
             kubectl -n ${NAMESPACE} rollout status deployment/spanbarn --timeout=180s
+            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-ingest --timeout=180s
             kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-web --timeout=180s
           "
 
@@ -136,6 +139,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
             kubectl -n ${NAMESPACE} rollout undo deployment/spanbarn || true
+            kubectl -n ${NAMESPACE} rollout undo deployment/spanbarn-ingest || true
             kubectl -n ${NAMESPACE} rollout undo deployment/spanbarn-web || true
             echo 'Rollback triggered'
           " || true

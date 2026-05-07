@@ -11,6 +11,18 @@ func (s *Server) registerRoutes() {
 	// Health endpoint — no auth required.
 	s.mux.HandleFunc("/api/v1/health", s.handleHealth)
 
+	// Internal ingest endpoint — used by ingest pods to forward spans to writer.
+	// Authenticated via the same API key as external ingest.
+	if s.ingest != nil {
+		var internalAuth func(http.Handler) http.Handler
+		if s.authorizer != nil {
+			internalAuth = func(next http.Handler) http.Handler { return authorizerOrBearerAuth(s.authorizer, next) }
+		} else {
+			internalAuth = func(next http.Handler) http.Handler { return apiKeyOrBearerAuth(s.apiKey, next) }
+		}
+		s.mux.Handle("/internal/v1/ingest", internalAuth(http.HandlerFunc(s.handleInternalIngest)))
+	}
+
 	// Metrics endpoint.
 	if s.metrics != nil {
 		s.mux.Handle("/metrics", s.metrics.Handler(s.metricsToken))

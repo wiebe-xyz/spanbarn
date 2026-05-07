@@ -12,6 +12,20 @@ spec:
     - host: spanbarn.wiebe.xyz
       http:
         paths:
+          - path: /v1/traces
+            pathType: Prefix
+            backend:
+              service:
+                name: spanbarn-ingest
+                port:
+                  name: http
+          - path: /api/v1/spans
+            pathType: Prefix
+            backend:
+              service:
+                name: spanbarn-ingest
+                port:
+                  name: http
           - path: /api
             pathType: Prefix
             backend:

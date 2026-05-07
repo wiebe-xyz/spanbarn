@@ -18,6 +18,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/api"
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
+	"github.com/wiebe-xyz/spanbarn/internal/forward"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
@@ -60,6 +61,10 @@ func run() error {
 		case "apikey":
 			return runAPIKeyCmd(cfg, os.Args[2:])
 		}
+	}
+
+	if cfg.Mode == "ingest" {
+		return runIngestMode(cfg, logger)
 	}
 
 	if cfg.SessionSecret == "" {
@@ -265,4 +270,74 @@ func (a *userLookupAdapter) GetUserByUsername(username string) (auth.UserRecord,
 		Username:     u.Username,
 		PasswordHash: u.PasswordHash,
 	}, nil
+}
+
+// runIngestMode starts the binary in ingest-only mode: accepts spans, buffers
+// to spool, and forwards batches to the writer pod. No SQLite, no query API.
+func runIngestMode(cfg config.Config, logger *slog.Logger) error {
+	if cfg.WriterURL == "" {
+		return fmt.Errorf("SPANBARN_WRITER_URL is required in ingest mode")
+	}
+
+	logger.Info("starting in ingest mode", "writer_url", cfg.WriterURL)
+
+	eventSpool, err := spool.NewSpool(cfg.SpoolDir, cfg.MaxSpoolBytes)
+	if err != nil {
+		return fmt.Errorf("create spool: %w", err)
+	}
+	defer eventSpool.Close()
+
+	queue := ingest.NewQueue(32768)
+	ingestHandler := ingest.NewHandler(queue, eventSpool, 5*time.Millisecond, logger)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	ingestHandler.Start(ctx)
+
+	fwd := forward.New(eventSpool, cfg.WriterURL, cfg.APIKey, logger)
+	go fwd.Run(ctx)
+
+	serverCfg := api.ServerConfig{
+		APIKey:       cfg.APIKey,
+		MaxBodyBytes: cfg.MaxBodyBytes,
+		Version:      Version,
+		IngestRate:   cfg.IngestRatePerMinute,
+	}
+	apiServer := api.NewServer(serverCfg, ingestHandler, logger)
+
+	httpServer := &http.Server{
+		Addr:         cfg.Addr,
+		Handler:      apiServer.Handler(),
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("ingest listening", "addr", cfg.Addr)
+		errCh <- httpServer.ListenAndServe()
+	}()
+
+	select {
+	case <-ctx.Done():
+		logger.Info("shutting down ingest")
+	case err := <-errCh:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error("http server shutdown error", "error", err)
+	}
+
+	ingestHandler.Stop()
+	logger.Info("ingest shutdown complete")
+	return nil
 }

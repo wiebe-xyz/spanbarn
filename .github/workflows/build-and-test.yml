@@ -189,9 +189,12 @@ jobs:
             kubectl apply -k /tmp/spanbarn-deploy/deploy/k8s/testing
             kubectl -n ${NAMESPACE} set image deployment/spanbarn \
               spanbarn=${SERVICE_IMAGE}:${{ github.sha }}
+            kubectl -n ${NAMESPACE} set image deployment/spanbarn-ingest \
+              spanbarn-ingest=${SERVICE_IMAGE}:${{ github.sha }}
             kubectl -n ${NAMESPACE} set image deployment/spanbarn-web \
               spanbarn-web=${WEB_IMAGE}:${{ github.sha }}
             kubectl -n ${NAMESPACE} rollout status deployment/spanbarn --timeout=360s
+            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-ingest --timeout=360s
             kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-web --timeout=360s
           "
 
@@ -265,9 +268,12 @@ jobs:
             kubectl apply -k /tmp/spanbarn-deploy-staging/deploy/k8s/staging
             kubectl -n spanbarn-staging set image deployment/spanbarn \
               spanbarn=${SERVICE_IMAGE}:${{ github.sha }}
+            kubectl -n spanbarn-staging set image deployment/spanbarn-ingest \
+              spanbarn-ingest=${SERVICE_IMAGE}:${{ github.sha }}
             kubectl -n spanbarn-staging set image deployment/spanbarn-web \
               spanbarn-web=${WEB_IMAGE}:${{ github.sha }}
             kubectl -n spanbarn-staging rollout status deployment/spanbarn --timeout=360s
+            kubectl -n spanbarn-staging rollout status deployment/spanbarn-ingest --timeout=360s
             kubectl -n spanbarn-staging rollout status deployment/spanbarn-web --timeout=360s
           "
 
