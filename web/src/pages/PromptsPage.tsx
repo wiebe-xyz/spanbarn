@@ -46,16 +46,15 @@ export function PromptsPage(): ReactElement {
   const navigate = useNavigate()
 
   const fetchData = useCallback(() => {
+    setLoading(true)
     const { from, to } = getTimeRange(range)
     return api.getPrompts(from, to, serviceFilter || undefined).then((data) => {
       setPrompts(data ?? [])
-    }).catch(() => {})
+    }).catch(() => {}).finally(() => { setLoading(false) })
   }, [range, serviceFilter])
 
   useEffect(() => {
-    let cancelled = false
-    fetchData().finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
+    fetchData() // eslint-disable-line react-hooks/set-state-in-effect -- async fetch pattern
   }, [fetchData])
 
   const handleSort = (field: SortField) => {

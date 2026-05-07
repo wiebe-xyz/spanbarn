@@ -93,6 +93,9 @@ export type DatabaseQuerySpan = {
   status: string
   startTimeUs: number
   ingestedAt: string
+  callerName: string
+  callerService: string
+  errorMessage: string
 }
 
 /** Database query pattern metrics. */

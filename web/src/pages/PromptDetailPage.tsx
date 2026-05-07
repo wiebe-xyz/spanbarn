@@ -39,6 +39,7 @@ export function PromptDetailPage(): ReactElement {
 
   const fetchData = useCallback(() => {
     if (!name) return Promise.resolve()
+    setLoading(true)
     const { from, to } = getTimeRange(range)
     return api
       .getPromptDetail(
@@ -51,13 +52,11 @@ export function PromptDetailPage(): ReactElement {
       )
       .then((data) => { setRecords(data ?? []) })
       .catch(() => {})
+      .finally(() => { setLoading(false) })
   }, [name, model, service, range, statusFilter, finishReasonFilter])
 
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    fetchData().finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
+    fetchData() // eslint-disable-line react-hooks/set-state-in-effect -- async fetch pattern
   }, [fetchData])
 
   // Derive available finish reasons from current result set for the dropdown
