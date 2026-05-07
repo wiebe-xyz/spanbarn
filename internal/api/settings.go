@@ -15,12 +15,6 @@ type settingsHandlers struct {
 	spoolDir string
 }
 
-type settingsResponse struct {
-	RetentionFullHours     string `json:"retention_full_hours"`
-	RetentionAggregatedDays string `json:"retention_aggregated_days"`
-	RetentionErrorDays     string `json:"retention_error_days"`
-}
-
 func (h *settingsHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSuffix(r.URL.Path, "/")
 
