@@ -134,7 +134,11 @@ export type PromptRecord = {
   inputTokens: number
   outputTokens: number
   totalTokens: number
+  cachedInputTokens: number
+  reasoningOutputTokens: number
   costUsd: number
+  inputCostUsd: number
+  outputCostUsd: number
   durationUs: number
   status: string
   finishReason: string

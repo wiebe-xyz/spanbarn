@@ -124,9 +124,9 @@ export const api = {
       `/api/v1/prompts${qs({ from, to, service, model })}`,
     ),
 
-  getPromptDetail: (from: string, to: string, name: string, model?: string, service?: string) =>
+  getPromptDetail: (from: string, to: string, name: string, model?: string, service?: string, status?: string, finishReason?: string) =>
     fetchJSON<PromptRecord[]>(
-      `/api/v1/prompts/detail${qs({ from, to, name, model, service })}`,
+      `/api/v1/prompts/detail${qs({ from, to, name, model, service, status, finish_reason: finishReason })}`,
     ),
 
   getHealth: () => fetchJSON<HealthResponse>('/api/v1/health'),

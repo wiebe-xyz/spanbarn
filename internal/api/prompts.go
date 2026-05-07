@@ -51,6 +51,8 @@ func (h *queryHandlers) handlePromptDetail(w http.ResponseWriter, r *http.Reques
 	name := r.URL.Query().Get("name")
 	model := r.URL.Query().Get("model")
 	svcFilter := r.URL.Query().Get("service")
+	statusFilter := r.URL.Query().Get("status")
+	finishReason := r.URL.Query().Get("finish_reason")
 
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "missing name parameter", "")
@@ -58,7 +60,7 @@ func (h *queryHandlers) handlePromptDetail(w http.ResponseWriter, r *http.Reques
 	}
 	span.SetAttributes(attribute.String("prompt.name", name))
 
-	records, err := h.svc.GetPromptDetail(ctx, 0, from, to, name, model, svcFilter)
+	records, err := h.svc.GetPromptDetail(ctx, 0, from, to, name, model, svcFilter, statusFilter, finishReason)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return

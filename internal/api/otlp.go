@@ -63,7 +63,8 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	records := otlpToSpanRecords(&req)
+	projectID := GetProjectID(r.Context())
+	records := otlpToSpanRecords(&req, projectID)
 
 	if span != nil {
 		span.SetAttributes(attribute.Int("span_count", len(records)))
@@ -97,8 +98,9 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// otlpToSpanRecords converts an OTLP ExportTraceServiceRequest into SpanRecords.
-func otlpToSpanRecords(req *collectorpb.ExportTraceServiceRequest) []model.SpanRecord {
+// otlpToSpanRecords converts an OTLP ExportTraceServiceRequest into SpanRecords
+// stamped with the given projectID (from the authenticated API key).
+func otlpToSpanRecords(req *collectorpb.ExportTraceServiceRequest, projectID int64) []model.SpanRecord {
 	var records []model.SpanRecord
 	for _, rs := range req.GetResourceSpans() {
 		serviceName := extractServiceName(rs.GetResource().GetAttributes())
@@ -133,6 +135,7 @@ func otlpToSpanRecords(req *collectorpb.ExportTraceServiceRequest) []model.SpanR
 				}
 
 				rec := model.SpanRecord{
+					ProjectID:    projectID,
 					TraceID:      hex.EncodeToString(span.GetTraceId()),
 					SpanID:       hex.EncodeToString(span.GetSpanId()),
 					ParentSpanID: hexIfNonEmpty(span.GetParentSpanId()),

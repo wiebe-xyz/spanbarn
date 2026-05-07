@@ -20,14 +20,18 @@ func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
 		(project_id, trace_id, span_id, parent_span_id, service, name,
 		 gen_ai_system, model, temperature, max_tokens,
 		 prompt_body, response_body,
-		 input_tokens, output_tokens, total_tokens, cost_usd, duration_us,
+		 input_tokens, output_tokens, total_tokens,
+		 cached_input_tokens, reasoning_output_tokens,
+		 cost_usd, input_cost_usd, output_cost_usd, duration_us,
 		 status, finish_reason,
 		 prompt_template, prompt_hash, outcome, quality_score,
 		 feature_flag_key, feature_flag_variant, start_time_us)
 		VALUES (?, ?, ?, ?, ?, ?,
 		        ?, ?, ?, ?,
 		        ?, ?,
-		        ?, ?, ?, ?, ?,
+		        ?, ?, ?,
+		        ?, ?,
+		        ?, ?, ?, ?,
 		        ?, ?,
 		        ?, ?, ?, ?,
 		        ?, ?, ?)`)
@@ -45,7 +49,9 @@ func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
 			rec.ProjectID, rec.TraceID, rec.SpanID, parentID, rec.Service, rec.Name,
 			rec.GenAISystem, rec.Model, rec.Temperature, rec.MaxTokens,
 			rec.PromptBody, rec.ResponseBody,
-			rec.InputTokens, rec.OutputTokens, rec.TotalTokens, rec.CostUSD, rec.DurationUs,
+			rec.InputTokens, rec.OutputTokens, rec.TotalTokens,
+			rec.CachedInputTokens, rec.ReasoningOutputTokens,
+			rec.CostUSD, rec.InputCostUSD, rec.OutputCostUSD, rec.DurationUs,
 			rec.Status, rec.FinishReason,
 			rec.PromptTemplate, rec.PromptHash, rec.Outcome, rec.QualityScore,
 			rec.FeatureFlagKey, rec.FeatureFlagVariant, rec.StartTimeUs,
@@ -80,6 +86,10 @@ func (r *Repository) QueryPromptRecords(f PromptFilter) ([]PromptRecord, error) 
 		where = append(where, "status = ?")
 		args = append(args, f.Status)
 	}
+	if f.FinishReason != "" {
+		where = append(where, "finish_reason = ?")
+		args = append(args, f.FinishReason)
+	}
 	if f.PromptHash != "" {
 		where = append(where, "prompt_hash = ?")
 		args = append(args, f.PromptHash)
@@ -100,7 +110,9 @@ func (r *Repository) QueryPromptRecords(f PromptFilter) ([]PromptRecord, error) 
 	q := `SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), service, name,
 		gen_ai_system, model, temperature, max_tokens,
 		prompt_body, response_body,
-		input_tokens, output_tokens, total_tokens, cost_usd, duration_us,
+		input_tokens, output_tokens, total_tokens,
+		cached_input_tokens, reasoning_output_tokens,
+		cost_usd, input_cost_usd, output_cost_usd, duration_us,
 		status, finish_reason,
 		prompt_template, prompt_hash, outcome, quality_score,
 		feature_flag_key, feature_flag_variant, start_time_us, ingested_at
@@ -127,7 +139,9 @@ func (r *Repository) GetPromptRecordsByTraceID(traceID string) ([]PromptRecord, 
 		`SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), service, name,
 		gen_ai_system, model, temperature, max_tokens,
 		prompt_body, response_body,
-		input_tokens, output_tokens, total_tokens, cost_usd, duration_us,
+		input_tokens, output_tokens, total_tokens,
+		cached_input_tokens, reasoning_output_tokens,
+		cost_usd, input_cost_usd, output_cost_usd, duration_us,
 		status, finish_reason,
 		prompt_template, prompt_hash, outcome, quality_score,
 		feature_flag_key, feature_flag_variant, start_time_us, ingested_at
@@ -158,7 +172,9 @@ func (r *Repository) scanPromptRecords(query string, args ...any) ([]PromptRecor
 			&rec.Service, &rec.Name,
 			&rec.GenAISystem, &rec.Model, &rec.Temperature, &rec.MaxTokens,
 			&rec.PromptBody, &rec.ResponseBody,
-			&rec.InputTokens, &rec.OutputTokens, &rec.TotalTokens, &rec.CostUSD, &rec.DurationUs,
+			&rec.InputTokens, &rec.OutputTokens, &rec.TotalTokens,
+			&rec.CachedInputTokens, &rec.ReasoningOutputTokens,
+			&rec.CostUSD, &rec.InputCostUSD, &rec.OutputCostUSD, &rec.DurationUs,
 			&rec.Status, &rec.FinishReason,
 			&rec.PromptTemplate, &rec.PromptHash, &rec.Outcome, &rec.QualityScore,
 			&rec.FeatureFlagKey, &rec.FeatureFlagVariant, &rec.StartTimeUs, &rec.IngestedAt,

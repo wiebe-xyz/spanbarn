@@ -95,17 +95,19 @@ func (s *QueryService) ListPrompts(ctx context.Context, projectID int64, from, t
 	return result, nil
 }
 
-func (s *QueryService) GetPromptDetail(ctx context.Context, projectID int64, from, to time.Time, name, model, svcFilter string) ([]repository.PromptRecord, error) {
+func (s *QueryService) GetPromptDetail(ctx context.Context, projectID int64, from, to time.Time, name, model, svcFilter, status, finishReason string) ([]repository.PromptRecord, error) {
 	_, span := tracer.Start(ctx, "query.get_prompt_detail")
 	defer span.End()
 
 	f := repository.PromptFilter{
-		ProjectID: projectID,
-		Service:   svcFilter,
-		Model:     model,
-		From:      from,
-		To:        to,
-		Limit:     200,
+		ProjectID:    projectID,
+		Service:      svcFilter,
+		Model:        model,
+		Status:       status,
+		FinishReason: finishReason,
+		From:         from,
+		To:           to,
+		Limit:        500,
 	}
 
 	records, err := s.repo.QueryPromptRecords(f)

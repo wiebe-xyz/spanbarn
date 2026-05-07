@@ -176,12 +176,14 @@ func authorizerOrBearerAuth(a *auth.Authorizer, next http.Handler) http.Handler 
 			writeError(w, http.StatusUnauthorized, "missing API key", "set X-SpanBarn-Api-Key or Authorization: Bearer header")
 			return
 		}
-		_, _, err := a.Authorize(key)
+		projectID, scope, err := a.Authorize(key)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid API key", "")
 			return
 		}
-		next.ServeHTTP(w, r)
+		ctx := SetProjectID(r.Context(), projectID)
+		ctx = SetScope(ctx, scope)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

@@ -53,8 +53,13 @@ func extractPromptRecords(spans []repository.Span) []repository.PromptRecord {
 		if rec.TotalTokens == 0 {
 			rec.TotalTokens = rec.InputTokens + rec.OutputTokens
 		}
+		rec.CachedInputTokens = intAttrDefault(attrs, "gen_ai.usage.input_tokens.cached", 0)
+		rec.ReasoningOutputTokens = intAttrDefault(attrs, "gen_ai.usage.output_tokens.reasoning", 0)
 
-		rec.CostUSD = floatAttrDefault(attrs, "gen_ai.usage.cost", 0)
+		rec.InputCostUSD = floatAttrDefault(attrs, "gen_ai.usage.input_cost", 0)
+		rec.OutputCostUSD = floatAttrDefault(attrs, "gen_ai.usage.output_cost", 0)
+		rec.CostUSD = floatAttrDefault(attrs, "gen_ai.usage.total_cost",
+			floatAttrDefault(attrs, "gen_ai.usage.cost", rec.InputCostUSD+rec.OutputCostUSD))
 
 		rec.PromptTemplate = strAttr(attrs, "gen_ai.prompt.template")
 		rec.Outcome = strAttr(attrs, "gen_ai.outcome")
@@ -67,6 +72,22 @@ func extractPromptRecords(spans []repository.Span) []repository.PromptRecord {
 		rec.FeatureFlagVariant = strAttr(attrs, "feature_flag.variant")
 
 		rec.PromptBody, rec.ResponseBody = extractBodies(sp.Events)
+		// Fall back to gen_ai.prompt / gen_ai.completion span attributes when
+		// the provider doesn't emit events (e.g. OpenRouter).
+		if rec.PromptBody == "" {
+			if v := strAttr(attrs, "gen_ai.prompt"); v != "" {
+				rec.PromptBody = v
+			} else if v := strAttr(attrs, "span.input"); v != "" {
+				rec.PromptBody = v
+			}
+		}
+		if rec.ResponseBody == "" {
+			if v := strAttr(attrs, "gen_ai.completion"); v != "" {
+				rec.ResponseBody = v
+			} else if v := strAttr(attrs, "span.output"); v != "" {
+				rec.ResponseBody = v
+			}
+		}
 
 		if rec.PromptTemplate != "" {
 			rec.PromptHash = hashString(rec.PromptTemplate)

@@ -126,7 +126,7 @@ func TestGetPromptDetail(t *testing.T) {
 	from := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	result, err := svc.GetPromptDetail(context.Background(), 0, from, to, "summarize", "gpt-4", "")
+	result, err := svc.GetPromptDetail(context.Background(), 0, from, to, "summarize", "gpt-4", "", "", "")
 	if err != nil {
 		t.Fatalf("GetPromptDetail: %v", err)
 	}

@@ -101,10 +101,14 @@ type PromptRecord struct {
 	MaxTokens          *int64       `json:"maxTokens"`
 	PromptBody         string       `json:"promptBody"`
 	ResponseBody       string       `json:"responseBody"`
-	InputTokens        int64        `json:"inputTokens"`
-	OutputTokens       int64        `json:"outputTokens"`
-	TotalTokens        int64        `json:"totalTokens"`
-	CostUSD            float64      `json:"costUsd"`
+	InputTokens           int64    `json:"inputTokens"`
+	OutputTokens          int64    `json:"outputTokens"`
+	TotalTokens           int64    `json:"totalTokens"`
+	CachedInputTokens     int64    `json:"cachedInputTokens"`
+	ReasoningOutputTokens int64    `json:"reasoningOutputTokens"`
+	CostUSD               float64  `json:"costUsd"`
+	InputCostUSD          float64  `json:"inputCostUsd"`
+	OutputCostUSD         float64  `json:"outputCostUsd"`
 	DurationUs         int64        `json:"durationUs"`
 	Status             string       `json:"status"`
 	FinishReason       string       `json:"finishReason"`
@@ -124,6 +128,7 @@ type PromptFilter struct {
 	Model        string
 	GenAISystem  string
 	Status       string
+	FinishReason string
 	PromptHash   string
 	MinDuration  int64
 	From         time.Time
