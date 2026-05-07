@@ -114,15 +114,15 @@ export function OperationsPage(): ReactElement {
       {/* Operations table */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
-        <table>
+        <table style={{ minWidth: 700 }}>
           <thead>
             <tr>
               <th>Operation</th>
-              <th className="hide-mobile">Resource</th>
-              <th className="hide-mobile">Kind</th>
+              <th>Resource</th>
+              <th>Kind</th>
               <th style={{ textAlign: 'right' }}>Requests</th>
-              <th style={{ textAlign: 'right' }} className="hide-mobile">Errors</th>
-              <th style={{ textAlign: 'right' }} className="hide-mobile">Err%</th>
+              <th style={{ textAlign: 'right' }}>Errors</th>
+              <th style={{ textAlign: 'right' }}>Error Rate</th>
               <th style={{ textAlign: 'right' }}>P50</th>
               <th style={{ textAlign: 'right' }}>P95</th>
               <th style={{ textAlign: 'right' }}>P99</th>
@@ -172,15 +172,15 @@ export function OperationsPage(): ReactElement {
                           {op.operation}
                         </span>
                       </td>
-                      <td className="text-muted hide-mobile" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={op.resource || undefined}>{op.resource || '-'}</td>
-                      <td className="text-muted hide-mobile">{op.kind || '-'}</td>
+                      <td className="text-muted">{op.resource || '-'}</td>
+                      <td className="text-muted">{op.kind || '-'}</td>
                       <td style={{ textAlign: 'right' }} className="mono">
                         {formatCount(op.spanCount)}
                       </td>
-                      <td style={{ textAlign: 'right' }} className="mono hide-mobile">
+                      <td style={{ textAlign: 'right' }} className="mono">
                         {formatCount(op.errorCount)}
                       </td>
-                      <td style={{ textAlign: 'right', color: errorRateColor(op.errorRate) }} className="mono hide-mobile">
+                      <td style={{ textAlign: 'right', color: errorRateColor(op.errorRate) }} className="mono">
                         {formatErrorRate(op.errorRate)}
                       </td>
                       <td style={{ textAlign: 'right' }} className="mono">
