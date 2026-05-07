@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
@@ -14,6 +16,9 @@ type queryHandlers struct {
 }
 
 func (h *queryHandlers) handleServices(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.query.services")
+	defer span.End()
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
@@ -27,7 +32,7 @@ func (h *queryHandlers) handleServices(w http.ResponseWriter, r *http.Request) {
 
 	projectID := parseInt64Param(r, "project_id", 0)
 
-	services, err := h.svc.ListServices(r.Context(), projectID, from, to)
+	services, err := h.svc.ListServices(ctx, projectID, from, to)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -37,6 +42,9 @@ func (h *queryHandlers) handleServices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *queryHandlers) handleOperations(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.query.operations")
+	defer span.End()
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
@@ -47,6 +55,7 @@ func (h *queryHandlers) handleOperations(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "missing service", "")
 		return
 	}
+	span.SetAttributes(attribute.String("service", svcName))
 
 	from, to, err := parseTimeRange(r)
 	if err != nil {
@@ -54,7 +63,7 @@ func (h *queryHandlers) handleOperations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ops, err := h.svc.ListOperations(r.Context(), 0, svcName, from, to)
+	ops, err := h.svc.ListOperations(ctx, 0, svcName, from, to)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -64,6 +73,9 @@ func (h *queryHandlers) handleOperations(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *queryHandlers) handleTimeseries(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.query.timeseries")
+	defer span.End()
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
@@ -75,6 +87,10 @@ func (h *queryHandlers) handleTimeseries(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "missing service or operation", "")
 		return
 	}
+	span.SetAttributes(
+		attribute.String("service", svcName),
+		attribute.String("operation", opName),
+	)
 
 	from, to, err := parseTimeRange(r)
 	if err != nil {
@@ -84,7 +100,7 @@ func (h *queryHandlers) handleTimeseries(w http.ResponseWriter, r *http.Request)
 
 	interval := parseInterval(r.URL.Query().Get("interval"))
 
-	ts, err := h.svc.GetTimeseries(r.Context(), 0, svcName, opName, from, to, interval)
+	ts, err := h.svc.GetTimeseries(ctx, 0, svcName, opName, from, to, interval)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -94,6 +110,9 @@ func (h *queryHandlers) handleTimeseries(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.query.traces")
+	defer span.End()
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
@@ -122,7 +141,7 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 		Offset:        parseIntParam(r, "offset", 0),
 	}
 
-	traces, err := h.svc.SearchTraces(r.Context(), filter)
+	traces, err := h.svc.SearchTraces(ctx, filter)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -132,6 +151,9 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *queryHandlers) handleTraceDetail(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.query.trace_detail")
+	defer span.End()
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
@@ -142,8 +164,9 @@ func (h *queryHandlers) handleTraceDetail(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "missing traceId", "")
 		return
 	}
+	span.SetAttributes(attribute.String("trace_id", traceID))
 
-	detail, err := h.svc.GetTrace(r.Context(), traceID)
+	detail, err := h.svc.GetTrace(ctx, traceID)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -157,6 +180,9 @@ func (h *queryHandlers) handleTraceDetail(w http.ResponseWriter, r *http.Request
 }
 
 func (h *queryHandlers) handleDependencies(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.query.dependencies")
+	defer span.End()
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
@@ -170,7 +196,7 @@ func (h *queryHandlers) handleDependencies(w http.ResponseWriter, r *http.Reques
 
 	svcFilter := r.URL.Query().Get("service")
 
-	deps, err := h.svc.ListDependencies(r.Context(), 0, from, to, svcFilter)
+	deps, err := h.svc.ListDependencies(ctx, 0, from, to, svcFilter)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -180,6 +206,9 @@ func (h *queryHandlers) handleDependencies(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *queryHandlers) handleDatabaseQueries(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.query.database")
+	defer span.End()
+
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
@@ -193,7 +222,7 @@ func (h *queryHandlers) handleDatabaseQueries(w http.ResponseWriter, r *http.Req
 
 	svcFilter := r.URL.Query().Get("service")
 
-	queries, err := h.svc.ListDatabaseQueries(r.Context(), 0, from, to, svcFilter)
+	queries, err := h.svc.ListDatabaseQueries(ctx, 0, from, to, svcFilter)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return

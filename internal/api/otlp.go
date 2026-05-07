@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 
 	collectorpb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -23,8 +24,14 @@ import (
 var apiTracer = otel.Tracer("spanbarn/api")
 
 func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
-	ctx, span := apiTracer.Start(r.Context(), "api.otlp.receive", trace.WithSpanKind(trace.SpanKindServer))
-	defer span.End()
+	ctx := r.Context()
+	selfExport := observability.IsSelfInstrument(ctx)
+
+	var span trace.Span
+	if !selfExport {
+		ctx, span = apiTracer.Start(ctx, "api.otlp.receive", trace.WithSpanKind(trace.SpanKindServer))
+		defer span.End()
+	}
 
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -50,7 +57,6 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
-		// Default to protobuf (application/x-protobuf or unspecified).
 		if err := proto.Unmarshal(body, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid protobuf", err.Error())
 			return
@@ -58,13 +64,22 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	records := otlpToSpanRecords(&req)
-	span.SetAttributes(attribute.Int("span_count", len(records)))
 
-	_, enqueueSpan := apiTracer.Start(ctx, "api.otlp.enqueue")
-	for _, rec := range records {
-		s.ingest.Enqueue(rec)
+	if span != nil {
+		span.SetAttributes(attribute.Int("span_count", len(records)))
 	}
-	enqueueSpan.End()
+
+	if !selfExport {
+		_, enqueueSpan := apiTracer.Start(ctx, "api.otlp.enqueue")
+		for _, rec := range records {
+			s.ingest.Enqueue(rec)
+		}
+		enqueueSpan.End()
+	} else {
+		for _, rec := range records {
+			s.ingest.Enqueue(rec)
+		}
+	}
 
 	// Return ExportTraceServiceResponse.
 	resp := &collectorpb.ExportTraceServiceResponse{}

@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -16,11 +18,23 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
+const selfInstrumentUA = "spanbarn-self-instrument"
+
+type selfInstrumentKey struct{}
+
+// IsSelfInstrument reports whether the request originates from SpanBarn's own
+// OTLP exporter, so handlers can skip creating spans and avoid feedback loops.
+func IsSelfInstrument(ctx context.Context) bool {
+	v, _ := ctx.Value(selfInstrumentKey{}).(bool)
+	return v
+}
+
 // TracingConfig holds self-instrumentation settings.
 type TracingConfig struct {
 	Endpoint    string
 	APIKey      string
 	Service     string
+	Version     string
 	Environment string
 }
 
@@ -35,11 +49,7 @@ func InitTracing(cfg TracingConfig) func() {
 	ctx := context.Background()
 
 	endpoint := cfg.Endpoint
-	opts := []otlptracehttp.Option{
-		otlptracehttp.WithHeaders(map[string]string{
-			"X-SpanBarn-Api-Key": cfg.APIKey,
-		}),
-	}
+	var opts []otlptracehttp.Option
 
 	if u, err := url.Parse(endpoint); err == nil && u.Host != "" {
 		endpoint = u.Host
@@ -50,7 +60,13 @@ func InitTracing(cfg TracingConfig) func() {
 		opts = append(opts, otlptracehttp.WithInsecure())
 	}
 
-	opts = append(opts, otlptracehttp.WithEndpoint(endpoint))
+	opts = append(opts,
+		otlptracehttp.WithEndpoint(endpoint),
+		otlptracehttp.WithHeaders(map[string]string{
+			"X-SpanBarn-Api-Key":  cfg.APIKey,
+			"User-Agent":          selfInstrumentUA,
+		}),
+	)
 
 	exporter, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {
@@ -58,11 +74,16 @@ func InitTracing(cfg TracingConfig) func() {
 		return func() {}
 	}
 
+	attrs := []attribute.KeyValue{
+		semconv.ServiceName(cfg.Service),
+		semconv.DeploymentEnvironment(cfg.Environment),
+	}
+	if cfg.Version != "" {
+		attrs = append(attrs, semconv.ServiceVersion(cfg.Version))
+	}
+
 	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			semconv.ServiceName(cfg.Service),
-			semconv.DeploymentEnvironment(cfg.Environment),
-		),
+		resource.WithAttributes(attrs...),
 	)
 	if err != nil {
 		slog.Error("failed to create OTel resource", "error", err)
@@ -86,13 +107,19 @@ func InitTracing(cfg TracingConfig) func() {
 }
 
 // TracingMiddleware returns OTel HTTP middleware for incoming requests.
-// It filters out high-frequency health/metrics endpoints to avoid noise.
+// It filters out health/metrics endpoints and self-instrumentation exports
+// to avoid noise and infinite feedback loops.
 func TracingMiddleware(next http.Handler) http.Handler {
 	otelHandler := otelhttp.NewHandler(next, "http.request")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if path == "/api/v1/health" || path == "/metrics" {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if strings.Contains(r.UserAgent(), selfInstrumentUA) {
+			ctx := context.WithValue(r.Context(), selfInstrumentKey{}, true)
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 		otelHandler.ServeHTTP(w, r)
@@ -152,6 +179,7 @@ func SetupWithConfig(cfg SetupConfig) (*slog.Logger, func()) {
 		Endpoint:    cfg.SelfEndpoint,
 		APIKey:      cfg.SelfAPIKey,
 		Service:     "spanbarn",
+		Version:     cfg.Version,
 		Environment: cfg.Environment,
 	})
 
