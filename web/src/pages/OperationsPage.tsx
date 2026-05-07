@@ -114,26 +114,15 @@ export function OperationsPage(): ReactElement {
       {/* Operations table */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
-        <table style={{ tableLayout: 'fixed', width: '100%' }}>
-          <colgroup>
-            <col style={{ width: '30%' }} />
-            <col style={{ width: '12%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '8%' }} />
-            <col style={{ width: '8%' }} />
-          </colgroup>
+        <table>
           <thead>
             <tr>
               <th>Operation</th>
-              <th>Resource</th>
-              <th>Kind</th>
+              <th className="hide-mobile">Resource</th>
+              <th className="hide-mobile">Kind</th>
               <th style={{ textAlign: 'right' }}>Requests</th>
-              <th style={{ textAlign: 'right' }}>Errors</th>
-              <th style={{ textAlign: 'right' }}>Error Rate</th>
+              <th style={{ textAlign: 'right' }} className="hide-mobile">Errors</th>
+              <th style={{ textAlign: 'right' }} className="hide-mobile">Err%</th>
               <th style={{ textAlign: 'right' }}>P50</th>
               <th style={{ textAlign: 'right' }}>P95</th>
               <th style={{ textAlign: 'right' }}>P99</th>
@@ -168,26 +157,30 @@ export function OperationsPage(): ReactElement {
                         )
                       }
                     >
-                      <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <td style={{ maxWidth: 300 }}>
                         <span
                           style={{
                             fontWeight: 600,
                             color: 'var(--accent)',
+                            display: 'block',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
                           }}
                           title={op.operation}
                         >
                           {op.operation}
                         </span>
                       </td>
-                      <td className="text-muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={op.resource || undefined}>{op.resource || '-'}</td>
-                      <td className="text-muted">{op.kind || '-'}</td>
+                      <td className="text-muted hide-mobile" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={op.resource || undefined}>{op.resource || '-'}</td>
+                      <td className="text-muted hide-mobile">{op.kind || '-'}</td>
                       <td style={{ textAlign: 'right' }} className="mono">
                         {formatCount(op.spanCount)}
                       </td>
-                      <td style={{ textAlign: 'right' }} className="mono">
+                      <td style={{ textAlign: 'right' }} className="mono hide-mobile">
                         {formatCount(op.errorCount)}
                       </td>
-                      <td style={{ textAlign: 'right', color: errorRateColor(op.errorRate) }} className="mono">
+                      <td style={{ textAlign: 'right', color: errorRateColor(op.errorRate) }} className="mono hide-mobile">
                         {formatErrorRate(op.errorRate)}
                       </td>
                       <td style={{ textAlign: 'right' }} className="mono">

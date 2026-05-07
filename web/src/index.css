@@ -242,6 +242,11 @@ label {
     padding: 0.75rem;
   }
 
+  /* Hide non-essential table columns on mobile */
+  .hide-mobile {
+    display: none !important;
+  }
+
   /* Dependency detail panel full width on mobile */
   .dep-detail-panel {
     width: 100vw !important;
