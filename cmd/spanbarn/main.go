@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -108,7 +109,7 @@ func run() error {
 	w := worker.NewWorker(eventSpool, &workerRepoAdapter{repo: repo}, logger)
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
-	go w.Run(workerCtx)
+	safeGo("worker", func() { w.Run(workerCtx) })
 
 	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
 	aggregator := aggregation.NewAggregator(repo, aggInterval, logger)
@@ -122,14 +123,14 @@ func run() error {
 	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
-	go retentionWorker.Run(retentionCtx)
+	safeGo("retention", func() { retentionWorker.Run(retentionCtx) })
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
 	alertEval := alert.NewEvaluator(repo, alertNotifier, logger)
 	alertRunner := alert.NewRunner(alertEval, repo, time.Minute, logger)
 	alertCtx, alertCancel := context.WithCancel(ctx)
 	defer alertCancel()
-	go alertRunner.Run(alertCtx)
+	safeGo("alert-runner", func() { alertRunner.Run(alertCtx) })
 
 	authorizer := auth.NewAuthorizer(cfg.APIKeySHA256, &keyLookupAdapter{repo: repo}, logger)
 	_ = authorizer
@@ -218,6 +219,21 @@ func bootstrapAdmin(repo *repository.Repository, cfg config.Config, logger *slog
 	return nil
 }
 
+func safeGo(name string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("goroutine panic",
+					"goroutine", name,
+					"panic", fmt.Sprint(r),
+					"stack", string(debug.Stack()),
+				)
+			}
+		}()
+		fn()
+	}()
+}
+
 func parseAggregationInterval(s string) time.Duration {
 	d, err := time.ParseDuration(s)
 	if err != nil || d <= 0 {
@@ -300,7 +316,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	ingestHandler.Start(ctx)
 
 	fwd := forward.New(eventSpool, cfg.WriterURL, cfg.APIKey, logger)
-	go fwd.Run(ctx)
+	safeGo("forwarder", func() { fwd.Run(ctx) })
 
 	serverCfg := api.ServerConfig{
 		APIKey:       cfg.APIKey,

@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,18 +14,45 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 )
 
-// loggingMiddleware logs every request with method, path, status, and duration.
+const requestIDKey contextKey = "request_id"
+
+func requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Header.Get("X-Request-Id")
+		if id == "" {
+			var buf [8]byte
+			_, _ = rand.Read(buf[:])
+			id = hex.EncodeToString(buf[:])
+		}
+		w.Header().Set("X-Request-Id", id)
+		ctx := context.WithValue(r.Context(), requestIDKey, id)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func getRequestID(r *http.Request) string {
+	if id, ok := r.Context().Value(requestIDKey).(string); ok {
+		return id
+	}
+	return ""
+}
+
+// loggingMiddleware logs every request with method, path, status, duration, and request ID.
 func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
-		logger.Info("http",
+		attrs := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", sw.status,
 			"duration_ms", time.Since(start).Milliseconds(),
-		)
+		}
+		if id := getRequestID(r); id != "" {
+			attrs = append(attrs, "request_id", id)
+		}
+		logger.Info("http", attrs...)
 	})
 }
 

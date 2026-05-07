@@ -99,11 +99,35 @@ func TracingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// SetupConfig holds values needed by the observability stack.
+type SetupConfig struct {
+	Version         string
+	Environment     string
+	BugBarnEndpoint string
+	BugBarnAPIKey   string
+	SelfEndpoint    string
+	SelfAPIKey      string
+}
+
 // Setup initializes the full observability stack (BugBarn + self-tracing)
 // and returns a composite logger and shutdown function.
 func Setup(version string) (*slog.Logger, func()) {
-	env := getenvDefault("SPANBARN_ENVIRONMENT", "development")
+	selfAPIKey := os.Getenv("SPANBARN_SELF_API_KEY")
+	if selfAPIKey == "" {
+		selfAPIKey = os.Getenv("SPANBARN_API_KEY")
+	}
+	return SetupWithConfig(SetupConfig{
+		Version:         version,
+		Environment:     getenvDefault("SPANBARN_ENVIRONMENT", "development"),
+		BugBarnEndpoint: os.Getenv("SPANBARN_BUGBARN_ENDPOINT"),
+		BugBarnAPIKey:   os.Getenv("SPANBARN_BUGBARN_API_KEY"),
+		SelfEndpoint:    os.Getenv("SPANBARN_SELF_ENDPOINT"),
+		SelfAPIKey:      selfAPIKey,
+	})
+}
 
+// SetupWithConfig initializes observability from explicit config.
+func SetupWithConfig(cfg SetupConfig) (*slog.Logger, func()) {
 	jsonHandler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})
@@ -111,31 +135,24 @@ func Setup(version string) (*slog.Logger, func()) {
 	var handler slog.Handler = jsonHandler
 	var bugbarnClient *BugBarnClient
 
-	bbEndpoint := os.Getenv("SPANBARN_BUGBARN_ENDPOINT")
-	bbAPIKey := os.Getenv("SPANBARN_BUGBARN_API_KEY")
-	if bbEndpoint != "" && bbAPIKey != "" {
+	if cfg.BugBarnEndpoint != "" && cfg.BugBarnAPIKey != "" {
 		bugbarnClient = NewBugBarnClient(BugBarnConfig{
-			Endpoint:    bbEndpoint,
-			APIKey:      bbAPIKey,
+			Endpoint:    cfg.BugBarnEndpoint,
+			APIKey:      cfg.BugBarnAPIKey,
 			Project:     "spanbarn",
-			Environment: env,
-			Version:     version,
+			Environment: cfg.Environment,
+			Version:     cfg.Version,
 		})
 		handler = NewBugBarnHandler(jsonHandler, bugbarnClient)
 	}
 
 	logger := slog.New(handler)
 
-	selfAPIKey := os.Getenv("SPANBARN_SELF_API_KEY")
-	if selfAPIKey == "" {
-		selfAPIKey = os.Getenv("SPANBARN_API_KEY")
-	}
-
 	shutdownTracing := InitTracing(TracingConfig{
-		Endpoint:    os.Getenv("SPANBARN_SELF_ENDPOINT"),
-		APIKey:      selfAPIKey,
+		Endpoint:    cfg.SelfEndpoint,
+		APIKey:      cfg.SelfAPIKey,
 		Service:     "spanbarn",
-		Environment: env,
+		Environment: cfg.Environment,
 	})
 
 	shutdown := func() {

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -146,4 +147,13 @@ func writeError(w http.ResponseWriter, status int, msg, details string) {
 		resp.Details = details
 	}
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func writeServerError(w http.ResponseWriter, r *http.Request, msg string, err error) {
+	attrs := []any{"error", err, "method", r.Method, "path", r.URL.Path}
+	if id := getRequestID(r); id != "" {
+		attrs = append(attrs, "request_id", id)
+	}
+	slog.Error(msg, attrs...)
+	writeError(w, http.StatusInternalServerError, msg, "")
 }

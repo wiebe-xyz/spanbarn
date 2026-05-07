@@ -95,7 +95,7 @@ func (h *alertHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case http.MethodPut:
 			h.handleUpdate(w, r, id)
 		case http.MethodDelete:
-			h.handleDelete(w, id)
+			h.handleDelete(w, r, id)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		}
@@ -113,7 +113,7 @@ func (h *alertHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 
 	alerts, err := h.repo.ListAlerts(projectID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list alerts", err.Error())
+		writeServerError(w, r, "failed to list alerts", err)
 		return
 	}
 
@@ -162,7 +162,7 @@ func (h *alertHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	id, err := h.repo.CreateAlert(alert)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create alert", err.Error())
+		writeServerError(w, r, "failed to create alert", err)
 		return
 	}
 
@@ -208,16 +208,16 @@ func (h *alertHandlers) handleUpdate(w http.ResponseWriter, r *http.Request, id 
 	}
 
 	if err := h.repo.UpdateAlert(alert); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update alert", err.Error())
+		writeServerError(w, r, "failed to update alert", err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
-func (h *alertHandlers) handleDelete(w http.ResponseWriter, id int64) {
+func (h *alertHandlers) handleDelete(w http.ResponseWriter, r *http.Request, id int64) {
 	if err := h.repo.DeleteAlert(id); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to delete alert", err.Error())
+		writeServerError(w, r, "failed to delete alert", err)
 		return
 	}
 

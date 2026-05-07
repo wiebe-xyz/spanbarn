@@ -29,7 +29,7 @@ func (h *queryHandlers) handleServices(w http.ResponseWriter, r *http.Request) {
 
 	services, err := h.svc.ListServices(r.Context(), projectID, from, to)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 
@@ -56,7 +56,7 @@ func (h *queryHandlers) handleOperations(w http.ResponseWriter, r *http.Request)
 
 	ops, err := h.svc.ListOperations(r.Context(), 0, svcName, from, to)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 
@@ -86,7 +86,7 @@ func (h *queryHandlers) handleTimeseries(w http.ResponseWriter, r *http.Request)
 
 	ts, err := h.svc.GetTimeseries(r.Context(), 0, svcName, opName, from, to, interval)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 
@@ -124,7 +124,7 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 
 	traces, err := h.svc.SearchTraces(r.Context(), filter)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 
@@ -145,7 +145,7 @@ func (h *queryHandlers) handleTraceDetail(w http.ResponseWriter, r *http.Request
 
 	detail, err := h.svc.GetTrace(r.Context(), traceID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 	if detail == nil {
@@ -172,7 +172,7 @@ func (h *queryHandlers) handleDependencies(w http.ResponseWriter, r *http.Reques
 
 	deps, err := h.svc.ListDependencies(r.Context(), 0, from, to, svcFilter)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 
@@ -195,7 +195,7 @@ func (h *queryHandlers) handleDatabaseQueries(w http.ResponseWriter, r *http.Req
 
 	queries, err := h.svc.ListDatabaseQueries(r.Context(), 0, from, to, svcFilter)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 

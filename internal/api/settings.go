@@ -30,10 +30,10 @@ func (h *settingsHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *settingsHandlers) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
+func (h *settingsHandlers) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.repo.GetAllSettings()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read settings", err.Error())
+		writeServerError(w, r, "failed to read settings", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
@@ -58,7 +58,7 @@ func (h *settingsHandlers) handleUpdateSettings(w http.ResponseWriter, r *http.R
 			return
 		}
 		if err := h.repo.SetSetting(k, v); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to save setting", err.Error())
+			writeServerError(w, r, "failed to save setting", err)
 			return
 		}
 	}
@@ -77,10 +77,10 @@ type memoryStats struct {
 	NumGC      uint32 `json:"numGC"`
 }
 
-func (h *settingsHandlers) handleStats(w http.ResponseWriter, _ *http.Request) {
+func (h *settingsHandlers) handleStats(w http.ResponseWriter, r *http.Request) {
 	dbStats, err := h.repo.GetDBStats(h.dbPath, h.spoolDir)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read stats", err.Error())
+		writeServerError(w, r, "failed to read stats", err)
 		return
 	}
 

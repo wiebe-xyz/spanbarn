@@ -77,40 +77,7 @@ func WithPaths(dbPath, spoolDir string) ServerOption {
 
 // NewServer creates a new HTTP server with the given configuration.
 func NewServer(cfg ServerConfig, ingestHandler *ingest.Handler, logger *slog.Logger) *Server {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	if cfg.MaxBodyBytes <= 0 {
-		cfg.MaxBodyBytes = 4 << 20 // 4 MiB default
-	}
-
-	s := &Server{
-		mux:            http.NewServeMux(),
-		apiKey:         cfg.APIKey,
-		maxBodyBytes:   cfg.MaxBodyBytes,
-		allowedOrigins: cfg.AllowedOrigins,
-		version:        cfg.Version,
-		metricsToken:   cfg.MetricsToken,
-		rateLimiter:    NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
-		metrics:        NewMetrics(),
-		ingest:         ingestHandler,
-		logger:         logger,
-	}
-
-	s.registerRoutes()
-
-	// Build middleware chain: recovery -> security -> tracing -> metrics -> logging -> CORS -> maxBodyBytes -> routes.
-	var h http.Handler = s.mux
-	h = maxBodyBytesMiddleware(s.maxBodyBytes, h)
-	h = corsMiddleware(s.allowedOrigins, h)
-	h = loggingMiddleware(logger, h)
-	h = MetricsMiddleware(s.metrics)(h)
-	h = observability.TracingMiddleware(h)
-	h = SecurityHeaders(h)
-	h = recoveryMiddleware(logger, h)
-	s.handler = h
-
-	return s
+	return NewServerWithQuery(cfg, ingestHandler, nil, nil, logger)
 }
 
 // NewServerWithQuery creates a new HTTP server with query service support.
@@ -145,7 +112,7 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 
 	s.registerRoutes()
 
-	// Build middleware chain: recovery -> security -> tracing -> metrics -> logging -> CORS -> maxBodyBytes -> routes.
+	// Build middleware chain: recovery -> requestID -> security -> tracing -> metrics -> logging -> CORS -> maxBodyBytes -> routes.
 	var h http.Handler = s.mux
 	h = maxBodyBytesMiddleware(s.maxBodyBytes, h)
 	h = corsMiddleware(s.allowedOrigins, h)
@@ -153,6 +120,7 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 	h = MetricsMiddleware(s.metrics)(h)
 	h = observability.TracingMiddleware(h)
 	h = SecurityHeaders(h)
+	h = requestIDMiddleware(h)
 	h = recoveryMiddleware(logger, h)
 	s.handler = h
 

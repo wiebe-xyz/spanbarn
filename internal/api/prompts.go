@@ -19,7 +19,7 @@ func (h *queryHandlers) handlePrompts(w http.ResponseWriter, r *http.Request) {
 
 	prompts, err := h.svc.ListPrompts(r.Context(), 0, from, to, svcFilter, modelFilter)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 
@@ -49,7 +49,7 @@ func (h *queryHandlers) handlePromptDetail(w http.ResponseWriter, r *http.Reques
 
 	records, err := h.svc.GetPromptDetail(r.Context(), 0, from, to, name, model, svcFilter)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 
