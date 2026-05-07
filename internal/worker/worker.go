@@ -96,14 +96,10 @@ func (w *Worker) GetMetrics() (processed, errors int64, duration time.Duration) 
 }
 
 func (w *Worker) processBatch(ctx context.Context) {
-	ctx, span := tracer.Start(ctx, "worker.process_batch")
-	defer span.End()
 	start := time.Now()
 
 	cursor, err := w.spool.LoadCursor()
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
 		w.logger.Error("worker: load cursor", "error", err)
 		w.metrics.mu.Lock()
 		w.metrics.ErrorCount++
@@ -113,8 +109,6 @@ func (w *Worker) processBatch(ctx context.Context) {
 
 	records, nextCursor, err := w.spool.Read(cursor, DefaultBatchSize)
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
 		w.logger.Error("worker: read spool", "error", err)
 		w.metrics.mu.Lock()
 		w.metrics.ErrorCount++
@@ -123,10 +117,11 @@ func (w *Worker) processBatch(ctx context.Context) {
 	}
 
 	if len(records) == 0 {
-		span.SetAttributes(attribute.Bool("batch.empty", true))
 		return
 	}
 
+	ctx, span := tracer.Start(ctx, "worker.process_batch")
+	defer span.End()
 	span.SetAttributes(attribute.Int("batch.size", len(records)))
 
 	spans := convertRecords(records)

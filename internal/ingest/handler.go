@@ -93,7 +93,8 @@ func (h *Handler) flush() {
 	}
 	_, span := tracer.Start(context.Background(), "ingest.flush_to_spool")
 	span.SetAttributes(attribute.Int("record_count", len(records)))
-	if err := h.spool.Write(records); err != nil {
+	err := h.spool.Write(records)
+	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		h.logger.Error("failed to flush queue to spool", "count", len(records), "error", err)

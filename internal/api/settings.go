@@ -31,6 +31,9 @@ func (h *settingsHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *settingsHandlers) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	_, span := apiTracer.Start(r.Context(), "api.settings.get")
+	defer span.End()
+
 	settings, err := h.repo.GetAllSettings()
 	if err != nil {
 		writeServerError(w, r, "failed to read settings", err)
@@ -40,6 +43,9 @@ func (h *settingsHandlers) handleGetSettings(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *settingsHandlers) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	_, span := apiTracer.Start(r.Context(), "api.settings.update")
+	defer span.End()
+
 	var body map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON", err.Error())
@@ -78,6 +84,9 @@ type memoryStats struct {
 }
 
 func (h *settingsHandlers) handleStats(w http.ResponseWriter, r *http.Request) {
+	_, span := apiTracer.Start(r.Context(), "api.stats")
+	defer span.End()
+
 	dbStats, err := h.repo.GetDBStats(h.dbPath, h.spoolDir)
 	if err != nil {
 		writeServerError(w, r, "failed to read stats", err)

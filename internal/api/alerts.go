@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -105,6 +107,9 @@ func (h *alertHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *alertHandlers) handleList(w http.ResponseWriter, r *http.Request) {
+	_, span := apiTracer.Start(r.Context(), "api.alerts.list")
+	defer span.End()
+
 	projectID := parseInt64Param(r, "project_id", 0)
 	if projectID == 0 {
 		writeError(w, http.StatusBadRequest, "project_id is required", "")
@@ -126,6 +131,9 @@ func (h *alertHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *alertHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
+	_, span := apiTracer.Start(r.Context(), "api.alerts.create")
+	defer span.End()
+
 	var req alertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON", err.Error())
@@ -183,6 +191,10 @@ func (h *alertHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *alertHandlers) handleUpdate(w http.ResponseWriter, r *http.Request, id int64) {
+	_, span := apiTracer.Start(r.Context(), "api.alerts.update")
+	defer span.End()
+	span.SetAttributes(attribute.Int64("alert.id", id))
+
 	var req alertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON", err.Error())
@@ -216,6 +228,10 @@ func (h *alertHandlers) handleUpdate(w http.ResponseWriter, r *http.Request, id 
 }
 
 func (h *alertHandlers) handleDelete(w http.ResponseWriter, r *http.Request, id int64) {
+	_, span := apiTracer.Start(r.Context(), "api.alerts.delete")
+	defer span.End()
+	span.SetAttributes(attribute.Int64("alert.id", id))
+
 	if err := h.repo.DeleteAlert(id); err != nil {
 		writeServerError(w, r, "failed to delete alert", err)
 		return

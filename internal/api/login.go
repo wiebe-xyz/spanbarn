@@ -20,6 +20,9 @@ type loginResponse struct {
 // HandleLogin returns an http.HandlerFunc for POST /api/v1/login.
 func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		_, span := apiTracer.Start(r.Context(), "api.login")
+		defer span.End()
+
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 			return

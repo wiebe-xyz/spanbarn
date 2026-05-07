@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -62,7 +64,10 @@ func (h *projectHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotFound, "not found", "")
 }
 
-func (h *projectHandlers) handleList(w http.ResponseWriter, _ *http.Request) {
+func (h *projectHandlers) handleList(w http.ResponseWriter, r *http.Request) {
+	_, span := apiTracer.Start(r.Context(), "api.projects.list")
+	defer span.End()
+
 	projects, err := h.repo.ListProjects()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list projects", "")
@@ -75,7 +80,11 @@ func (h *projectHandlers) handleList(w http.ResponseWriter, _ *http.Request) {
 	json.NewEncoder(w).Encode(projects)
 }
 
-func (h *projectHandlers) handleDelete(w http.ResponseWriter, _ *http.Request, id int64) {
+func (h *projectHandlers) handleDelete(w http.ResponseWriter, r *http.Request, id int64) {
+	_, span := apiTracer.Start(r.Context(), "api.projects.delete")
+	defer span.End()
+	span.SetAttributes(attribute.Int64("project.id", id))
+
 	if err := h.repo.DeleteProject(id); err != nil {
 		writeError(w, http.StatusNotFound, "project not found", "")
 		return
@@ -83,7 +92,11 @@ func (h *projectHandlers) handleDelete(w http.ResponseWriter, _ *http.Request, i
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *projectHandlers) handleApprove(w http.ResponseWriter, _ *http.Request, id int64) {
+func (h *projectHandlers) handleApprove(w http.ResponseWriter, r *http.Request, id int64) {
+	_, span := apiTracer.Start(r.Context(), "api.projects.approve")
+	defer span.End()
+	span.SetAttributes(attribute.Int64("project.id", id))
+
 	project, err := h.repo.ApproveProject(id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "project not found", "")
@@ -102,7 +115,11 @@ type apiKeyResponse struct {
 	CreatedAt  string  `json:"createdAt"`
 }
 
-func (h *projectHandlers) handleListAPIKeys(w http.ResponseWriter, _ *http.Request, projectID int64) {
+func (h *projectHandlers) handleListAPIKeys(w http.ResponseWriter, r *http.Request, projectID int64) {
+	_, span := apiTracer.Start(r.Context(), "api.projects.list_api_keys")
+	defer span.End()
+	span.SetAttributes(attribute.Int64("project.id", projectID))
+
 	keys, err := h.repo.ListAPIKeys(projectID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list api keys", "")

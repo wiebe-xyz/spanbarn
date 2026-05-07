@@ -26,6 +26,9 @@ func setupKey(secret, slug string) (plaintext, keySHA256 string) {
 }
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	_, span := apiTracer.Start(r.Context(), "api.setup")
+	defer span.End()
+
 	slug := r.PathValue("slug")
 	if slug == "" {
 		http.Error(w, "slug is required", http.StatusBadRequest)
