@@ -36,18 +36,17 @@ export function DatabaseQueryDetailPage(): ReactElement {
 
   const fetchData = useCallback(() => {
     if (!pattern) return Promise.resolve()
+    setLoading(true)
     const { from, to } = getTimeRange(range)
     return api
       .getDatabaseQueryDetail(from, to, pattern, serviceParam || undefined)
       .then((data) => setSpans(data ?? []))
       .catch(() => {})
+      .finally(() => { setLoading(false) })
   }, [pattern, serviceParam, range])
 
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    fetchData().finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
+    fetchData() // eslint-disable-line react-hooks/set-state-in-effect -- async fetch pattern
   }, [fetchData])
 
   // Compute percentiles from full result set
