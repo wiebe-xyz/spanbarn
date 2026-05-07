@@ -35,6 +35,14 @@ export function SpanWaterfall({ spans, totalDurationUs }: Props) {
     setSelectedSpanId(selectedSpanId === spanId ? null : spanId)
   }
 
+  const navigateToSpan = (spanId: string) => {
+    setSelectedSpanId(spanId)
+    const row = document.querySelector(`[data-testid="waterfall-row-${spanId}"]`)
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }
+
   const handleMouseMove = (e: React.MouseEvent, span: Span) => {
     setHoveredSpanId(span.spanId)
     setTooltipPos({ x: e.clientX + 12, y: e.clientY + 12 })
@@ -109,6 +117,7 @@ export function SpanWaterfall({ spans, totalDurationUs }: Props) {
               <SpanDetail
                 span={span}
                 traceStartTimeUs={traceStartTimeUs}
+                onNavigateToSpan={navigateToSpan}
               />
             )}
           </React.Fragment>
