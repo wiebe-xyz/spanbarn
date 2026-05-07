@@ -36,9 +36,15 @@ spec:
               value: ":8080"
             - name: SPANBARN_SPOOL_DIR
               value: "/tmp/spool"
+            - name: SPANBARN_DB_PATH
+              value: "/var/lib/spanbarn/spanbarn.db"
           envFrom:
             - secretRef:
                 name: spanbarn-secrets
+          volumeMounts:
+            - name: spanbarn-data
+              mountPath: /var/lib/spanbarn
+              readOnly: true
           resources:
             requests:
               cpu: 50m
@@ -60,3 +66,7 @@ spec:
             initialDelaySeconds: 3
             periodSeconds: 10
             failureThreshold: 3
+      volumes:
+        - name: spanbarn-data
+          persistentVolumeClaim:
+            claimName: spanbarn-data

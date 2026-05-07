@@ -35,6 +35,23 @@ func NewDB(dbPath string) (*DB, error) {
 	return &DB{DB: db}, nil
 }
 
+// NewReadOnlyDB opens an existing SQLite database at dbPath in read-only mode.
+// Safe to use concurrently with a writer process on the same file when WAL mode
+// is active on that file.
+func NewReadOnlyDB(dbPath string) (*DB, error) {
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite read-only %s: %w", dbPath, err)
+	}
+
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("exec busy_timeout: %w", err)
+	}
+
+	return &DB{DB: db}, nil
+}
+
 // Close closes the underlying database connection.
 func (d *DB) Close() error {
 	return d.DB.Close()

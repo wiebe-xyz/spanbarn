@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -628,5 +629,34 @@ func TestInsertAndQueryErrorSamples(t *testing.T) {
 	// Empty insert should be no-op.
 	if err := repo.InsertErrorSamples(nil); err != nil {
 		t.Fatalf("InsertErrorSamples empty: %v", err)
+	}
+}
+
+func TestNewReadOnlyDB(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+
+	rw, err := NewDB(path)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	if err := Migrate(rw.DB); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	rw.Close()
+
+	ro, err := NewReadOnlyDB(path)
+	if err != nil {
+		t.Fatalf("NewReadOnlyDB: %v", err)
+	}
+	defer ro.Close()
+
+	var count int
+	if err := ro.QueryRow("SELECT count(*) FROM api_keys").Scan(&count); err != nil {
+		t.Fatalf("read query failed: %v", err)
+	}
+
+	_, err = ro.Exec("INSERT INTO api_keys (project_id, name, key_hash, scope) VALUES (1,'x','y','ingest')")
+	if err == nil {
+		t.Fatal("expected write to fail on read-only connection, but it succeeded")
 	}
 }

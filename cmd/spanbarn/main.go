@@ -276,6 +276,27 @@ func (a *keyLookupAdapter) TouchAPIKey(id int64) error {
 	return a.repo.TouchAPIKey(id)
 }
 
+// readOnlyKeyLookupAdapter is used by the ingest pod which opens the database
+// in read-only mode. TouchAPIKey is a no-op because last_used_at can be
+// inferred from the presence of spans in the writer's database.
+type readOnlyKeyLookupAdapter struct {
+	repo *repository.Repository
+}
+
+func (a *readOnlyKeyLookupAdapter) GetAPIKeyByHash(keyHash string) (auth.APIKeyRecord, error) {
+	k, err := a.repo.GetAPIKeyByHash(keyHash)
+	if err != nil {
+		return auth.APIKeyRecord{}, err
+	}
+	return auth.APIKeyRecord{
+		ID:        k.ID,
+		ProjectID: k.ProjectID,
+		Scope:     k.Scope,
+	}, nil
+}
+
+func (a *readOnlyKeyLookupAdapter) TouchAPIKey(_ int64) error { return nil }
+
 type userLookupAdapter struct {
 	repo *repository.Repository
 }
@@ -318,13 +339,31 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	fwd := forward.New(eventSpool, cfg.WriterURL, cfg.APIKey, logger)
 	safeGo("forwarder", func() { fwd.Run(ctx) })
 
+	// Build an authorizer so the ingest pod can validate both the static API key
+	// and any per-project keys stored in the writer's database.
+	var keyLookup auth.KeyLookup
+	if cfg.DBPath != "" {
+		if db, dbErr := repository.NewReadOnlyDB(cfg.DBPath); dbErr != nil {
+			logger.Warn("read-only DB unavailable, API key validation limited to static key", "error", dbErr)
+		} else {
+			defer db.Close()
+			keyLookup = &readOnlyKeyLookupAdapter{repo: repository.NewRepository(db.DB)}
+			logger.Info("API key DB lookup enabled", "path", cfg.DBPath)
+		}
+	}
+	staticKeyHash := cfg.APIKeySHA256
+	if staticKeyHash == "" && cfg.APIKey != "" {
+		staticKeyHash = auth.HashKey(cfg.APIKey)
+	}
+	authorizer := auth.NewAuthorizer(staticKeyHash, keyLookup, logger)
+
 	serverCfg := api.ServerConfig{
 		APIKey:       cfg.APIKey,
 		MaxBodyBytes: cfg.MaxBodyBytes,
 		Version:      Version,
 		IngestRate:   cfg.IngestRatePerMinute,
 	}
-	apiServer := api.NewServer(serverCfg, ingestHandler, logger)
+	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, nil, nil, logger, api.WithAuthorizer(authorizer))
 
 	httpServer := &http.Server{
 		Addr:         cfg.Addr,
