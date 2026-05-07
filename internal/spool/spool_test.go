@@ -196,6 +196,57 @@ func TestSpoolRotation(t *testing.T) {
 	}
 }
 
+func TestSpoolReadResetsCursorAfterRotation(t *testing.T) {
+	dir := t.TempDir()
+	sp, err := NewSpool(dir, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sp.Close()
+
+	// Write enough to trigger rotation and save a cursor past the rotated file.
+	for batch := 0; batch < 5; batch++ {
+		if err := sp.Write(makeRecords(5)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Simulate a stale cursor pointing into the old (rotated) file.
+	staleCursor := int64(50000)
+	if err := sp.SaveCursor(staleCursor); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write new data to the current (post-rotation) spool file.
+	newRec := []model.SpanRecord{{
+		ProjectID: 1, SpanID: "after-rotation", Name: "op",
+		Service: "svc", Kind: "SERVER", Status: "OK",
+	}}
+	if err := sp.Write(newRec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read with the stale cursor — should auto-reset and return the new data.
+	got, _, err := sp.Read(staleCursor, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 {
+		t.Fatal("Read() with stale cursor returned 0 records, expected auto-reset")
+	}
+
+	found := false
+	for _, r := range got {
+		if r.SpanID == "after-rotation" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected to find 'after-rotation' record after cursor reset")
+	}
+}
+
 func TestSpoolConcurrentWrites(t *testing.T) {
 	dir := t.TempDir()
 	sp, err := NewSpool(dir, DefaultMaxBytes)
