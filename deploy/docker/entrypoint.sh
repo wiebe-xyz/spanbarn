@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-if [ -z "${LITESTREAM_ACCESS_KEY_ID:-}" ]; then
+if [ -z "${LITESTREAM_ACCESS_KEY_ID:-}" ] || [ "${SPANBARN_MODE:-}" = "ingest" ]; then
   exec spanbarn
 fi
 
