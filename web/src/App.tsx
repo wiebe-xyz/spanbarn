@@ -7,6 +7,7 @@ import { TracesPage } from './pages/TracesPage'
 import { TraceDetailPage } from './pages/TraceDetailPage'
 import { DependenciesPage } from './pages/DependenciesPage'
 import { DatabasePage } from './pages/DatabasePage'
+import { DatabaseQueryDetailPage } from './pages/DatabaseQueryDetailPage'
 import { PromptsPage } from './pages/PromptsPage'
 import { PromptDetailPage } from './pages/PromptDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -27,6 +28,7 @@ function App() {
             <Route path="traces/:traceId" element={<TraceDetailPage />} />
             <Route path="dependencies" element={<DependenciesPage />} />
             <Route path="database" element={<DatabasePage />} />
+            <Route path="database/detail" element={<DatabaseQueryDetailPage />} />
             <Route path="prompts" element={<PromptsPage />} />
             <Route path="prompts/:name" element={<PromptDetailPage />} />
             <Route path="settings" element={<SettingsPage />} />

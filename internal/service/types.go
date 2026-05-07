@@ -72,6 +72,22 @@ type DependencySummary struct {
 	P99Us      int64   `json:"p99Us"`
 }
 
+// DatabaseQuerySpan is a single span execution of a database query,
+// enriched with caller context from the parent span.
+type DatabaseQuerySpan struct {
+	SpanID        string `json:"spanId"`
+	TraceID       string `json:"traceId"`
+	ParentSpanID  string `json:"parentSpanId"`
+	Service       string `json:"service"`
+	CallerName    string `json:"callerName"`    // parent span's operation name
+	CallerService string `json:"callerService"` // parent span's service
+	DurationUs    int64  `json:"durationUs"`
+	Status        string `json:"status"`
+	ErrorMessage  string `json:"errorMessage"`
+	StartTimeUs   int64  `json:"startTimeUs"`
+	IngestedAt    string `json:"ingestedAt"`
+}
+
 // DatabaseQuerySummary holds metrics for a single normalized query pattern.
 type DatabaseQuerySummary struct {
 	Pattern     string  `json:"pattern"`

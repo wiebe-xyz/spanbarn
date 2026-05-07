@@ -98,6 +98,22 @@ func (r *Repository) GetTraceByID(traceID string) ([]Span, error) {
 	)
 }
 
+func (r *Repository) GetSpansBySpanIDs(spanIDs []string) ([]Span, error) {
+	if len(spanIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(spanIDs))
+	args := make([]any, len(spanIDs))
+	for i, id := range spanIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return r.scanSpans(
+		"SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at FROM spans WHERE span_id IN ("+strings.Join(placeholders, ",")+")",
+		args...,
+	)
+}
+
 func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil

@@ -83,6 +83,18 @@ export type DependencySummary = {
   p99Us: number
 }
 
+/** A single span execution of a database query pattern. */
+export type DatabaseQuerySpan = {
+  spanId: string
+  traceId: string
+  parentSpanId: string
+  service: string
+  durationUs: number
+  status: string
+  startTimeUs: number
+  ingestedAt: string
+}
+
 /** Database query pattern metrics. */
 export type DatabaseQuerySummary = {
   pattern: string

@@ -6,6 +6,7 @@ import type {
   TraceDetail,
   DependencySummary,
   DatabaseQuerySummary,
+  DatabaseQuerySpan,
   PromptSummary,
   PromptRecord,
   HealthResponse,
@@ -117,6 +118,11 @@ export const api = {
   getDatabaseQueries: (from: string, to: string, service?: string) =>
     fetchJSON<DatabaseQuerySummary[]>(
       `/api/v1/database${qs({ from, to, service })}`,
+    ),
+
+  getDatabaseQueryDetail: (from: string, to: string, pattern: string, service?: string) =>
+    fetchJSON<DatabaseQuerySpan[]>(
+      `/api/v1/database/detail${qs({ from, to, pattern, service })}`,
     ),
 
   getPrompts: (from: string, to: string, service?: string, model?: string) =>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import type { DatabaseQuerySummary } from '../api/types'
 import { TimeRangeSelector } from '../components/TimeRangeSelector'
@@ -19,7 +20,7 @@ export function DatabasePage(): ReactElement {
   const [loading, setLoading] = useState(true)
   const [sortField, setSortField] = useState<SortField>('totalTimeUs')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
-  const [expandedPattern, setExpandedPattern] = useState<string | null>(null)
+  const navigate = useNavigate()
 
   const fetchData = useCallback(async () => {
     const { from, to } = getTimeRange(range)
@@ -159,12 +160,11 @@ export function DatabasePage(): ReactElement {
                     )
                   : sorted.map((q) => {
                       const oc = opColor(q.operation)
-                      const isExpanded = expandedPattern === q.pattern
                       return (
                         <tr
                           key={q.pattern}
                           style={{ cursor: 'pointer' }}
-                          onClick={() => setExpandedPattern(isExpanded ? null : q.pattern)}
+                          onClick={() => navigate(`/database/detail?pattern=${encodeURIComponent(q.pattern)}${serviceFilter ? `&service=${encodeURIComponent(serviceFilter)}` : ''}`)}
                         >
                           <td style={{ maxWidth: 350 }}>
                             <span
@@ -173,11 +173,10 @@ export function DatabasePage(): ReactElement {
                                 fontSize: '0.75rem',
                                 color: 'var(--accent)',
                                 display: 'block',
-                                overflow: isExpanded ? 'visible' : 'hidden',
-                                textOverflow: isExpanded ? 'unset' : 'ellipsis',
-                                whiteSpace: isExpanded ? 'pre-wrap' : 'nowrap',
-                                maxWidth: isExpanded ? 'none' : 350,
-                                wordBreak: isExpanded ? 'break-all' : undefined,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                maxWidth: 350,
                               }}
                             >
                               {q.pattern}

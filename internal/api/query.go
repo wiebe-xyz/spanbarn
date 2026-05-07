@@ -231,6 +231,37 @@ func (h *queryHandlers) handleDatabaseQueries(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, queries)
 }
 
+func (h *queryHandlers) handleDatabaseQueryDetail(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.query.database_detail")
+	defer span.End()
+
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	from, to, err := parseTimeRange(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+		return
+	}
+
+	pattern := r.URL.Query().Get("pattern")
+	if pattern == "" {
+		writeError(w, http.StatusBadRequest, "missing pattern parameter", "")
+		return
+	}
+	svcFilter := r.URL.Query().Get("service")
+
+	spans, err := h.svc.GetDatabaseQuerySpans(ctx, 0, from, to, pattern, svcFilter)
+	if err != nil {
+		writeServerError(w, r, "query failed", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, spans)
+}
+
 // routeQuery is a handler that dispatches query routes based on URL path pattern.
 // It handles the following patterns:
 //
