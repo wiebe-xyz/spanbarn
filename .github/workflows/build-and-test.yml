@@ -49,6 +49,8 @@ jobs:
           docker buildx build \
             --platform linux/amd64 \
             --push \
+            --build-arg VERSION="${{ github.sha }}" \
+            --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -f deploy/docker/service.Dockerfile \
             -t "${SERVICE_IMAGE}:${{ github.sha }}" \
             .
