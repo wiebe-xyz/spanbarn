@@ -2,6 +2,9 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App'
+import { initInstrumentation } from './instrumentation'
+
+initInstrumentation()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

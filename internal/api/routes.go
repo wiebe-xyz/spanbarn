@@ -90,6 +90,13 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/saved-queries/", apiRL(sessionAuth(sqh)))
 	}
 
+	// Frontend telemetry — session auth, accepts same format as /api/v1/spans.
+	if s.ingest != nil && s.sessionMgr != nil {
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+		s.mux.Handle("/api/v1/telemetry", ingestRL(sessionAuth(http.HandlerFunc(s.handleIngest))))
+		s.mux.Handle("/api/v1/client-errors", ingestRL(sessionAuth(http.HandlerFunc(s.handleClientError))))
+	}
+
 	// Export endpoint — rate limited + session auth required, streams NDJSON.
 	if s.repo != nil && s.sessionMgr != nil {
 		eh := &exportHandlers{repo: s.repo}
