@@ -16,7 +16,7 @@ function useForceLayout(nodes: ServiceMapNode[], edges: ServiceMapEdge[], width:
 
   useEffect(() => {
     if (nodes.length === 0) {
-      setSimNodes([])
+      setSimNodes([]) // eslint-disable-line react-hooks/set-state-in-effect -- resetting derived state when input is empty
       return
     }
 
@@ -149,7 +149,7 @@ export function ServiceMapPage(): ReactElement {
   }, [range])
 
   useEffect(() => {
-    void fetchData()
+    void fetchData() // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   }, [fetchData])
 
   const nodes = data?.nodes ?? []
