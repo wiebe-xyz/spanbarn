@@ -94,12 +94,12 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			var lastErr error
-			for attempt := 1; attempt <= 3; attempt++ {
+			for attempt := 1; attempt <= 5; attempt++ {
 				if lastErr = w.RunOnce(ctx); lastErr == nil {
 					break
 				}
 				w.logger.Info("retention cycle attempt failed", "attempt", attempt, "error", lastErr)
-				backoff := time.Duration(attempt*attempt) * 500 * time.Millisecond
+				backoff := time.Duration(attempt*attempt) * time.Second
 				time.Sleep(backoff)
 			}
 			if lastErr != nil {
