@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, LogOut } from 'lucide-react'
+import { Activity, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, LogOut } from 'lucide-react'
 import { api } from '../api/client'
 
 const tabs = [
@@ -55,6 +55,44 @@ export function MobileTabBar(): ReactElement {
             boxShadow: '0 -4px 24px rgba(0, 0, 0, 0.4)',
           }}
         >
+          <NavLink
+            to="/live"
+            onClick={() => setMoreOpen(false)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.625rem',
+              width: '100%',
+              padding: '0.625rem 0.75rem',
+              borderRadius: '0.5rem',
+              fontSize: '0.875rem',
+              fontWeight: 500,
+              color: 'var(--text-muted)',
+              textDecoration: 'none',
+            }}
+          >
+            <Radio size={18} />
+            Live Tail
+          </NavLink>
+          <NavLink
+            to="/service-map"
+            onClick={() => setMoreOpen(false)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.625rem',
+              width: '100%',
+              padding: '0.625rem 0.75rem',
+              borderRadius: '0.5rem',
+              fontSize: '0.875rem',
+              fontWeight: 500,
+              color: 'var(--text-muted)',
+              textDecoration: 'none',
+            }}
+          >
+            <Network size={18} />
+            Service Map
+          </NavLink>
           <NavLink
             to="/database"
             onClick={() => setMoreOpen(false)}
