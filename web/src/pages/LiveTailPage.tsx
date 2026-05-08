@@ -24,6 +24,7 @@ export function LiveTailPage(): ReactElement {
   const [connected, setConnected] = useState(false)
   const [serviceFilter, setServiceFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [bufferCount, setBufferCount] = useState(0)
   const pausedRef = useRef(paused)
   const bufferRef = useRef<LiveSpan[]>([])
   const tableRef = useRef<HTMLDivElement>(null)
@@ -33,6 +34,7 @@ export function LiveTailPage(): ReactElement {
     if (!paused && bufferRef.current.length > 0) {
       setSpans((prev) => [...bufferRef.current, ...prev].slice(0, MAX_SPANS))
       bufferRef.current = []
+      setBufferCount(0)
     }
   }, [paused])
 
@@ -54,6 +56,7 @@ export function LiveTailPage(): ReactElement {
         const span = JSON.parse(event.data) as LiveSpan
         if (pausedRef.current) {
           bufferRef.current = [span, ...bufferRef.current].slice(0, MAX_SPANS)
+          setBufferCount(bufferRef.current.length)
         } else {
           setSpans((prev) => [span, ...prev].slice(0, MAX_SPANS))
         }
@@ -129,7 +132,7 @@ export function LiveTailPage(): ReactElement {
               cursor: 'pointer',
             }}
           >
-            {paused ? `Resume (${bufferRef.current.length})` : 'Pause'}
+            {paused ? `Resume (${bufferCount})` : 'Pause'}
           </button>
           <button
             onClick={() => setSpans([])}
