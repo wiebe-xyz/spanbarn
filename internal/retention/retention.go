@@ -98,7 +98,7 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 				if lastErr = w.RunOnce(ctx); lastErr == nil {
 					break
 				}
-				w.logger.Warn("retention cycle attempt failed", "attempt", attempt, "error", lastErr)
+				w.logger.Info("retention cycle attempt failed", "attempt", attempt, "error", lastErr)
 				backoff := time.Duration(attempt*attempt) * 500 * time.Millisecond
 				time.Sleep(backoff)
 			}
