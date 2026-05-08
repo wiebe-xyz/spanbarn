@@ -196,6 +196,59 @@ func TestSpoolRotation(t *testing.T) {
 	}
 }
 
+func TestSpoolReadAfterRotation_CursorResets(t *testing.T) {
+	dir := t.TempDir()
+	sp, err := NewSpool(dir, 100000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sp.Close()
+
+	recs := makeRecords(5)
+	if err := sp.Write(recs); err != nil {
+		t.Fatal(err)
+	}
+
+	got, cursor, err := sp.Read(0, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 records, got %d", len(got))
+	}
+
+	// Simulate rotation: rename current to .old, create new file.
+	sp.Close()
+	curPath := dir + "/spool.ndjson"
+	if err := os.Rename(curPath, dir+"/spool.ndjson.old"); err != nil {
+		t.Fatal(err)
+	}
+	sp, err = NewSpool(dir, 100000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newRecs := makeRecords(3)
+	for i := range newRecs {
+		newRecs[i].SpanID = fmt.Sprintf("new-%d", i)
+	}
+	if err := sp.Write(newRecs); err != nil {
+		t.Fatal(err)
+	}
+
+	// cursor exceeds new file size → should reset to 0 and read new file.
+	got2, _, err := sp.Read(cursor, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got2) != 3 {
+		t.Fatalf("expected 3 records from new file after cursor reset, got %d", len(got2))
+	}
+	if got2[0].SpanID != "new-0" {
+		t.Errorf("got2[0].SpanID = %q, want %q", got2[0].SpanID, "new-0")
+	}
+}
+
 func TestSpoolConcurrentWrites(t *testing.T) {
 	dir := t.TempDir()
 	sp, err := NewSpool(dir, DefaultMaxBytes)

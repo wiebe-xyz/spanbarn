@@ -90,8 +90,20 @@ func (s *Spool) Write(records []model.SpanRecord) error {
 
 // Read reads records from the spool file starting at byte offset cursor.
 // It returns up to limit records and the next cursor position.
+// After rotation the cursor may exceed the new (smaller) file — reset to 0.
 func (s *Spool) Read(cursor int64, limit int) ([]model.SpanRecord, int64, error) {
 	path := filepath.Join(s.dir, spoolFileName)
+
+	if cursor > 0 {
+		if info, err := os.Stat(path); err == nil && cursor > info.Size() {
+			cursor = 0
+		}
+	}
+
+	return s.readFile(path, cursor, limit)
+}
+
+func (s *Spool) readFile(path string, cursor int64, limit int) ([]model.SpanRecord, int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -116,8 +128,7 @@ func (s *Spool) Read(cursor int64, limit int) ([]model.SpanRecord, int64, error)
 		line := scanner.Bytes()
 		var rec model.SpanRecord
 		if err := json.Unmarshal(line, &rec); err != nil {
-			// Skip malformed lines.
-			pos += int64(len(line)) + 1 // +1 for newline
+			pos += int64(len(line)) + 1
 			continue
 		}
 		records = append(records, rec)
