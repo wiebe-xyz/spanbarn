@@ -25,6 +25,7 @@ type QueryRepository interface {
 	QuerySpanTimeseries(projectID int64, service, operation string, from, to time.Time, intervalSec int64) ([]repository.SpanBucket, error)
 	QueryPromptRecords(filter repository.PromptFilter) ([]repository.PromptRecord, error)
 	GetSpansBySpanIDs(spanIDs []string) ([]repository.Span, error)
+	StreamSpans(filter repository.SpanFilter, fn func(repository.Span) error) error
 }
 
 // QueryService implements query logic for the dashboard API.

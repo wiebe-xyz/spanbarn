@@ -9,13 +9,18 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
-// mockWriter records calls to UpsertAggregate.
+// mockWriter records calls to UpsertAggregate/UpsertAggregates.
 type mockWriter struct {
 	calls []repository.Aggregate
 }
 
 func (m *mockWriter) UpsertAggregate(agg repository.Aggregate) error {
 	m.calls = append(m.calls, agg)
+	return nil
+}
+
+func (m *mockWriter) UpsertAggregates(aggs []repository.Aggregate) error {
+	m.calls = append(m.calls, aggs...)
 	return nil
 }
 

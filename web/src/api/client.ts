@@ -5,10 +5,12 @@ import type {
   TraceSummary,
   TraceDetail,
   DependencySummary,
+  ServiceMap,
   DatabaseQuerySummary,
   DatabaseQuerySpan,
   PromptSummary,
   PromptRecord,
+  SavedQuery,
   HealthResponse,
   TraceSearchParams,
 } from './types'
@@ -115,6 +117,9 @@ export const api = {
       `/api/v1/dependencies${qs({ from, to, service })}`,
     ),
 
+  getServiceMap: (from: string, to: string) =>
+    fetchJSON<ServiceMap>(`/api/v1/service-map${qs({ from, to })}`),
+
   getDatabaseQueries: (from: string, to: string, service?: string) =>
     fetchJSON<DatabaseQuerySummary[]>(
       `/api/v1/database${qs({ from, to, service })}`,
@@ -135,5 +140,20 @@ export const api = {
       `/api/v1/prompts/detail${qs({ from, to, name, model, service, status, finish_reason: finishReason })}`,
     ),
 
+  getSavedQueries: (projectId = 1) =>
+    fetchJSON<SavedQuery[]>(`/api/v1/saved-queries${qs({ project_id: projectId })}`),
+
+  createSavedQuery: (query: { name: string; service?: string; operation?: string; status?: string; minDurationUs?: number }) =>
+    fetchJSON<{ id: number }>('/api/v1/saved-queries', {
+      method: 'POST',
+      body: JSON.stringify({ projectId: 1, ...query }),
+    }),
+
+  deleteSavedQuery: (id: number) =>
+    fetchJSON<{ status: string }>(`/api/v1/saved-queries/${id}`, { method: 'DELETE' }),
+
   getHealth: () => fetchJSON<HealthResponse>('/api/v1/health'),
+
+  getExportUrl: (from: string, to: string, service?: string, status?: string, limit?: number) =>
+    `/api/v1/export${qs({ from, to, service, status, limit })}`,
 }

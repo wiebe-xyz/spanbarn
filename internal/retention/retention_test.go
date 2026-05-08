@@ -71,10 +71,11 @@ func insertTestSpans(t *testing.T, repo *repository.Repository, count int, statu
 
 func TestRunOnceAggregatesOldSpans(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:     1,
-		ErrorRetentionDays:     30,
-		AggregateRetentionDays: 365,
-		SlowThresholdUS:        1_000_000,
+		FullRetentionHours:        1,
+		InterestingRetentionHours: 1,
+		ErrorRetentionDays:        30,
+		AggregateRetentionDays:    365,
+		SlowThresholdUS:           1_000_000,
 	}
 	worker, repo := setupTestWorker(t, cfg)
 
@@ -113,10 +114,11 @@ func TestRunOnceAggregatesOldSpans(t *testing.T) {
 
 func TestRunOnceSamplesErrors(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:     1,
-		ErrorRetentionDays:     30,
-		AggregateRetentionDays: 365,
-		SlowThresholdUS:        1_000_000,
+		FullRetentionHours:        1,
+		InterestingRetentionHours: 1,
+		ErrorRetentionDays:        30,
+		AggregateRetentionDays:    365,
+		SlowThresholdUS:           1_000_000,
 	}
 	worker, repo := setupTestWorker(t, cfg)
 
@@ -144,10 +146,11 @@ func TestRunOnceSamplesErrors(t *testing.T) {
 
 func TestRunOnceSamplesSlowSpans(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:     1,
-		ErrorRetentionDays:     30,
-		AggregateRetentionDays: 365,
-		SlowThresholdUS:        500_000, // 500ms
+		FullRetentionHours:        1,
+		InterestingRetentionHours: 1,
+		ErrorRetentionDays:        30,
+		AggregateRetentionDays:    365,
+		SlowThresholdUS:           500_000, // 500ms
 	}
 	worker, repo := setupTestWorker(t, cfg)
 
@@ -175,10 +178,11 @@ func TestRunOnceSamplesSlowSpans(t *testing.T) {
 
 func TestRunOncePreservesRecentSpans(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:     1,
-		ErrorRetentionDays:     30,
-		AggregateRetentionDays: 365,
-		SlowThresholdUS:        1_000_000,
+		FullRetentionHours:        1,
+		InterestingRetentionHours: 1,
+		ErrorRetentionDays:        30,
+		AggregateRetentionDays:    365,
+		SlowThresholdUS:           1_000_000,
 	}
 	worker, repo := setupTestWorker(t, cfg)
 
@@ -225,10 +229,11 @@ func TestRunOncePreservesRecentSpans(t *testing.T) {
 
 func TestRunOnceDeletesOldErrorSamples(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:     1,
-		ErrorRetentionDays:     30,
-		AggregateRetentionDays: 365,
-		SlowThresholdUS:        1_000_000,
+		FullRetentionHours:        1,
+		InterestingRetentionHours: 1,
+		ErrorRetentionDays:        30,
+		AggregateRetentionDays:    365,
+		SlowThresholdUS:           1_000_000,
 	}
 	worker, repo := setupTestWorker(t, cfg)
 
@@ -266,10 +271,11 @@ func TestRunOnceDeletesOldErrorSamples(t *testing.T) {
 
 func TestRunOnceDeletesOldAggregates(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:     1,
-		ErrorRetentionDays:     30,
-		AggregateRetentionDays: 365,
-		SlowThresholdUS:        1_000_000,
+		FullRetentionHours:        1,
+		InterestingRetentionHours: 1,
+		ErrorRetentionDays:        30,
+		AggregateRetentionDays:    365,
+		SlowThresholdUS:           1_000_000,
 	}
 	worker, repo := setupTestWorker(t, cfg)
 
@@ -312,10 +318,11 @@ func TestRunOnceDeletesOldAggregates(t *testing.T) {
 
 func TestRunOnceEmptyDatabase(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:     1,
-		ErrorRetentionDays:     30,
-		AggregateRetentionDays: 365,
-		SlowThresholdUS:        1_000_000,
+		FullRetentionHours:        1,
+		InterestingRetentionHours: 1,
+		ErrorRetentionDays:        30,
+		AggregateRetentionDays:    365,
+		SlowThresholdUS:           1_000_000,
 	}
 	worker, _ := setupTestWorker(t, cfg)
 
@@ -326,10 +333,11 @@ func TestRunOnceEmptyDatabase(t *testing.T) {
 
 func TestRunOnceMultipleBatches(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:     1,
-		ErrorRetentionDays:     30,
-		AggregateRetentionDays: 365,
-		SlowThresholdUS:        1_000_000,
+		FullRetentionHours:        1,
+		InterestingRetentionHours: 1,
+		ErrorRetentionDays:        30,
+		AggregateRetentionDays:    365,
+		SlowThresholdUS:           1_000_000,
 	}
 	worker, repo := setupTestWorker(t, cfg)
 

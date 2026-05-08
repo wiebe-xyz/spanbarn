@@ -6,6 +6,8 @@ import { OperationDetailPage } from './pages/OperationDetailPage'
 import { TracesPage } from './pages/TracesPage'
 import { TraceDetailPage } from './pages/TraceDetailPage'
 import { DependenciesPage } from './pages/DependenciesPage'
+import { ServiceMapPage } from './pages/ServiceMapPage'
+import { LiveTailPage } from './pages/LiveTailPage'
 import { DatabasePage } from './pages/DatabasePage'
 import { DatabaseQueryDetailPage } from './pages/DatabaseQueryDetailPage'
 import { PromptsPage } from './pages/PromptsPage'
@@ -27,6 +29,8 @@ function App() {
             <Route path="traces" element={<TracesPage />} />
             <Route path="traces/:traceId" element={<TraceDetailPage />} />
             <Route path="dependencies" element={<DependenciesPage />} />
+            <Route path="service-map" element={<ServiceMapPage />} />
+            <Route path="live" element={<LiveTailPage />} />
             <Route path="database" element={<DatabasePage />} />
             <Route path="database/detail" element={<DatabaseQueryDetailPage />} />
             <Route path="prompts" element={<PromptsPage />} />

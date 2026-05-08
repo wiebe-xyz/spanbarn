@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -49,10 +50,12 @@ func (m *Metrics) Snapshot() (processed, errors int64, duration time.Duration) {
 
 // Worker reads from the spool and persists records to the repository.
 type Worker struct {
-	spool   *spool.Spool
-	repo    Repository
-	logger  *slog.Logger
-	metrics Metrics
+	spool            *spool.Spool
+	repo             Repository
+	logger           *slog.Logger
+	metrics          Metrics
+	ingestSampleRate float64
+	slowThresholdUS  int64
 }
 
 // NewWorker creates a new background worker.
@@ -61,10 +64,18 @@ func NewWorker(sp *spool.Spool, repo Repository, logger *slog.Logger) *Worker {
 		logger = slog.Default()
 	}
 	return &Worker{
-		spool:  sp,
-		repo:   repo,
-		logger: logger,
+		spool:            sp,
+		repo:             repo,
+		logger:           logger,
+		ingestSampleRate: 1.0,
 	}
+}
+
+// SetIngestSampling configures probabilistic dropping of uneventful spans.
+// rate=1.0 keeps all spans (default). rate=0.5 drops ~50% of non-error, non-slow spans.
+func (w *Worker) SetIngestSampling(rate float64, slowThresholdUS int64) {
+	w.ingestSampleRate = rate
+	w.slowThresholdUS = slowThresholdUS
 }
 
 // Run loops on a 1-second ticker, processing spool batches until ctx is cancelled.
@@ -126,6 +137,11 @@ func (w *Worker) processBatch(ctx context.Context) {
 
 	spans := convertRecords(records)
 
+	if w.ingestSampleRate < 1.0 {
+		spans = w.sampleSpans(spans)
+		span.SetAttributes(attribute.Int("batch.size_after_sampling", len(spans)))
+	}
+
 	_, insertSpan := tracer.Start(ctx, "worker.insert_spans")
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -178,6 +194,22 @@ func (w *Worker) processBatch(ctx context.Context) {
 	w.metrics.mu.Lock()
 	w.metrics.ProcessingDuration += elapsed
 	w.metrics.mu.Unlock()
+}
+
+// sampleSpans keeps all interesting spans (error/slow) and probabilistically
+// drops normal spans based on the configured sample rate.
+func (w *Worker) sampleSpans(spans []repository.Span) []repository.Span {
+	kept := make([]repository.Span, 0, len(spans))
+	for _, s := range spans {
+		if s.Status == "error" || (w.slowThresholdUS > 0 && s.DurationUs > w.slowThresholdUS) {
+			kept = append(kept, s)
+			continue
+		}
+		if rand.Float64() < w.ingestSampleRate {
+			kept = append(kept, s)
+		}
+	}
+	return kept
 }
 
 func convertRecords(records []model.SpanRecord) []repository.Span {

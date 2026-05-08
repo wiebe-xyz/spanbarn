@@ -24,8 +24,10 @@ type Config struct {
 	RetentionFullHours     int
 	RetentionAggregatedDays int
 	RetentionErrorDays     int
-	SlowThresholdMS        int
-	AggregationInterval    string
+	RetentionInterestingHours int
+	IngestSampleRate          float64
+	SlowThresholdMS           int
+	AggregationInterval       string
 	AllowedOrigins         []string
 	SelfEndpoint           string
 	SelfAPIKey             string
@@ -36,6 +38,7 @@ type Config struct {
 	IngestRatePerMinute    int
 	APIRatePerMinute       int
 	MetricsToken           string
+	QueryTimeoutSeconds    int
 	Mode                   string // "writer" (default) or "ingest"
 	WriterURL              string // URL of writer pod, used when Mode=ingest
 }
@@ -59,7 +62,9 @@ func Load() Config {
 		RetentionFullHours:      getenvInt("SPANBARN_RETENTION_FULL_HOURS", 72),
 		RetentionAggregatedDays: getenvInt("SPANBARN_RETENTION_AGGREGATED_DAYS", 30),
 		RetentionErrorDays:      getenvInt("SPANBARN_RETENTION_ERROR_DAYS", 90),
-		SlowThresholdMS:         getenvInt("SPANBARN_SLOW_THRESHOLD_MS", 500),
+		RetentionInterestingHours: getenvInt("SPANBARN_RETENTION_INTERESTING_HOURS", 168),
+		IngestSampleRate:          getenvFloat("SPANBARN_INGEST_SAMPLE_RATE", 1.0),
+		SlowThresholdMS:           getenvInt("SPANBARN_SLOW_THRESHOLD_MS", 500),
 		AggregationInterval:     getenv("SPANBARN_AGGREGATION_INTERVAL", "1m"),
 		SelfEndpoint:            os.Getenv("SPANBARN_SELF_ENDPOINT"),
 		SelfAPIKey:              os.Getenv("SPANBARN_SELF_API_KEY"),
@@ -70,6 +75,7 @@ func Load() Config {
 		IngestRatePerMinute:     getenvInt("SPANBARN_INGEST_RATE_PER_MINUTE", 1000),
 		APIRatePerMinute:        getenvInt("SPANBARN_API_RATE_PER_MINUTE", 300),
 		MetricsToken:            os.Getenv("SPANBARN_METRICS_TOKEN"),
+		QueryTimeoutSeconds:     getenvInt("SPANBARN_QUERY_TIMEOUT_SECONDS", 30),
 		Mode:                    getenv("SPANBARN_MODE", "writer"),
 		WriterURL:               os.Getenv("SPANBARN_WRITER_URL"),
 	}
@@ -104,6 +110,15 @@ func getenvInt(key string, fallback int) int {
 func getenvInt64(key string, fallback int64) int64 {
 	if raw := os.Getenv(key); raw != "" {
 		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func getenvFloat(key string, fallback float64) float64 {
+	if raw := os.Getenv(key); raw != "" {
+		if parsed, err := strconv.ParseFloat(raw, 64); err == nil && parsed >= 0 && parsed <= 1 {
 			return parsed
 		}
 	}

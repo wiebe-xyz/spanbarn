@@ -1,7 +1,8 @@
 import type { ReactElement } from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import type { TraceSummary } from '../api/types'
+import type { SavedQuery, TraceSummary } from '../api/types'
+import { api } from '../api/client'
 import {
   durationColor,
   formatDuration,
@@ -68,8 +69,14 @@ export function TracesPage(): ReactElement {
     const o = searchParams.get('offset')
     return o ? parseInt(o, 10) || 0 : 0
   })
+  const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([])
+  const [savingQuery, setSavingQuery] = useState(false)
 
   const apiBase = '/api/v1'
+
+  useEffect(() => {
+    api.getSavedQueries().then(setSavedQueries).catch(() => {})
+  }, [])
 
   // Fetch services for dropdown
   useEffect(() => {
@@ -137,6 +144,53 @@ export function TracesPage(): ReactElement {
 
   const updateFilter = (key: keyof Filters, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const saveCurrentQuery = async () => {
+    const hasFilters = filters.service || filters.operation || filters.status || filters.minDurationMs
+    if (!hasFilters) return
+    const parts = [
+      filters.service,
+      filters.operation,
+      filters.status,
+      filters.minDurationMs ? `>${filters.minDurationMs}ms` : '',
+    ].filter(Boolean)
+    const name = parts.join(' / ') || 'Unnamed query'
+    setSavingQuery(true)
+    try {
+      await api.createSavedQuery({
+        name,
+        service: filters.service || undefined,
+        operation: filters.operation || undefined,
+        status: filters.status || undefined,
+        minDurationUs: filters.minDurationMs ? Math.round(parseFloat(filters.minDurationMs) * 1000) : undefined,
+      })
+      const updated = await api.getSavedQueries()
+      setSavedQueries(updated)
+    } catch {
+      // ignore
+    } finally {
+      setSavingQuery(false)
+    }
+  }
+
+  const applySavedQuery = (q: SavedQuery) => {
+    setFilters((prev) => ({
+      ...prev,
+      service: q.service || '',
+      operation: q.operation || '',
+      status: q.status || '',
+      minDurationMs: q.minDurationUs ? String(q.minDurationUs / 1000) : '',
+    }))
+  }
+
+  const deleteSavedQuery = async (id: number) => {
+    try {
+      await api.deleteSavedQuery(id)
+      setSavedQueries((prev) => prev.filter((q) => q.id !== id))
+    } catch {
+      // ignore
+    }
   }
 
   return (
@@ -248,7 +302,72 @@ export function TracesPage(): ReactElement {
         <button onClick={() => search(0)} style={buttonStyle}>
           Search
         </button>
+        <a
+          href={api.getExportUrl(
+            new Date(filters.from).toISOString(),
+            new Date(filters.to).toISOString(),
+            filters.service || undefined,
+            filters.status && filters.status !== 'all' ? filters.status : undefined,
+          )}
+          download="spans.ndjson"
+          style={{
+            ...buttonStyle,
+            background: 'transparent',
+            border: '1px solid #374151',
+            textDecoration: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+        >
+          Export
+        </a>
+        <button
+          onClick={saveCurrentQuery}
+          disabled={savingQuery || !(filters.service || filters.operation || filters.status || filters.minDurationMs)}
+          style={{
+            ...buttonStyle,
+            background: 'transparent',
+            border: '1px solid #374151',
+            opacity: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 1 : 0.4,
+            cursor: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 'pointer' : 'not-allowed',
+          }}
+        >
+          {savingQuery ? 'Saving...' : 'Save Query'}
+        </button>
       </div>
+
+      {/* Saved queries */}
+      {savedQueries.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          <span style={{ fontSize: 12, color: '#6b7280', alignSelf: 'center' }}>Saved:</span>
+          {savedQueries.map((q) => (
+            <span
+              key={q.id}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                background: '#1f2937',
+                border: '1px solid #374151',
+                borderRadius: 16,
+                padding: '3px 10px',
+                fontSize: 12,
+                color: '#d1d5db',
+                cursor: 'pointer',
+              }}
+            >
+              <span onClick={() => applySavedQuery(q)}>{q.name}</span>
+              <span
+                onClick={() => deleteSavedQuery(q.id)}
+                style={{ color: '#6b7280', fontSize: 14, lineHeight: 1 }}
+                title="Delete"
+              >
+                &times;
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Error */}
       {error && (
