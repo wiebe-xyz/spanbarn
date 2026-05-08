@@ -149,7 +149,7 @@ func (w *Worker) processBatch(ctx context.Context) {
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		if err := w.repo.InsertSpans(ctx, spans); err != nil {
 			lastErr = err
-			w.logger.Warn("worker: insert attempt failed",
+			w.logger.Info("worker: insert attempt failed",
 				"attempt", attempt,
 				"count", len(spans),
 				"error", err,
