@@ -123,12 +123,13 @@ func TestWorkerRetries(t *testing.T) {
 
 	repo := &mockRepo{err: fmt.Errorf("storage unavailable")}
 	w := NewWorker(sp, repo, slog.Default())
+	w.retryBaseDelay = time.Millisecond
 
 	w.ProcessOnce(context.Background())
 
-	// Should have retried 3 times.
-	if repo.getCalls() != 3 {
-		t.Fatalf("expected 3 retry calls, got %d", repo.getCalls())
+	// Should have retried maxRetries times.
+	if repo.getCalls() != maxRetries {
+		t.Fatalf("expected %d retry calls, got %d", maxRetries, repo.getCalls())
 	}
 
 	// Error count should be incremented.

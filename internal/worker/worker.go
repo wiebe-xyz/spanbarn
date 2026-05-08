@@ -24,7 +24,7 @@ const (
 	// DefaultTickInterval is the interval between worker ticks.
 	DefaultTickInterval = 1 * time.Second
 	// maxRetries is the number of times a failing record batch is retried before being skipped.
-	maxRetries = 3
+	maxRetries = 5
 )
 
 // Repository is the interface the worker needs to persist spans.
@@ -56,6 +56,7 @@ type Worker struct {
 	metrics          Metrics
 	ingestSampleRate float64
 	slowThresholdUS  int64
+	retryBaseDelay   time.Duration
 }
 
 // NewWorker creates a new background worker.
@@ -68,6 +69,7 @@ func NewWorker(sp *spool.Spool, repo Repository, logger *slog.Logger) *Worker {
 		repo:             repo,
 		logger:           logger,
 		ingestSampleRate: 1.0,
+		retryBaseDelay:   500 * time.Millisecond,
 	}
 }
 
@@ -152,6 +154,8 @@ func (w *Worker) processBatch(ctx context.Context) {
 				"count", len(spans),
 				"error", err,
 			)
+			backoff := time.Duration(attempt*attempt) * w.retryBaseDelay
+			time.Sleep(backoff)
 			continue
 		}
 		lastErr = nil
