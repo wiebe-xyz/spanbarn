@@ -259,8 +259,8 @@ type workerRepoAdapter struct {
 	repo *repository.Repository
 }
 
-func (a *workerRepoAdapter) InsertSpans(_ context.Context, spans []repository.Span) error {
-	return a.repo.InsertSpans(spans)
+func (a *workerRepoAdapter) InsertSpans(ctx context.Context, spans []repository.Span) error {
+	return a.repo.InsertSpansContext(ctx, spans)
 }
 
 func (a *workerRepoAdapter) InsertPromptRecords(_ context.Context, records []repository.PromptRecord) error {

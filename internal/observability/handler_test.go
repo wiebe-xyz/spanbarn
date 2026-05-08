@@ -64,6 +64,54 @@ func TestBugBarnHandler_ForwardsWarnAndError(t *testing.T) {
 	}
 }
 
+func TestBugBarnHandler_ErrorAttrSerializedAsString(t *testing.T) {
+	var mu sync.Mutex
+	var received []bugbarnEvent
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var ev bugbarnEvent
+		if err := json.Unmarshal(body, &ev); err == nil {
+			mu.Lock()
+			received = append(received, ev)
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	client := NewBugBarnClient(BugBarnConfig{
+		Endpoint: srv.URL,
+		APIKey:   "test-key",
+		Project:  "spanbarn",
+	})
+
+	var buf bytes.Buffer
+	handler := NewBugBarnHandler(slog.NewJSONHandler(&buf, nil), client)
+	logger := slog.New(handler)
+
+	logger.Error("insert failed", "error", io.ErrUnexpectedEOF)
+	client.Shutdown()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(received) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(received))
+	}
+	errAttr, ok := received[0].Attributes["error"]
+	if !ok {
+		t.Fatal("expected 'error' attribute")
+	}
+	errStr, ok := errAttr.(string)
+	if !ok {
+		t.Fatalf("expected error attribute to be string, got %T", errAttr)
+	}
+	if errStr != "unexpected EOF" {
+		t.Errorf("expected 'unexpected EOF', got %q", errStr)
+	}
+}
+
 func TestBugBarnClient_CaptureError(t *testing.T) {
 	var mu sync.Mutex
 	var received []bugbarnEvent

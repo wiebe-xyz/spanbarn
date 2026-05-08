@@ -21,7 +21,7 @@ func NewDB(dbPath string) (*DB, error) {
 
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
-		"PRAGMA busy_timeout=5000",
+		"PRAGMA busy_timeout=10000",
 		"PRAGMA foreign_keys=ON",
 		"PRAGMA synchronous=NORMAL",
 	}
@@ -44,7 +44,7 @@ func NewReadOnlyDB(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("open sqlite read-only %s: %w", dbPath, err)
 	}
 
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+	if _, err := db.Exec("PRAGMA busy_timeout=10000"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("exec busy_timeout: %w", err)
 	}

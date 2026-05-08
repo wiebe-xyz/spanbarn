@@ -1,22 +1,27 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 )
 
 func (r *Repository) InsertSpans(spans []Span) error {
+	return r.InsertSpansContext(context.Background(), spans)
+}
+
+func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error {
 	if len(spans) == 0 {
 		return nil
 	}
-	tx, err := r.db.Begin()
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`INSERT INTO spans
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO spans
 		(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
@@ -29,7 +34,7 @@ func (r *Repository) InsertSpans(spans []Span) error {
 		if s.ParentSpanID != "" {
 			parentID = &s.ParentSpanID
 		}
-		if _, err := stmt.Exec(
+		if _, err := stmt.ExecContext(ctx,
 			s.ProjectID, s.TraceID, s.SpanID, parentID,
 			s.Name, s.Service, s.Resource, s.Kind, s.Status,
 			s.StartTimeUs, s.DurationUs, s.Attributes, s.Events,
@@ -141,15 +146,25 @@ func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
 }
 
 func (r *Repository) DeleteBoringSpans(olderThan, newerThan time.Time, slowThresholdUS int64) (int64, error) {
-	res, err := r.db.Exec(`DELETE FROM spans
-		WHERE ingested_at < ? AND ingested_at >= ?
-		AND status NOT IN ('error','ERROR','Error')
-		AND duration_us <= ?`,
-		olderThan, newerThan, slowThresholdUS)
-	if err != nil {
-		return 0, err
+	var total int64
+	for {
+		res, err := r.db.Exec(`DELETE FROM spans WHERE id IN (
+			SELECT id FROM spans
+			WHERE ingested_at < ? AND ingested_at >= ?
+			AND status NOT IN ('error','ERROR','Error')
+			AND duration_us <= ?
+			LIMIT 5000)`,
+			olderThan, newerThan, slowThresholdUS)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n < 5000 {
+			break
+		}
 	}
-	return res.RowsAffected()
+	return total, nil
 }
 
 func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {

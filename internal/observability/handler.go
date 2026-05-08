@@ -34,7 +34,12 @@ func (h *BugBarnHandler) Handle(ctx context.Context, r slog.Record) error {
 			attrs[a.Key] = a.Value.Any()
 		}
 		r.Attrs(func(a slog.Attr) bool {
-			attrs[a.Key] = a.Value.Any()
+			v := a.Value.Any()
+			if err, ok := v.(error); ok {
+				attrs[a.Key] = err.Error()
+			} else {
+				attrs[a.Key] = v
+			}
 			return true
 		})
 
