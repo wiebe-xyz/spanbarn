@@ -6,15 +6,15 @@ const spanQueue: SpanPayload[] = []
 let flushTimer: ReturnType<typeof setInterval> | null = null
 
 type SpanPayload = {
-  trace_id: string
-  span_id: string
-  parent_span_id?: string
+  traceId: string
+  spanId: string
+  parentSpanId?: string
   name: string
   service: string
   kind: string
   status: string
-  start_time_us: number
-  duration_us: number
+  startTime: number
+  duration: number
   attributes: Record<string, string | number | boolean>
 }
 
@@ -96,14 +96,14 @@ function instrumentFetch() {
     return originalFetch.call(this, input, init).then(
       (response) => {
         enqueueSpan({
-          trace_id: traceId,
-          span_id: spanId,
+          traceId: traceId,
+          spanId: spanId,
           name: `${method} ${new URL(url, location.origin).pathname}`,
           service: SERVICE_NAME,
           kind: 'CLIENT',
           status: response.ok ? 'OK' : 'ERROR',
-          start_time_us: startUs,
-          duration_us: nowUs() - startUs,
+          startTime: startUs,
+          duration: nowUs() - startUs,
           attributes: {
             'http.method': method,
             'http.url': url,
@@ -122,14 +122,14 @@ function instrumentFetch() {
       },
       (error) => {
         enqueueSpan({
-          trace_id: traceId,
-          span_id: spanId,
+          traceId: traceId,
+          spanId: spanId,
           name: `${method} ${new URL(url, location.origin).pathname}`,
           service: SERVICE_NAME,
           kind: 'CLIENT',
           status: 'ERROR',
-          start_time_us: startUs,
-          duration_us: nowUs() - startUs,
+          startTime: startUs,
+          duration: nowUs() - startUs,
           attributes: {
             'http.method': method,
             'http.url': url,
@@ -151,14 +151,14 @@ function instrumentNavigation() {
     const newPath = location.pathname
     if (newPath === lastPath) return
     enqueueSpan({
-      trace_id: hex(16),
-      span_id: hex(8),
+      traceId: hex(16),
+      spanId: hex(8),
       name: `navigate ${newPath}`,
       service: SERVICE_NAME,
       kind: 'INTERNAL',
       status: 'OK',
-      start_time_us: nowUs(),
-      duration_us: 0,
+      startTime: nowUs(),
+      duration: 1,
       attributes: {
         'navigation.from': lastPath,
         'navigation.to': newPath,
