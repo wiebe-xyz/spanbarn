@@ -72,6 +72,30 @@ type DependencySummary struct {
 	P99Us      int64   `json:"p99Us"`
 }
 
+// ServiceMapNode holds a service in the service map.
+type ServiceMapNode struct {
+	ID         string  `json:"id"`
+	SpanCount  int64   `json:"spanCount"`
+	ErrorCount int64   `json:"errorCount"`
+	ErrorRate  float64 `json:"errorRate"`
+}
+
+// ServiceMapEdge holds a connection between two services.
+type ServiceMapEdge struct {
+	Source     string  `json:"source"`
+	Target     string  `json:"target"`
+	TargetType string  `json:"targetType"`
+	CallCount  int64   `json:"callCount"`
+	ErrorCount int64   `json:"errorCount"`
+	ErrorRate  float64 `json:"errorRate"`
+}
+
+// ServiceMap holds the full service topology.
+type ServiceMap struct {
+	Nodes []ServiceMapNode `json:"nodes"`
+	Edges []ServiceMapEdge `json:"edges"`
+}
+
 // DatabaseQuerySpan is a single span execution of a database query,
 // enriched with caller context from the parent span.
 type DatabaseQuerySpan struct {

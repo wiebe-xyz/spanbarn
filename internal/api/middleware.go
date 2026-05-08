@@ -187,6 +187,17 @@ func authorizerOrBearerAuth(a *auth.Authorizer, next http.Handler) http.Handler 
 	})
 }
 
+// cacheMiddleware sets Cache-Control on successful GET responses.
+func cacheMiddleware(maxAge int, next http.Handler) http.Handler {
+	val := fmt.Sprintf("private, max-age=%d", maxAge)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Cache-Control", val)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func originAllowed(origin string, allowed []string) bool {
 	for _, a := range allowed {
 		if a == "*" || a == origin {

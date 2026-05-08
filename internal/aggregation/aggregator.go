@@ -18,6 +18,7 @@ var tracer = otel.Tracer("spanbarn/aggregation")
 // AggregateWriter is the subset of repository methods needed to persist aggregates.
 type AggregateWriter interface {
 	UpsertAggregate(agg repository.Aggregate) error
+	UpsertAggregates(aggs []repository.Aggregate) error
 }
 
 // Aggregator groups raw spans into bucketed aggregates.
@@ -111,19 +112,16 @@ func (a *Aggregator) AggregateSpans(ctx context.Context, spans []repository.Span
 	return out, nil
 }
 
-// Persist writes each aggregate to the repository via UpsertAggregate.
+// Persist writes all aggregates to the repository in a single transaction.
 func (a *Aggregator) Persist(ctx context.Context, aggregates []repository.Aggregate) error {
 	_, span := tracer.Start(ctx, "aggregation.persist")
 	span.SetAttributes(attribute.Int("aggregate_count", len(aggregates)))
 	defer span.End()
 
-	for _, agg := range aggregates {
-		if err := a.repo.UpsertAggregate(agg); err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			return fmt.Errorf("upsert aggregate for %s/%s bucket %s: %w",
-				agg.Service, agg.Operation, agg.Bucket.Format(time.RFC3339), err)
-		}
+	if err := a.repo.UpsertAggregates(aggregates); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return fmt.Errorf("upsert %d aggregates: %w", len(aggregates), err)
 	}
 	a.logger.Info("persisted aggregates", "count", len(aggregates))
 	return nil

@@ -53,9 +53,11 @@ func (h *settingsHandlers) handleUpdateSettings(w http.ResponseWriter, r *http.R
 	}
 
 	allowed := map[string]bool{
-		"retention_full_hours":      true,
-		"retention_aggregated_days": true,
-		"retention_error_days":      true,
+		"retention_full_hours":        true,
+		"retention_interesting_hours": true,
+		"retention_aggregated_days":   true,
+		"retention_error_days":        true,
+		"ingest_sample_rate":          true,
 	}
 
 	for k, v := range body {

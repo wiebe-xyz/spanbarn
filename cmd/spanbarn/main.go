@@ -84,6 +84,9 @@ func run() error {
 	logger.Info("storage", "path", cfg.DBPath)
 
 	repo := repository.NewRepository(db.DB)
+	if cfg.QueryTimeoutSeconds > 0 {
+		repo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
+	}
 
 	if cfg.AdminUsername != "" && cfg.AdminPassword != "" {
 		if err := bootstrapAdmin(repo, cfg, logger); err != nil {
@@ -107,6 +110,9 @@ func run() error {
 	ingestHandler.Start(ctx)
 
 	w := worker.NewWorker(eventSpool, &workerRepoAdapter{repo: repo}, logger)
+	if cfg.IngestSampleRate < 1.0 {
+		w.SetIngestSampling(cfg.IngestSampleRate, int64(cfg.SlowThresholdMS)*1000)
+	}
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("worker", func() { w.Run(workerCtx) })
@@ -115,10 +121,11 @@ func run() error {
 	aggregator := aggregation.NewAggregator(repo, aggInterval, logger)
 
 	retentionCfg := retention.Config{
-		FullRetentionHours:     cfg.RetentionFullHours,
-		ErrorRetentionDays:     cfg.RetentionErrorDays,
-		AggregateRetentionDays: cfg.RetentionAggregatedDays,
-		SlowThresholdUS:        int64(cfg.SlowThresholdMS) * 1000,
+		FullRetentionHours:        cfg.RetentionFullHours,
+		InterestingRetentionHours: cfg.RetentionInterestingHours,
+		ErrorRetentionDays:        cfg.RetentionErrorDays,
+		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
+		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 	}
 	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)

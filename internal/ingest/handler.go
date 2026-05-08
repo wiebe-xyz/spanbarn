@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/wiebe-xyz/spanbarn/internal/livetail"
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
@@ -27,6 +28,7 @@ type Handler struct {
 	spool         *spool.Spool
 	flushInterval time.Duration
 	logger        *slog.Logger
+	broadcaster   *livetail.Broadcaster
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -45,7 +47,13 @@ func NewHandler(queue *Queue, sp *spool.Spool, flushInterval time.Duration, logg
 		spool:         sp,
 		flushInterval: flushInterval,
 		logger:        logger,
+		broadcaster:   livetail.NewBroadcaster(),
 	}
+}
+
+// Broadcaster returns the live tail broadcaster for SSE streaming.
+func (h *Handler) Broadcaster() *livetail.Broadcaster {
+	return h.broadcaster
 }
 
 // Start begins the background flush goroutine.
@@ -55,8 +63,9 @@ func (h *Handler) Start(ctx context.Context) {
 	go h.flushLoop(ctx)
 }
 
-// Enqueue delegates to the underlying queue.
+// Enqueue delegates to the underlying queue and publishes to live tail.
 func (h *Handler) Enqueue(record model.SpanRecord) bool {
+	h.broadcaster.Publish(record)
 	return h.queue.Enqueue(record)
 }
 

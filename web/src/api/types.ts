@@ -167,6 +167,42 @@ export type PromptRecord = {
   ingestedAt: string
 }
 
+/** A node in the service map. */
+export type ServiceMapNode = {
+  id: string
+  spanCount: number
+  errorCount: number
+  errorRate: number
+}
+
+/** An edge in the service map. */
+export type ServiceMapEdge = {
+  source: string
+  target: string
+  targetType: string
+  callCount: number
+  errorCount: number
+  errorRate: number
+}
+
+/** Full service map topology. */
+export type ServiceMap = {
+  nodes: ServiceMapNode[]
+  edges: ServiceMapEdge[]
+}
+
+/** A saved trace query. */
+export type SavedQuery = {
+  id: number
+  projectId: number
+  name: string
+  service: string
+  operation: string
+  status: string
+  minDurationUs: number
+  createdAt: string
+}
+
 /** Health check response. */
 export type HealthResponse = {
   status: string

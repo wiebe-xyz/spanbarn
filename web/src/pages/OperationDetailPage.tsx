@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type ReactElement } from 'react'
+import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
 import {
@@ -18,7 +18,7 @@ import {
 import { api } from '../api/client'
 import type { TimeseriesBucket, TraceSummary } from '../api/types'
 import { TimeRangeSelector } from '../components/TimeRangeSelector'
-import { getTimeRange } from '../utils/timeRange'
+import { getTimeRange, RANGES } from '../utils/timeRange'
 import { formatDuration } from '../utils/format'
 import { useTimeRange } from '../contexts/useTimeRange'
 
@@ -27,39 +27,68 @@ export function OperationDetailPage(): ReactElement {
   const navigate = useNavigate()
   const { range, setRange } = useTimeRange()
   const [timeseries, setTimeseries] = useState<TimeseriesBucket[]>([])
+  const [compareTs, setCompareTs] = useState<TimeseriesBucket[]>([])
   const [traces, setTraces] = useState<TraceSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [compare, setCompare] = useState(false)
+
+  const rangeHours = useMemo(() => {
+    const r = RANGES.find((r) => r.value === range)
+    return r ? r.hours : 1
+  }, [range])
 
   const fetchData = useCallback(async () => {
     if (!service || !operation) return
     const { from, to } = getTimeRange(range)
     try {
-      const [ts, tr] = await Promise.all([
+      const promises: Promise<unknown>[] = [
         api.getTimeseries(service, operation, from, to),
         api.searchTraces({ service, operation, from, to, limit: 20 }),
-      ])
-      setTimeseries(ts ?? [])
-      setTraces(tr ?? [])
+      ]
+
+      if (compare) {
+        const prevTo = new Date(new Date(from).getTime())
+        const prevFrom = new Date(prevTo.getTime() - rangeHours * 3600_000)
+        promises.push(api.getTimeseries(service, operation, prevFrom.toISOString(), prevTo.toISOString()))
+      }
+
+      const results = await Promise.all(promises)
+      setTimeseries((results[0] as TimeseriesBucket[]) ?? [])
+      setTraces((results[1] as TraceSummary[]) ?? [])
+      setCompareTs(compare ? ((results[2] as TimeseriesBucket[]) ?? []) : [])
     } catch {
       // handled by client
     } finally {
       setLoading(false)
     }
-  }, [service, operation, range])
+  }, [service, operation, range, compare, rangeHours])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     void fetchData()
   }, [fetchData])
 
-  const chartData = timeseries.map((b) => ({
-    time: new Date(b.bucket).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    p50: b.p50Us / 1000,
-    p95: b.p95Us / 1000,
-    p99: b.p99Us / 1000,
-    count: b.count,
-    errorRate: b.count > 0 ? (b.errorCount / b.count) * 100 : 0,
-  }))
+  const chartData = timeseries.map((b, i) => {
+    const base = {
+      time: new Date(b.bucket).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      p50: b.p50Us / 1000,
+      p95: b.p95Us / 1000,
+      p99: b.p99Us / 1000,
+      count: b.count,
+      errorRate: b.count > 0 ? (b.errorCount / b.count) * 100 : 0,
+    }
+    if (compare && compareTs[i]) {
+      return {
+        ...base,
+        prevP50: compareTs[i].p50Us / 1000,
+        prevP95: compareTs[i].p95Us / 1000,
+        prevP99: compareTs[i].p99Us / 1000,
+        prevCount: compareTs[i].count,
+        prevErrorRate: compareTs[i].count > 0 ? (compareTs[i].errorCount / compareTs[i].count) * 100 : 0,
+      }
+    }
+    return base
+  })
 
   const totalCount = timeseries.reduce((s, b) => s + b.count, 0)
   const avgP50 = totalCount > 0 ? timeseries.reduce((s, b) => s + b.p50Us * b.count, 0) / totalCount : 0
@@ -99,7 +128,24 @@ export function OperationDetailPage(): ReactElement {
         }}
       >
         <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>{operation}</h2>
-        <TimeRangeSelector value={range} onChange={setRange} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <button
+            onClick={() => setCompare((c) => !c)}
+            style={{
+              padding: '0.375rem 0.75rem',
+              borderRadius: 6,
+              border: '1px solid var(--border)',
+              background: compare ? 'var(--accent)' : 'transparent',
+              color: compare ? '#fff' : 'var(--text-muted)',
+              fontSize: '0.8125rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Compare
+          </button>
+          <TimeRangeSelector value={range} onChange={setRange} />
+        </div>
       </div>
 
       {/* Duration stats — only show when we have data */}
@@ -152,6 +198,9 @@ export function OperationDetailPage(): ReactElement {
                   <Line type="monotone" dataKey="p99" name="p99" stroke="#ef4444" dot={false} strokeWidth={2} />
                   <Line type="monotone" dataKey="p95" name="p95" stroke="#eab308" dot={false} strokeWidth={2} />
                   <Line type="monotone" dataKey="p50" name="p50" stroke="#3b82f6" dot={false} strokeWidth={2} />
+                  {compare && <Line type="monotone" dataKey="prevP99" name="prev p99" stroke="#ef4444" dot={false} strokeWidth={1.5} strokeDasharray="4 3" />}
+                  {compare && <Line type="monotone" dataKey="prevP95" name="prev p95" stroke="#eab308" dot={false} strokeWidth={1.5} strokeDasharray="4 3" />}
+                  {compare && <Line type="monotone" dataKey="prevP50" name="prev p50" stroke="#3b82f6" dot={false} strokeWidth={1.5} strokeDasharray="4 3" />}
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -175,6 +224,7 @@ export function OperationDetailPage(): ReactElement {
                     }}
                   />
                   <Bar dataKey="count" fill="#3b82f6" radius={[2, 2, 0, 0]} />
+                  {compare && <Bar dataKey="prevCount" name="prev count" fill="#3b82f640" radius={[2, 2, 0, 0]} />}
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -199,6 +249,7 @@ export function OperationDetailPage(): ReactElement {
                   }}
                 />
                 <Area type="monotone" dataKey="errorRate" stroke="#ef4444" fill="#ef444440" />
+                {compare && <Area type="monotone" dataKey="prevErrorRate" name="prev error rate" stroke="#ef4444" fill="none" strokeDasharray="4 3" />}
               </AreaChart>
             </ResponsiveContainer>
           </div>

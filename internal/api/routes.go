@@ -38,19 +38,29 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("/v1/traces", ingestRL(otlpAuth(http.HandlerFunc(s.handleOTLP))))
 
 	// Query endpoints — rate limited + session auth required.
+	// List/aggregate endpoints get a short cache (30s); detail endpoints are not cached.
 	if s.querySvc != nil && s.sessionMgr != nil {
 		qh := &queryHandlers{svc: s.querySvc}
 		sessionAuth := SessionMiddleware(s.sessionMgr)
+		cache30 := func(h http.Handler) http.Handler { return cacheMiddleware(30, h) }
 
-		s.mux.Handle("/api/v1/services", apiRL(sessionAuth(http.HandlerFunc(qh.handleServices))))
-		s.mux.Handle("/api/v1/services/", apiRL(sessionAuth(qh)))
-		s.mux.Handle("/api/v1/traces", apiRL(sessionAuth(http.HandlerFunc(qh.handleTraces))))
-		s.mux.Handle("/api/v1/traces/", apiRL(sessionAuth(qh)))
-		s.mux.Handle("/api/v1/dependencies", apiRL(sessionAuth(http.HandlerFunc(qh.handleDependencies))))
-		s.mux.Handle("/api/v1/database", apiRL(sessionAuth(http.HandlerFunc(qh.handleDatabaseQueries))))
+		s.mux.Handle("/api/v1/services", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleServices)))))
+		s.mux.Handle("/api/v1/services/", apiRL(sessionAuth(cache30(qh))))
+		s.mux.Handle("/api/v1/traces", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleTraces)))))
+		s.mux.Handle("/api/v1/traces/", apiRL(sessionAuth(http.HandlerFunc(qh.handleTraceDetail))))
+		s.mux.Handle("/api/v1/dependencies", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleDependencies)))))
+		s.mux.Handle("/api/v1/database", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleDatabaseQueries)))))
 		s.mux.Handle("/api/v1/database/detail", apiRL(sessionAuth(http.HandlerFunc(qh.handleDatabaseQueryDetail))))
-		s.mux.Handle("/api/v1/prompts", apiRL(sessionAuth(http.HandlerFunc(qh.handlePrompts))))
+		s.mux.Handle("/api/v1/prompts", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handlePrompts)))))
 		s.mux.Handle("/api/v1/prompts/detail", apiRL(sessionAuth(http.HandlerFunc(qh.handlePromptDetail))))
+		s.mux.Handle("/api/v1/service-map", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleServiceMap)))))
+	}
+
+	// Live tail SSE endpoint — session auth required.
+	if s.ingest != nil && s.sessionMgr != nil {
+		lth := &liveTailHandler{broadcaster: s.ingest.Broadcaster()}
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+		s.mux.Handle("/api/v1/spans/live", sessionAuth(lth))
 	}
 
 	// Alert endpoints — rate limited + session auth required.
@@ -69,6 +79,23 @@ func (s *Server) registerRoutes() {
 
 		s.mux.Handle("/api/v1/settings", apiRL(sessionAuth(sh)))
 		s.mux.Handle("/api/v1/stats", apiRL(sessionAuth(sh)))
+	}
+
+	// Saved queries endpoints — rate limited + session auth required.
+	if s.repo != nil && s.sessionMgr != nil {
+		sqh := &savedQueryHandlers{repo: s.repo}
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+
+		s.mux.Handle("/api/v1/saved-queries", apiRL(sessionAuth(sqh)))
+		s.mux.Handle("/api/v1/saved-queries/", apiRL(sessionAuth(sqh)))
+	}
+
+	// Export endpoint — rate limited + session auth required, streams NDJSON.
+	if s.repo != nil && s.sessionMgr != nil {
+		eh := &exportHandlers{repo: s.repo}
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+
+		s.mux.Handle("/api/v1/export", apiRL(sessionAuth(eh)))
 	}
 
 	// Setup endpoint — public, no auth required.

@@ -132,6 +132,26 @@ func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
 	return res.RowsAffected()
 }
 
+func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
+	res, err := r.db.Exec("DELETE FROM spans WHERE id <= ?", maxID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (r *Repository) DeleteBoringSpans(olderThan, newerThan time.Time, slowThresholdUS int64) (int64, error) {
+	res, err := r.db.Exec(`DELETE FROM spans
+		WHERE ingested_at < ? AND ingested_at >= ?
+		AND status NOT IN ('error','ERROR','Error')
+		AND duration_us <= ?`,
+		olderThan, newerThan, slowThresholdUS)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
 	res, err := r.db.Exec("DELETE FROM spans WHERE ingested_at < ?", cutoff)
 	if err != nil {
@@ -150,8 +170,78 @@ func (r *Repository) GetSpansForAggregation(cutoff time.Time, limit int) ([]Span
 	)
 }
 
+func (r *Repository) StreamSpans(f SpanFilter, fn func(Span) error) error {
+	var where []string
+	var args []any
+
+	if f.ProjectID != 0 {
+		where = append(where, "project_id = ?")
+		args = append(args, f.ProjectID)
+	}
+	if f.Service != "" {
+		where = append(where, "service = ?")
+		args = append(args, f.Service)
+	}
+	if f.Operation != "" {
+		where = append(where, "name = ?")
+		args = append(args, f.Operation)
+	}
+	if f.Status != "" {
+		where = append(where, "status = ?")
+		args = append(args, f.Status)
+	}
+	if f.MinDuration > 0 {
+		where = append(where, "duration_us >= ?")
+		args = append(args, f.MinDuration)
+	}
+	if !f.From.IsZero() {
+		where = append(where, "ingested_at >= ?")
+		args = append(args, f.From)
+	}
+	if !f.To.IsZero() {
+		where = append(where, "ingested_at <= ?")
+		args = append(args, f.To)
+	}
+
+	q := "SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at FROM spans"
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY ingested_at DESC"
+
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 100000
+	}
+	q += fmt.Sprintf(" LIMIT %d", limit)
+
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var s Span
+		if err := rows.Scan(
+			&s.ID, &s.ProjectID, &s.TraceID, &s.SpanID, &s.ParentSpanID,
+			&s.Name, &s.Service, &s.Resource, &s.Kind, &s.Status,
+			&s.StartTimeUs, &s.DurationUs, &s.Attributes, &s.Events, &s.IngestedAt,
+		); err != nil {
+			return err
+		}
+		if err := fn(s); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
 func (r *Repository) scanSpans(query string, args ...any) ([]Span, error) {
-	rows, err := r.db.Query(query, args...)
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -196,13 +286,15 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 		args = append(args, to)
 	}
 
-	q := "SELECT service, COUNT(*) as cnt, SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as err_cnt FROM spans"
+	q := `SELECT service, duration_us, CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END as is_error FROM spans`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
-	q += " GROUP BY service"
+	q += " ORDER BY service, duration_us"
 
-	rows, err := r.db.Query(q, args...)
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -212,52 +304,22 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 	var order []string
 	for rows.Next() {
 		var svc string
-		var cnt, errCnt int64
-		if err := rows.Scan(&svc, &cnt, &errCnt); err != nil {
+		var dur, isError int64
+		if err := rows.Scan(&svc, &dur, &isError); err != nil {
 			return nil, err
 		}
-		statsMap[svc] = &ServiceStats{Service: svc, Count: cnt, ErrorCount: errCnt}
-		order = append(order, svc)
+		s, ok := statsMap[svc]
+		if !ok {
+			s = &ServiceStats{Service: svc}
+			statsMap[svc] = s
+			order = append(order, svc)
+		}
+		s.Count++
+		s.ErrorCount += isError
+		s.Durations = append(s.Durations, dur)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-
-	for _, svc := range order {
-		dq := "SELECT duration_us FROM spans WHERE service = ?"
-		dargs := []any{svc}
-		if projectID != 0 {
-			dq += " AND project_id = ?"
-			dargs = append(dargs, projectID)
-		}
-		if !from.IsZero() {
-			dq += " AND ingested_at >= ?"
-			dargs = append(dargs, from)
-		}
-		if !to.IsZero() {
-			dq += " AND ingested_at <= ?"
-			dargs = append(dargs, to)
-		}
-		dq += " ORDER BY duration_us"
-
-		drows, err := r.db.Query(dq, dargs...)
-		if err != nil {
-			return nil, err
-		}
-		var durations []int64
-		for drows.Next() {
-			var d int64
-			if err := drows.Scan(&d); err != nil {
-				drows.Close()
-				return nil, err
-			}
-			durations = append(durations, d)
-		}
-		drows.Close()
-		if err := drows.Err(); err != nil {
-			return nil, err
-		}
-		statsMap[svc].Durations = durations
 	}
 
 	result := make([]ServiceStats, 0, len(order))
@@ -296,11 +358,12 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 		args = append(args, to)
 	}
 
-	q := `SELECT name, resource, kind, COUNT(*) as cnt,
-		SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as err_cnt
-		FROM spans WHERE ` + strings.Join(where, " AND ") + ` GROUP BY name, resource, kind`
+	q := `SELECT name, resource, kind, duration_us, CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END as is_error
+		FROM spans WHERE ` + strings.Join(where, " AND ") + ` ORDER BY name, resource, kind, duration_us`
 
-	rows, err := r.db.Query(q, args...)
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -311,53 +374,23 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 	var order []opKey
 	for rows.Next() {
 		var name, resource, kind string
-		var cnt, errCnt int64
-		if err := rows.Scan(&name, &resource, &kind, &cnt, &errCnt); err != nil {
+		var dur, isError int64
+		if err := rows.Scan(&name, &resource, &kind, &dur, &isError); err != nil {
 			return nil, err
 		}
 		k := opKey{name, resource, kind}
-		statsMap[k] = &OperationStats{Operation: name, Resource: resource, Kind: kind, Count: cnt, ErrorCount: errCnt}
-		order = append(order, k)
+		s, ok := statsMap[k]
+		if !ok {
+			s = &OperationStats{Operation: name, Resource: resource, Kind: kind}
+			statsMap[k] = s
+			order = append(order, k)
+		}
+		s.Count++
+		s.ErrorCount += isError
+		s.Durations = append(s.Durations, dur)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-
-	for _, k := range order {
-		dq := "SELECT duration_us FROM spans WHERE service = ? AND name = ? AND resource = ? AND kind = ?"
-		dargs := []any{service, k.name, k.resource, k.kind}
-		if projectID != 0 {
-			dq += " AND project_id = ?"
-			dargs = append(dargs, projectID)
-		}
-		if !from.IsZero() {
-			dq += " AND ingested_at >= ?"
-			dargs = append(dargs, from)
-		}
-		if !to.IsZero() {
-			dq += " AND ingested_at <= ?"
-			dargs = append(dargs, to)
-		}
-		dq += " ORDER BY duration_us"
-
-		drows, err := r.db.Query(dq, dargs...)
-		if err != nil {
-			return nil, err
-		}
-		var durations []int64
-		for drows.Next() {
-			var d int64
-			if err := drows.Scan(&d); err != nil {
-				drows.Close()
-				return nil, err
-			}
-			durations = append(durations, d)
-		}
-		drows.Close()
-		if err := drows.Err(); err != nil {
-			return nil, err
-		}
-		statsMap[k].Durations = durations
 	}
 
 	result := make([]OperationStats, 0, len(order))
@@ -402,7 +435,9 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 		ORDER BY bucket, duration_us`,
 		intervalSec, intervalSec, strings.Join(where, " AND "))
 
-	rows, err := r.db.Query(q, args...)
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

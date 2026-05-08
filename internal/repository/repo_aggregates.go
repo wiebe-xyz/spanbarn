@@ -26,6 +26,45 @@ func (r *Repository) UpsertAggregate(agg Aggregate) error {
 	return err
 }
 
+func (r *Repository) UpsertAggregates(aggs []Aggregate) error {
+	if len(aggs) == 0 {
+		return nil
+	}
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`INSERT INTO aggregates
+		(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(project_id, service, operation, resource, kind, bucket)
+		DO UPDATE SET
+			count = count + excluded.count,
+			error_count = error_count + excluded.error_count,
+			p50_us = excluded.p50_us,
+			p95_us = excluded.p95_us,
+			p99_us = excluded.p99_us,
+			max_us = MAX(max_us, excluded.max_us),
+			sum_duration_us = sum_duration_us + excluded.sum_duration_us`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, agg := range aggs {
+		if _, err := stmt.Exec(
+			agg.ProjectID, agg.Service, agg.Operation, agg.Resource, agg.Kind,
+			agg.Bucket, agg.Count, agg.ErrorCount,
+			agg.P50Us, agg.P95Us, agg.P99Us, agg.MaxUs, agg.SumDurationUs,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 	var where []string
 	var args []any
@@ -66,7 +105,9 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 		q += fmt.Sprintf(" OFFSET %d", f.Offset)
 	}
 
-	rows, err := r.db.Query(q, args...)
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
