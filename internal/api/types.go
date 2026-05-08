@@ -8,6 +8,7 @@ type SpanBatch struct {
 }
 
 // SpanInput represents a single span in the ingest payload.
+// Accepts both camelCase (traceId) and snake_case (trace_id) field names.
 type SpanInput struct {
 	TraceID      string          `json:"traceId"`
 	SpanID       string          `json:"spanId"`
@@ -21,6 +22,55 @@ type SpanInput struct {
 	Duration     int64           `json:"duration"`
 	Attributes   json.RawMessage `json:"attributes,omitempty"`
 	Events       json.RawMessage `json:"events,omitempty"`
+}
+
+func (s *SpanInput) UnmarshalJSON(data []byte) error {
+	type alias SpanInput
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*s = SpanInput(a)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+	jsonStr := func(key string) string {
+		v, ok := raw[key]
+		if !ok {
+			return ""
+		}
+		var str string
+		json.Unmarshal(v, &str)
+		return str
+	}
+	jsonInt := func(key string) int64 {
+		v, ok := raw[key]
+		if !ok {
+			return 0
+		}
+		var n int64
+		json.Unmarshal(v, &n)
+		return n
+	}
+
+	if s.TraceID == "" {
+		s.TraceID = jsonStr("trace_id")
+	}
+	if s.SpanID == "" {
+		s.SpanID = jsonStr("span_id")
+	}
+	if s.ParentSpanID == "" {
+		s.ParentSpanID = jsonStr("parent_span_id")
+	}
+	if s.StartTime == 0 {
+		s.StartTime = jsonInt("start_time_us")
+	}
+	if s.Duration == 0 {
+		s.Duration = jsonInt("duration_us")
+	}
+	return nil
 }
 
 // IngestResponse is returned on successful span ingestion.

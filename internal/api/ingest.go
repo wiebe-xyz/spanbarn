@@ -98,7 +98,7 @@ func validateSpan(sp SpanInput) error {
 	if sp.StartTime == 0 {
 		missing = append(missing, "startTime")
 	}
-	if sp.Duration == 0 {
+	if sp.Duration < 0 {
 		missing = append(missing, "duration")
 	}
 	if len(missing) > 0 {
