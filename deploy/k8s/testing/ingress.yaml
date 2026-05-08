@@ -19,6 +19,13 @@ spec:
                 name: spanbarn-ingest
                 port:
                   name: http
+          - path: /api/v1/spans/live
+            pathType: Prefix
+            backend:
+              service:
+                name: spanbarn
+                port:
+                  name: http
           - path: /api/v1/spans
             pathType: Prefix
             backend:
