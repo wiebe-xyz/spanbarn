@@ -205,140 +205,139 @@ export function TracesPage(): ReactElement {
       </h1>
 
       {/* Filters */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 12,
-          flexWrap: 'wrap',
-          marginBottom: 16,
-          alignItems: 'end',
-        }}
-      >
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>Service</span>
-          <select
-            value={filters.service}
-            onChange={(e) => updateFilter('service', e.target.value)}
-            style={inputStyle}
-          >
-            <option value="">All services</option>
-            {services.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>Operation</span>
-          <input
-            type="text"
-            placeholder="e.g. GET /api/users"
-            value={filters.operation}
-            onChange={(e) => updateFilter('operation', e.target.value)}
-            style={inputStyle}
-          />
-        </label>
-
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>Status</span>
-          <select
-            value={filters.status}
-            onChange={(e) => updateFilter('status', e.target.value)}
-            style={inputStyle}
-          >
-            <option value="">All</option>
-            <option value="ok">OK</option>
-            <option value="error">Error</option>
-          </select>
-        </label>
-
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>
-            Min Duration (ms)
-          </span>
-          <input
-            type="number"
-            min="0"
-            step="1"
-            placeholder="0"
-            value={filters.minDurationMs}
-            onChange={(e) => updateFilter('minDurationMs', e.target.value)}
-            style={{ ...inputStyle, width: 100 }}
-          />
-        </label>
-
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>
-            Min Spans
-          </span>
-          <input
-            type="number"
-            min="0"
-            step="1"
-            placeholder="0"
-            value={filters.minSpans}
-            onChange={(e) => updateFilter('minSpans', e.target.value)}
-            style={{ ...inputStyle, width: 80 }}
-          />
-        </label>
-
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>From</span>
-          <input
-            type="datetime-local"
-            value={filters.from}
-            onChange={(e) => updateFilter('from', e.target.value)}
-            style={inputStyle}
-          />
-        </label>
-
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 12, color: '#9ca3af' }}>To</span>
-          <input
-            type="datetime-local"
-            value={filters.to}
-            onChange={(e) => updateFilter('to', e.target.value)}
-            style={inputStyle}
-          />
-        </label>
-
-        <button onClick={() => search(0)} style={buttonStyle}>
-          Search
-        </button>
-        <a
-          href={api.getExportUrl(
-            new Date(filters.from).toISOString(),
-            new Date(filters.to).toISOString(),
-            filters.service || undefined,
-            filters.status && filters.status !== 'all' ? filters.status : undefined,
-          )}
-          download="spans.ndjson"
+      <div style={{ marginBottom: 16 }}>
+        <div
           style={{
-            ...buttonStyle,
-            background: 'transparent',
-            border: '1px solid #374151',
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+            gap: 12,
+            marginBottom: 12,
           }}
         >
-          Export
-        </a>
-        <button
-          onClick={saveCurrentQuery}
-          disabled={savingQuery || !(filters.service || filters.operation || filters.status || filters.minDurationMs)}
-          style={{
-            ...buttonStyle,
-            background: 'transparent',
-            border: '1px solid #374151',
-            opacity: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 1 : 0.4,
-            cursor: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 'pointer' : 'not-allowed',
-          }}
-        >
-          {savingQuery ? 'Saving...' : 'Save Query'}
-        </button>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>Service</span>
+            <select
+              value={filters.service}
+              onChange={(e) => updateFilter('service', e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">All services</option>
+              {services.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>Operation</span>
+            <input
+              type="text"
+              placeholder="e.g. GET /api/users"
+              value={filters.operation}
+              onChange={(e) => updateFilter('operation', e.target.value)}
+              style={inputStyle}
+            />
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>Status</span>
+            <select
+              value={filters.status}
+              onChange={(e) => updateFilter('status', e.target.value)}
+              style={inputStyle}
+            >
+              <option value="">All</option>
+              <option value="ok">OK</option>
+              <option value="error">Error</option>
+            </select>
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>Min Duration (ms)</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="0"
+              value={filters.minDurationMs}
+              onChange={(e) => updateFilter('minDurationMs', e.target.value)}
+              style={inputStyle}
+            />
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>Min Spans</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="0"
+              value={filters.minSpans}
+              onChange={(e) => updateFilter('minSpans', e.target.value)}
+              style={inputStyle}
+            />
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>From</span>
+            <input
+              type="datetime-local"
+              value={filters.from}
+              onChange={(e) => updateFilter('from', e.target.value)}
+              style={inputStyle}
+            />
+          </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>To</span>
+            <input
+              type="datetime-local"
+              value={filters.to}
+              onChange={(e) => updateFilter('to', e.target.value)}
+              style={inputStyle}
+            />
+          </label>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => search(0)} style={buttonStyle}>
+            Search
+          </button>
+          <a
+            href={api.getExportUrl(
+              new Date(filters.from).toISOString(),
+              new Date(filters.to).toISOString(),
+              filters.service || undefined,
+              filters.status && filters.status !== 'all' ? filters.status : undefined,
+            )}
+            download="spans.ndjson"
+            style={{
+              ...buttonStyle,
+              background: 'transparent',
+              border: '1px solid #374151',
+              textDecoration: 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+            }}
+          >
+            Export
+          </a>
+          <button
+            onClick={saveCurrentQuery}
+            disabled={savingQuery || !(filters.service || filters.operation || filters.status || filters.minDurationMs)}
+            style={{
+              ...buttonStyle,
+              background: 'transparent',
+              border: '1px solid #374151',
+              opacity: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 1 : 0.4,
+              cursor: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 'pointer' : 'not-allowed',
+            }}
+          >
+            {savingQuery ? 'Saving...' : 'Save Query'}
+          </button>
+        </div>
       </div>
 
       {/* Saved queries */}
