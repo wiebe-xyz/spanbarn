@@ -288,6 +288,30 @@ func (h *queryHandlers) handleServiceMap(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, sm)
 }
 
+func (h *queryHandlers) handleWebVitals(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.query.web_vitals")
+	defer span.End()
+
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	from, to, err := parseTimeRange(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+		return
+	}
+
+	vitals, err := h.svc.GetWebVitals(ctx, from, to)
+	if err != nil {
+		writeServerError(w, r, "query failed", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, vitals)
+}
+
 // routeQuery is a handler that dispatches query routes based on URL path pattern.
 // It handles the following patterns:
 //

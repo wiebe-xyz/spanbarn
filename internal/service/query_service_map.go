@@ -2,15 +2,22 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
 func (s *QueryService) GetServiceMap(ctx context.Context, projectID int64, from, to time.Time) (*ServiceMap, error) {
 	_, span := tracer.Start(ctx, "query.service_map")
 	defer span.End()
+
+	cacheKey := fmt.Sprintf("svcmap:%d:%d:%d", projectID, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
+	if cached, ok := cache.Get[*ServiceMap](s.cache, ctx, cacheKey); ok {
+		return cached, nil
+	}
 
 	sf := repository.SpanFilter{
 		ProjectID: projectID,
@@ -127,5 +134,6 @@ func (s *QueryService) GetServiceMap(ctx context.Context, projectID int64, from,
 		return result.Edges[i].CallCount > result.Edges[j].CallCount
 	})
 
+	cache.Set(s.cache, ctx, cacheKey, result)
 	return result, nil
 }

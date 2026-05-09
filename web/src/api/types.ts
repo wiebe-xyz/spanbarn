@@ -221,3 +221,14 @@ export type TraceSearchParams = {
   limit?: number
   offset?: number
 }
+
+export type WebVitalSummary = {
+  page: string
+  metric: string
+  p50Ms: number
+  p95Ms: number
+  samples: number
+  good: number
+  needsImprovement: number
+  poor: number
+}

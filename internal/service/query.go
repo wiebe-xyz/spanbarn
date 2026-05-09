@@ -9,6 +9,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -26,6 +27,7 @@ type QueryRepository interface {
 	QueryPromptRecords(filter repository.PromptFilter) ([]repository.PromptRecord, error)
 	GetSpansBySpanIDs(spanIDs []string) ([]repository.Span, error)
 	StreamSpans(filter repository.SpanFilter, fn func(repository.Span) error) error
+	QueryWebVitals(from, to time.Time) ([]repository.WebVitalRow, error)
 }
 
 // QueryService implements query logic for the dashboard API.
@@ -35,6 +37,7 @@ type QueryRepository interface {
 //   - query_dependencies.go  — ListDependencies
 type QueryService struct {
 	repo   QueryRepository
+	cache  *cache.Cache
 	logger *slog.Logger
 }
 
@@ -44,6 +47,10 @@ func NewQueryService(repo QueryRepository, logger *slog.Logger) *QueryService {
 		logger = slog.Default()
 	}
 	return &QueryService{repo: repo, logger: logger}
+}
+
+func (s *QueryService) SetCache(c *cache.Cache) {
+	s.cache = c
 }
 
 // --- Shared helpers ---

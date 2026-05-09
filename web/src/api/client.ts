@@ -13,6 +13,7 @@ import type {
   SavedQuery,
   HealthResponse,
   TraceSearchParams,
+  WebVitalSummary,
 } from './types'
 
 export class ApiError extends Error {
@@ -151,6 +152,9 @@ export const api = {
 
   deleteSavedQuery: (id: number) =>
     fetchJSON<{ status: string }>(`/api/v1/saved-queries/${id}`, { method: 'DELETE' }),
+
+  getWebVitals: (from: string, to: string) =>
+    fetchJSON<WebVitalSummary[]>(`/api/v1/web-vitals${qs({ from, to })}`),
 
   getHealth: () => fetchJSON<HealthResponse>('/api/v1/health'),
 

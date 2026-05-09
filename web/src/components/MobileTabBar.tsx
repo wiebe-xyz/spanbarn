@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, LogOut } from 'lucide-react'
+import { Activity, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut } from 'lucide-react'
 import { api } from '../api/client'
 
 const tabs = [
@@ -111,6 +111,25 @@ export function MobileTabBar(): ReactElement {
           >
             <Database size={18} />
             Database
+          </NavLink>
+          <NavLink
+            to="/pages"
+            onClick={() => setMoreOpen(false)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.625rem',
+              width: '100%',
+              padding: '0.625rem 0.75rem',
+              borderRadius: '0.5rem',
+              fontSize: '0.875rem',
+              fontWeight: 500,
+              color: 'var(--text-muted)',
+              textDecoration: 'none',
+            }}
+          >
+            <Globe size={18} />
+            Pages
           </NavLink>
           <NavLink
             to="/settings"

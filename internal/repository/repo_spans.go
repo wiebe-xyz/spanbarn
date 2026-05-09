@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -440,6 +441,68 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 		}
 		sb.Bucket, _ = time.Parse("2006-01-02 15:04:05", bucketStr)
 		result = append(result, sb)
+	}
+	return result, rows.Err()
+}
+
+type WebVitalRow struct {
+	Page       string
+	Metric     string
+	ValueUs    int64
+	Rating     string
+	IngestedAt time.Time
+}
+
+func (r *Repository) QueryWebVitals(from, to time.Time) ([]WebVitalRow, error) {
+	var where []string
+	var args []any
+
+	where = append(where, "name LIKE 'webvital.%'")
+	if !from.IsZero() {
+		where = append(where, "ingested_at >= ?")
+		args = append(args, from)
+	}
+	if !to.IsZero() {
+		where = append(where, "ingested_at <= ?")
+		args = append(args, to)
+	}
+
+	q := `SELECT name, duration_us, attributes, ingested_at FROM spans WHERE ` + strings.Join(where, " AND ") + ` ORDER BY ingested_at DESC LIMIT 10000`
+
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []WebVitalRow
+	for rows.Next() {
+		var name, attrsJSON string
+		var durUs int64
+		var ingestedAt time.Time
+		if err := rows.Scan(&name, &durUs, &attrsJSON, &ingestedAt); err != nil {
+			return nil, err
+		}
+		metric := strings.TrimPrefix(name, "webvital.")
+
+		var attrs map[string]any
+		_ = json.Unmarshal([]byte(attrsJSON), &attrs)
+
+		page, _ := attrs["webvital.page"].(string)
+		rating, _ := attrs["webvital.rating"].(string)
+		if page == "" {
+			page = "/"
+		}
+
+		result = append(result, WebVitalRow{
+			Page:       page,
+			Metric:     metric,
+			ValueUs:    durUs,
+			Rating:     rating,
+			IngestedAt: ingestedAt,
+		})
 	}
 	return result, rows.Err()
 }

@@ -1,6 +1,6 @@
 import { type ReactElement } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { Activity, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut } from 'lucide-react'
+import { Activity, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe } from 'lucide-react'
 import { api } from '../api/client'
 import { MobileTabBar } from './MobileTabBar'
 import { PWAInstallBanner } from './PWAInstallBanner'
@@ -13,6 +13,7 @@ const navItems = [
   { to: '/live', icon: Radio, label: 'Live Tail' },
   { to: '/database', icon: Database, label: 'Database' },
   { to: '/prompts', icon: BrainCircuit, label: 'Prompts' },
+  { to: '/pages', icon: Globe, label: 'Pages' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 

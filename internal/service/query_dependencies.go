@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -13,6 +15,11 @@ import (
 func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, from, to time.Time, svcFilter string) ([]DependencySummary, error) {
 	_, span := tracer.Start(ctx, "query.list_dependencies")
 	defer span.End()
+
+	cacheKey := fmt.Sprintf("deps:%d:%s:%d:%d", projectID, svcFilter, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
+	if cached, ok := cache.Get[[]DependencySummary](s.cache, ctx, cacheKey); ok {
+		return cached, nil
+	}
 
 	sf := repository.SpanFilter{
 		ProjectID: projectID,
@@ -101,6 +108,7 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 		return result[i].CallCount > result[j].CallCount
 	})
 
+	cache.Set(s.cache, ctx, cacheKey, result)
 	return result, nil
 }
 

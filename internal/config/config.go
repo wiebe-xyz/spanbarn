@@ -39,6 +39,8 @@ type Config struct {
 	APIRatePerMinute       int
 	MetricsToken           string
 	QueryTimeoutSeconds    int
+	RedisURL               string
+	CacheTTLSeconds        int
 	Mode                   string // "writer" (default) or "ingest"
 	WriterURL              string // URL of writer pod, used when Mode=ingest
 }
@@ -76,6 +78,8 @@ func Load() Config {
 		APIRatePerMinute:        getenvInt("SPANBARN_API_RATE_PER_MINUTE", 300),
 		MetricsToken:            os.Getenv("SPANBARN_METRICS_TOKEN"),
 		QueryTimeoutSeconds:     getenvInt("SPANBARN_QUERY_TIMEOUT_SECONDS", 30),
+		RedisURL:                os.Getenv("SPANBARN_REDIS_URL"),
+		CacheTTLSeconds:         getenvInt("SPANBARN_CACHE_TTL_SECONDS", 30),
 		Mode:                    getenv("SPANBARN_MODE", "writer"),
 		WriterURL:               os.Getenv("SPANBARN_WRITER_URL"),
 	}

@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/alert"
 	"github.com/wiebe-xyz/spanbarn/internal/api"
@@ -149,6 +150,27 @@ func run() error {
 	sessionMgr := auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
 
 	querySvc := service.NewQueryService(repo, logger)
+
+	{
+		ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
+		var store cache.Store
+		if cfg.RedisURL != "" {
+			rs, cacheErr := cache.NewRedisStore(cfg.RedisURL)
+			if cacheErr != nil {
+				logger.Warn("redis unavailable, falling back to in-memory cache", "error", cacheErr)
+				store = cache.NewMemoryStore()
+			} else {
+				store = rs
+				logger.Info("redis cache enabled", "ttl", ttl)
+			}
+		} else {
+			store = cache.NewMemoryStore()
+			logger.Info("in-memory cache enabled", "ttl", ttl)
+		}
+		queryCache := cache.New(store, ttl)
+		querySvc.SetCache(queryCache)
+		defer queryCache.Close()
+	}
 
 	serverCfg := api.ServerConfig{
 		APIKey:         cfg.APIKey,

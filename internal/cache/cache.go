@@ -1,0 +1,129 @@
+package cache
+
+import (
+	"context"
+	"encoding/json"
+	"sync"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+type Store interface {
+	Get(ctx context.Context, key string) ([]byte, bool)
+	Set(ctx context.Context, key string, data []byte, ttl time.Duration)
+	Close() error
+}
+
+type Cache struct {
+	store Store
+	ttl   time.Duration
+}
+
+func New(store Store, ttl time.Duration) *Cache {
+	return &Cache{store: store, ttl: ttl}
+}
+
+func (c *Cache) Close() error {
+	return c.store.Close()
+}
+
+func Get[T any](c *Cache, ctx context.Context, key string) (T, bool) {
+	var zero T
+	if c == nil {
+		return zero, false
+	}
+	data, ok := c.store.Get(ctx, key)
+	if !ok {
+		return zero, false
+	}
+	var result T
+	if err := json.Unmarshal(data, &result); err != nil {
+		return zero, false
+	}
+	return result, true
+}
+
+func Set(c *Cache, ctx context.Context, key string, value any) {
+	if c == nil {
+		return
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	c.store.Set(ctx, key, data, c.ttl)
+}
+
+// --- In-memory store ---
+
+type memEntry struct {
+	data      []byte
+	expiresAt time.Time
+}
+
+type MemoryStore struct {
+	mu      sync.RWMutex
+	entries map[string]memEntry
+}
+
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{entries: make(map[string]memEntry)}
+}
+
+func (m *MemoryStore) Get(_ context.Context, key string) ([]byte, bool) {
+	m.mu.RLock()
+	entry, ok := m.entries[key]
+	m.mu.RUnlock()
+	if !ok || time.Now().After(entry.expiresAt) {
+		return nil, false
+	}
+	return entry.data, true
+}
+
+func (m *MemoryStore) Set(_ context.Context, key string, data []byte, ttl time.Duration) {
+	m.mu.Lock()
+	m.entries[key] = memEntry{data: data, expiresAt: time.Now().Add(ttl)}
+	m.mu.Unlock()
+}
+
+func (m *MemoryStore) Close() error { return nil }
+
+// --- Redis store ---
+
+type RedisStore struct {
+	client *redis.Client
+}
+
+func NewRedisStore(redisURL string) (*RedisStore, error) {
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, err
+	}
+	client := redis.NewClient(opts)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		client.Close()
+		return nil, err
+	}
+
+	return &RedisStore{client: client}, nil
+}
+
+func (r *RedisStore) Get(ctx context.Context, key string) ([]byte, bool) {
+	data, err := r.client.Get(ctx, key).Bytes()
+	if err != nil {
+		return nil, false
+	}
+	return data, true
+}
+
+func (r *RedisStore) Set(ctx context.Context, key string, data []byte, ttl time.Duration) {
+	r.client.Set(ctx, key, data, ttl)
+}
+
+func (r *RedisStore) Close() error {
+	return r.client.Close()
+}

@@ -219,10 +219,100 @@ function instrumentNavigation() {
   window.addEventListener('popstate', onNav)
 }
 
+function observeWebVitals() {
+  function reportVital(name: string, valueMs: number, rating: string) {
+    const spanId = hex(8)
+    enqueueSpan({
+      traceId: pageTraceId || hex(16),
+      spanId,
+      parentSpanId: pageSpanId || undefined,
+      name: `webvital.${name}`,
+      service: SERVICE_NAME,
+      kind: 'INTERNAL',
+      status: 'OK',
+      startTime: nowUs(),
+      duration: Math.round(valueMs * 1000),
+      attributes: {
+        'webvital.name': name,
+        'webvital.value_ms': Math.round(valueMs * 100) / 100,
+        'webvital.rating': rating,
+        'webvital.page': location.pathname,
+      },
+    })
+  }
+
+  function rate(name: string, value: number): string {
+    const thresholds: Record<string, [number, number]> = {
+      LCP: [2500, 4000],
+      FCP: [1800, 3000],
+      TTFB: [800, 1800],
+      CLS: [0.1, 0.25],
+      INP: [200, 500],
+    }
+    const [good, poor] = thresholds[name] ?? [1000, 3000]
+    if (value <= good) return 'good'
+    if (value <= poor) return 'needs-improvement'
+    return 'poor'
+  }
+
+  try {
+    const po = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.entryType === 'largest-contentful-paint') {
+          reportVital('LCP', entry.startTime, rate('LCP', entry.startTime))
+        }
+      }
+    })
+    po.observe({ type: 'largest-contentful-paint', buffered: true })
+  } catch { /* not supported */ }
+
+  try {
+    const po = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.entryType === 'paint' && entry.name === 'first-contentful-paint') {
+          reportVital('FCP', entry.startTime, rate('FCP', entry.startTime))
+        }
+      }
+    })
+    po.observe({ type: 'paint', buffered: true })
+  } catch { /* not supported */ }
+
+  try {
+    const po = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.entryType === 'navigation') {
+          const nav = entry as PerformanceNavigationTiming
+          const ttfb = nav.responseStart - nav.requestStart
+          if (ttfb > 0) reportVital('TTFB', ttfb, rate('TTFB', ttfb))
+        }
+      }
+    })
+    po.observe({ type: 'navigation', buffered: true })
+  } catch { /* not supported */ }
+
+  try {
+    const po = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.entryType === 'layout-shift' && !(entry as LayoutShift).hadRecentInput) {
+          const value = (entry as LayoutShift).value
+          reportVital('CLS', value * 1000, rate('CLS', value))
+        }
+      }
+    })
+    po.observe({ type: 'layout-shift', buffered: true })
+  } catch { /* not supported */ }
+}
+
+interface LayoutShift extends PerformanceEntry {
+  hadRecentInput: boolean
+  value: number
+}
+
 export function initInstrumentation() {
   installErrorHandlers()
   instrumentFetch()
   instrumentNavigation()
+  observeWebVitals()
   flushTimer = setInterval(flushSpans, 5000)
 
   document.addEventListener('visibilitychange', () => {

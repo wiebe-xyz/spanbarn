@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -14,6 +16,11 @@ import (
 func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, to time.Time) ([]ServiceSummary, error) {
 	_, span := tracer.Start(ctx, "query.list_services")
 	defer span.End()
+
+	cacheKey := fmt.Sprintf("services:%d:%d:%d", projectID, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
+	if cached, ok := cache.Get[[]ServiceSummary](s.cache, ctx, cacheKey); ok {
+		return cached, nil
+	}
 
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: projectID,
@@ -105,6 +112,7 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 		return result[i].SpanCount > result[j].SpanCount
 	})
 
+	cache.Set(s.cache, ctx, cacheKey, result)
 	return result, nil
 }
 
@@ -113,6 +121,11 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 	_, span := tracer.Start(ctx, "query.list_operations")
 	span.SetAttributes(attribute.String("service", service))
 	defer span.End()
+
+	cacheKey := fmt.Sprintf("ops:%d:%s:%d:%d", projectID, service, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
+	if cached, ok := cache.Get[[]OperationSummary](s.cache, ctx, cacheKey); ok {
+		return cached, nil
+	}
 
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: projectID,
@@ -193,6 +206,7 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 		return result[i].SpanCount > result[j].SpanCount
 	})
 
+	cache.Set(s.cache, ctx, cacheKey, result)
 	return result, nil
 }
 
