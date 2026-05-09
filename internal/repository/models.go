@@ -67,6 +67,7 @@ type Aggregate struct {
 
 type SpanFilter struct {
 	ProjectID   int64
+	TraceID     string
 	Service     string
 	Operation   string
 	Status      string

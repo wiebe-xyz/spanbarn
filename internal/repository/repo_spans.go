@@ -54,6 +54,10 @@ func (r *Repository) QuerySpans(f SpanFilter) ([]Span, error) {
 		where = append(where, "project_id = ?")
 		args = append(args, f.ProjectID)
 	}
+	if f.TraceID != "" {
+		where = append(where, "trace_id = ?")
+		args = append(args, f.TraceID)
+	}
 	if f.Service != "" {
 		where = append(where, "service = ?")
 		args = append(args, f.Service)

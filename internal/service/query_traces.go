@@ -130,16 +130,13 @@ func (s *QueryService) GetTrace(ctx context.Context, traceID string) (*TraceDeta
 	}
 
 	errorSpans, err := s.repo.QueryErrorSamples(repository.SpanFilter{
-		Limit: 1000,
+		TraceID: traceID,
+		Limit:   1000,
 	})
 	if err != nil {
 		s.logger.Warn("failed to query error samples for trace", "error", err)
 	} else {
-		for _, sp := range errorSpans {
-			if sp.TraceID == traceID {
-				spans = append(spans, sp)
-			}
-		}
+		spans = append(spans, errorSpans...)
 	}
 
 	seen := make(map[string]bool)
