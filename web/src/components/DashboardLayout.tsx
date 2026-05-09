@@ -1,5 +1,5 @@
-import { type ReactElement } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { type ReactElement, useEffect } from 'react'
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Activity, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe } from 'lucide-react'
 import { api } from '../api/client'
 import { MobileTabBar } from './MobileTabBar'
@@ -19,6 +19,16 @@ const navItems = [
 
 export function DashboardLayout(): ReactElement {
   const navigate = useNavigate()
+  const location = useLocation()
+
+  useEffect(() => {
+    if (navigator.serviceWorker?.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'PREFETCH_ADJACENT',
+        path: location.pathname,
+      })
+    }
+  }, [location.pathname])
 
   const handleLogout = async () => {
     try {
