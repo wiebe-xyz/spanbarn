@@ -2,15 +2,22 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
 func (s *QueryService) ListPrompts(ctx context.Context, projectID int64, from, to time.Time, svcFilter, modelFilter string) ([]PromptSummary, error) {
 	_, span := tracer.Start(ctx, "query.list_prompts")
 	defer span.End()
+
+	cacheKey := fmt.Sprintf("prompts:%d:%s:%s:%d:%d", projectID, svcFilter, modelFilter, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
+	if cached, ok := cache.Get[[]PromptSummary](s.cache, ctx, cacheKey); ok {
+		return cached, nil
+	}
 
 	f := repository.PromptFilter{
 		ProjectID: projectID,
@@ -92,6 +99,7 @@ func (s *QueryService) ListPrompts(ctx context.Context, projectID int64, from, t
 		return result[i].TotalCostUSD > result[j].TotalCostUSD
 	})
 
+	cache.Set(s.cache, ctx, cacheKey, result)
 	return result, nil
 }
 

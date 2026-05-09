@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -15,6 +17,11 @@ import (
 func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64, from, to time.Time, svcFilter string) ([]DatabaseQuerySummary, error) {
 	_, span := tracer.Start(ctx, "query.list_database_queries")
 	defer span.End()
+
+	cacheKey := fmt.Sprintf("dbq:%d:%s:%d:%d", projectID, svcFilter, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
+	if cached, ok := cache.Get[[]DatabaseQuerySummary](s.cache, ctx, cacheKey); ok {
+		return cached, nil
+	}
 
 	sf := repository.SpanFilter{
 		ProjectID: projectID,
@@ -115,6 +122,7 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 		return result[i].TotalTimeUs > result[j].TotalTimeUs
 	})
 
+	cache.Set(s.cache, ctx, cacheKey, result)
 	return result, nil
 }
 
