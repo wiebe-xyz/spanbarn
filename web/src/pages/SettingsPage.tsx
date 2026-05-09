@@ -195,6 +195,12 @@ type Project = {
   createdAt: string
 }
 
+type ProjectStats = {
+  projectId: number
+  spanCount: number
+  errorCount: number
+}
+
 type APIKey = {
   id: number
   projectId: number
@@ -323,6 +329,7 @@ function ProjectAPIKeys({ projectId }: { projectId: number }) {
 
 export function SettingsPage(): ReactElement {
   const [projects, setProjects] = useState<Project[]>([])
+  const [statsMap, setStatsMap] = useState<Record<number, ProjectStats>>({})
   const [loading, setLoading] = useState(true)
   const [approvingProject, setApprovingProject] = useState<number | null>(null)
   const [rejectingProject, setRejectingProject] = useState<number | null>(null)
@@ -330,8 +337,14 @@ export function SettingsPage(): ReactElement {
 
   const fetchProjects = useCallback(async () => {
     try {
-      const data = await fetchJSON<Project[]>('/api/v1/projects')
+      const [data, stats] = await Promise.all([
+        fetchJSON<Project[]>('/api/v1/projects'),
+        fetchJSON<ProjectStats[]>('/api/v1/projects/stats').catch(() => [] as ProjectStats[]),
+      ])
       setProjects(data ?? [])
+      const map: Record<number, ProjectStats> = {}
+      for (const s of stats ?? []) map[s.projectId] = s
+      setStatsMap(map)
     } catch {
       setError('Failed to load projects')
     } finally {
@@ -590,48 +603,67 @@ export function SettingsPage(): ReactElement {
             No projects yet. Use the setup URL above to create one.
           </div>
         ) : (
-          activeProjects.map((p) => (
-            <div
-              key={p.id}
-              style={{
-                padding: '1rem 1.25rem',
-                borderBottom: '1px solid var(--border)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{p.name}</span>
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    background: 'rgba(34,197,94,0.15)',
-                    color: '#22c55e',
-                    borderRadius: 99,
-                    padding: '0.1rem 0.5rem',
-                  }}
-                >
-                  {p.status}
-                </span>
-                <span className="mono text-muted" style={{ fontSize: '0.75rem' }}>
-                  {p.slug}
-                </span>
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <CopyButton value={`${window.location.origin}/api/v1/setup/${p.slug}`} />
-                  <a
-                    href={`/api/v1/setup/${p.slug}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn btn-sm"
-                    style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+          activeProjects.map((p) => {
+            const stats = statsMap[p.id]
+            const errorRate = stats && stats.spanCount > 0
+              ? ((stats.errorCount / stats.spanCount) * 100).toFixed(1)
+              : null
+            return (
+              <div
+                key={p.id}
+                style={{
+                  padding: '1rem 1.25rem',
+                  borderBottom: '1px solid var(--border)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{p.name}</span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      background: 'rgba(34,197,94,0.15)',
+                      color: '#22c55e',
+                      borderRadius: 99,
+                      padding: '0.1rem 0.5rem',
+                    }}
                   >
-                    <ExternalLink size={13} />
-                    Setup
-                  </a>
+                    {p.status}
+                  </span>
+                  <span className="mono text-muted" style={{ fontSize: '0.75rem' }}>
+                    {p.slug}
+                  </span>
+                  {stats && (
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: '0.75rem', marginLeft: 4 }}>
+                      <span style={{ color: 'var(--text-muted)' }}>
+                        <strong style={{ color: 'var(--text)', fontWeight: 700 }}>{formatNumber(stats.spanCount)}</strong> spans
+                      </span>
+                      {stats.errorCount > 0 && (
+                        <span style={{ color: 'var(--text-muted)' }}>
+                          <strong style={{ color: '#ef4444', fontWeight: 700 }}>{formatNumber(stats.errorCount)}</strong> errors
+                          {errorRate && <span style={{ marginLeft: 3 }}>({errorRate}%)</span>}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <CopyButton value={`${window.location.origin}/api/v1/setup/${p.slug}`} />
+                    <a
+                      href={`/api/v1/setup/${p.slug}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-sm"
+                      style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+                    >
+                      <ExternalLink size={13} />
+                      Setup
+                    </a>
+                  </div>
                 </div>
+                <ProjectAPIKeys projectId={p.id} />
               </div>
-              <ProjectAPIKeys projectId={p.id} />
-            </div>
-          ))
+            )
+          })
         )}
       </div>
     </div>

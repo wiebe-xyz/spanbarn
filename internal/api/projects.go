@@ -28,6 +28,11 @@ func (h *projectHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if path == "stats" && r.Method == http.MethodGet {
+		h.handleStats(w, r)
+		return
+	}
+
 	parts := strings.SplitN(path, "/", 2)
 	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
@@ -104,6 +109,22 @@ func (h *projectHandlers) handleApprove(w http.ResponseWriter, r *http.Request, 
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(project)
+}
+
+func (h *projectHandlers) handleStats(w http.ResponseWriter, r *http.Request) {
+	_, span := apiTracer.Start(r.Context(), "api.projects.stats")
+	defer span.End()
+
+	stats, err := h.repo.ProjectUsageStatsAll(24)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to query stats", "")
+		return
+	}
+	if stats == nil {
+		stats = []repository.ProjectUsageStats{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
 }
 
 type apiKeyResponse struct {

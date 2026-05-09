@@ -1,6 +1,9 @@
 package repository
 
-import "database/sql"
+import (
+	"database/sql"
+	"fmt"
+)
 
 func (r *Repository) CreateProject(slug, name string) (Project, error) {
 	res, err := r.db.Exec("INSERT INTO projects (slug, name) VALUES (?, ?)", slug, name)
@@ -105,6 +108,37 @@ func (r *Repository) DeleteProject(id int64) error {
 		return sql.ErrNoRows
 	}
 	return tx.Commit()
+}
+
+// ProjectUsageStats holds per-project span metrics.
+type ProjectUsageStats struct {
+	ProjectID  int64 `json:"projectId"`
+	SpanCount  int64 `json:"spanCount"`
+	ErrorCount int64 `json:"errorCount"`
+}
+
+// ProjectUsageStatsAll returns span count and error count per project for the last N hours.
+func (r *Repository) ProjectUsageStatsAll(hours int) ([]ProjectUsageStats, error) {
+	rows, err := r.db.Query(`
+		SELECT project_id,
+			COUNT(*) as span_count,
+			SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as error_count
+		FROM spans
+		WHERE ingested_at >= datetime('now', ?)
+		GROUP BY project_id`, fmt.Sprintf("-%d hours", hours))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProjectUsageStats
+	for rows.Next() {
+		var s ProjectUsageStats
+		if err := rows.Scan(&s.ProjectID, &s.SpanCount, &s.ErrorCount); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 func (r *Repository) EnsureSetupAPIKey(projectID int64, keySHA256 string) error {
