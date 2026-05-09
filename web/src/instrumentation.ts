@@ -5,6 +5,9 @@ const SERVICE_NAME = 'spanbarn-web'
 const spanQueue: SpanPayload[] = []
 let flushTimer: ReturnType<typeof setInterval> | null = null
 
+let pageTraceId = ''
+let pageSpanId = ''
+
 type SpanPayload = {
   traceId: string
   spanId: string
@@ -25,6 +28,34 @@ function hex(bytes: number): string {
 
 function nowUs(): number {
   return Math.round(performance.timeOrigin * 1000 + performance.now() * 1000)
+}
+
+function traceparent(traceId: string, spanId: string): string {
+  return `00-${traceId}-${spanId}-01`
+}
+
+function startPageTrace(path: string, fromPath?: string) {
+  flushSpans()
+
+  pageTraceId = hex(16)
+  pageSpanId = hex(8)
+
+  const attrs: Record<string, string | number | boolean> = {
+    'navigation.to': path,
+  }
+  if (fromPath) attrs['navigation.from'] = fromPath
+
+  enqueueSpan({
+    traceId: pageTraceId,
+    spanId: pageSpanId,
+    name: `page ${path}`,
+    service: SERVICE_NAME,
+    kind: 'INTERNAL',
+    status: 'OK',
+    startTime: nowUs(),
+    duration: 1,
+    attributes: attrs,
+  })
 }
 
 function reportError(error: Error, attrs?: Record<string, string>) {
@@ -89,15 +120,21 @@ function instrumentFetch() {
       return originalFetch.call(this, input, init)
     }
 
-    const traceId = hex(16)
     const spanId = hex(8)
     const startUs = nowUs()
 
-    return originalFetch.call(this, input, init).then(
+    const headers = new Headers(init?.headers)
+    if (pageTraceId) {
+      headers.set('traceparent', traceparent(pageTraceId, spanId))
+    }
+    const patchedInit = { ...init, headers }
+
+    return originalFetch.call(this, input, patchedInit).then(
       (response) => {
         enqueueSpan({
-          traceId: traceId,
-          spanId: spanId,
+          traceId: pageTraceId,
+          spanId,
+          parentSpanId: pageSpanId,
           name: `${method} ${new URL(url, location.origin).pathname}`,
           service: SERVICE_NAME,
           kind: 'CLIENT',
@@ -122,8 +159,9 @@ function instrumentFetch() {
       },
       (error) => {
         enqueueSpan({
-          traceId: traceId,
-          spanId: spanId,
+          traceId: pageTraceId,
+          spanId,
+          parentSpanId: pageSpanId,
           name: `${method} ${new URL(url, location.origin).pathname}`,
           service: SERVICE_NAME,
           kind: 'CLIENT',
@@ -147,24 +185,14 @@ function instrumentNavigation() {
   const originalPushState = history.pushState.bind(history)
   const originalReplaceState = history.replaceState.bind(history)
 
+  startPageTrace(lastPath)
+
   function onNav() {
     const newPath = location.pathname
     if (newPath === lastPath) return
-    enqueueSpan({
-      traceId: hex(16),
-      spanId: hex(8),
-      name: `navigate ${newPath}`,
-      service: SERVICE_NAME,
-      kind: 'INTERNAL',
-      status: 'OK',
-      startTime: nowUs(),
-      duration: 1,
-      attributes: {
-        'navigation.from': lastPath,
-        'navigation.to': newPath,
-      },
-    })
+    const fromPath = lastPath
     lastPath = newPath
+    startPageTrace(newPath, fromPath)
   }
 
   history.pushState = function (...args: Parameters<typeof history.pushState>) {
