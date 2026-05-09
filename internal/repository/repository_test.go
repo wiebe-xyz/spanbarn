@@ -513,9 +513,6 @@ func TestQueryOperationStatsFromSpans(t *testing.T) {
 	if getAPI.Count != 2 || getAPI.ErrorCount != 1 {
 		t.Fatalf("unexpected stats: count=%d errors=%d", getAPI.Count, getAPI.ErrorCount)
 	}
-	if len(getAPI.Durations) != 2 {
-		t.Fatalf("expected 2 durations, got %d", len(getAPI.Durations))
-	}
 }
 
 func TestQuerySpanTimeseries(t *testing.T) {
@@ -540,16 +537,11 @@ func TestQuerySpanTimeseries(t *testing.T) {
 	}
 
 	var totalCount int64
-	var totalDurations int
 	for _, b := range buckets {
 		totalCount += b.Count
-		totalDurations += len(b.Durations)
 	}
 	if totalCount != 3 {
 		t.Fatalf("expected 3 total count, got %d", totalCount)
-	}
-	if totalDurations != 3 {
-		t.Fatalf("expected 3 total durations, got %d", totalDurations)
 	}
 }
 
