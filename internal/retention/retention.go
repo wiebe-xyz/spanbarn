@@ -103,7 +103,7 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 				time.Sleep(backoff)
 			}
 			if lastErr != nil {
-				w.logger.Warn("retention cycle failed, will retry next tick", "error", lastErr)
+				w.logger.Info("retention cycle failed, will retry next tick", "error", lastErr)
 			}
 		}
 	}
