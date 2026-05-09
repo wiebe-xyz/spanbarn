@@ -202,9 +202,9 @@ export function LiveTailPage(): ReactElement {
                     <td
                       className="mono"
                       style={{ fontSize: '0.8125rem', color: 'var(--accent)', cursor: 'pointer' }}
-                      onClick={() => navigate(`/traces/${s.trace_id}`)}
+                      onClick={() => s.trace_id && navigate(`/traces/${s.trace_id}`)}
                     >
-                      {s.trace_id.slice(0, 16)}...
+                      {s.trace_id ? `${s.trace_id.slice(0, 16)}...` : '-'}
                     </td>
                   </tr>
                 ))
