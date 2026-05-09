@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 )
 
 type WebVitalSummary struct {
@@ -20,6 +23,11 @@ type WebVitalSummary struct {
 func (s *QueryService) GetWebVitals(ctx context.Context, from, to time.Time) ([]WebVitalSummary, error) {
 	_, span := tracer.Start(ctx, "query.web_vitals")
 	defer span.End()
+
+	cacheKey := fmt.Sprintf("vitals:%d:%d", from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
+	if cached, ok := cache.Get[[]WebVitalSummary](s.cache, ctx, cacheKey); ok {
+		return cached, nil
+	}
 
 	rows, err := s.repo.QueryWebVitals(from, to)
 	if err != nil {
@@ -82,5 +90,6 @@ func (s *QueryService) GetWebVitals(ctx context.Context, from, to time.Time) ([]
 		return result[i].Metric < result[j].Metric
 	})
 
+	cache.Set(s.cache, ctx, cacheKey, result)
 	return result, nil
 }
