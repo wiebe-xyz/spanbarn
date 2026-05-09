@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, type ReactElement } from 'react'
+import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, Search } from 'lucide-react'
 import {
   AreaChart,
   Area,
@@ -26,6 +26,10 @@ export function OperationsPage(): ReactElement {
   const [operations, setOperations] = useState<OperationSummary[]>([])
   const [_timeseries, setTimeseries] = useState<TimeseriesBucket[]>([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [kindFilter, setKindFilter] = useState('')
+  const [sortKey, setSortKey] = useState<string>('spanCount')
+  const [sortAsc, setSortAsc] = useState(false)
 
   const fetchData = useCallback(async () => {
     if (!service) return
@@ -49,6 +53,43 @@ export function OperationsPage(): ReactElement {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     void fetchData()
   }, [fetchData])
+
+  const kinds = useMemo(() => {
+    const set = new Set(operations.map((o) => o.kind || 'internal'))
+    return Array.from(set).sort()
+  }, [operations])
+
+  const handleSort = (key: string) => {
+    if (sortKey === key) {
+      setSortAsc(!sortAsc)
+    } else {
+      setSortKey(key)
+      setSortAsc(key === 'operation')
+    }
+  }
+
+  const filteredOps = useMemo(() => {
+    let list = operations
+    if (search) {
+      const q = search.toLowerCase()
+      list = list.filter((o) => o.operation.toLowerCase().includes(q) || (o.resource && o.resource.toLowerCase().includes(q)))
+    }
+    if (kindFilter) {
+      list = list.filter((o) => (o.kind || 'internal') === kindFilter)
+    }
+    const dir = sortAsc ? 1 : -1
+    return [...list].sort((a, b) => {
+      const av = (a as Record<string, unknown>)[sortKey]
+      const bv = (b as Record<string, unknown>)[sortKey]
+      if (typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv) * dir
+      return ((av as number) - (bv as number)) * dir
+    })
+  }, [operations, search, kindFilter, sortKey, sortAsc])
+
+  const sortIcon = (key: string) => {
+    if (sortKey !== key) return ''
+    return sortAsc ? ' ▲' : ' ▼'
+  }
 
   const chartData = _timeseries.map((b) => ({
     time: new Date(b.bucket).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -78,7 +119,44 @@ export function OperationsPage(): ReactElement {
         }}
       >
         <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>{service} Operations</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative' }}>
+            <Search size={14} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+            <input
+              type="text"
+              placeholder="Filter operations..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+                padding: '6px 10px 6px 28px',
+                color: 'var(--text)',
+                fontSize: 13,
+                outline: 'none',
+                width: 180,
+              }}
+            />
+          </div>
+          <select
+            value={kindFilter}
+            onChange={(e) => setKindFilter(e.target.value)}
+            style={{
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+              padding: '6px 10px',
+              color: 'var(--text)',
+              fontSize: 13,
+              outline: 'none',
+            }}
+          >
+            <option value="">All kinds</option>
+            {kinds.map((k) => (
+              <option key={k} value={k}>{k}</option>
+            ))}
+          </select>
           <AutoRefresh value={refreshInterval} onChange={setRefreshInterval} onRefresh={fetchData} />
           <TimeRangeSelector value={range} onChange={setRange} />
         </div>
@@ -117,15 +195,15 @@ export function OperationsPage(): ReactElement {
         <table style={{ minWidth: 700 }}>
           <thead>
             <tr>
-              <th>Operation</th>
-              <th>Resource</th>
-              <th>Kind</th>
-              <th style={{ textAlign: 'right' }}>Requests</th>
-              <th style={{ textAlign: 'right' }}>Errors</th>
-              <th style={{ textAlign: 'right' }}>Error Rate</th>
-              <th style={{ textAlign: 'right' }}>P50</th>
-              <th style={{ textAlign: 'right' }}>P95</th>
-              <th style={{ textAlign: 'right' }}>P99</th>
+              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('operation')}>Operation{sortIcon('operation')}</th>
+              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('resource')}>Resource{sortIcon('resource')}</th>
+              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('kind')}>Kind{sortIcon('kind')}</th>
+              <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('spanCount')}>Requests{sortIcon('spanCount')}</th>
+              <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('errorCount')}>Errors{sortIcon('errorCount')}</th>
+              <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('errorRate')}>Error Rate{sortIcon('errorRate')}</th>
+              <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('p50Us')}>P50{sortIcon('p50Us')}</th>
+              <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('p95Us')}>P95{sortIcon('p95Us')}</th>
+              <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('p99Us')}>P99{sortIcon('p99Us')}</th>
             </tr>
           </thead>
           <tbody>
@@ -139,15 +217,15 @@ export function OperationsPage(): ReactElement {
                     ))}
                   </tr>
                 ))
-              : operations.length === 0
+              : filteredOps.length === 0
                 ? (
                     <tr>
                       <td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>
-                        No operations found
+                        {search || kindFilter ? 'No operations match your filters' : 'No operations found'}
                       </td>
                     </tr>
                   )
-                : operations.map((op) => (
+                : filteredOps.map((op) => (
                     <tr
                       key={`${op.operation}-${op.resource}-${op.kind}`}
                       style={{ cursor: 'pointer' }}
