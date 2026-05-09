@@ -4,14 +4,14 @@ import { ServiceSelect } from '../components/ServiceSelect'
 import { formatDuration } from '../utils/format'
 
 type LiveSpan = {
-  traceId: string
-  spanId: string
-  parentSpanId?: string
+  trace_id: string
+  span_id: string
+  parent_span_id?: string
   name: string
   service: string
   kind: string
   status: string
-  durationUs: number
+  duration_us: number
   start_time_us: number
 }
 
@@ -174,7 +174,7 @@ export function LiveTailPage(): ReactElement {
                 </tr>
               ) : (
                 spans.map((s, i) => (
-                  <tr key={`${s.spanId}-${i}`}>
+                  <tr key={`${s.span_id}-${i}`}>
                     <td className="mono text-muted" style={{ fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>
                       {new Date(s.start_time_us / 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                     </td>
@@ -182,7 +182,7 @@ export function LiveTailPage(): ReactElement {
                     <td>{s.name}</td>
                     <td className="text-muted">{s.kind}</td>
                     <td style={{ textAlign: 'right' }} className="mono">
-                      {formatDuration(s.durationUs)}
+                      {formatDuration(s.duration_us)}
                     </td>
                     <td style={{ textAlign: 'center' }}>
                       <span
@@ -202,9 +202,9 @@ export function LiveTailPage(): ReactElement {
                     <td
                       className="mono"
                       style={{ fontSize: '0.8125rem', color: 'var(--accent)', cursor: 'pointer' }}
-                      onClick={() => navigate(`/traces/${s.traceId}`)}
+                      onClick={() => navigate(`/traces/${s.trace_id}`)}
                     >
-                      {s.traceId.slice(0, 16)}...
+                      {s.trace_id.slice(0, 16)}...
                     </td>
                   </tr>
                 ))
