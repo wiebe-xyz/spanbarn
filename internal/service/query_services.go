@@ -219,6 +219,11 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 	)
 	defer span.End()
 
+	cacheKey := fmt.Sprintf("ts:%d:%s:%s:%d:%d:%d", projectID, svcName, operation, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix(), int64(interval.Seconds()))
+	if cached, ok := cache.Get[[]TimeseriesBucket](s.cache, ctx, cacheKey); ok {
+		return cached, nil
+	}
+
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: projectID,
 		Service:   svcName,
@@ -289,5 +294,6 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 		return result[i].Bucket.Before(result[j].Bucket)
 	})
 
+	cache.Set(s.cache, ctx, cacheKey, result)
 	return result, nil
 }
