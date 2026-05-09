@@ -29,7 +29,13 @@ export function SpanWaterfall({ spans, totalDurationUs }: Props) {
       ? Math.min(...spans.map((s) => s.startTimeUs))
       : 0
 
-  const safeDuration = totalDurationUs > 0 ? totalDurationUs : 1
+  const traceEndTimeUs =
+    spans.length > 0
+      ? Math.max(...spans.map((s) => s.startTimeUs + s.durationUs))
+      : 0
+
+  const actualRange = traceEndTimeUs - traceStartTimeUs
+  const safeDuration = actualRange > 0 ? actualRange : (totalDurationUs > 0 ? totalDurationUs : 1)
 
   const handleRowClick = (spanId: string) => {
     setSelectedSpanId(selectedSpanId === spanId ? null : spanId)

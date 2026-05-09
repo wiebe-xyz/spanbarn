@@ -69,7 +69,7 @@ describe('SpanWaterfall', () => {
 
     const bar = screen.getByTestId('waterfall-bar-s1')
     expect(bar.style.left).toBe('0%')
-    expect(bar.style.width).toBe('50%')
+    expect(bar.style.width).toBe('100%')
   })
 
   it('opens detail panel on click', () => {
