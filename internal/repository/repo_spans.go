@@ -308,88 +308,27 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 		whereClause = "WHERE " + strings.Join(where, " AND ")
 	}
 
-	ctx, cancel := r.queryContext()
-	defer cancel()
-
-	// Step 1: get counts per service (fast GROUP BY).
-	countQ := fmt.Sprintf(`SELECT service, COUNT(*) as cnt,
+	q := fmt.Sprintf(`SELECT service, COUNT(*) as cnt,
 		SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as err_cnt
 		FROM spans %s GROUP BY service`, whereClause)
-	countRows, err := r.db.QueryContext(ctx, countQ, args...)
-	if err != nil {
-		return nil, err
-	}
-	type svcCount struct {
-		count, errors          int64
-		p50Idx, p95Idx, p99Idx int64
-	}
-	counts := make(map[string]*svcCount)
-	var order []string
-	for countRows.Next() {
-		var svc string
-		var sc svcCount
-		if err := countRows.Scan(&svc, &sc.count, &sc.errors); err != nil {
-			countRows.Close()
-			return nil, err
-		}
-		sc.p50Idx = max(1, sc.count*50/100)
-		sc.p95Idx = max(1, sc.count*95/100)
-		sc.p99Idx = max(1, sc.count*99/100)
-		counts[svc] = &sc
-		order = append(order, svc)
-	}
-	countRows.Close()
 
-	// Step 2: stream sorted rows to pick percentile values at exact positions.
-	streamQ := fmt.Sprintf(`SELECT service, duration_us FROM spans %s ORDER BY service, duration_us`, whereClause)
-	rows, err := r.db.QueryContext(ctx, streamQ, args...)
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	statsMap := make(map[string]*ServiceStats, len(counts))
-	for svc, sc := range counts {
-		statsMap[svc] = &ServiceStats{Service: svc, Count: sc.count, ErrorCount: sc.errors}
-	}
-
-	var curSvc string
-	var pos int64
+	var result []ServiceStats
 	for rows.Next() {
-		var svc string
-		var dur int64
-		if err := rows.Scan(&svc, &dur); err != nil {
+		var s ServiceStats
+		if err := rows.Scan(&s.Service, &s.Count, &s.ErrorCount); err != nil {
 			return nil, err
 		}
-		if svc != curSvc {
-			curSvc = svc
-			pos = 0
-		}
-		pos++
-		sc := counts[svc]
-		if sc == nil {
-			continue
-		}
-		st := statsMap[svc]
-		if pos == sc.p50Idx {
-			st.P50Us = dur
-		}
-		if pos == sc.p95Idx {
-			st.P95Us = dur
-		}
-		if pos == sc.p99Idx {
-			st.P99Us = dur
-		}
+		result = append(result, s)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	result := make([]ServiceStats, 0, len(order))
-	for _, svc := range order {
-		result = append(result, *statsMap[svc])
-	}
-	return result, nil
+	return result, rows.Err()
 }
 
 type OperationStats struct {
@@ -425,92 +364,27 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 
 	whereClause := strings.Join(where, " AND ")
 
-	ctx, cancel := r.queryContext()
-	defer cancel()
-
-	type opKey struct{ name, resource, kind string }
-	type opCount struct {
-		count, errors          int64
-		p50Idx, p95Idx, p99Idx int64
-	}
-
-	countQ := fmt.Sprintf(`SELECT name, resource, kind, COUNT(*) as cnt,
+	q := fmt.Sprintf(`SELECT name, resource, kind, COUNT(*) as cnt,
 		SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as err_cnt
 		FROM spans WHERE %s GROUP BY name, resource, kind`, whereClause)
-	countRows, err := r.db.QueryContext(ctx, countQ, args...)
-	if err != nil {
-		return nil, err
-	}
-	counts := make(map[opKey]*opCount)
-	var order []opKey
-	for countRows.Next() {
-		var k opKey
-		var oc opCount
-		if err := countRows.Scan(&k.name, &k.resource, &k.kind, &oc.count, &oc.errors); err != nil {
-			countRows.Close()
-			return nil, err
-		}
-		oc.p50Idx = max(1, oc.count*50/100)
-		oc.p95Idx = max(1, oc.count*95/100)
-		oc.p99Idx = max(1, oc.count*99/100)
-		counts[k] = &oc
-		order = append(order, k)
-	}
-	countRows.Close()
 
-	statsMap := make(map[opKey]*OperationStats, len(counts))
-	for k, oc := range counts {
-		statsMap[k] = &OperationStats{
-			Operation: k.name, Resource: k.resource, Kind: k.kind,
-			Count: oc.count, ErrorCount: oc.errors,
-		}
-	}
-
-	streamQ := fmt.Sprintf(`SELECT name, resource, kind, duration_us
-		FROM spans WHERE %s ORDER BY name, resource, kind, duration_us`, whereClause)
-	rows, err := r.db.QueryContext(ctx, streamQ, args...)
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var curKey opKey
-	var pos int64
+	var result []OperationStats
 	for rows.Next() {
-		var k opKey
-		var dur int64
-		if err := rows.Scan(&k.name, &k.resource, &k.kind, &dur); err != nil {
+		var s OperationStats
+		if err := rows.Scan(&s.Operation, &s.Resource, &s.Kind, &s.Count, &s.ErrorCount); err != nil {
 			return nil, err
 		}
-		if k != curKey {
-			curKey = k
-			pos = 0
-		}
-		pos++
-		oc := counts[k]
-		if oc == nil {
-			continue
-		}
-		st := statsMap[k]
-		if pos == oc.p50Idx {
-			st.P50Us = dur
-		}
-		if pos == oc.p95Idx {
-			st.P95Us = dur
-		}
-		if pos == oc.p99Idx {
-			st.P99Us = dur
-		}
+		result = append(result, s)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	result := make([]OperationStats, 0, len(order))
-	for _, k := range order {
-		result = append(result, *statsMap[k])
-	}
-	return result, nil
+	return result, rows.Err()
 }
 
 type SpanBucket struct {
@@ -545,88 +419,27 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 	whereClause := strings.Join(where, " AND ")
 	bucketExpr := fmt.Sprintf("datetime((strftime('%%s', ingested_at) / %d) * %d, 'unixepoch')", intervalSec, intervalSec)
 
-	ctx, cancel := r.queryContext()
-	defer cancel()
-
-	// Step 1: counts per bucket.
-	countQ := fmt.Sprintf(`SELECT %s as bucket, COUNT(*) as cnt,
+	q := fmt.Sprintf(`SELECT %s as bucket, COUNT(*) as cnt,
 		SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as err_cnt
 		FROM spans WHERE %s GROUP BY bucket ORDER BY bucket`, bucketExpr, whereClause)
-	countRows, err := r.db.QueryContext(ctx, countQ, args...)
-	if err != nil {
-		return nil, err
-	}
-	type bucketCount struct {
-		count, errors          int64
-		p50Idx, p95Idx, p99Idx int64
-	}
-	counts := make(map[string]*bucketCount)
-	var order []string
-	for countRows.Next() {
-		var bucket string
-		var bc bucketCount
-		if err := countRows.Scan(&bucket, &bc.count, &bc.errors); err != nil {
-			countRows.Close()
-			return nil, err
-		}
-		bc.p50Idx = max(1, bc.count*50/100)
-		bc.p95Idx = max(1, bc.count*95/100)
-		bc.p99Idx = max(1, bc.count*99/100)
-		counts[bucket] = &bc
-		order = append(order, bucket)
-	}
-	countRows.Close()
 
-	statsMap := make(map[string]*SpanBucket, len(counts))
-	for bucket, bc := range counts {
-		t, _ := time.Parse("2006-01-02 15:04:05", bucket)
-		statsMap[bucket] = &SpanBucket{Bucket: t, Count: bc.count, ErrorCount: bc.errors}
-	}
-
-	// Step 2: stream sorted rows for percentiles.
-	streamQ := fmt.Sprintf(`SELECT %s as bucket, duration_us
-		FROM spans WHERE %s ORDER BY bucket, duration_us`, bucketExpr, whereClause)
-	rows, err := r.db.QueryContext(ctx, streamQ, args...)
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var curBucket string
-	var pos int64
+	var result []SpanBucket
 	for rows.Next() {
-		var bucket string
-		var dur int64
-		if err := rows.Scan(&bucket, &dur); err != nil {
+		var bucketStr string
+		var sb SpanBucket
+		if err := rows.Scan(&bucketStr, &sb.Count, &sb.ErrorCount); err != nil {
 			return nil, err
 		}
-		if bucket != curBucket {
-			curBucket = bucket
-			pos = 0
-		}
-		pos++
-		bc := counts[bucket]
-		if bc == nil {
-			continue
-		}
-		sb := statsMap[bucket]
-		if pos == bc.p50Idx {
-			sb.P50Us = dur
-		}
-		if pos == bc.p95Idx {
-			sb.P95Us = dur
-		}
-		if pos == bc.p99Idx {
-			sb.P99Us = dur
-		}
+		sb.Bucket, _ = time.Parse("2006-01-02 15:04:05", bucketStr)
+		result = append(result, sb)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	result := make([]SpanBucket, 0, len(order))
-	for _, bucket := range order {
-		result = append(result, *statsMap[bucket])
-	}
-	return result, nil
+	return result, rows.Err()
 }
