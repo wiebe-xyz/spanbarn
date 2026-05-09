@@ -150,22 +150,25 @@ func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
 	return res.RowsAffected()
 }
 
-func (r *Repository) DeleteBoringSpans(olderThan, newerThan time.Time, slowThresholdUS int64) (int64, error) {
+func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThresholdUS int64) (int64, error) {
 	var total int64
 	for {
-		res, err := r.db.Exec(`DELETE FROM spans WHERE id IN (
-			SELECT id FROM spans
+		// Find trace_ids where ALL spans in the trace are boring (non-error, fast)
+		// and at least one span falls in the retention window.
+		res, err := r.db.Exec(`DELETE FROM spans WHERE trace_id IN (
+			SELECT trace_id FROM spans
 			WHERE ingested_at < ? AND ingested_at >= ?
-			AND status NOT IN ('error','ERROR','Error')
-			AND duration_us <= ?
-			LIMIT 5000)`,
+			GROUP BY trace_id
+			HAVING MAX(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) = 0
+			AND MAX(duration_us) <= ?
+			LIMIT 1000)`,
 			olderThan, newerThan, slowThresholdUS)
 		if err != nil {
 			return total, err
 		}
 		n, _ := res.RowsAffected()
 		total += n
-		if n < 5000 {
+		if n == 0 {
 			break
 		}
 	}

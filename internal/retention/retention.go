@@ -24,7 +24,7 @@ type Repository interface {
 	DeleteSpansByIDs(ids []int64) (int64, error)
 	DeleteSpansByMaxID(maxID int64) (int64, error)
 	DeleteSpansOlderThan(cutoff time.Time) (int64, error)
-	DeleteBoringSpans(olderThan, newerThan time.Time, slowThresholdUS int64) (int64, error)
+	DeleteBoringTraces(olderThan, newerThan time.Time, slowThresholdUS int64) (int64, error)
 	InsertErrorSamples(spans []repository.Span) error
 	DeleteErrorSamplesOlderThan(cutoff time.Time) (int64, error)
 	DeleteAggregatesOlderThan(cutoff time.Time) (int64, error)
@@ -39,6 +39,7 @@ type Config struct {
 	AggregateRetentionDays    int           // days to keep aggregates (default 365)
 	SlowThresholdUS           int64         // microseconds above which a span is "slow"
 	Interval                  time.Duration // how often to run (default 5m)
+	PurgeHourUTC              int           // hour (0-23 UTC) to run boring trace purge (default 3)
 }
 
 func (c Config) withDefaults() Config {
@@ -59,6 +60,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Interval <= 0 {
 		c.Interval = 5 * time.Minute
+	}
+	if c.PurgeHourUTC <= 0 || c.PurgeHourUTC > 23 {
+		c.PurgeHourUTC = 3
 	}
 	return c
 }
@@ -87,6 +91,8 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 	ticker := time.NewTicker(w.cfg.Interval)
 	defer ticker.Stop()
 
+	var lastPurgeDate string
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -105,7 +111,34 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 			if lastErr != nil {
 				w.logger.Info("retention cycle failed, will retry next tick", "error", lastErr)
 			}
+
+			now := time.Now().UTC()
+			today := now.Format("2006-01-02")
+			if now.Hour() == w.cfg.PurgeHourUTC && lastPurgeDate != today {
+				lastPurgeDate = today
+				w.runBoringPurge(ctx)
+			}
 		}
+	}
+}
+
+func (w *RetentionWorker) runBoringPurge(ctx context.Context) {
+	cfg := w.effectiveConfig()
+	now := time.Now().UTC()
+	fullCutoff := now.Add(-time.Duration(cfg.FullRetentionHours) * time.Hour)
+	interestingCutoff := now.Add(-time.Duration(cfg.InterestingRetentionHours) * time.Hour)
+
+	if !interestingCutoff.Before(fullCutoff) {
+		return
+	}
+
+	dropped, err := w.repo.DeleteBoringTraces(fullCutoff, interestingCutoff, cfg.SlowThresholdUS)
+	if err != nil {
+		w.logger.Info("boring trace purge failed", "error", err)
+		return
+	}
+	if dropped > 0 {
+		w.logger.Info("boring trace purge complete", "spans_dropped", dropped)
 	}
 }
 
@@ -147,7 +180,6 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	cfg := w.effectiveConfig()
 
 	now := time.Now().UTC()
-	fullCutoff := now.Add(-time.Duration(cfg.FullRetentionHours) * time.Hour)
 	interestingCutoff := now.Add(-time.Duration(cfg.InterestingRetentionHours) * time.Hour)
 	errorCutoff := now.Add(-time.Duration(cfg.ErrorRetentionDays) * 24 * time.Hour)
 	aggCutoff := now.Add(-time.Duration(cfg.AggregateRetentionDays) * 24 * time.Hour)
@@ -155,21 +187,9 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	var totalAggregated int64
 	var totalSampled int64
 	var spansDeleted int64
-	var boringDropped int64
 
-	// Phase 1: Drop boring (non-error, non-slow) spans that are past full
-	// retention but still within interesting retention. These don't need
-	// aggregation yet — the interesting ones survive until phase 2.
-	if interestingCutoff.Before(fullCutoff) {
-		dropped, err := w.repo.DeleteBoringSpans(fullCutoff, interestingCutoff, cfg.SlowThresholdUS)
-		if err != nil {
-			return err
-		}
-		boringDropped = dropped
-	}
-
-	// Phase 2: Process spans older than interesting retention — aggregate all
-	// remaining spans (the interesting ones that survived phase 1) and delete.
+	// Process spans older than interesting retention — aggregate all
+	// remaining spans and delete.
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -241,7 +261,6 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		attribute.Int64("spans_aggregated", totalAggregated),
 		attribute.Int64("errors_sampled", totalSampled),
 		attribute.Int64("spans_deleted", spansDeleted),
-		attribute.Int64("boring_dropped", boringDropped),
 		attribute.Int64("error_samples_deleted", errorSamplesDeleted),
 		attribute.Int64("aggregates_deleted", aggregatesDeleted),
 	)
@@ -250,7 +269,6 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		"spans_aggregated", totalAggregated,
 		"errors_sampled", totalSampled,
 		"spans_deleted", spansDeleted,
-		"boring_dropped", boringDropped,
 		"error_samples_deleted", errorSamplesDeleted,
 		"aggregates_deleted", aggregatesDeleted,
 	)
