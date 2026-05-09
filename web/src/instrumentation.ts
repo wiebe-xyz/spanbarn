@@ -7,6 +7,8 @@ let flushTimer: ReturnType<typeof setInterval> | null = null
 
 let pageTraceId = ''
 let pageSpanId = ''
+let pageStartUs = 0
+let pendingPageSpan: SpanPayload | null = null
 
 type SpanPayload = {
   traceId: string
@@ -34,28 +36,38 @@ function traceparent(traceId: string, spanId: string): string {
   return `00-${traceId}-${spanId}-01`
 }
 
+function finalizePageSpan() {
+  if (pendingPageSpan) {
+    pendingPageSpan.duration = nowUs() - pendingPageSpan.startTime
+    spanQueue.push(pendingPageSpan)
+    pendingPageSpan = null
+  }
+}
+
 function startPageTrace(path: string, fromPath?: string) {
+  finalizePageSpan()
   flushSpans()
 
   pageTraceId = hex(16)
   pageSpanId = hex(8)
+  pageStartUs = nowUs()
 
   const attrs: Record<string, string | number | boolean> = {
     'navigation.to': path,
   }
   if (fromPath) attrs['navigation.from'] = fromPath
 
-  enqueueSpan({
+  pendingPageSpan = {
     traceId: pageTraceId,
     spanId: pageSpanId,
     name: `page ${path}`,
     service: SERVICE_NAME,
     kind: 'INTERNAL',
     status: 'OK',
-    startTime: nowUs(),
-    duration: 1,
+    startTime: pageStartUs,
+    duration: 0,
     attributes: attrs,
-  })
+  }
 }
 
 function reportError(error: Error, attrs?: Record<string, string>) {
@@ -80,6 +92,7 @@ function enqueueSpan(span: SpanPayload) {
 }
 
 function flushSpans() {
+  finalizePageSpan()
   if (spanQueue.length === 0) return
   const batch = spanQueue.splice(0, 50)
   fetch(TELEMETRY_ENDPOINT, {
