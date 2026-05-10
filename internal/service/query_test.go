@@ -290,6 +290,133 @@ func TestGetTrace(t *testing.T) {
 	}
 }
 
+func TestGetWebVitals(t *testing.T) {
+	repo := setupTestRepo(t)
+	svc := NewQueryService(repo, nil)
+
+	now := time.Now()
+
+	spans := []repository.Span{
+		{
+			ProjectID: 1, TraceID: "t1", SpanID: "wv1", Name: "webvital.LCP", Service: "frontend",
+			Kind: "internal", Status: "ok", StartTimeUs: now.UnixMicro(), DurationUs: 2500_000,
+			Attributes: `{"webvital.page":"/home","webvital.rating":"good"}`, Events: "[]",
+		},
+		{
+			ProjectID: 1, TraceID: "t1", SpanID: "wv2", Name: "webvital.LCP", Service: "frontend",
+			Kind: "internal", Status: "ok", StartTimeUs: now.UnixMicro() + 1000, DurationUs: 4500_000,
+			Attributes: `{"webvital.page":"/home","webvital.rating":"poor"}`, Events: "[]",
+		},
+		{
+			ProjectID: 1, TraceID: "t1", SpanID: "wv3", Name: "webvital.CLS", Service: "frontend",
+			Kind: "internal", Status: "ok", StartTimeUs: now.UnixMicro() + 2000, DurationUs: 100_000,
+			Attributes: `{"webvital.page":"/home","webvital.rating":"good"}`, Events: "[]",
+		},
+	}
+
+	if err := repo.InsertSpans(spans); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+
+	result, err := svc.GetWebVitals(context.Background(), time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("GetWebVitals: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("expected 2 web vital summaries, got %d", len(result))
+	}
+
+	var lcp *WebVitalSummary
+	for i := range result {
+		if result[i].Metric == "LCP" {
+			lcp = &result[i]
+		}
+	}
+	if lcp == nil {
+		t.Fatal("expected LCP metric")
+	}
+	if lcp.Samples != 2 {
+		t.Errorf("expected 2 LCP samples, got %d", lcp.Samples)
+	}
+	if lcp.Good != 1 || lcp.Poor != 1 {
+		t.Errorf("expected 1 good + 1 poor, got good=%d poor=%d", lcp.Good, lcp.Poor)
+	}
+}
+
+func TestGetWebVitalsTimeseries(t *testing.T) {
+	repo := setupTestRepo(t)
+	svc := NewQueryService(repo, nil)
+
+	base := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+
+	spans := []repository.Span{
+		{
+			ProjectID: 1, TraceID: "t1", SpanID: "wv1", Name: "webvital.LCP", Service: "frontend",
+			Kind: "internal", Status: "ok", StartTimeUs: base.UnixMicro(), DurationUs: 2000_000,
+			Attributes: `{"webvital.page":"/home","webvital.rating":"good"}`, Events: "[]",
+		},
+		{
+			ProjectID: 1, TraceID: "t1", SpanID: "wv2", Name: "webvital.LCP", Service: "frontend",
+			Kind: "internal", Status: "ok", StartTimeUs: base.Add(5 * time.Minute).UnixMicro(), DurationUs: 3000_000,
+			Attributes: `{"webvital.page":"/home","webvital.rating":"needs-improvement"}`, Events: "[]",
+		},
+	}
+
+	if err := repo.InsertSpans(spans); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+
+	result, err := svc.GetWebVitalsTimeseries(context.Background(), "/home", "LCP", time.Time{}, time.Time{}, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("GetWebVitalsTimeseries: %v", err)
+	}
+	if len(result) < 1 {
+		t.Fatal("expected at least 1 bucket")
+	}
+
+	if result[0].P50Ms <= 0 {
+		t.Errorf("expected positive p50Ms, got %f", result[0].P50Ms)
+	}
+	if result[0].Samples <= 0 {
+		t.Errorf("expected positive samples, got %d", result[0].Samples)
+	}
+}
+
+func TestListServicesFromSpansPercentiles(t *testing.T) {
+	repo := setupTestRepo(t)
+	svc := NewQueryService(repo, nil)
+
+	now := time.Now()
+
+	spans := []repository.Span{
+		{
+			ProjectID: 1, TraceID: "t1", SpanID: "s1", Name: "GET /api", Service: "web",
+			Kind: "server", Status: "ok", StartTimeUs: now.UnixMicro(), DurationUs: 1000,
+			Attributes: "{}", Events: "[]",
+		},
+		{
+			ProjectID: 1, TraceID: "t1", SpanID: "s2", Name: "GET /api", Service: "web",
+			Kind: "server", Status: "ok", StartTimeUs: now.UnixMicro() + 1000, DurationUs: 5000,
+			Attributes: "{}", Events: "[]",
+		},
+	}
+
+	if err := repo.InsertSpans(spans); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+
+	result, err := svc.ListServices(context.Background(), 1, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("ListServices: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(result))
+	}
+	if result[0].P50Us == 0 {
+		t.Error("expected non-zero P50Us from span percentiles")
+	}
+}
+
 func TestListDependencies(t *testing.T) {
 	repo := setupTestRepo(t)
 	svc := NewQueryService(repo, nil)

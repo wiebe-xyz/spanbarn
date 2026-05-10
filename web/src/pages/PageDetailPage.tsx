@@ -196,7 +196,7 @@ export function PageDetailPage(): ReactElement {
                             borderRadius: 8,
                             color: 'var(--text)',
                           }}
-                          formatter={(value: number) => [isCLS ? value.toFixed(3) : `${value.toFixed(1)}ms`]}
+                          formatter={(value) => [isCLS ? Number(value).toFixed(3) : `${Number(value).toFixed(1)}ms`]}
                         />
                         <Legend verticalAlign="top" align="right" iconType="line" wrapperStyle={{ fontSize: 10, paddingBottom: 4 }} />
                         <Line type="monotone" dataKey="p95" name="p95" stroke="#eab308" dot={false} strokeWidth={1.5} />
@@ -217,7 +217,7 @@ export function PageDetailPage(): ReactElement {
                               color: 'var(--text)',
                               fontSize: 11,
                             }}
-                            formatter={(value: number) => [`${value.toFixed(0)}%`]}
+                            formatter={(value) => [`${Number(value).toFixed(0)}%`]}
                           />
                           <Area type="monotone" dataKey="goodPct" name="Good" stackId="1" stroke="none" fill="#22c55e" fillOpacity={0.6} />
                           <Area type="monotone" dataKey="niPct" name="Needs improvement" stackId="1" stroke="none" fill="#eab308" fillOpacity={0.6} />
