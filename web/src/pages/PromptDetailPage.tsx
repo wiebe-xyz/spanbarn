@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
+import { useState, useEffect, useCallback, useMemo, Fragment, type ReactElement } from 'react'
 import { useParams, useSearchParams, Link } from 'react-router-dom'
 import { api } from '../api/client'
 import type { PromptRecord } from '../api/types'
@@ -206,8 +206,8 @@ export function PromptDetailPage(): ReactElement {
                   : records.map((r) => {
                       const isExpanded = expandedId === r.id
                       return (
+                        <Fragment key={r.id}>
                         <tr
-                          key={r.id}
                           style={{ cursor: 'pointer', verticalAlign: 'top' }}
                           onClick={() => setExpandedId(isExpanded ? null : r.id)}
                         >
@@ -219,74 +219,6 @@ export function PromptDetailPage(): ReactElement {
                               <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
                                 {r.finishReason && <span>Finish: {r.finishReason}</span>}
                                 {r.temperature != null && <span> | Temp: {r.temperature}</span>}
-                              </div>
-                            )}
-                            {isExpanded && (
-                              <div style={{ marginTop: '0.75rem' }}>
-                                {/* Request params */}
-                                <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '0.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                                  {r.finishReason && <span>Finish: <strong style={{ color: 'var(--text)' }}>{r.finishReason}</strong></span>}
-                                  {r.temperature != null && <span>Temp: <strong style={{ color: 'var(--text)' }}>{r.temperature}</strong></span>}
-                                  {r.maxTokens != null && <span>Max tokens: <strong style={{ color: 'var(--text)' }}>{r.maxTokens}</strong></span>}
-                                </div>
-
-                                {/* Cost breakdown */}
-                                {(r.inputCostUsd > 0 || r.outputCostUsd > 0) && (
-                                  <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '0.5rem', display: 'flex', gap: '1rem' }}>
-                                    <span>Input cost: <strong style={{ color: 'var(--text)' }}>{formatCost(r.inputCostUsd)}</strong></span>
-                                    <span>Output cost: <strong style={{ color: 'var(--text)' }}>{formatCost(r.outputCostUsd)}</strong></span>
-                                    {r.cachedInputTokens > 0 && (
-                                      <span style={{ color: '#22c55e' }}>Cached: {formatTokens(r.cachedInputTokens)} tok saved</span>
-                                    )}
-                                    {r.reasoningOutputTokens > 0 && (
-                                      <span>Reasoning: {formatTokens(r.reasoningOutputTokens)} tok</span>
-                                    )}
-                                  </div>
-                                )}
-
-                                {/* Prompt */}
-                                {r.promptBody && (
-                                  <div style={{ marginBottom: '0.75rem' }}>
-                                    <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '0.25rem', fontWeight: 600 }}>Prompt</div>
-                                    <pre style={{
-                                      fontSize: '0.6875rem',
-                                      padding: '0.5rem',
-                                      background: 'var(--surface-hover)',
-                                      borderRadius: '0.375rem',
-                                      whiteSpace: 'pre-wrap',
-                                      wordBreak: 'break-word',
-                                      maxHeight: 200,
-                                      overflow: 'auto',
-                                    }}>
-                                      {r.promptBody}
-                                    </pre>
-                                  </div>
-                                )}
-
-                                {/* Response */}
-                                {r.responseBody && (
-                                  <div>
-                                    <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '0.25rem', fontWeight: 600 }}>Response</div>
-                                    <pre style={{
-                                      fontSize: '0.6875rem',
-                                      padding: '0.5rem',
-                                      background: 'var(--surface-hover)',
-                                      borderRadius: '0.375rem',
-                                      whiteSpace: 'pre-wrap',
-                                      wordBreak: 'break-word',
-                                      maxHeight: 200,
-                                      overflow: 'auto',
-                                    }}>
-                                      {r.responseBody}
-                                    </pre>
-                                  </div>
-                                )}
-
-                                {r.featureFlagKey && (
-                                  <div style={{ marginTop: '0.5rem', fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
-                                    Flag: {r.featureFlagKey}={r.featureFlagVariant}
-                                  </div>
-                                )}
                               </div>
                             )}
                           </td>
@@ -332,6 +264,73 @@ export function PromptDetailPage(): ReactElement {
                             </Link>
                           </td>
                         </tr>
+                        {isExpanded && (
+                          <tr onClick={() => setExpandedId(null)} style={{ cursor: 'pointer' }}>
+                            <td colSpan={9} style={{ padding: '0.75rem 1rem', borderTop: 'none' }}>
+                              <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '0.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                                {r.finishReason && <span>Finish: <strong style={{ color: 'var(--text)' }}>{r.finishReason}</strong></span>}
+                                {r.temperature != null && <span>Temp: <strong style={{ color: 'var(--text)' }}>{r.temperature}</strong></span>}
+                                {r.maxTokens != null && <span>Max tokens: <strong style={{ color: 'var(--text)' }}>{r.maxTokens}</strong></span>}
+                              </div>
+
+                              {(r.inputCostUsd > 0 || r.outputCostUsd > 0) && (
+                                <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '0.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                                  <span>Input cost: <strong style={{ color: 'var(--text)' }}>{formatCost(r.inputCostUsd)}</strong></span>
+                                  <span>Output cost: <strong style={{ color: 'var(--text)' }}>{formatCost(r.outputCostUsd)}</strong></span>
+                                  {r.cachedInputTokens > 0 && (
+                                    <span style={{ color: '#22c55e' }}>Cached: {formatTokens(r.cachedInputTokens)} tok saved</span>
+                                  )}
+                                  {r.reasoningOutputTokens > 0 && (
+                                    <span>Reasoning: {formatTokens(r.reasoningOutputTokens)} tok</span>
+                                  )}
+                                </div>
+                              )}
+
+                              {r.promptBody && (
+                                <div style={{ marginBottom: '0.75rem' }}>
+                                  <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '0.25rem', fontWeight: 600 }}>Prompt</div>
+                                  <pre style={{
+                                    fontSize: '0.6875rem',
+                                    padding: '0.5rem',
+                                    background: 'var(--surface-hover)',
+                                    borderRadius: '0.375rem',
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-word',
+                                    maxHeight: 200,
+                                    overflow: 'auto',
+                                  }}>
+                                    {r.promptBody}
+                                  </pre>
+                                </div>
+                              )}
+
+                              {r.responseBody && (
+                                <div>
+                                  <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '0.25rem', fontWeight: 600 }}>Response</div>
+                                  <pre style={{
+                                    fontSize: '0.6875rem',
+                                    padding: '0.5rem',
+                                    background: 'var(--surface-hover)',
+                                    borderRadius: '0.375rem',
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-word',
+                                    maxHeight: 200,
+                                    overflow: 'auto',
+                                  }}>
+                                    {r.responseBody}
+                                  </pre>
+                                </div>
+                              )}
+
+                              {r.featureFlagKey && (
+                                <div style={{ marginTop: '0.5rem', fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
+                                  Flag: {r.featureFlagKey}={r.featureFlagVariant}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       )
                     })}
             </tbody>
