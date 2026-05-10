@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
 import { Search } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import type { WebVitalSummary } from '../api/types'
+import type { WebVitalSummary, WebVitalTimeseriesBucket } from '../api/types'
 import { TimeRangeSelector } from '../components/TimeRangeSelector'
 import { getTimeRange } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { useTimeRange } from '../contexts/useTimeRange'
+import { Sparkline } from '../components/Sparkline'
 
 const METRIC_ORDER = ['LCP', 'FCP', 'TTFB', 'CLS', 'INP'] as const
 
@@ -76,9 +78,11 @@ type PageGroup = {
 }
 
 export function PagesPage(): ReactElement {
+  const navigate = useNavigate()
   const { range, setRange } = useTimeRange()
   const [refreshInterval, setRefreshInterval] = useState(0)
   const [vitals, setVitals] = useState<WebVitalSummary[]>([])
+  const [trends, setTrends] = useState<Map<string, number[]>>(new Map())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
 
@@ -93,6 +97,31 @@ export function PagesPage(): ReactElement {
       setLoading(false)
     }
   }, [range])
+
+  useEffect(() => {
+    if (vitals.length === 0) return
+
+    const { from, to } = getTimeRange(range)
+    const seen = new Set<string>()
+    const fetches: Promise<void>[] = []
+
+    for (const v of vitals) {
+      const key = `${v.page}:${v.metric}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      fetches.push(
+        api.getWebVitalsTimeseries(v.page, v.metric, from, to).then((buckets: WebVitalTimeseriesBucket[]) => {
+          setTrends((prev) => {
+            const next = new Map(prev)
+            next.set(key, buckets.map((b) => b.p50Ms))
+            return next
+          })
+        }).catch(() => {}),
+      )
+    }
+
+    void Promise.all(fetches)
+  }, [vitals, range])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
@@ -176,7 +205,12 @@ export function PagesPage(): ReactElement {
         </div>
       ) : (
         pages.map((group) => (
-          <div key={group.page} className="card" style={{ marginBottom: '1rem', padding: 0, overflow: 'hidden' }}>
+          <div
+            key={group.page}
+            className="card"
+            style={{ marginBottom: '1rem', padding: 0, overflow: 'hidden', cursor: 'pointer' }}
+            onClick={() => navigate(`/pages/${encodeURIComponent(group.page)}`)}
+          >
             <div
               style={{
                 padding: '0.75rem 1rem',
@@ -194,6 +228,7 @@ export function PagesPage(): ReactElement {
                 <thead>
                   <tr>
                     <th style={{ textAlign: 'left' }}>Metric</th>
+                    <th style={{ textAlign: 'left' }}>Trend</th>
                     <th style={{ textAlign: 'right' }}>P50</th>
                     <th style={{ textAlign: 'right' }}>P95</th>
                     <th style={{ textAlign: 'left' }}>Rating</th>
@@ -205,6 +240,7 @@ export function PagesPage(): ReactElement {
                     const v = group.metrics.get(metric)
                     if (!v) return null
                     const unit = METRIC_UNIT[metric]
+                    const trendData = trends.get(`${group.page}:${metric}`)
                     return (
                       <tr key={metric}>
                         <td>
@@ -217,6 +253,13 @@ export function PagesPage(): ReactElement {
                               ({unit})
                             </span>
                           )}
+                        </td>
+                        <td>
+                          <Sparkline
+                            data={trendData ?? []}
+                            color={ratingColor(v.good, v.needsImprovement, v.poor)}
+                            fillColor={ratingColor(v.good, v.needsImprovement, v.poor)}
+                          />
                         </td>
                         <td
                           style={{ textAlign: 'right', color: ratingColor(v.good, v.needsImprovement, v.poor) }}

@@ -14,6 +14,7 @@ import type {
   HealthResponse,
   TraceSearchParams,
   WebVitalSummary,
+  WebVitalTimeseriesBucket,
 } from './types'
 
 export class ApiError extends Error {
@@ -155,6 +156,9 @@ export const api = {
 
   getWebVitals: (from: string, to: string) =>
     fetchJSON<WebVitalSummary[]>(`/api/v1/web-vitals${qs({ from, to })}`),
+
+  getWebVitalsTimeseries: (page: string, metric: string, from: string, to: string, interval?: string) =>
+    fetchJSON<WebVitalTimeseriesBucket[]>(`/api/v1/web-vitals/timeseries${qs({ page, metric, from, to, interval })}`),
 
   getHealth: () => fetchJSON<HealthResponse>('/api/v1/health'),
 

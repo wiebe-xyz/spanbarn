@@ -232,3 +232,13 @@ export type WebVitalSummary = {
   needsImprovement: number
   poor: number
 }
+
+export type WebVitalTimeseriesBucket = {
+  bucket: string
+  p50Ms: number
+  p95Ms: number
+  samples: number
+  good: number
+  needsImprovement: number
+  poor: number
+}

@@ -22,6 +22,28 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 		return cached, nil
 	}
 
+	if stale, found, _ := cache.GetStale[[]ServiceSummary](s.cache, ctx, cacheKey); found {
+		if _, already := revalidating.LoadOrStore(cacheKey, true); !already {
+			go func() {
+				defer revalidating.Delete(cacheKey)
+				if result, err := s.listServicesUncached(context.Background(), projectID, from, to); err == nil {
+					cache.Set(s.cache, context.Background(), cacheKey, result)
+				}
+			}()
+		}
+		return stale, nil
+	}
+
+	result, err := s.listServicesUncached(ctx, projectID, from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	cache.Set(s.cache, ctx, cacheKey, result)
+	return result, nil
+}
+
+func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64, from, to time.Time) ([]ServiceSummary, error) {
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: projectID,
 		From:      from,
@@ -59,6 +81,8 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 		count, errorCount              int64
 		aggP50Sum, aggP95Sum, aggP99Sum int64
 		aggCount                       int64
+		spanP50, spanP95, spanP99      int64
+		hasSpanPercentiles             bool
 	}
 	merged := make(map[string]*mergedStats)
 
@@ -81,6 +105,12 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 		}
 		ms.count += ss.Count
 		ms.errorCount += ss.ErrorCount
+		if ss.P50Us > 0 || ss.P95Us > 0 || ss.P99Us > 0 {
+			ms.spanP50 = ss.P50Us
+			ms.spanP95 = ss.P95Us
+			ms.spanP99 = ss.P99Us
+			ms.hasSpanPercentiles = true
+		}
 	}
 
 	result := make([]ServiceSummary, 0, len(merged))
@@ -95,6 +125,10 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 			p50 = ms.aggP50Sum / ms.aggCount
 			p95 = ms.aggP95Sum / ms.aggCount
 			p99 = ms.aggP99Sum / ms.aggCount
+		} else if ms.hasSpanPercentiles {
+			p50 = ms.spanP50
+			p95 = ms.spanP95
+			p99 = ms.spanP99
 		}
 
 		result = append(result, ServiceSummary{
@@ -112,7 +146,6 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 		return result[i].SpanCount > result[j].SpanCount
 	})
 
-	cache.Set(s.cache, ctx, cacheKey, result)
 	return result, nil
 }
 
@@ -145,6 +178,8 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 		count, errorCount              int64
 		aggP50Sum, aggP95Sum, aggP99Sum int64
 		aggCount                       int64
+		spanP50, spanP95, spanP99      int64
+		hasSpanPercentiles             bool
 	}
 	byOp := make(map[opKey]*opStats)
 	for _, a := range aggs {
@@ -175,6 +210,12 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 		}
 		st.count += ss.Count
 		st.errorCount += ss.ErrorCount
+		if ss.P50Us > 0 || ss.P95Us > 0 || ss.P99Us > 0 {
+			st.spanP50 = ss.P50Us
+			st.spanP95 = ss.P95Us
+			st.spanP99 = ss.P99Us
+			st.hasSpanPercentiles = true
+		}
 	}
 
 	result := make([]OperationSummary, 0, len(byOp))
@@ -188,6 +229,10 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 			p50 = st.aggP50Sum / st.aggCount
 			p95 = st.aggP95Sum / st.aggCount
 			p99 = st.aggP99Sum / st.aggCount
+		} else if st.hasSpanPercentiles {
+			p50 = st.spanP50
+			p95 = st.spanP95
+			p99 = st.spanP99
 		}
 		result = append(result, OperationSummary{
 			Operation:  k.operation,
@@ -240,6 +285,8 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 		count, errorCount              int64
 		aggP50Sum, aggP95Sum, aggP99Sum int64
 		aggCount                       int64
+		spanP50, spanP95, spanP99      int64
+		hasSpanPercentiles             bool
 	}
 	byBucket := make(map[time.Time]*bucketStats)
 	for _, a := range aggs {
@@ -270,6 +317,12 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 		}
 		st.count += sb.Count
 		st.errorCount += sb.ErrorCount
+		if sb.P50Us > 0 || sb.P95Us > 0 || sb.P99Us > 0 {
+			st.spanP50 = sb.P50Us
+			st.spanP95 = sb.P95Us
+			st.spanP99 = sb.P99Us
+			st.hasSpanPercentiles = true
+		}
 	}
 
 	result := make([]TimeseriesBucket, 0, len(byBucket))
@@ -279,6 +332,10 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 			p50 = st.aggP50Sum / st.aggCount
 			p95 = st.aggP95Sum / st.aggCount
 			p99 = st.aggP99Sum / st.aggCount
+		} else if st.hasSpanPercentiles {
+			p50 = st.spanP50
+			p95 = st.spanP95
+			p99 = st.spanP99
 		}
 		result = append(result, TimeseriesBucket{
 			Bucket:     b,

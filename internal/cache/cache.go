@@ -11,6 +11,7 @@ import (
 
 type Store interface {
 	Get(ctx context.Context, key string) ([]byte, bool)
+	GetStale(ctx context.Context, key string) ([]byte, bool)
 	Set(ctx context.Context, key string, data []byte, ttl time.Duration)
 	Close() error
 }
@@ -42,6 +43,33 @@ func Get[T any](c *Cache, ctx context.Context, key string) (T, bool) {
 		return zero, false
 	}
 	return result, true
+}
+
+// GetStale returns cached data even if expired, plus a boolean indicating
+// whether the data is still fresh (true) or stale (false).
+// Returns (zero, false, false) on cache miss.
+func GetStale[T any](c *Cache, ctx context.Context, key string) (value T, found bool, fresh bool) {
+	var zero T
+	if c == nil {
+		return zero, false, false
+	}
+	data, ok := c.store.Get(ctx, key)
+	if ok {
+		var result T
+		if err := json.Unmarshal(data, &result); err != nil {
+			return zero, false, false
+		}
+		return result, true, true
+	}
+	data, ok = c.store.GetStale(ctx, key)
+	if !ok {
+		return zero, false, false
+	}
+	var result T
+	if err := json.Unmarshal(data, &result); err != nil {
+		return zero, false, false
+	}
+	return result, true, false
 }
 
 func Set(c *Cache, ctx context.Context, key string, value any) {
@@ -76,6 +104,16 @@ func (m *MemoryStore) Get(_ context.Context, key string) ([]byte, bool) {
 	entry, ok := m.entries[key]
 	m.mu.RUnlock()
 	if !ok || time.Now().After(entry.expiresAt) {
+		return nil, false
+	}
+	return entry.data, true
+}
+
+func (m *MemoryStore) GetStale(_ context.Context, key string) ([]byte, bool) {
+	m.mu.RLock()
+	entry, ok := m.entries[key]
+	m.mu.RUnlock()
+	if !ok {
 		return nil, false
 	}
 	return entry.data, true
@@ -118,6 +156,10 @@ func (r *RedisStore) Get(ctx context.Context, key string) ([]byte, bool) {
 		return nil, false
 	}
 	return data, true
+}
+
+func (r *RedisStore) GetStale(ctx context.Context, key string) ([]byte, bool) {
+	return r.Get(ctx, key)
 }
 
 func (r *RedisStore) Set(ctx context.Context, key string, data []byte, ttl time.Duration) {

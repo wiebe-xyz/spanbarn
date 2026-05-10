@@ -13,6 +13,7 @@ import { DatabaseQueryDetailPage } from './pages/DatabaseQueryDetailPage'
 import { PromptsPage } from './pages/PromptsPage'
 import { PromptDetailPage } from './pages/PromptDetailPage'
 import { PagesPage } from './pages/PagesPage'
+import { PageDetailPage } from './pages/PageDetailPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { DashboardLayout } from './components/DashboardLayout'
 import { TimeRangeProvider } from './contexts/TimeRangeContext'
@@ -37,6 +38,7 @@ function App() {
             <Route path="prompts" element={<PromptsPage />} />
             <Route path="prompts/:name" element={<PromptDetailPage />} />
             <Route path="pages" element={<PagesPage />} />
+            <Route path="pages/:page" element={<PageDetailPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>

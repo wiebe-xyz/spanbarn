@@ -55,6 +55,7 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/prompts/detail", apiRL(sessionAuth(http.HandlerFunc(qh.handlePromptDetail))))
 		s.mux.Handle("/api/v1/service-map", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleServiceMap)))))
 		s.mux.Handle("/api/v1/web-vitals", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleWebVitals)))))
+		s.mux.Handle("/api/v1/web-vitals/timeseries", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleWebVitalsTimeseries)))))
 	}
 
 	// Live tail SSE endpoint — session auth required.

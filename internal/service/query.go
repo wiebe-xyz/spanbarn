@@ -28,6 +28,7 @@ type QueryRepository interface {
 	GetSpansBySpanIDs(spanIDs []string) ([]repository.Span, error)
 	StreamSpans(filter repository.SpanFilter, fn func(repository.Span) error) error
 	QueryWebVitals(from, to time.Time) ([]repository.WebVitalRow, error)
+	QueryWebVitalsTimeseries(page, metric string, from, to time.Time, intervalSec int64) ([]repository.WebVitalBucket, error)
 }
 
 // QueryService implements query logic for the dashboard API.

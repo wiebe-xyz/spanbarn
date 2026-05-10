@@ -316,9 +316,7 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 		whereClause = "WHERE " + strings.Join(where, " AND ")
 	}
 
-	q := fmt.Sprintf(`SELECT service, COUNT(*) as cnt,
-		SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as err_cnt
-		FROM spans %s GROUP BY service`, whereClause)
+	q := fmt.Sprintf(`SELECT service, duration_us, status FROM spans %s ORDER BY service, duration_us`, whereClause)
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -328,15 +326,43 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 	}
 	defer rows.Close()
 
-	var result []ServiceStats
+	type svcBucket struct {
+		durations  []int64
+		errorCount int64
+	}
+	byService := make(map[string]*svcBucket)
 	for rows.Next() {
-		var s ServiceStats
-		if err := rows.Scan(&s.Service, &s.Count, &s.ErrorCount); err != nil {
+		var service, status string
+		var durationUs int64
+		if err := rows.Scan(&service, &durationUs, &status); err != nil {
 			return nil, err
 		}
-		result = append(result, s)
+		b, ok := byService[service]
+		if !ok {
+			b = &svcBucket{}
+			byService[service] = b
+		}
+		b.durations = append(b.durations, durationUs)
+		if status == "error" || status == "ERROR" || status == "Error" {
+			b.errorCount++
+		}
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]ServiceStats, 0, len(byService))
+	for svc, b := range byService {
+		result = append(result, ServiceStats{
+			Service:    svc,
+			Count:      int64(len(b.durations)),
+			ErrorCount: b.errorCount,
+			P50Us:      percentileFromSorted(b.durations, 50),
+			P95Us:      percentileFromSorted(b.durations, 95),
+			P99Us:      percentileFromSorted(b.durations, 99),
+		})
+	}
+	return result, nil
 }
 
 type OperationStats struct {
@@ -372,9 +398,7 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 
 	whereClause := strings.Join(where, " AND ")
 
-	q := fmt.Sprintf(`SELECT name, resource, kind, COUNT(*) as cnt,
-		SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as err_cnt
-		FROM spans WHERE %s GROUP BY name, resource, kind`, whereClause)
+	q := fmt.Sprintf(`SELECT name, resource, kind, duration_us, status FROM spans WHERE %s ORDER BY name, resource, kind, duration_us`, whereClause)
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -384,15 +408,63 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 	}
 	defer rows.Close()
 
-	var result []OperationStats
+	type opKey struct{ operation, resource, kind string }
+	type opBucket struct {
+		durations  []int64
+		errorCount int64
+	}
+	byOp := make(map[opKey]*opBucket)
 	for rows.Next() {
-		var s OperationStats
-		if err := rows.Scan(&s.Operation, &s.Resource, &s.Kind, &s.Count, &s.ErrorCount); err != nil {
+		var name, resource, kind, status string
+		var durationUs int64
+		if err := rows.Scan(&name, &resource, &kind, &durationUs, &status); err != nil {
 			return nil, err
 		}
-		result = append(result, s)
+		k := opKey{name, resource, kind}
+		b, ok := byOp[k]
+		if !ok {
+			b = &opBucket{}
+			byOp[k] = b
+		}
+		b.durations = append(b.durations, durationUs)
+		if status == "error" || status == "ERROR" || status == "Error" {
+			b.errorCount++
+		}
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]OperationStats, 0, len(byOp))
+	for k, b := range byOp {
+		result = append(result, OperationStats{
+			Operation:  k.operation,
+			Resource:   k.resource,
+			Kind:       k.kind,
+			Count:      int64(len(b.durations)),
+			ErrorCount: b.errorCount,
+			P50Us:      percentileFromSorted(b.durations, 50),
+			P95Us:      percentileFromSorted(b.durations, 95),
+			P99Us:      percentileFromSorted(b.durations, 99),
+		})
+	}
+	return result, nil
+}
+
+// percentileFromSorted computes a percentile from an already-sorted slice.
+func percentileFromSorted(sorted []int64, pct float64) int64 {
+	n := len(sorted)
+	if n == 0 {
+		return 0
+	}
+	idx := int(pct/100.0*float64(n)+0.5) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= n {
+		idx = n - 1
+	}
+	return sorted[idx]
 }
 
 type SpanBucket struct {
@@ -427,9 +499,7 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 	whereClause := strings.Join(where, " AND ")
 	bucketExpr := fmt.Sprintf("datetime((strftime('%%s', ingested_at) / %d) * %d, 'unixepoch')", intervalSec, intervalSec)
 
-	q := fmt.Sprintf(`SELECT %s as bucket, COUNT(*) as cnt,
-		SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as err_cnt
-		FROM spans WHERE %s GROUP BY bucket ORDER BY bucket`, bucketExpr, whereClause)
+	q := fmt.Sprintf(`SELECT %s as bucket, duration_us, status FROM spans WHERE %s ORDER BY bucket, duration_us`, bucketExpr, whereClause)
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -439,17 +509,47 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 	}
 	defer rows.Close()
 
-	var result []SpanBucket
+	type rawBucket struct {
+		durations  []int64
+		errorCount int64
+	}
+	byBucket := make(map[string]*rawBucket)
+	var bucketOrder []string
 	for rows.Next() {
-		var bucketStr string
-		var sb SpanBucket
-		if err := rows.Scan(&bucketStr, &sb.Count, &sb.ErrorCount); err != nil {
+		var bucketStr, status string
+		var durationUs int64
+		if err := rows.Scan(&bucketStr, &durationUs, &status); err != nil {
 			return nil, err
 		}
-		sb.Bucket, _ = time.Parse("2006-01-02 15:04:05", bucketStr)
-		result = append(result, sb)
+		b, ok := byBucket[bucketStr]
+		if !ok {
+			b = &rawBucket{}
+			byBucket[bucketStr] = b
+			bucketOrder = append(bucketOrder, bucketStr)
+		}
+		b.durations = append(b.durations, durationUs)
+		if status == "error" || status == "ERROR" || status == "Error" {
+			b.errorCount++
+		}
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]SpanBucket, 0, len(byBucket))
+	for _, bucketStr := range bucketOrder {
+		b := byBucket[bucketStr]
+		t, _ := time.Parse("2006-01-02 15:04:05", bucketStr)
+		result = append(result, SpanBucket{
+			Bucket:     t,
+			Count:      int64(len(b.durations)),
+			ErrorCount: b.errorCount,
+			P50Us:      percentileFromSorted(b.durations, 50),
+			P95Us:      percentileFromSorted(b.durations, 95),
+			P99Us:      percentileFromSorted(b.durations, 99),
+		})
+	}
+	return result, nil
 }
 
 type WebVitalRow struct {
@@ -512,4 +612,113 @@ func (r *Repository) QueryWebVitals(from, to time.Time) ([]WebVitalRow, error) {
 		})
 	}
 	return result, rows.Err()
+}
+
+// WebVitalBucket holds bucketed web vital metrics for timeseries display.
+type WebVitalBucket struct {
+	Bucket  time.Time
+	Page    string
+	Metric  string
+	P50Us   int64
+	P95Us   int64
+	Samples int64
+	Good    int64
+	NI      int64
+	Poor    int64
+}
+
+// QueryWebVitalsTimeseries returns time-bucketed web vital data for a specific page and metric.
+func (r *Repository) QueryWebVitalsTimeseries(page, metric string, from, to time.Time, intervalSec int64) ([]WebVitalBucket, error) {
+	var where []string
+	var args []any
+
+	where = append(where, "name = ?")
+	args = append(args, "webvital."+metric)
+
+	if !from.IsZero() {
+		where = append(where, "ingested_at >= ?")
+		args = append(args, from)
+	}
+	if !to.IsZero() {
+		where = append(where, "ingested_at <= ?")
+		args = append(args, to)
+	}
+
+	whereClause := strings.Join(where, " AND ")
+	bucketExpr := fmt.Sprintf("datetime((strftime('%%s', ingested_at) / %d) * %d, 'unixepoch')", intervalSec, intervalSec)
+
+	q := fmt.Sprintf(`SELECT %s as bucket, duration_us, attributes FROM spans WHERE %s ORDER BY bucket, duration_us`, bucketExpr, whereClause)
+
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type rawBucket struct {
+		values             []int64
+		good, ni, poor     int64
+	}
+	byBucket := make(map[string]*rawBucket)
+	var bucketOrder []string
+
+	for rows.Next() {
+		var bucketStr, attrsJSON string
+		var durationUs int64
+		if err := rows.Scan(&bucketStr, &durationUs, &attrsJSON); err != nil {
+			return nil, err
+		}
+
+		var attrs map[string]any
+		_ = json.Unmarshal([]byte(attrsJSON), &attrs)
+
+		spanPage, _ := attrs["webvital.page"].(string)
+		if spanPage == "" {
+			spanPage = "/"
+		}
+		if page != "" && spanPage != page {
+			continue
+		}
+
+		rating, _ := attrs["webvital.rating"].(string)
+
+		b, ok := byBucket[bucketStr]
+		if !ok {
+			b = &rawBucket{}
+			byBucket[bucketStr] = b
+			bucketOrder = append(bucketOrder, bucketStr)
+		}
+		b.values = append(b.values, durationUs)
+		switch rating {
+		case "good":
+			b.good++
+		case "needs-improvement":
+			b.ni++
+		default:
+			b.poor++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]WebVitalBucket, 0, len(byBucket))
+	for _, bucketStr := range bucketOrder {
+		b := byBucket[bucketStr]
+		t, _ := time.Parse("2006-01-02 15:04:05", bucketStr)
+		result = append(result, WebVitalBucket{
+			Bucket:  t,
+			Page:    page,
+			Metric:  metric,
+			P50Us:   percentileFromSorted(b.values, 50),
+			P95Us:   percentileFromSorted(b.values, 95),
+			Samples: int64(len(b.values)),
+			Good:    b.good,
+			NI:      b.ni,
+			Poor:    b.poor,
+		})
+	}
+	return result, nil
 }
