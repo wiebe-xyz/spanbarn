@@ -92,6 +92,7 @@ export function PageDetailPage(): ReactElement {
   }, [page, decodedPage, range])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     void fetchData()
   }, [fetchData])
 
