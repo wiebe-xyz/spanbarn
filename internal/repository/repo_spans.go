@@ -553,6 +553,7 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 }
 
 type WebVitalRow struct {
+	Service    string
 	Page       string
 	Metric     string
 	ValueUs    int64
@@ -560,11 +561,15 @@ type WebVitalRow struct {
 	IngestedAt time.Time
 }
 
-func (r *Repository) QueryWebVitals(from, to time.Time) ([]WebVitalRow, error) {
+func (r *Repository) QueryWebVitals(service string, from, to time.Time) ([]WebVitalRow, error) {
 	var where []string
 	var args []any
 
 	where = append(where, "name LIKE 'webvital.%'")
+	if service != "" {
+		where = append(where, "service = ?")
+		args = append(args, service)
+	}
 	if !from.IsZero() {
 		where = append(where, "ingested_at >= ?")
 		args = append(args, from)
@@ -574,7 +579,7 @@ func (r *Repository) QueryWebVitals(from, to time.Time) ([]WebVitalRow, error) {
 		args = append(args, to)
 	}
 
-	q := `SELECT name, duration_us, attributes, ingested_at FROM spans WHERE ` + strings.Join(where, " AND ") + ` ORDER BY ingested_at DESC LIMIT 10000`
+	q := `SELECT service, name, duration_us, attributes, ingested_at FROM spans WHERE ` + strings.Join(where, " AND ") + ` ORDER BY ingested_at DESC LIMIT 10000`
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -586,10 +591,10 @@ func (r *Repository) QueryWebVitals(from, to time.Time) ([]WebVitalRow, error) {
 
 	var result []WebVitalRow
 	for rows.Next() {
-		var name, attrsJSON string
+		var svc, name, attrsJSON string
 		var durUs int64
 		var ingestedAt time.Time
-		if err := rows.Scan(&name, &durUs, &attrsJSON, &ingestedAt); err != nil {
+		if err := rows.Scan(&svc, &name, &durUs, &attrsJSON, &ingestedAt); err != nil {
 			return nil, err
 		}
 		metric := strings.TrimPrefix(name, "webvital.")
@@ -604,6 +609,7 @@ func (r *Repository) QueryWebVitals(from, to time.Time) ([]WebVitalRow, error) {
 		}
 
 		result = append(result, WebVitalRow{
+			Service:    svc,
 			Page:       page,
 			Metric:     metric,
 			ValueUs:    durUs,
@@ -628,12 +634,17 @@ type WebVitalBucket struct {
 }
 
 // QueryWebVitalsTimeseries returns time-bucketed web vital data for a specific page and metric.
-func (r *Repository) QueryWebVitalsTimeseries(page, metric string, from, to time.Time, intervalSec int64) ([]WebVitalBucket, error) {
+func (r *Repository) QueryWebVitalsTimeseries(service, page, metric string, from, to time.Time, intervalSec int64) ([]WebVitalBucket, error) {
 	var where []string
 	var args []any
 
 	where = append(where, "name = ?")
 	args = append(args, "webvital."+metric)
+
+	if service != "" {
+		where = append(where, "service = ?")
+		args = append(args, service)
+	}
 
 	if !from.IsZero() {
 		where = append(where, "ingested_at >= ?")

@@ -134,7 +134,7 @@ export function PageDetailPage(): ReactElement {
           No web vitals data for this page in the selected time range.
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+        <div className="charts-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
           {metrics.map(({ metric, summary, buckets }) => {
             const unit = METRIC_UNIT[metric]
             const isCLS = metric === 'CLS'

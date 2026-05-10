@@ -11,6 +11,7 @@ import (
 )
 
 type WebVitalSummary struct {
+	Service string `json:"service"`
 	Page    string `json:"page"`
 	Metric  string `json:"metric"`
 	P50Ms   float64 `json:"p50Ms"`
@@ -23,11 +24,11 @@ type WebVitalSummary struct {
 
 var revalidating sync.Map
 
-func (s *QueryService) GetWebVitals(ctx context.Context, from, to time.Time) ([]WebVitalSummary, error) {
+func (s *QueryService) GetWebVitals(ctx context.Context, service string, from, to time.Time) ([]WebVitalSummary, error) {
 	_, span := tracer.Start(ctx, "query.web_vitals")
 	defer span.End()
 
-	cacheKey := fmt.Sprintf("vitals:%d:%d", from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
+	cacheKey := fmt.Sprintf("vitals:%s:%d:%d", service, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
 	if cached, ok := cache.Get[[]WebVitalSummary](s.cache, ctx, cacheKey); ok {
 		return cached, nil
 	}
@@ -36,7 +37,7 @@ func (s *QueryService) GetWebVitals(ctx context.Context, from, to time.Time) ([]
 		if _, already := revalidating.LoadOrStore(cacheKey, true); !already {
 			go func() {
 				defer revalidating.Delete(cacheKey)
-				if result, err := s.fetchWebVitals(context.Background(), from, to); err == nil {
+				if result, err := s.fetchWebVitals(context.Background(), service, from, to); err == nil {
 					cache.Set(s.cache, context.Background(), cacheKey, result)
 				}
 			}()
@@ -44,7 +45,7 @@ func (s *QueryService) GetWebVitals(ctx context.Context, from, to time.Time) ([]
 		return stale, nil
 	}
 
-	result, err := s.fetchWebVitals(ctx, from, to)
+	result, err := s.fetchWebVitals(ctx, service, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -53,13 +54,13 @@ func (s *QueryService) GetWebVitals(ctx context.Context, from, to time.Time) ([]
 	return result, nil
 }
 
-func (s *QueryService) fetchWebVitals(ctx context.Context, from, to time.Time) ([]WebVitalSummary, error) {
-	rows, err := s.repo.QueryWebVitals(from, to)
+func (s *QueryService) fetchWebVitals(ctx context.Context, service string, from, to time.Time) ([]WebVitalSummary, error) {
+	rows, err := s.repo.QueryWebVitals(service, from, to)
 	if err != nil {
 		return nil, err
 	}
 
-	type key struct{ page, metric string }
+	type key struct{ service, page, metric string }
 	type bucket struct {
 		values []float64
 		good, ni, poor int
@@ -67,7 +68,7 @@ func (s *QueryService) fetchWebVitals(ctx context.Context, from, to time.Time) (
 
 	byKey := make(map[key]*bucket)
 	for _, r := range rows {
-		k := key{r.Page, r.Metric}
+		k := key{r.Service, r.Page, r.Metric}
 		b, ok := byKey[k]
 		if !ok {
 			b = &bucket{}
@@ -97,6 +98,7 @@ func (s *QueryService) fetchWebVitals(ctx context.Context, from, to time.Time) (
 		p95 := b.values[p95Idx]
 
 		result = append(result, WebVitalSummary{
+			Service: k.service,
 			Page:    k.page,
 			Metric:  k.metric,
 			P50Ms:   p50,
@@ -109,6 +111,9 @@ func (s *QueryService) fetchWebVitals(ctx context.Context, from, to time.Time) (
 	}
 
 	sort.Slice(result, func(i, j int) bool {
+		if result[i].Service != result[j].Service {
+			return result[i].Service < result[j].Service
+		}
 		if result[i].Page != result[j].Page {
 			return result[i].Page < result[j].Page
 		}
@@ -129,11 +134,11 @@ type WebVitalTimeseriesBucket struct {
 	Poor    int64     `json:"poor"`
 }
 
-func (s *QueryService) GetWebVitalsTimeseries(ctx context.Context, page, metric string, from, to time.Time, interval time.Duration) ([]WebVitalTimeseriesBucket, error) {
+func (s *QueryService) GetWebVitalsTimeseries(ctx context.Context, service, page, metric string, from, to time.Time, interval time.Duration) ([]WebVitalTimeseriesBucket, error) {
 	_, span := tracer.Start(ctx, "query.web_vitals_timeseries")
 	defer span.End()
 
-	cacheKey := fmt.Sprintf("vitals-ts:%s:%s:%d:%d:%d", page, metric, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix(), int64(interval.Seconds()))
+	cacheKey := fmt.Sprintf("vitals-ts:%s:%s:%s:%d:%d:%d", service, page, metric, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix(), int64(interval.Seconds()))
 	if cached, ok := cache.Get[[]WebVitalTimeseriesBucket](s.cache, ctx, cacheKey); ok {
 		return cached, nil
 	}
@@ -142,7 +147,7 @@ func (s *QueryService) GetWebVitalsTimeseries(ctx context.Context, page, metric 
 		if _, already := revalidating.LoadOrStore(cacheKey, true); !already {
 			go func() {
 				defer revalidating.Delete(cacheKey)
-				if result, err := s.fetchWebVitalsTimeseries(context.Background(), page, metric, from, to, interval); err == nil {
+				if result, err := s.fetchWebVitalsTimeseries(context.Background(), service, page, metric, from, to, interval); err == nil {
 					cache.Set(s.cache, context.Background(), cacheKey, result)
 				}
 			}()
@@ -150,7 +155,7 @@ func (s *QueryService) GetWebVitalsTimeseries(ctx context.Context, page, metric 
 		return stale, nil
 	}
 
-	result, err := s.fetchWebVitalsTimeseries(ctx, page, metric, from, to, interval)
+	result, err := s.fetchWebVitalsTimeseries(ctx, service, page, metric, from, to, interval)
 	if err != nil {
 		return nil, err
 	}
@@ -159,8 +164,8 @@ func (s *QueryService) GetWebVitalsTimeseries(ctx context.Context, page, metric 
 	return result, nil
 }
 
-func (s *QueryService) fetchWebVitalsTimeseries(ctx context.Context, page, metric string, from, to time.Time, interval time.Duration) ([]WebVitalTimeseriesBucket, error) {
-	buckets, err := s.repo.QueryWebVitalsTimeseries(page, metric, from, to, int64(interval.Seconds()))
+func (s *QueryService) fetchWebVitalsTimeseries(ctx context.Context, service, page, metric string, from, to time.Time, interval time.Duration) ([]WebVitalTimeseriesBucket, error) {
+	buckets, err := s.repo.QueryWebVitalsTimeseries(service, page, metric, from, to, int64(interval.Seconds()))
 	if err != nil {
 		return nil, err
 	}

@@ -318,7 +318,7 @@ func TestGetWebVitals(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	result, err := svc.GetWebVitals(context.Background(), time.Time{}, time.Time{})
+	result, err := svc.GetWebVitals(context.Background(), "", time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatalf("GetWebVitals: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestGetWebVitalsTimeseries(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	result, err := svc.GetWebVitalsTimeseries(context.Background(), "/home", "LCP", time.Time{}, time.Time{}, 5*time.Minute)
+	result, err := svc.GetWebVitalsTimeseries(context.Background(), "", "/home", "LCP", time.Time{}, time.Time{}, 5*time.Minute)
 	if err != nil {
 		t.Fatalf("GetWebVitalsTimeseries: %v", err)
 	}

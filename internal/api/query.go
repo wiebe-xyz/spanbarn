@@ -303,7 +303,9 @@ func (h *queryHandlers) handleWebVitals(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	vitals, err := h.svc.GetWebVitals(ctx, from, to)
+	svcFilter := r.URL.Query().Get("service")
+
+	vitals, err := h.svc.GetWebVitals(ctx, svcFilter, from, to)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -327,6 +329,7 @@ func (h *queryHandlers) handleWebVitalsTimeseries(w http.ResponseWriter, r *http
 		return
 	}
 
+	svcFilter := r.URL.Query().Get("service")
 	page := r.URL.Query().Get("page")
 	metric := r.URL.Query().Get("metric")
 	if metric == "" {
@@ -336,7 +339,7 @@ func (h *queryHandlers) handleWebVitalsTimeseries(w http.ResponseWriter, r *http
 
 	interval := parseInterval(r.URL.Query().Get("interval"))
 
-	ts, err := h.svc.GetWebVitalsTimeseries(ctx, page, metric, from, to, interval)
+	ts, err := h.svc.GetWebVitalsTimeseries(ctx, svcFilter, page, metric, from, to, interval)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return

@@ -154,11 +154,11 @@ export const api = {
   deleteSavedQuery: (id: number) =>
     fetchJSON<{ status: string }>(`/api/v1/saved-queries/${id}`, { method: 'DELETE' }),
 
-  getWebVitals: (from: string, to: string) =>
-    fetchJSON<WebVitalSummary[]>(`/api/v1/web-vitals${qs({ from, to })}`),
+  getWebVitals: (from: string, to: string, service?: string) =>
+    fetchJSON<WebVitalSummary[]>(`/api/v1/web-vitals${qs({ from, to, service })}`),
 
-  getWebVitalsTimeseries: (page: string, metric: string, from: string, to: string, interval?: string) =>
-    fetchJSON<WebVitalTimeseriesBucket[]>(`/api/v1/web-vitals/timeseries${qs({ page, metric, from, to, interval })}`),
+  getWebVitalsTimeseries: (page: string, metric: string, from: string, to: string, interval?: string, service?: string) =>
+    fetchJSON<WebVitalTimeseriesBucket[]>(`/api/v1/web-vitals/timeseries${qs({ page, metric, from, to, interval, service })}`),
 
   getHealth: () => fetchJSON<HealthResponse>('/api/v1/health'),
 

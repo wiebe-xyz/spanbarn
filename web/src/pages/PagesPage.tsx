@@ -77,6 +77,11 @@ type PageGroup = {
   metrics: Map<string, WebVitalSummary>
 }
 
+type ServiceGroup = {
+  service: string
+  pages: PageGroup[]
+}
+
 export function PagesPage(): ReactElement {
   const navigate = useNavigate()
   const { range, setRange } = useTimeRange()
@@ -85,18 +90,19 @@ export function PagesPage(): ReactElement {
   const [trends, setTrends] = useState<Map<string, number[]>>(new Map())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [serviceFilter, setServiceFilter] = useState('')
 
   const fetchData = useCallback(async () => {
     const { from, to } = getTimeRange(range)
     try {
-      const data = await api.getWebVitals(from, to)
+      const data = await api.getWebVitals(from, to, serviceFilter || undefined)
       setVitals(data ?? [])
     } catch {
       // handled by client
     } finally {
       setLoading(false)
     }
-  }, [range])
+  }, [range, serviceFilter])
 
   useEffect(() => {
     if (vitals.length === 0) return
@@ -110,7 +116,7 @@ export function PagesPage(): ReactElement {
       if (seen.has(key)) continue
       seen.add(key)
       fetches.push(
-        api.getWebVitalsTimeseries(v.page, v.metric, from, to).then((buckets: WebVitalTimeseriesBucket[]) => {
+        api.getWebVitalsTimeseries(v.page, v.metric, from, to, undefined, serviceFilter || undefined).then((buckets: WebVitalTimeseriesBucket[]) => {
           setTrends((prev) => {
             const next = new Map(prev)
             next.set(key, buckets.map((b) => b.p50Ms))
@@ -121,16 +127,27 @@ export function PagesPage(): ReactElement {
     }
 
     void Promise.all(fetches)
-  }, [vitals, range])
+  }, [vitals, range, serviceFilter])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     void fetchData()
   }, [fetchData])
 
-  const pages: PageGroup[] = useMemo(() => {
-    const byPage = new Map<string, Map<string, WebVitalSummary>>()
+  const services = useMemo(() => {
+    const svcSet = new Set<string>()
+    for (const v of vitals) svcSet.add(v.service)
+    return Array.from(svcSet).sort()
+  }, [vitals])
+
+  const serviceGroups: ServiceGroup[] = useMemo(() => {
+    const bySvc = new Map<string, Map<string, Map<string, WebVitalSummary>>>()
     for (const v of vitals) {
+      let byPage = bySvc.get(v.service)
+      if (!byPage) {
+        byPage = new Map()
+        bySvc.set(v.service, byPage)
+      }
       let metrics = byPage.get(v.page)
       if (!metrics) {
         metrics = new Map()
@@ -139,18 +156,23 @@ export function PagesPage(): ReactElement {
       metrics.set(v.metric, v)
     }
 
-    let groups: PageGroup[] = []
-    for (const [page, metrics] of byPage) {
-      groups.push({ page, metrics })
+    const result: ServiceGroup[] = []
+    for (const [service, byPage] of bySvc) {
+      let pages: PageGroup[] = []
+      for (const [page, metrics] of byPage) {
+        pages.push({ page, metrics })
+      }
+      if (search) {
+        const q = search.toLowerCase()
+        pages = pages.filter((g) => g.page.toLowerCase().includes(q))
+      }
+      if (pages.length === 0) continue
+      pages.sort((a, b) => a.page.localeCompare(b.page))
+      result.push({ service, pages })
     }
 
-    if (search) {
-      const q = search.toLowerCase()
-      groups = groups.filter((g) => g.page.toLowerCase().includes(q))
-    }
-
-    groups.sort((a, b) => a.page.localeCompare(b.page))
-    return groups
+    result.sort((a, b) => a.service.localeCompare(b.service))
+    return result
   }, [vitals, search])
 
   return (
@@ -190,6 +212,26 @@ export function PagesPage(): ReactElement {
               }}
             />
           </div>
+          {services.length > 1 && (
+            <select
+              value={serviceFilter}
+              onChange={(e) => setServiceFilter(e.target.value)}
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+                padding: '6px 10px',
+                color: 'var(--text)',
+                fontSize: 13,
+                outline: 'none',
+              }}
+            >
+              <option value="">All services</option>
+              {services.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          )}
           <AutoRefresh value={refreshInterval} onChange={setRefreshInterval} onRefresh={fetchData} />
           <TimeRangeSelector value={range} onChange={setRange} />
         </div>
@@ -199,87 +241,96 @@ export function PagesPage(): ReactElement {
         <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
           Loading web vitals...
         </div>
-      ) : pages.length === 0 ? (
+      ) : serviceGroups.length === 0 ? (
         <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
           {search ? 'No pages match your filter' : 'No web vitals data yet. Deploy the frontend SDK to start collecting.'}
         </div>
       ) : (
-        pages.map((group) => (
-          <div
-            key={group.page}
-            className="card"
-            style={{ marginBottom: '1rem', padding: 0, overflow: 'hidden', cursor: 'pointer' }}
-            onClick={() => navigate(`/pages/${encodeURIComponent(group.page)}`)}
-          >
-            <div
-              style={{
-                padding: '0.75rem 1rem',
-                borderBottom: '1px solid var(--border)',
-                fontSize: '0.875rem',
-                fontWeight: 600,
-                color: 'var(--accent)',
-              }}
-              className="mono"
-            >
-              {group.page}
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left' }}>Metric</th>
-                    <th style={{ textAlign: 'left' }}>Trend</th>
-                    <th style={{ textAlign: 'right' }}>P50</th>
-                    <th style={{ textAlign: 'right' }}>P95</th>
-                    <th style={{ textAlign: 'left' }}>Rating</th>
-                    <th style={{ textAlign: 'right' }}>Samples</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {METRIC_ORDER.map((metric) => {
-                    const v = group.metrics.get(metric)
-                    if (!v) return null
-                    const unit = METRIC_UNIT[metric]
-                    const trendData = trends.get(`${group.page}:${metric}`)
-                    return (
-                      <tr key={metric}>
-                        <td>
-                          <span style={{ fontWeight: 600 }}>{metric}</span>
-                          <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>
-                            {METRIC_LABELS[metric]}
-                          </span>
-                          {unit && (
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.6875rem', marginLeft: '0.25rem' }}>
-                              ({unit})
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          <Sparkline
-                            data={trendData ?? []}
-                            color={ratingColor(v.good, v.needsImprovement, v.poor)}
-                            fillColor={ratingColor(v.good, v.needsImprovement, v.poor)}
-                          />
-                        </td>
-                        <td
-                          style={{ textAlign: 'right', color: ratingColor(v.good, v.needsImprovement, v.poor) }}
-                          className="mono"
-                        >
-                          {formatMetricValue(v.p50Ms, metric)}
-                        </td>
-                        <td style={{ textAlign: 'right' }} className="mono">
-                          {formatMetricValue(v.p95Ms, metric)}
-                        </td>
-                        <td>{ratingBar(v.good, v.needsImprovement, v.poor)}</td>
-                        <td style={{ textAlign: 'right' }} className="mono">
-                          {v.samples}
-                        </td>
+        serviceGroups.map((svcGroup) => (
+          <div key={svcGroup.service} style={{ marginBottom: '1.5rem' }}>
+            {serviceGroups.length > 1 && (
+              <h3 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                {svcGroup.service}
+              </h3>
+            )}
+            {svcGroup.pages.map((group) => (
+              <div
+                key={group.page}
+                className="card"
+                style={{ marginBottom: '1rem', padding: 0, overflow: 'hidden', cursor: 'pointer' }}
+                onClick={() => navigate(`/pages/${encodeURIComponent(group.page)}`)}
+              >
+                <div
+                  style={{
+                    padding: '0.75rem 1rem',
+                    borderBottom: '1px solid var(--border)',
+                    fontSize: '0.875rem',
+                    fontWeight: 600,
+                    color: 'var(--accent)',
+                  }}
+                  className="mono"
+                >
+                  {group.page}
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'left' }}>Metric</th>
+                        <th style={{ textAlign: 'left' }}>Trend</th>
+                        <th style={{ textAlign: 'right' }}>P50</th>
+                        <th style={{ textAlign: 'right' }}>P95</th>
+                        <th style={{ textAlign: 'left' }}>Rating</th>
+                        <th style={{ textAlign: 'right' }}>Samples</th>
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {METRIC_ORDER.map((metric) => {
+                        const v = group.metrics.get(metric)
+                        if (!v) return null
+                        const unit = METRIC_UNIT[metric]
+                        const trendData = trends.get(`${group.page}:${metric}`)
+                        return (
+                          <tr key={metric}>
+                            <td>
+                              <span style={{ fontWeight: 600 }}>{metric}</span>
+                              <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginLeft: '0.5rem' }}>
+                                {METRIC_LABELS[metric]}
+                              </span>
+                              {unit && (
+                                <span style={{ color: 'var(--text-muted)', fontSize: '0.6875rem', marginLeft: '0.25rem' }}>
+                                  ({unit})
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              <Sparkline
+                                data={trendData ?? []}
+                                color={ratingColor(v.good, v.needsImprovement, v.poor)}
+                                fillColor={ratingColor(v.good, v.needsImprovement, v.poor)}
+                              />
+                            </td>
+                            <td
+                              style={{ textAlign: 'right', color: ratingColor(v.good, v.needsImprovement, v.poor) }}
+                              className="mono"
+                            >
+                              {formatMetricValue(v.p50Ms, metric)}
+                            </td>
+                            <td style={{ textAlign: 'right' }} className="mono">
+                              {formatMetricValue(v.p95Ms, metric)}
+                            </td>
+                            <td>{ratingBar(v.good, v.needsImprovement, v.poor)}</td>
+                            <td style={{ textAlign: 'right' }} className="mono">
+                              {v.samples}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
           </div>
         ))
       )}

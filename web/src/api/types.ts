@@ -223,6 +223,7 @@ export type TraceSearchParams = {
 }
 
 export type WebVitalSummary = {
+  service: string
   page: string
   metric: string
   p50Ms: number
