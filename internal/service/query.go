@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"net/url"
 	"sort"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -92,12 +91,5 @@ func extractHost(rawURL string) string {
 	if err != nil {
 		return ""
 	}
-	host := u.Hostname()
-	if host == "" {
-		parts := strings.SplitN(rawURL, "/", 4)
-		if len(parts) >= 3 {
-			return parts[2]
-		}
-	}
-	return host
+	return u.Hostname()
 }

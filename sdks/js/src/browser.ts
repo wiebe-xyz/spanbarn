@@ -98,8 +98,13 @@ function instrumentFetchCalls(telemetryEndpoint: string, errorEndpoint?: string)
       // If header construction fails, proceed with original init
     }
 
+    let fullUrl = url
     let pathname = url
-    try { pathname = new URL(url, location.origin).pathname } catch { /* use raw url */ }
+    try {
+      const parsed = new URL(url, location.origin)
+      fullUrl = parsed.href
+      pathname = parsed.pathname
+    } catch { /* use raw url */ }
 
     return originalFetch.call(this, input, patchedInit).then(
       (response) => {
@@ -116,7 +121,7 @@ function instrumentFetchCalls(telemetryEndpoint: string, errorEndpoint?: string)
             duration: nowUs() - startUs,
             attributes: {
               'http.method': method,
-              'http.url': url,
+              'http.url': fullUrl,
               'http.status_code': response.status,
             },
             events: [],
@@ -138,7 +143,7 @@ function instrumentFetchCalls(telemetryEndpoint: string, errorEndpoint?: string)
             duration: nowUs() - startUs,
             attributes: {
               'http.method': method,
-              'http.url': url,
+              'http.url': fullUrl,
               'error.message': error instanceof Error ? error.message : String(error),
             },
             events: [],
