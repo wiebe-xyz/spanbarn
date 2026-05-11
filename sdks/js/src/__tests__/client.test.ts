@@ -136,6 +136,60 @@ describe('SpanBarn client', () => {
     expect(client.getQueueLength()).toBe(0)
   })
 
+  it('backs off exponentially after consecutive failures', async () => {
+    vi.useFakeTimers()
+    const t0 = Date.now()
+    const mockFetch = vi.mocked(fetch)
+    mockFetch.mockRejectedValue(new Error('Network error'))
+
+    const client = SpanBarn.init({
+      endpoint: 'https://test.example.com',
+      apiKey: 'key',
+      service: 'my-service',
+    })
+
+    client.startSpan('s1').end()
+    await client.flush() // failure 1 → backoff 5s
+    expect(client.getConsecutiveFailures()).toBe(1)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    client.startSpan('s2').end()
+    await client.flush() // still within backoff window → skipped
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    vi.setSystemTime(t0 + 5001)
+    await client.flush() // backoff expired → failure 2 → backoff 10s
+    expect(client.getConsecutiveFailures()).toBe(2)
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+
+    vi.useRealTimers()
+  })
+
+  it('resets backoff on successful flush', async () => {
+    vi.useFakeTimers()
+    const t0 = Date.now()
+    const mockFetch = vi.mocked(fetch)
+    mockFetch.mockRejectedValueOnce(new Error('Network error'))
+    mockFetch.mockResolvedValue(new Response(null, { status: 200 }))
+
+    const client = SpanBarn.init({
+      endpoint: 'https://test.example.com',
+      apiKey: 'key',
+      service: 'my-service',
+    })
+
+    client.startSpan('s1').end()
+    await client.flush() // failure → backoff
+    expect(client.getConsecutiveFailures()).toBe(1)
+
+    vi.setSystemTime(t0 + 5001)
+    client.startSpan('s2').end()
+    await client.flush() // success → reset
+    expect(client.getConsecutiveFailures()).toBe(0)
+
+    vi.useRealTimers()
+  })
+
   it('max queue size drops oldest spans', () => {
     const client = SpanBarn.init({
       endpoint: 'https://test.example.com',

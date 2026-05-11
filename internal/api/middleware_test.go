@@ -13,27 +13,27 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
 
-func TestCORSIngestEndpoint(t *testing.T) {
+func newCORSTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
 	q := ingest.NewQueue(1024)
 	sp, err := spool.NewSpool(t.TempDir(), 0)
 	if err != nil {
 		t.Fatalf("spool: %v", err)
 	}
 	t.Cleanup(func() { sp.Close() })
-
 	h := ingest.NewHandler(q, sp, 0, slog.Default())
 	h.Start(t.Context())
 	t.Cleanup(func() { h.Stop() })
-
-	srv := api.NewServer(api.ServerConfig{
-		APIKey:  testAPIKey,
-		Version: "test",
-	}, h, slog.Default())
-
+	srv := api.NewServer(api.ServerConfig{APIKey: testAPIKey, Version: "test"}, h, slog.Default())
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
+	return ts
+}
 
-	// Send OPTIONS preflight to ingest endpoint.
+func TestCORSIngestEndpoint(t *testing.T) {
+	ts := newCORSTestServer(t)
+
+	// Preflight to /api/v1/spans
 	req, _ := http.NewRequest(http.MethodOptions, ts.URL+"/api/v1/spans", nil)
 	req.Header.Set("Origin", "https://example.com")
 	req.Header.Set("Access-Control-Request-Method", "POST")
@@ -47,15 +47,41 @@ func TestCORSIngestEndpoint(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("expected 204 for OPTIONS, got %d", resp.StatusCode)
 	}
-
-	acao := resp.Header.Get("Access-Control-Allow-Origin")
-	if acao != "*" {
+	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "*" {
 		t.Fatalf("expected CORS allow-origin '*', got %q", acao)
 	}
-
 	acah := resp.Header.Get("Access-Control-Allow-Headers")
 	if !strings.Contains(acah, "X-SpanBarn-Api-Key") {
 		t.Fatalf("expected CORS headers to include X-SpanBarn-Api-Key, got %q", acah)
+	}
+}
+
+func TestCORSOTLPEndpoint(t *testing.T) {
+	ts := newCORSTestServer(t)
+
+	// Preflight to /v1/traces with Authorization + traceparent (OTel SDK pattern)
+	req, _ := http.NewRequest(http.MethodOptions, ts.URL+"/v1/traces", nil)
+	req.Header.Set("Origin", "https://geobarn.test.wiebe.xyz")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "Content-Type, Authorization, traceparent")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 for OPTIONS preflight, got %d", resp.StatusCode)
+	}
+	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "*" {
+		t.Fatalf("expected CORS allow-origin '*', got %q", acao)
+	}
+	acah := resp.Header.Get("Access-Control-Allow-Headers")
+	for _, h := range []string{"Authorization", "traceparent", "Content-Type"} {
+		if !strings.Contains(acah, h) {
+			t.Fatalf("expected CORS allow-headers to include %q, got %q", h, acah)
+		}
 	}
 }
 

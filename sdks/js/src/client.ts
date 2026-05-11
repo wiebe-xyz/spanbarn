@@ -24,6 +24,8 @@ export class SpanBarn {
   private flushTimer: ReturnType<typeof setInterval> | null = null
   private transport: Transport
   private traceId: string
+  private consecutiveFailures = 0
+  private backoffUntil = 0
 
   private constructor(config: SpanBarnConfig) {
     this.config = {
@@ -94,6 +96,11 @@ export class SpanBarn {
     return this.config
   }
 
+  /** Get consecutive failure count (for testing) */
+  getConsecutiveFailures(): number {
+    return this.consecutiveFailures
+  }
+
   /** Start a new span */
   startSpan(name: string, options?: SpanOptions): Span {
     return new Span(this, name, this.traceId, options)
@@ -139,6 +146,13 @@ export class SpanBarn {
   async flush(): Promise<void> {
     if (this.queue.length === 0) return
 
+    if (Date.now() < this.backoffUntil) {
+      if (this.config.debug) {
+        console.debug(`[SpanBarn] Skipping flush, backing off for ${Math.round((this.backoffUntil - Date.now()) / 1000)}s`)
+      }
+      return
+    }
+
     const batch = this.queue.splice(0, this.config.maxBatchSize)
 
     if (this.config.debug) {
@@ -156,6 +170,13 @@ export class SpanBarn {
       if (available > 0) {
         this.queue.unshift(...batch.slice(0, available))
       }
+      // Exponential backoff: 5s, 10s, 20s, …, capped at 5 minutes
+      this.consecutiveFailures++
+      const delay = Math.min(5000 * 2 ** (this.consecutiveFailures - 1), 5 * 60 * 1000)
+      this.backoffUntil = Date.now() + delay
+    } else {
+      this.consecutiveFailures = 0
+      this.backoffUntil = 0
     }
   }
 
