@@ -496,3 +496,74 @@ func TestListDependencies(t *testing.T) {
 		t.Errorf("expected callCount 1, got %d", httpDep.CallCount)
 	}
 }
+
+func TestGetDependencyTraces(t *testing.T) {
+	repo := setupTestRepo(t)
+	svc := NewQueryService(repo, nil)
+
+	now := time.Now()
+
+	spans := []repository.Span{
+		{
+			ProjectID: 1, TraceID: "dt1", SpanID: "ds1", Name: "root", Service: "web",
+			Kind: "server", Status: "ok", StartTimeUs: now.UnixMicro(), DurationUs: 5000,
+			Attributes: `{}`, Events: "[]",
+		},
+		{
+			ProjectID: 1, TraceID: "dt1", SpanID: "ds2", ParentSpanID: "ds1", Name: "DB call", Service: "web",
+			Kind: "client", Status: "ok", StartTimeUs: now.UnixMicro() + 100, DurationUs: 800,
+			Attributes: `{"db.system":"postgresql"}`, Events: "[]",
+		},
+		{
+			ProjectID: 1, TraceID: "dt2", SpanID: "ds3", Name: "root2", Service: "web",
+			Kind: "server", Status: "ok", StartTimeUs: now.UnixMicro() + 10000, DurationUs: 3000,
+			Attributes: `{}`, Events: "[]",
+		},
+		{
+			ProjectID: 1, TraceID: "dt2", SpanID: "ds4", ParentSpanID: "ds3", Name: "DB call", Service: "web",
+			Kind: "client", Status: "error", StartTimeUs: now.UnixMicro() + 10100, DurationUs: 1200,
+			Attributes: `{"db.system":"postgresql"}`, Events: "[]",
+		},
+		{
+			ProjectID: 1, TraceID: "dt3", SpanID: "ds5", Name: "HTTP root", Service: "api",
+			Kind: "server", Status: "ok", StartTimeUs: now.UnixMicro() + 20000, DurationUs: 2000,
+			Attributes: `{}`, Events: "[]",
+		},
+		{
+			ProjectID: 1, TraceID: "dt3", SpanID: "ds6", ParentSpanID: "ds5", Name: "HTTP call", Service: "api",
+			Kind: "client", Status: "ok", StartTimeUs: now.UnixMicro() + 20100, DurationUs: 600,
+			Attributes: `{"http.url":"https://example.com/data"}`, Events: "[]",
+		},
+	}
+
+	if err := repo.InsertSpans(spans); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+
+	traces, err := svc.GetDependencyTraces(context.Background(), 1, "postgresql", "database", time.Time{}, time.Now().Add(time.Hour), 10)
+	if err != nil {
+		t.Fatalf("GetDependencyTraces: %v", err)
+	}
+	if len(traces) != 2 {
+		t.Fatalf("expected 2 traces for postgresql, got %d", len(traces))
+	}
+
+	traces, err = svc.GetDependencyTraces(context.Background(), 1, "example.com", "http", time.Time{}, time.Now().Add(time.Hour), 10)
+	if err != nil {
+		t.Fatalf("GetDependencyTraces: %v", err)
+	}
+	if len(traces) != 1 {
+		t.Fatalf("expected 1 trace for example.com, got %d", len(traces))
+	}
+	if traces[0].TraceID != "dt3" {
+		t.Errorf("expected traceID dt3, got %s", traces[0].TraceID)
+	}
+
+	traces, err = svc.GetDependencyTraces(context.Background(), 1, "nonexistent", "database", time.Time{}, time.Now().Add(time.Hour), 10)
+	if err != nil {
+		t.Fatalf("GetDependencyTraces: %v", err)
+	}
+	if len(traces) != 0 {
+		t.Fatalf("expected 0 traces for nonexistent, got %d", len(traces))
+	}
+}
