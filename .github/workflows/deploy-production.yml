@@ -129,9 +129,9 @@ jobs:
               spanbarn-ingest=${SERVICE_IMAGE}:${SHA}
             kubectl -n ${NAMESPACE} set image deployment/spanbarn-web \
               spanbarn-web=${WEB_IMAGE}:${SHA}
-            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn --timeout=180s
-            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-ingest --timeout=180s
-            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-web --timeout=180s
+            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn --timeout=360s
+            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-ingest --timeout=360s
+            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-web --timeout=360s
           "
 
       - name: Rollback on failure
