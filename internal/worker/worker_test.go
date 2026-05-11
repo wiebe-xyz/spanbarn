@@ -139,6 +139,88 @@ func TestWorkerRetries(t *testing.T) {
 	}
 }
 
+// mockAggregator records spans passed to AggregateSpans for test assertions.
+type mockAggregator struct {
+	mu    sync.Mutex
+	spans []repository.Span
+	err   error
+}
+
+func (m *mockAggregator) AggregateSpans(_ context.Context, spans []repository.Span) ([]repository.Aggregate, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return nil, m.err
+	}
+	m.spans = append(m.spans, spans...)
+	return nil, nil
+}
+
+func (m *mockAggregator) Persist(_ context.Context, _ []repository.Aggregate) error { return nil }
+
+func (m *mockAggregator) getSpans() []repository.Span {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := make([]repository.Span, len(m.spans))
+	copy(cp, m.spans)
+	return cp
+}
+
+func TestWorkerInlineAggregation(t *testing.T) {
+	dir := t.TempDir()
+	sp, err := spool.NewSpool(dir, spool.DefaultMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sp.Close()
+
+	records := make([]model.SpanRecord, 3)
+	for i := range records {
+		records[i] = model.SpanRecord{
+			ProjectID: 1, SpanID: fmt.Sprintf("agg-span-%d", i),
+			Name: "op", Service: "svc", Kind: "SERVER", Status: "OK",
+		}
+	}
+	if err := sp.Write(records); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &mockRepo{}
+	agg := &mockAggregator{}
+	w := NewWorker(sp, repo, slog.Default())
+	w.SetAggregator(agg)
+	w.ProcessOnce(context.Background())
+
+	if len(repo.getSpans()) != 3 {
+		t.Fatalf("expected 3 spans inserted, got %d", len(repo.getSpans()))
+	}
+	if len(agg.getSpans()) != 3 {
+		t.Fatalf("expected 3 spans aggregated inline, got %d", len(agg.getSpans()))
+	}
+}
+
+func TestWorkerNoAggregationOnInsertFailure(t *testing.T) {
+	dir := t.TempDir()
+	sp, err := spool.NewSpool(dir, spool.DefaultMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sp.Close()
+
+	_ = sp.Write([]model.SpanRecord{{ProjectID: 1, SpanID: "s", Name: "op", Service: "svc"}})
+
+	repo := &mockRepo{err: fmt.Errorf("db down")}
+	agg := &mockAggregator{}
+	w := NewWorker(sp, repo, slog.Default())
+	w.SetAggregator(agg)
+	w.retryBaseDelay = time.Millisecond
+	w.ProcessOnce(context.Background())
+
+	if len(agg.getSpans()) != 0 {
+		t.Fatal("aggregator should not be called when insert fails")
+	}
+}
+
 func TestWorkerGracefulShutdown(t *testing.T) {
 	dir := t.TempDir()
 	sp, err := spool.NewSpool(dir, spool.DefaultMaxBytes)

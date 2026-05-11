@@ -193,6 +193,30 @@ func (r *Repository) GetSpansForAggregation(cutoff time.Time, limit int) ([]Span
 	)
 }
 
+// GetBoringTraceSpans returns spans from traces that are entirely boring
+// (no error spans, no slow spans) with ingested_at older than cutoff.
+// Used to aggregate-then-delete boring traces on a shorter TTL than error traces.
+func (r *Repository) GetBoringTraceSpans(cutoff time.Time, slowThresholdUS int64, limit int) ([]Span, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	return r.scanSpans(`
+		SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at
+		FROM spans
+		WHERE trace_id IN (
+			SELECT trace_id FROM spans
+			WHERE ingested_at < ?
+			GROUP BY trace_id
+			HAVING MAX(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) = 0
+			   AND MAX(duration_us) <= ?
+			LIMIT 100
+		)
+		ORDER BY id
+		LIMIT ?`,
+		cutoff, slowThresholdUS, limit,
+	)
+}
+
 func (r *Repository) StreamSpans(f SpanFilter, fn func(Span) error) error {
 	var where []string
 	var args []any

@@ -34,16 +34,21 @@ func setupTestWorker(t *testing.T, cfg Config) (*RetentionWorker, *repository.Re
 	return worker, repo
 }
 
+// traceCounter ensures each insertTestSpans call gets unique trace IDs.
+var traceCounter int
+
 // insertTestSpans inserts spans into the repository with the given ingested_at timestamp.
 // All spans belong to project 1.
 func insertTestSpans(t *testing.T, repo *repository.Repository, count int, status string, durationUs int64, ingestedAt time.Time) {
 	t.Helper()
+	base := traceCounter
+	traceCounter += count
 	spans := make([]repository.Span, count)
 	for i := 0; i < count; i++ {
 		spans[i] = repository.Span{
 			ProjectID:   1,
-			TraceID:     fmt.Sprintf("trace-%s-%d", status, i),
-			SpanID:      fmt.Sprintf("span-%s-%d", status, i),
+			TraceID:     fmt.Sprintf("trace-%s-%d", status, base+i),
+			SpanID:      fmt.Sprintf("span-%s-%d", status, base+i),
 			Name:        "test-op",
 			Service:     "test-svc",
 			Resource:    "/api/test",
@@ -328,6 +333,67 @@ func TestRunOnceEmptyDatabase(t *testing.T) {
 
 	if err := worker.RunOnce(context.Background()); err != nil {
 		t.Fatalf("RunOnce on empty DB should not error, got: %v", err)
+	}
+}
+
+func TestBoringTraceAggregationAndDeletion(t *testing.T) {
+	cfg := Config{
+		BoringTraceHours:          1,   // boring traces older than 1h are processed
+		FullRetentionHours:        168, // error traces kept for 7d
+		InterestingRetentionHours: 168,
+		ErrorRetentionDays:        30,
+		AggregateRetentionDays:    365,
+		SlowThresholdUS:           1_000_000,
+	}
+	worker, repo := setupTestWorker(t, cfg)
+	if _, err := repo.CreateProject("test", "Test"); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	old := time.Now().UTC().Add(-2 * time.Hour)
+
+	// 5 boring spans (single trace, no errors, fast) — should be aggregated + deleted
+	insertTestSpans(t, repo, 5, "ok", 500, old)
+
+	// 3 error spans in a separate trace — must NOT be touched by boring purge
+	insertTestSpans(t, repo, 3, "error", 500, old)
+
+	// 2 recent boring spans — must NOT be touched (within boring TTL)
+	insertTestSpans(t, repo, 2, "ok", 500, time.Now().UTC())
+
+	if err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	remaining, err := repo.QuerySpans(repository.SpanFilter{ProjectID: 1, Limit: 100})
+	if err != nil {
+		t.Fatalf("QuerySpans: %v", err)
+	}
+	// Only the 3 error spans + 2 recent boring spans should remain.
+	if len(remaining) != 5 {
+		t.Fatalf("expected 5 spans remaining, got %d", len(remaining))
+	}
+	for _, s := range remaining {
+		if s.Status == "ok" && s.DurationUs == 500 {
+			// If it's ok+fast it must be one of the recent ones.
+			continue
+		}
+		if s.Status != "error" {
+			t.Errorf("unexpected span remaining: %+v", s)
+		}
+	}
+
+	// Boring spans must have been aggregated.
+	aggs, err := repo.QueryAggregates(repository.AggregateFilter{ProjectID: 1, Limit: 100})
+	if err != nil {
+		t.Fatalf("QueryAggregates: %v", err)
+	}
+	var total int64
+	for _, a := range aggs {
+		total += a.Count
+	}
+	if total < 5 {
+		t.Fatalf("expected at least 5 spans in aggregates, got %d", total)
 	}
 }
 

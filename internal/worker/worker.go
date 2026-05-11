@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"log/slog"
-	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -19,18 +18,23 @@ import (
 var tracer = otel.Tracer("spanbarn/worker")
 
 const (
-	// DefaultBatchSize is the maximum number of records to process per tick.
-	DefaultBatchSize = 1000
-	// DefaultTickInterval is the interval between worker ticks.
+	DefaultBatchSize    = 1000
 	DefaultTickInterval = 1 * time.Second
-	// maxRetries is the number of times a failing record batch is retried before being skipped.
-	maxRetries = 5
+	maxRetries          = 5
 )
 
 // Repository is the interface the worker needs to persist spans.
 type Repository interface {
 	InsertSpans(ctx context.Context, spans []repository.Span) error
 	InsertPromptRecords(ctx context.Context, records []repository.PromptRecord) error
+}
+
+// Aggregator is the interface the worker uses for inline aggregation.
+// After each batch of spans is written, the worker aggregates them so
+// the aggregates table stays current without waiting for retention.
+type Aggregator interface {
+	AggregateSpans(ctx context.Context, spans []repository.Span) ([]repository.Aggregate, error)
+	Persist(ctx context.Context, aggregates []repository.Aggregate) error
 }
 
 // Metrics tracks worker processing stats.
@@ -50,13 +54,12 @@ func (m *Metrics) Snapshot() (processed, errors int64, duration time.Duration) {
 
 // Worker reads from the spool and persists records to the repository.
 type Worker struct {
-	spool            *spool.Spool
-	repo             Repository
-	logger           *slog.Logger
-	metrics          Metrics
-	ingestSampleRate float64
-	slowThresholdUS  int64
-	retryBaseDelay   time.Duration
+	spool      *spool.Spool
+	repo       Repository
+	aggregator Aggregator
+	logger     *slog.Logger
+	metrics    Metrics
+	retryBaseDelay time.Duration
 }
 
 // NewWorker creates a new background worker.
@@ -65,23 +68,19 @@ func NewWorker(sp *spool.Spool, repo Repository, logger *slog.Logger) *Worker {
 		logger = slog.Default()
 	}
 	return &Worker{
-		spool:            sp,
-		repo:             repo,
-		logger:           logger,
-		ingestSampleRate: 1.0,
-		retryBaseDelay:   500 * time.Millisecond,
+		spool:          sp,
+		repo:           repo,
+		logger:         logger,
+		retryBaseDelay: 500 * time.Millisecond,
 	}
 }
 
-// SetIngestSampling configures probabilistic dropping of uneventful spans.
-// rate=1.0 keeps all spans (default). rate=0.5 drops ~50% of non-error, non-slow spans.
-func (w *Worker) SetIngestSampling(rate float64, slowThresholdUS int64) {
-	w.ingestSampleRate = rate
-	w.slowThresholdUS = slowThresholdUS
+// SetAggregator wires in an aggregator for inline aggregation after each batch.
+func (w *Worker) SetAggregator(a Aggregator) {
+	w.aggregator = a
 }
 
 // Run loops on a 1-second ticker, processing spool batches until ctx is cancelled.
-// It finishes the current batch before returning.
 func (w *Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(DefaultTickInterval)
 	defer ticker.Stop()
@@ -89,7 +88,6 @@ func (w *Worker) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			// Finish one last batch before exiting.
 			w.processBatch(ctx)
 			return
 		case <-ticker.C:
@@ -139,11 +137,6 @@ func (w *Worker) processBatch(ctx context.Context) {
 
 	spans := convertRecords(records)
 
-	if w.ingestSampleRate < 1.0 {
-		spans = w.sampleSpans(spans)
-		span.SetAttributes(attribute.Int("batch.size_after_sampling", len(spans)))
-	}
-
 	_, insertSpan := tracer.Start(ctx, "worker.insert_spans")
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -187,6 +180,11 @@ func (w *Worker) processBatch(ctx context.Context) {
 				w.logger.Warn("worker: insert prompt records", "count", len(promptRecs), "error", err)
 			}
 		}
+
+		// Inline aggregation: keep aggregates table current after every batch.
+		if w.aggregator != nil {
+			w.aggregateInline(ctx, spans)
+		}
 	}
 
 	if err := w.spool.SaveCursor(nextCursor); err != nil {
@@ -200,20 +198,18 @@ func (w *Worker) processBatch(ctx context.Context) {
 	w.metrics.mu.Unlock()
 }
 
-// sampleSpans keeps all interesting spans (error/slow) and probabilistically
-// drops normal spans based on the configured sample rate.
-func (w *Worker) sampleSpans(spans []repository.Span) []repository.Span {
-	kept := make([]repository.Span, 0, len(spans))
-	for _, s := range spans {
-		if s.Status == "error" || (w.slowThresholdUS > 0 && s.DurationUs > w.slowThresholdUS) {
-			kept = append(kept, s)
-			continue
-		}
-		if rand.Float64() < w.ingestSampleRate {
-			kept = append(kept, s)
-		}
+func (w *Worker) aggregateInline(ctx context.Context, spans []repository.Span) {
+	aggs, err := w.aggregator.AggregateSpans(ctx, spans)
+	if err != nil {
+		w.logger.Warn("worker: inline aggregate compute failed, retention will catch up", "error", err)
+		return
 	}
-	return kept
+	if len(aggs) == 0 {
+		return
+	}
+	if err := w.aggregator.Persist(ctx, aggs); err != nil {
+		w.logger.Warn("worker: inline aggregate persist failed, retention will catch up", "error", err)
+	}
 }
 
 func convertRecords(records []model.SpanRecord) []repository.Span {

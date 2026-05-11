@@ -110,16 +110,14 @@ func run() error {
 
 	ingestHandler.Start(ctx)
 
+	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
+	aggregator := aggregation.NewAggregator(repo, aggInterval, logger)
+
 	w := worker.NewWorker(eventSpool, &workerRepoAdapter{repo: repo}, logger)
-	if cfg.IngestSampleRate < 1.0 {
-		w.SetIngestSampling(cfg.IngestSampleRate, int64(cfg.SlowThresholdMS)*1000)
-	}
+	w.SetAggregator(aggregator)
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("worker", func() { w.Run(workerCtx) })
-
-	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
-	aggregator := aggregation.NewAggregator(repo, aggInterval, logger)
 
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
