@@ -21,20 +21,30 @@ type DependencyDetailPanelProps = {
 }
 
 export function DependencyDetailPanel({ dependency, range, onClose }: DependencyDetailPanelProps): ReactElement {
-  const [traces, setTraces] = useState<TraceSummary[]>([])
+  const [errorTraces, setErrorTraces] = useState<TraceSummary[]>([])
+  const [recentTraces, setRecentTraces] = useState<TraceSummary[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchTraces = useCallback(async () => {
     const { from, to } = getTimeRange(range)
     try {
-      const data = await api.searchTraces({
-        operation: dependency.target,
-        status: 'ERROR',
-        from,
-        to,
-        limit: 10,
-      })
-      setTraces(data ?? [])
+      const [errors, recent] = await Promise.all([
+        api.searchTraces({
+          operation: dependency.target,
+          status: 'ERROR',
+          from,
+          to,
+          limit: 10,
+        }),
+        api.searchTraces({
+          operation: dependency.target,
+          from,
+          to,
+          limit: 10,
+        }),
+      ])
+      setErrorTraces(errors ?? [])
+      setRecentTraces(recent ?? [])
     } catch {
       // handled by client
     } finally {
@@ -146,16 +156,17 @@ export function DependencyDetailPanel({ dependency, range, onClose }: Dependency
         </ResponsiveContainer>
       </div>
 
-      {/* Recent error traces */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      {/* Recent traces */}
+      <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: '1rem' }}>
         <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)' }}>
-          <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>Recent Error Traces</span>
+          <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>Recent Traces</span>
         </div>
         <table>
           <thead>
             <tr>
               <th>Trace ID</th>
               <th style={{ textAlign: 'right' }}>Duration</th>
+              <th>Status</th>
               <th>Time</th>
             </tr>
           </thead>
@@ -165,17 +176,66 @@ export function DependencyDetailPanel({ dependency, range, onClose }: Dependency
                 <tr key={i}>
                   <td><div className="skeleton" style={{ height: 16, width: 100 }} /></td>
                   <td><div className="skeleton" style={{ height: 16, width: 50 }} /></td>
+                  <td><div className="skeleton" style={{ height: 16, width: 40 }} /></td>
                   <td><div className="skeleton" style={{ height: 16, width: 80 }} /></td>
                 </tr>
               ))
-            ) : traces.length === 0 ? (
+            ) : recentTraces.length === 0 ? (
               <tr>
-                <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '1.5rem' }}>
-                  No error traces found
+                <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '1.5rem' }}>
+                  No traces found
                 </td>
               </tr>
             ) : (
-              traces.map((t) => (
+              recentTraces.map((t) => (
+                <tr key={t.traceId}>
+                  <td className="mono" style={{ fontSize: '0.8125rem', color: 'var(--accent)' }}>
+                    <a href={`/traces/${t.traceId}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                      {t.traceId.slice(0, 16)}...
+                    </a>
+                  </td>
+                  <td style={{ textAlign: 'right' }} className="mono">
+                    {formatDuration(t.durationUs)}
+                  </td>
+                  <td>
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '0.125rem 0.375rem',
+                      borderRadius: '0.75rem',
+                      fontSize: '0.6875rem',
+                      fontWeight: 600,
+                      background: t.status === 'error' ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+                      color: t.status === 'error' ? '#ef4444' : '#22c55e',
+                    }}>
+                      {t.status}
+                    </span>
+                  </td>
+                  <td className="text-muted" style={{ fontSize: '0.8125rem' }}>
+                    {new Date(t.startTime).toLocaleString()}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Error traces */}
+      {errorTraces.length > 0 && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#ef4444' }}>Error Traces</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Trace ID</th>
+                <th style={{ textAlign: 'right' }}>Duration</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {errorTraces.map((t) => (
                 <tr key={t.traceId}>
                   <td className="mono" style={{ fontSize: '0.8125rem', color: 'var(--accent)' }}>
                     <a href={`/traces/${t.traceId}`} style={{ color: 'inherit', textDecoration: 'none' }}>
@@ -189,11 +249,11 @@ export function DependencyDetailPanel({ dependency, range, onClose }: Dependency
                     {new Date(t.startTime).toLocaleString()}
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
