@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -76,22 +77,33 @@ func parseInt64Param(r *http.Request, name string, defaultVal int64) int64 {
 func pathParam(path, name string) string {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	// Extract by position based on known route patterns:
-	// /api/v1/services/{service}/operations/{operation}/timeseries
-	// 0   1   2        3         4           5          6
+	// /api/v1/services/{service}/operations/{operation...}/timeseries
+	// 0   1   2        3         4           5..n-1        n
 	// /api/v1/traces/{traceId}
 	// 0   1   2      3
 	switch name {
 	case "service":
 		if len(parts) > 3 {
-			return parts[3]
+			v, _ := url.PathUnescape(parts[3])
+			return v
 		}
 	case "operation":
 		if len(parts) > 5 {
-			return parts[5]
+			// Operation name may contain encoded slashes (%2F), producing
+			// extra path segments. Join everything between "operations/" and
+			// the trailing "/timeseries" (or end of path).
+			end := len(parts)
+			if parts[end-1] == "timeseries" {
+				end--
+			}
+			raw := strings.Join(parts[5:end], "/")
+			v, _ := url.PathUnescape(raw)
+			return v
 		}
 	case "traceId":
 		if len(parts) > 3 {
-			return parts[3]
+			v, _ := url.PathUnescape(parts[3])
+			return v
 		}
 	}
 	return ""

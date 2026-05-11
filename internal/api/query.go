@@ -358,7 +358,12 @@ func (h *queryHandlers) handleWebVitalsTimeseries(w http.ResponseWriter, r *http
 //	/api/v1/traces/{traceId}
 //	/api/v1/dependencies
 func (h *queryHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimSuffix(r.URL.Path, "/")
+	// Use RawPath to preserve %2F in operation names; fall back to Path
+	path := r.URL.RawPath
+	if path == "" {
+		path = r.URL.Path
+	}
+	path = strings.TrimSuffix(path, "/")
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 
 	// parts[0]=api, parts[1]=v1, parts[2]=resource...
@@ -378,7 +383,7 @@ func (h *queryHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case len(parts) == 5 && parts[4] == "operations":
 			// GET /api/v1/services/{service}/operations
 			h.handleOperations(w, r)
-		case len(parts) == 7 && parts[4] == "operations" && parts[6] == "timeseries":
+		case len(parts) >= 7 && parts[4] == "operations" && parts[len(parts)-1] == "timeseries":
 			// GET /api/v1/services/{service}/operations/{operation}/timeseries
 			h.handleTimeseries(w, r)
 		default:
