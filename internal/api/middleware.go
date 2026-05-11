@@ -82,8 +82,11 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
-		// Ingest and traces endpoints always allow wildcard CORS for browser SDKs.
-		if strings.HasPrefix(path, "/api/v1/spans") || strings.HasPrefix(path, "/v1/traces") {
+		// Ingest endpoints always allow wildcard CORS for browser SDKs.
+		if strings.HasPrefix(path, "/api/v1/spans") ||
+			strings.HasPrefix(path, "/v1/traces") ||
+			path == "/api/v1/telemetry" ||
+			path == "/api/v1/client-errors" {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-SpanBarn-Api-Key, Authorization")
