@@ -15,45 +15,39 @@ import { getTimeRange } from '../utils/timeRange'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
 
 type DependencyDetailPanelProps = {
-  dependency: DependencySummary
+  dependency: DependencySummary | null
+  target: string
+  targetType: string
   range: string
   onClose: () => void
 }
 
-export function DependencyDetailPanel({ dependency, range, onClose }: DependencyDetailPanelProps): ReactElement {
+export function DependencyDetailPanel({ dependency, target, targetType, range, onClose }: DependencyDetailPanelProps): ReactElement {
   const [traces, setTraces] = useState<TraceSummary[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchTraces = useCallback(async () => {
     const { from, to } = getTimeRange(range)
     try {
-      const data = await api.getDependencyTraces(dependency.target, dependency.targetType, from, to, 20)
+      const data = await api.getDependencyTraces(target, targetType, from, to, 20)
       setTraces(data ?? [])
     } catch {
       // handled by client
     } finally {
       setLoading(false)
     }
-  }, [dependency.target, dependency.targetType, range])
+  }, [target, targetType, range])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchTraces()
   }, [fetchTraces])
 
-  useEffect(() => {
-    history.pushState({ depPanel: true }, '')
-    const onPop = () => onClose()
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  }, [onClose])
-
-  // Build a simple summary chart from the single data point we have
-  const summaryData = [
+  const summaryData = dependency ? [
     { label: 'P50', value: dependency.p50Us / 1000 },
     { label: 'P95', value: dependency.p95Us / 1000 },
     { label: 'P99', value: dependency.p99Us / 1000 },
-  ]
+  ] : []
 
   return (
     <div
@@ -76,7 +70,7 @@ export function DependencyDetailPanel({ dependency, range, onClose }: Dependency
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <div>
-          <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.25rem' }}>{dependency.target}</h3>
+          <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.25rem' }}>{target}</h3>
           <span
             style={{
               display: 'inline-block',
@@ -88,7 +82,7 @@ export function DependencyDetailPanel({ dependency, range, onClose }: Dependency
               color: '#3b82f6',
             }}
           >
-            {dependency.targetType}
+            {targetType}
           </span>
         </div>
         <button
@@ -101,51 +95,55 @@ export function DependencyDetailPanel({ dependency, range, onClose }: Dependency
         </button>
       </div>
 
-      {/* Summary stats */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr 1fr',
-          gap: '0.75rem',
-          marginBottom: '1.5rem',
-        }}
-      >
-        <div className="card" style={{ textAlign: 'center', padding: '0.75rem' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Calls</div>
-          <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatCount(dependency.callCount)}</div>
-        </div>
-        <div className="card" style={{ textAlign: 'center', padding: '0.75rem' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Errors</div>
-          <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatCount(dependency.errorCount)}</div>
-        </div>
-        <div className="card" style={{ textAlign: 'center', padding: '0.75rem' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Error Rate</div>
-          <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700, color: errorRateColor(dependency.errorRate) }}>
-            {formatErrorRate(dependency.errorRate)}
+      {dependency && (
+        <>
+          {/* Summary stats */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr 1fr',
+              gap: '0.75rem',
+              marginBottom: '1.5rem',
+            }}
+          >
+            <div className="card" style={{ textAlign: 'center', padding: '0.75rem' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Calls</div>
+              <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatCount(dependency.callCount)}</div>
+            </div>
+            <div className="card" style={{ textAlign: 'center', padding: '0.75rem' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Errors</div>
+              <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatCount(dependency.errorCount)}</div>
+            </div>
+            <div className="card" style={{ textAlign: 'center', padding: '0.75rem' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Error Rate</div>
+              <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700, color: errorRateColor(dependency.errorRate) }}>
+                {formatErrorRate(dependency.errorRate)}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
-      {/* Latency chart */}
-      <div className="card" style={{ marginBottom: '1.5rem' }}>
-        <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>Latency (ms)</div>
-        <ResponsiveContainer width="100%" height={180}>
-          <LineChart data={summaryData} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
-            <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} width={40} />
-            <Tooltip
-              contentStyle={{
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                color: 'var(--text)',
-              }}
-            />
-            <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+          {/* Latency chart */}
+          <div className="card" style={{ marginBottom: '1.5rem' }}>
+            <div style={{ fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.75rem' }}>Latency (ms)</div>
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={summaryData} margin={{ top: 4, right: 8, bottom: 0, left: -16 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} />
+                <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} width={40} />
+                <Tooltip
+                  contentStyle={{
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    color: 'var(--text)',
+                  }}
+                />
+                <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
 
       {/* Traces */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { DependencySummary } from '../api/types'
 import { TimeRangeSelector } from '../components/TimeRangeSelector'
@@ -14,13 +15,13 @@ type SortDir = 'asc' | 'desc'
 
 export function DependenciesPage(): ReactElement {
   const { range, setRange } = useTimeRange()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [refreshInterval, setRefreshInterval] = useState(0)
   const [serviceFilter, setServiceFilter] = useState('')
   const [dependencies, setDependencies] = useState<DependencySummary[]>([])
   const [loading, setLoading] = useState(true)
   const [sortField, setSortField] = useState<SortField>('callCount')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
-  const [selectedDep, setSelectedDep] = useState<DependencySummary | null>(null)
 
   const fetchData = useCallback(async () => {
     const { from, to } = getTimeRange(range)
@@ -65,6 +66,21 @@ export function DependenciesPage(): ReactElement {
   const sortIndicator = (field: SortField) => {
     if (sortField !== field) return ''
     return sortDir === 'asc' ? ' ▲' : ' ▼'
+  }
+
+  const selectedTarget = searchParams.get('target')
+  const selectedType = searchParams.get('type')
+  const selectedDep = useMemo(() => {
+    if (!selectedTarget) return null
+    return dependencies.find(d => d.target === selectedTarget && (!selectedType || d.targetType === selectedType)) ?? null
+  }, [dependencies, selectedTarget, selectedType])
+
+  const selectDep = (dep: DependencySummary) => {
+    setSearchParams({ target: dep.target, type: dep.targetType })
+  }
+
+  const closeDep = () => {
+    setSearchParams({})
   }
 
   const headerStyle = (align: 'left' | 'right' = 'right'): React.CSSProperties => ({
@@ -149,7 +165,7 @@ export function DependenciesPage(): ReactElement {
                     <tr
                       key={`${dep.target}-${dep.targetType}`}
                       style={{ cursor: 'pointer' }}
-                      onClick={() => setSelectedDep(dep)}
+                      onClick={() => selectDep(dep)}
                     >
                       <td>
                         <span style={{ fontWeight: 600, color: 'var(--accent)' }}>{dep.target}</span>
@@ -195,8 +211,8 @@ export function DependenciesPage(): ReactElement {
       </div>
 
       {/* Detail panel */}
-      {selectedDep && (
-        <DependencyDetailPanel dependency={selectedDep} range={range} onClose={() => setSelectedDep(null)} />
+      {selectedTarget && (
+        <DependencyDetailPanel dependency={selectedDep} target={selectedTarget} targetType={selectedType ?? ''} range={range} onClose={closeDep} />
       )}
     </div>
   )
