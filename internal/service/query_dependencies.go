@@ -112,6 +112,75 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 	return result, nil
 }
 
+// GetDependencyTraces returns recent traces that contain client spans targeting a specific dependency.
+func (s *QueryService) GetDependencyTraces(ctx context.Context, projectID int64, target, targetType string, from, to time.Time, limit int) ([]TraceSummary, error) {
+	_, span := tracer.Start(ctx, "query.get_dependency_traces")
+	defer span.End()
+
+	sf := repository.SpanFilter{
+		ProjectID: projectID,
+		From:      from,
+		To:        to,
+		Limit:     10000,
+	}
+
+	spans, err := s.repo.QuerySpans(sf)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	var traceIDs []string
+	for _, sp := range spans {
+		if seen[sp.TraceID] {
+			continue
+		}
+		if sp.Kind != "client" && sp.Kind != "CLIENT" {
+			continue
+		}
+		t, tt := extractDependencyTarget(sp.Attributes)
+		if t == target && tt == targetType {
+			seen[sp.TraceID] = true
+			traceIDs = append(traceIDs, sp.TraceID)
+			if len(traceIDs) >= limit {
+				break
+			}
+		}
+	}
+
+	result := make([]TraceSummary, 0, len(traceIDs))
+	for _, tid := range traceIDs {
+		traceSpans, err := s.repo.GetTraceByID(tid)
+		if err != nil || len(traceSpans) == 0 {
+			continue
+		}
+		root := traceSpans[0]
+		for _, ts := range traceSpans {
+			if ts.ParentSpanID == "" {
+				root = ts
+				break
+			}
+		}
+		var totalDur int64
+		for _, ts := range traceSpans {
+			if ts.DurationUs > totalDur {
+				totalDur = ts.DurationUs
+			}
+		}
+		result = append(result, TraceSummary{
+			TraceID:      tid,
+			RootSpanName: root.Name,
+			RootService:  root.Service,
+			DurationUs:   totalDur,
+			SpanCount:    len(traceSpans),
+			Status:       root.Status,
+			StartTime:    time.UnixMicro(root.StartTimeUs),
+		})
+	}
+
+	return result, nil
+}
+
 func extractDependencyTarget(attrJSON string) (target, targetType string) {
 	if attrJSON == "" || attrJSON == "{}" {
 		return "", ""

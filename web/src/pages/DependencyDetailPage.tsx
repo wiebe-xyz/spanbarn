@@ -21,41 +21,32 @@ type DependencyDetailPanelProps = {
 }
 
 export function DependencyDetailPanel({ dependency, range, onClose }: DependencyDetailPanelProps): ReactElement {
-  const [errorTraces, setErrorTraces] = useState<TraceSummary[]>([])
-  const [recentTraces, setRecentTraces] = useState<TraceSummary[]>([])
+  const [traces, setTraces] = useState<TraceSummary[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchTraces = useCallback(async () => {
     const { from, to } = getTimeRange(range)
     try {
-      const [errors, recent] = await Promise.all([
-        api.searchTraces({
-          operation: dependency.target,
-          status: 'ERROR',
-          from,
-          to,
-          limit: 10,
-        }),
-        api.searchTraces({
-          operation: dependency.target,
-          from,
-          to,
-          limit: 10,
-        }),
-      ])
-      setErrorTraces(errors ?? [])
-      setRecentTraces(recent ?? [])
+      const data = await api.getDependencyTraces(dependency.target, dependency.targetType, from, to, 20)
+      setTraces(data ?? [])
     } catch {
       // handled by client
     } finally {
       setLoading(false)
     }
-  }, [dependency.target, range])
+  }, [dependency.target, dependency.targetType, range])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchTraces()
   }, [fetchTraces])
+
+  useEffect(() => {
+    history.pushState({ depPanel: true }, '')
+    const onPop = () => onClose()
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [onClose])
 
   // Build a simple summary chart from the single data point we have
   const summaryData = [
@@ -156,10 +147,10 @@ export function DependencyDetailPanel({ dependency, range, onClose }: Dependency
         </ResponsiveContainer>
       </div>
 
-      {/* Recent traces */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: '1rem' }}>
+      {/* Traces */}
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)' }}>
-          <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>Recent Traces</span>
+          <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>Traces</span>
         </div>
         <table>
           <thead>
@@ -180,14 +171,14 @@ export function DependencyDetailPanel({ dependency, range, onClose }: Dependency
                   <td><div className="skeleton" style={{ height: 16, width: 80 }} /></td>
                 </tr>
               ))
-            ) : recentTraces.length === 0 ? (
+            ) : traces.length === 0 ? (
               <tr>
                 <td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '1.5rem' }}>
                   No traces found
                 </td>
               </tr>
             ) : (
-              recentTraces.map((t) => (
+              traces.map((t) => (
                 <tr key={t.traceId}>
                   <td className="mono" style={{ fontSize: '0.8125rem', color: 'var(--accent)' }}>
                     <a href={`/traces/${t.traceId}`} style={{ color: 'inherit', textDecoration: 'none' }}>
@@ -219,41 +210,6 @@ export function DependencyDetailPanel({ dependency, range, onClose }: Dependency
           </tbody>
         </table>
       </div>
-
-      {/* Error traces */}
-      {errorTraces.length > 0 && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)' }}>
-            <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#ef4444' }}>Error Traces</span>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Trace ID</th>
-                <th style={{ textAlign: 'right' }}>Duration</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {errorTraces.map((t) => (
-                <tr key={t.traceId}>
-                  <td className="mono" style={{ fontSize: '0.8125rem', color: 'var(--accent)' }}>
-                    <a href={`/traces/${t.traceId}`} style={{ color: 'inherit', textDecoration: 'none' }}>
-                      {t.traceId.slice(0, 16)}...
-                    </a>
-                  </td>
-                  <td style={{ textAlign: 'right' }} className="mono">
-                    {formatDuration(t.durationUs)}
-                  </td>
-                  <td className="text-muted" style={{ fontSize: '0.8125rem' }}>
-                    {new Date(t.startTime).toLocaleString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   )
 }

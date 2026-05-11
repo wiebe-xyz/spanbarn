@@ -205,6 +205,42 @@ func (h *queryHandlers) handleDependencies(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, deps)
 }
 
+func (h *queryHandlers) handleDependencyTraces(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.query.dependency_traces")
+	defer span.End()
+
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	from, to, err := parseTimeRange(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+		return
+	}
+
+	target := r.URL.Query().Get("target")
+	targetType := r.URL.Query().Get("target_type")
+	if target == "" {
+		writeError(w, http.StatusBadRequest, "missing target parameter", "")
+		return
+	}
+
+	limit := parseIntParam(r, "limit", 20)
+	if limit > 100 {
+		limit = 100
+	}
+
+	traces, err := h.svc.GetDependencyTraces(ctx, 0, target, targetType, from, to, limit)
+	if err != nil {
+		writeServerError(w, r, "query failed", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, traces)
+}
+
 func (h *queryHandlers) handleDatabaseQueries(w http.ResponseWriter, r *http.Request) {
 	ctx, span := apiTracer.Start(r.Context(), "api.query.database")
 	defer span.End()
@@ -401,9 +437,12 @@ func (h *queryHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not found", "")
 		}
 	case "dependencies":
-		if len(parts) == 3 {
+		switch {
+		case len(parts) == 3:
 			h.handleDependencies(w, r)
-		} else {
+		case len(parts) == 4 && parts[3] == "traces":
+			h.handleDependencyTraces(w, r)
+		default:
 			writeError(w, http.StatusNotFound, "not found", "")
 		}
 	case "database":

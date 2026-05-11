@@ -119,6 +119,11 @@ export const api = {
       `/api/v1/dependencies${qs({ from, to, service })}`,
     ),
 
+  getDependencyTraces: (target: string, targetType: string, from: string, to: string, limit?: number) =>
+    fetchJSON<TraceSummary[]>(
+      `/api/v1/dependencies/traces${qs({ target, target_type: targetType, from, to, limit })}`,
+    ),
+
   getServiceMap: (from: string, to: string) =>
     fetchJSON<ServiceMap>(`/api/v1/service-map${qs({ from, to })}`),
 
