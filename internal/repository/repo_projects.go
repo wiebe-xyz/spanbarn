@@ -112,20 +112,27 @@ func (r *Repository) DeleteProject(id int64) error {
 
 // ProjectUsageStats holds per-project span metrics.
 type ProjectUsageStats struct {
-	ProjectID  int64 `json:"projectId"`
-	SpanCount  int64 `json:"spanCount"`
-	ErrorCount int64 `json:"errorCount"`
+	ProjectID       int64 `json:"projectId"`
+	SpanCount       int64 `json:"spanCount"`
+	ErrorCount      int64 `json:"errorCount"`
+	RecentSpanCount int64 `json:"recentSpanCount"` // last 4 h, indicates current velocity
 }
 
 // ProjectUsageStatsAll returns span count and error count per project for the last N hours.
+// It reads from the pre-aggregated aggregates table (idx_agg_stats covering index) rather
+// than scanning raw spans, which is orders of magnitude faster at scale.
 func (r *Repository) ProjectUsageStatsAll(hours int) ([]ProjectUsageStats, error) {
 	rows, err := r.db.Query(`
-		SELECT project_id,
-			COUNT(*) as span_count,
-			SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) as error_count
-		FROM spans
-		WHERE ingested_at >= datetime('now', ?)
-		GROUP BY project_id`, fmt.Sprintf("-%d hours", hours))
+		SELECT
+			project_id,
+			SUM(count)                                                                  AS span_count,
+			SUM(error_count)                                                            AS error_count,
+			SUM(CASE WHEN bucket >= datetime('now', '-4 hours') THEN count ELSE 0 END) AS recent_span_count
+		FROM aggregates
+		WHERE bucket >= datetime('now', ?)
+		GROUP BY project_id
+		ORDER BY span_count DESC`,
+		fmt.Sprintf("-%d hours", hours))
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +140,7 @@ func (r *Repository) ProjectUsageStatsAll(hours int) ([]ProjectUsageStats, error
 	var out []ProjectUsageStats
 	for rows.Next() {
 		var s ProjectUsageStats
-		if err := rows.Scan(&s.ProjectID, &s.SpanCount, &s.ErrorCount); err != nil {
+		if err := rows.Scan(&s.ProjectID, &s.SpanCount, &s.ErrorCount, &s.RecentSpanCount); err != nil {
 			return nil, err
 		}
 		out = append(out, s)

@@ -652,3 +652,48 @@ func TestNewReadOnlyDB(t *testing.T) {
 		t.Fatal("expected write to fail on read-only connection, but it succeeded")
 	}
 }
+
+func TestProjectUsageStatsAll(t *testing.T) {
+	repo := setupTestDB(t)
+	p1, _ := repo.CreateProject("alpha", "Alpha")
+	p2, _ := repo.CreateProject("beta", "Beta")
+
+	now := time.Now().UTC()
+	recent := now.Add(-2 * time.Hour).Truncate(time.Minute)
+	older := now.Add(-20 * time.Hour).Truncate(time.Minute)
+
+	// p1: 10 spans in last 4h (recent), 5 errors total
+	_ = repo.UpsertAggregate(Aggregate{ProjectID: p1.ID, Service: "web", Operation: "GET /", Bucket: recent, Count: 10, ErrorCount: 5})
+	// p1: 20 more spans from 20h ago (not recent)
+	_ = repo.UpsertAggregate(Aggregate{ProjectID: p1.ID, Service: "web", Operation: "GET /", Bucket: older, Count: 20, ErrorCount: 0})
+	// p2: 3 spans all recent
+	_ = repo.UpsertAggregate(Aggregate{ProjectID: p2.ID, Service: "api", Operation: "POST /data", Bucket: recent, Count: 3, ErrorCount: 1})
+
+	stats, err := repo.ProjectUsageStatsAll(24)
+	if err != nil {
+		t.Fatalf("ProjectUsageStatsAll: %v", err)
+	}
+	if len(stats) != 2 {
+		t.Fatalf("expected 2 projects, got %d", len(stats))
+	}
+
+	// Results are ordered by span_count DESC, so p1 (30) comes before p2 (3).
+	p1stats := stats[0]
+	if p1stats.ProjectID != p1.ID {
+		t.Fatalf("expected p1 first (highest volume), got project %d", p1stats.ProjectID)
+	}
+	if p1stats.SpanCount != 30 {
+		t.Errorf("p1 SpanCount: got %d, want 30", p1stats.SpanCount)
+	}
+	if p1stats.ErrorCount != 5 {
+		t.Errorf("p1 ErrorCount: got %d, want 5", p1stats.ErrorCount)
+	}
+	if p1stats.RecentSpanCount != 10 {
+		t.Errorf("p1 RecentSpanCount: got %d, want 10 (only recent bucket)", p1stats.RecentSpanCount)
+	}
+
+	p2stats := stats[1]
+	if p2stats.SpanCount != 3 || p2stats.ErrorCount != 1 || p2stats.RecentSpanCount != 3 {
+		t.Errorf("p2 unexpected: %+v", p2stats)
+	}
+}
