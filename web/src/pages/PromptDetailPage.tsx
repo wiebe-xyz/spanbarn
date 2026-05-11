@@ -22,6 +22,106 @@ function formatTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(2)}M`
 }
 
+const roleColors: Record<string, string> = {
+  system: '#a78bfa',
+  user: '#3b82f6',
+  assistant: '#22c55e',
+  tool: '#f59e0b',
+  function: '#f59e0b',
+}
+
+function formatBody(raw: string): ReactElement {
+  try {
+    const parsed = JSON.parse(raw)
+
+    if (Array.isArray(parsed)) {
+      return <>{parsed.map((msg, i) => <MessageBubble key={i} msg={msg} />)}</>
+    }
+
+    if (parsed && typeof parsed === 'object' && 'messages' in parsed && Array.isArray(parsed.messages)) {
+      return <>{parsed.messages.map((msg: Record<string, unknown>, i: number) => <MessageBubble key={i} msg={msg} />)}</>
+    }
+
+    if (parsed && typeof parsed === 'object') {
+      if ('content' in parsed) {
+        return <MessageBubble msg={parsed} />
+      }
+      if ('completion' in parsed) {
+        return <MessageBubble msg={{ role: 'assistant', content: parsed.completion }} />
+      }
+    }
+
+    return <RawBlock text={JSON.stringify(parsed, null, 2)} />
+  } catch {
+    return <RawBlock text={raw} />
+  }
+}
+
+function extractContent(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part
+        if (part && typeof part === 'object') {
+          if (part.type === 'text' && typeof part.text === 'string') return part.text
+          if (part.type === 'tool_use') return `[tool_use: ${part.name ?? 'unknown'}]`
+          if (part.type === 'tool_result') return extractContent(part.content)
+          if (part.type === 'image_url' || part.type === 'image') return '[image]'
+        }
+        return JSON.stringify(part)
+      })
+      .join('\n')
+  }
+  if (content && typeof content === 'object') return JSON.stringify(content, null, 2)
+  return String(content ?? '')
+}
+
+function MessageBubble({ msg }: { msg: Record<string, unknown> }): ReactElement {
+  const role = String(msg.role ?? 'unknown')
+  const text = extractContent(msg.content)
+  const color = roleColors[role] ?? 'var(--text-muted)'
+  return (
+    <div style={{ marginBottom: '0.5rem' }}>
+      <div style={{ fontSize: '0.625rem', fontWeight: 700, color, textTransform: 'uppercase', marginBottom: '0.125rem' }}>
+        {role}
+      </div>
+      <pre style={{
+        fontSize: '0.6875rem',
+        padding: '0.5rem',
+        background: 'var(--surface-hover)',
+        borderRadius: '0.375rem',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        maxHeight: 200,
+        overflow: 'auto',
+        margin: 0,
+        borderLeft: `3px solid ${color}`,
+      }}>
+        {text}
+      </pre>
+    </div>
+  )
+}
+
+function RawBlock({ text }: { text: string }): ReactElement {
+  return (
+    <pre style={{
+      fontSize: '0.6875rem',
+      padding: '0.5rem',
+      background: 'var(--surface-hover)',
+      borderRadius: '0.375rem',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+      maxHeight: 200,
+      overflow: 'auto',
+      margin: 0,
+    }}>
+      {text}
+    </pre>
+  )
+}
+
 export function PromptDetailPage(): ReactElement {
   const { name } = useParams<{ name: string }>()
   const [searchParams] = useSearchParams()
@@ -289,36 +389,14 @@ export function PromptDetailPage(): ReactElement {
                               {r.promptBody && (
                                 <div style={{ marginBottom: '0.75rem' }}>
                                   <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '0.25rem', fontWeight: 600 }}>Prompt</div>
-                                  <pre style={{
-                                    fontSize: '0.6875rem',
-                                    padding: '0.5rem',
-                                    background: 'var(--surface-hover)',
-                                    borderRadius: '0.375rem',
-                                    whiteSpace: 'pre-wrap',
-                                    wordBreak: 'break-word',
-                                    maxHeight: 200,
-                                    overflow: 'auto',
-                                  }}>
-                                    {r.promptBody}
-                                  </pre>
+                                  {formatBody(r.promptBody)}
                                 </div>
                               )}
 
                               {r.responseBody && (
                                 <div>
                                   <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '0.25rem', fontWeight: 600 }}>Response</div>
-                                  <pre style={{
-                                    fontSize: '0.6875rem',
-                                    padding: '0.5rem',
-                                    background: 'var(--surface-hover)',
-                                    borderRadius: '0.375rem',
-                                    whiteSpace: 'pre-wrap',
-                                    wordBreak: 'break-word',
-                                    maxHeight: 200,
-                                    overflow: 'auto',
-                                  }}>
-                                    {r.responseBody}
-                                  </pre>
+                                  {formatBody(r.responseBody)}
                                 </div>
                               )}
 
