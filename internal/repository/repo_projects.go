@@ -119,17 +119,19 @@ type ProjectUsageStats struct {
 }
 
 // ProjectUsageStatsAll returns span count and error count per project for the last N hours.
-// It reads from the pre-aggregated aggregates table (idx_agg_stats covering index) rather
-// than scanning raw spans, which is orders of magnitude faster at scale.
+// Reads from raw spans via idx_spans_project_stats (ingested_at, project_id, status) — a
+// covering index that satisfies the full query without touching main table rows.
+// TODO: once aggregation runs continuously (not only at retention time), switch this to
+// query the aggregates table for O(N_buckets) instead of O(N_raw_spans) performance.
 func (r *Repository) ProjectUsageStatsAll(hours int) ([]ProjectUsageStats, error) {
 	rows, err := r.db.Query(`
 		SELECT
 			project_id,
-			SUM(count)                                                                  AS span_count,
-			SUM(error_count)                                                            AS error_count,
-			SUM(CASE WHEN bucket >= datetime('now', '-4 hours') THEN count ELSE 0 END) AS recent_span_count
-		FROM aggregates
-		WHERE bucket >= datetime('now', ?)
+			COUNT(*)                                                                          AS span_count,
+			SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END)             AS error_count,
+			SUM(CASE WHEN ingested_at >= datetime('now', '-4 hours') THEN 1 ELSE 0 END)      AS recent_span_count
+		FROM spans
+		WHERE ingested_at >= datetime('now', ?)
 		GROUP BY project_id
 		ORDER BY span_count DESC`,
 		fmt.Sprintf("-%d hours", hours))

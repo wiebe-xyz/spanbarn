@@ -658,16 +658,30 @@ func TestProjectUsageStatsAll(t *testing.T) {
 	p1, _ := repo.CreateProject("alpha", "Alpha")
 	p2, _ := repo.CreateProject("beta", "Beta")
 
-	now := time.Now().UTC()
-	recent := now.Add(-2 * time.Hour).Truncate(time.Minute)
-	older := now.Add(-20 * time.Hour).Truncate(time.Minute)
+	ingestAt := func(projectID int64, status, ago string) {
+		_, err := repo.db.Exec(
+			`INSERT INTO spans (project_id, trace_id, span_id, name, service, resource, kind, status, start_time_us, duration_us, ingested_at)
+			 VALUES (?, 'tr', hex(randomblob(8)), 'op', 'svc', '', 'server', ?, 1000, 500, datetime('now', ?))`,
+			projectID, status, ago)
+		if err != nil {
+			t.Fatalf("insert span: %v", err)
+		}
+	}
 
-	// p1: 10 spans in last 4h (recent), 5 errors total
-	_ = repo.UpsertAggregate(Aggregate{ProjectID: p1.ID, Service: "web", Operation: "GET /", Bucket: recent, Count: 10, ErrorCount: 5})
-	// p1: 20 more spans from 20h ago (not recent)
-	_ = repo.UpsertAggregate(Aggregate{ProjectID: p1.ID, Service: "web", Operation: "GET /", Bucket: older, Count: 20, ErrorCount: 0})
-	// p2: 3 spans all recent
-	_ = repo.UpsertAggregate(Aggregate{ProjectID: p2.ID, Service: "api", Operation: "POST /data", Bucket: recent, Count: 3, ErrorCount: 1})
+	// p1: 10 recent ok spans + 20 older ok spans + 5 old errors
+	for i := 0; i < 10; i++ {
+		ingestAt(p1.ID, "ok", "-2 hours")
+	}
+	for i := 0; i < 20; i++ {
+		ingestAt(p1.ID, "ok", "-20 hours")
+	}
+	for i := 0; i < 5; i++ {
+		ingestAt(p1.ID, "error", "-20 hours")
+	}
+	// p2: 3 recent spans, 1 error
+	ingestAt(p2.ID, "ok", "-1 hours")
+	ingestAt(p2.ID, "ok", "-1 hours")
+	ingestAt(p2.ID, "error", "-1 hours")
 
 	stats, err := repo.ProjectUsageStatsAll(24)
 	if err != nil {
@@ -677,19 +691,19 @@ func TestProjectUsageStatsAll(t *testing.T) {
 		t.Fatalf("expected 2 projects, got %d", len(stats))
 	}
 
-	// Results are ordered by span_count DESC, so p1 (30) comes before p2 (3).
+	// Results are ordered by span_count DESC: p1 (35) before p2 (3).
 	p1stats := stats[0]
 	if p1stats.ProjectID != p1.ID {
 		t.Fatalf("expected p1 first (highest volume), got project %d", p1stats.ProjectID)
 	}
-	if p1stats.SpanCount != 30 {
-		t.Errorf("p1 SpanCount: got %d, want 30", p1stats.SpanCount)
+	if p1stats.SpanCount != 35 {
+		t.Errorf("p1 SpanCount: got %d, want 35", p1stats.SpanCount)
 	}
 	if p1stats.ErrorCount != 5 {
 		t.Errorf("p1 ErrorCount: got %d, want 5", p1stats.ErrorCount)
 	}
 	if p1stats.RecentSpanCount != 10 {
-		t.Errorf("p1 RecentSpanCount: got %d, want 10 (only recent bucket)", p1stats.RecentSpanCount)
+		t.Errorf("p1 RecentSpanCount: got %d, want 10", p1stats.RecentSpanCount)
 	}
 
 	p2stats := stats[1]
