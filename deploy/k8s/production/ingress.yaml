@@ -8,7 +8,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    # Ingest paths — always handled by the ingest pod (it spools to disk and forwards).
+    # Ingest paths — always handled by the ingest pod (spools to disk, forwards).
     - match: Host(`spanbarn.wiebe.xyz`) && PathPrefix(`/v1/traces`)
       kind: Rule
       services:
@@ -30,19 +30,29 @@ spec:
         - name: spanbarn-ingest
           port: 8080
 
-    # API + OTLP query paths — prefer the writer pod, fail over to the ingest
-    # pod (read-only DB) when the writer is unavailable so the dashboard stays
-    # alive across writer restarts.
+    # Mutating API calls must hit the writer. When the writer is down they
+    # 503 (no endpoints) — but reads keep flowing via the rule below.
+    - match: Host(`spanbarn.wiebe.xyz`) && PathPrefix(`/api`) && (Method(`POST`) || Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))
+      kind: Rule
+      priority: 100
+      services:
+        - name: spanbarn
+          port: 8080
+
+    # Reads — load-balanced across writer + ingest pods (both carry
+    # spanbarn.io/serves-reads). When the writer is unready during a deploy,
+    # k8s drops it from this Service's endpoints and the ingest pod (read-only
+    # DB) keeps serving the dashboard.
     - match: Host(`spanbarn.wiebe.xyz`) && PathPrefix(`/api`)
       kind: Rule
       services:
-        - name: spanbarn-failover
-          kind: TraefikService
+        - name: spanbarn-reads
+          port: 8080
     - match: Host(`spanbarn.wiebe.xyz`) && PathPrefix(`/v1`)
       kind: Rule
       services:
-        - name: spanbarn-failover
-          kind: TraefikService
+        - name: spanbarn-reads
+          port: 8080
 
     # Static frontend.
     - match: Host(`spanbarn.wiebe.xyz`)

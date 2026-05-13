@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: spanbarn-reads
+spec:
+  # Selects any pod carrying the shared "serves-reads" label — currently the
+  # writer deployment and the ingest deployment (which opens the same DB
+  # read-only). When the writer pod is unready (deploy in progress), its
+  # endpoint drops out and traffic flows to the ingest pod only, keeping the
+  # dashboard alive.
+  selector:
+    spanbarn.io/serves-reads: "true"
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

@@ -11,4 +11,4 @@ resources:
   - service-redis.yaml
   - configmap.yaml
   - pvc.yaml
-  - traefikservice.yaml
+  - service-reads.yaml

@@ -17,6 +17,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: spanbarn-ingest
+        spanbarn.io/serves-reads: "true"
     spec:
       imagePullSecrets:
         - name: ghcr-secret
