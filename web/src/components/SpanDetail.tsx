@@ -175,7 +175,7 @@ export function SpanDetail({ span, traceStartTimeUs, onNavigateToSpan }: Props) 
                             ([k, v]) =>
                               `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`,
                           )
-                          .join(', ')}
+                          .join('\n')}
                       </div>
                     )}
                 </div>

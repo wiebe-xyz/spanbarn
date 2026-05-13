@@ -218,6 +218,13 @@
   font-size: 12px;
 }
 
+/* Allow the right-side content column to shrink so long stack traces or
+   JSON payloads wrap inside the viewport instead of forcing horizontal scroll. */
+.event-item > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .event-time {
   flex: 0 0 80px;
   color: var(--text-secondary, #9ca3af);
@@ -227,12 +234,16 @@
 .event-name {
   font-weight: 500;
   color: var(--text-primary, #e5e7eb);
+  overflow-wrap: anywhere;
 }
 
 .event-attrs {
   color: var(--text-secondary, #9ca3af);
   font-size: 11px;
   margin-top: 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
 }
 
 /* Tooltip */
