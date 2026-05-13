@@ -122,6 +122,7 @@ jobs:
           SHA="${{ needs.preflight.outputs.sha }}"
           ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
             set -euo pipefail
+            kubectl -n ${NAMESPACE} delete ingress.networking.k8s.io/spanbarn --ignore-not-found
             kubectl apply -k /tmp/spanbarn-deploy/deploy/k8s/production
             kubectl -n ${NAMESPACE} set image deployment/spanbarn \
               spanbarn=${SERVICE_IMAGE}:${SHA}

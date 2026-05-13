@@ -1,0 +1,13 @@
+apiVersion: traefik.io/v1alpha1
+kind: TraefikService
+metadata:
+  name: spanbarn-failover
+spec:
+  failover:
+    service:
+      name: spanbarn
+      port: 8080
+    fallback:
+      name: spanbarn-ingest
+      port: 8080
+    healthCheck: {}

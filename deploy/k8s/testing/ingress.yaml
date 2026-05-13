@@ -1,59 +1,47 @@
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
 metadata:
   name: spanbarn
-  annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    traefik.ingress.kubernetes.io/router.tls: "true"
-    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
 spec:
-  ingressClassName: traefik
-  rules:
-    - host: spanbarn-test.nijmegen.wiebe.xyz
-      http:
-        paths:
-          - path: /v1/traces
-            pathType: Prefix
-            backend:
-              service:
-                name: spanbarn-ingest
-                port:
-                  name: http
-          - path: /api/v1/spans/live
-            pathType: Prefix
-            backend:
-              service:
-                name: spanbarn
-                port:
-                  name: http
-          - path: /api/v1/spans
-            pathType: Prefix
-            backend:
-              service:
-                name: spanbarn-ingest
-                port:
-                  name: http
-          - path: /api
-            pathType: Prefix
-            backend:
-              service:
-                name: spanbarn
-                port:
-                  name: http
-          - path: /v1
-            pathType: Prefix
-            backend:
-              service:
-                name: spanbarn
-                port:
-                  name: http
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: spanbarn-web
-                port:
-                  name: http
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`spanbarn-test.nijmegen.wiebe.xyz`) && PathPrefix(`/v1/traces`)
+      kind: Rule
+      services:
+        - name: spanbarn-ingest
+          port: 8080
+    - match: Host(`spanbarn-test.nijmegen.wiebe.xyz`) && PathPrefix(`/api/v1/spans`)
+      kind: Rule
+      services:
+        - name: spanbarn-ingest
+          port: 8080
+    - match: Host(`spanbarn-test.nijmegen.wiebe.xyz`) && PathPrefix(`/api/v1/telemetry`)
+      kind: Rule
+      services:
+        - name: spanbarn-ingest
+          port: 8080
+    - match: Host(`spanbarn-test.nijmegen.wiebe.xyz`) && PathPrefix(`/api/v1/client-errors`)
+      kind: Rule
+      services:
+        - name: spanbarn-ingest
+          port: 8080
+
+    - match: Host(`spanbarn-test.nijmegen.wiebe.xyz`) && PathPrefix(`/api`)
+      kind: Rule
+      services:
+        - name: spanbarn-failover
+          kind: TraefikService
+    - match: Host(`spanbarn-test.nijmegen.wiebe.xyz`) && PathPrefix(`/v1`)
+      kind: Rule
+      services:
+        - name: spanbarn-failover
+          kind: TraefikService
+
+    - match: Host(`spanbarn-test.nijmegen.wiebe.xyz`)
+      kind: Rule
+      services:
+        - name: spanbarn-web
+          port: 8080
   tls:
-    - hosts:
-        - spanbarn-test.nijmegen.wiebe.xyz
+    certResolver: letsencrypt

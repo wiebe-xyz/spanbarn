@@ -345,7 +345,9 @@ func (a *userLookupAdapter) GetUserByUsername(username string) (auth.UserRecord,
 }
 
 // runIngestMode starts the binary in ingest-only mode: accepts spans, buffers
-// to spool, and forwards batches to the writer pod. No SQLite, no query API.
+// to spool, and forwards batches to the writer pod. Also serves the read API
+// from the same DB (read-only) so reads survive a writer pod restart and the
+// dashboard stays alive during deploys.
 func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	if cfg.WriterURL == "" {
 		return fmt.Errorf("SPANBARN_WRITER_URL is required in ingest mode")
@@ -370,16 +372,25 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	fwd := forward.New(eventSpool, cfg.WriterURL, cfg.APIKey, logger)
 	safeGo("forwarder", func() { fwd.Run(ctx) })
 
-	// Build an authorizer so the ingest pod can validate both the static API key
-	// and any per-project keys stored in the writer's database.
-	var keyLookup auth.KeyLookup
+	// Open the writer's DB read-only so reads can be served when the writer
+	// pod is restarting. Mutation handlers will hit SQLite "readonly database"
+	// errors and return 5xx, which is the same as if the writer were down.
+	var (
+		roRepo   *repository.Repository
+		keyLookup auth.KeyLookup
+	)
 	if cfg.DBPath != "" {
-		if db, dbErr := repository.NewReadOnlyDB(cfg.DBPath); dbErr != nil {
+		db, dbErr := repository.NewReadOnlyDB(cfg.DBPath)
+		if dbErr != nil {
 			logger.Warn("read-only DB unavailable, API key validation limited to static key", "error", dbErr)
 		} else {
 			defer db.Close()
-			keyLookup = &readOnlyKeyLookupAdapter{repo: repository.NewRepository(db.DB)}
-			logger.Info("API key DB lookup enabled", "path", cfg.DBPath)
+			roRepo = repository.NewRepository(db.DB)
+			if cfg.QueryTimeoutSeconds > 0 {
+				roRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
+			}
+			keyLookup = &readOnlyKeyLookupAdapter{repo: roRepo}
+			logger.Info("read-only DB attached for failover reads", "path", cfg.DBPath)
 		}
 	}
 	staticKeyHash := cfg.APIKeySHA256
@@ -388,17 +399,64 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	}
 	authorizer := auth.NewAuthorizer(staticKeyHash, keyLookup, logger)
 
-	serverCfg := api.ServerConfig{
-		APIKey:       cfg.APIKey,
-		MaxBodyBytes: cfg.MaxBodyBytes,
-		Version:      Version,
-		IngestRate:   cfg.IngestRatePerMinute,
+	var (
+		querySvc   *service.QueryService
+		sessionMgr *auth.SessionManager
+		userAuth   *auth.UserAuthenticator
+		queryCache *cache.Cache
+	)
+	if roRepo != nil {
+		sessionMgr = auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
+		userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
+		querySvc = service.NewQueryService(roRepo, logger)
+		ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
+		var store cache.Store
+		if cfg.RedisURL != "" {
+			if rs, cacheErr := cache.NewRedisStore(cfg.RedisURL); cacheErr != nil {
+				logger.Warn("redis unavailable, falling back to in-memory cache", "error", cacheErr)
+				store = cache.NewMemoryStore()
+			} else {
+				store = rs
+			}
+		} else {
+			store = cache.NewMemoryStore()
+		}
+		queryCache = cache.New(store, ttl)
+		querySvc.SetCache(queryCache)
+		defer queryCache.Close()
 	}
-	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, nil, nil, logger, api.WithAuthorizer(authorizer))
+
+	serverCfg := api.ServerConfig{
+		APIKey:         cfg.APIKey,
+		MaxBodyBytes:   cfg.MaxBodyBytes,
+		AllowedOrigins: cfg.AllowedOrigins,
+		Version:        Version,
+		LoginRate:      cfg.LoginRatePerMinute,
+		IngestRate:     cfg.IngestRatePerMinute,
+		APIRate:        cfg.APIRatePerMinute,
+		SessionSecret:  cfg.SessionSecret,
+		PublicURL:      cfg.PublicURL,
+	}
+	opts := []api.ServerOption{api.WithAuthorizer(authorizer)}
+	if roRepo != nil {
+		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
+	}
+	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, opts...)
+
+	mux := http.NewServeMux()
+	if sessionMgr != nil && userAuth != nil {
+		loginRL := api.RateLimitMiddleware(
+			api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute),
+			"login",
+		)
+		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr)))
+		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+	}
+	mux.Handle("/", apiServer.Handler())
 
 	httpServer := &http.Server{
 		Addr:         cfg.Addr,
-		Handler:      apiServer.Handler(),
+		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
