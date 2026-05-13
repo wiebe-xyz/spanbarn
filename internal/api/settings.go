@@ -100,8 +100,32 @@ const (
 	statsCountsStale = 24 * time.Hour
 )
 
-// serveSWR serves a cached value, computing it inline on miss and refreshing
-// in the background on stale hit.
+// kickBackgroundRefresh runs `compute` in a goroutine (deduplicated by key)
+// and writes the result into the cache. The goroutine uses a fresh context
+// detached from the request so it survives the HTTP write timeout.
+func kickBackgroundRefresh[T any](
+	c *cache.Cache,
+	key string,
+	freshTTL, staleTTL time.Duration,
+	compute func(ctx context.Context) (T, error),
+) {
+	if _, already := statsRevalidating.LoadOrStore(key, true); already {
+		return
+	}
+	go func() {
+		defer statsRevalidating.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if v, err := compute(ctx); err == nil {
+			cache.SetSWR(c, ctx, key, v, freshTTL, staleTTL)
+		}
+	}()
+}
+
+// serveSWR serves a cached value if present, otherwise computes inline.
+// Stale hits trigger a background refresh. Cache misses ALSO trigger a
+// background refresh so the cache gets populated even if the inline compute
+// is killed by the HTTP WriteTimeout — the next request will then hit cache.
 func serveSWR[T any](
 	w http.ResponseWriter,
 	r *http.Request,
@@ -113,20 +137,12 @@ func serveSWR[T any](
 	if c != nil {
 		if value, found, fresh := cache.GetSWR[T](c, r.Context(), key); found {
 			if !fresh {
-				if _, already := statsRevalidating.LoadOrStore(key, true); !already {
-					go func() {
-						defer statsRevalidating.Delete(key)
-						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-						defer cancel()
-						if v, err := compute(ctx); err == nil {
-							cache.SetSWR(c, ctx, key, v, freshTTL, staleTTL)
-						}
-					}()
-				}
+				kickBackgroundRefresh(c, key, freshTTL, staleTTL, compute)
 			}
 			writeJSON(w, http.StatusOK, value)
 			return
 		}
+		kickBackgroundRefresh(c, key, freshTTL, staleTTL, compute)
 	}
 
 	value, err := compute(r.Context())

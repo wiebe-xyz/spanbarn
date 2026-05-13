@@ -184,6 +184,8 @@ func run() error {
 	}
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, api.WithRepository(repo), api.WithAuthorizer(authorizer), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(querySvc.Cache()))
 
+	api.WarmCaches(ctx, repo, querySvc.Cache(), logger)
+
 	mux := http.NewServeMux()
 	loginRL := api.RateLimitMiddleware(api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), "login")
 	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr)))
@@ -442,6 +444,10 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
 	}
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, opts...)
+
+	if roRepo != nil && queryCache != nil {
+		api.WarmCaches(ctx, roRepo, queryCache, logger)
+	}
 
 	mux := http.NewServeMux()
 	if sessionMgr != nil && userAuth != nil {
