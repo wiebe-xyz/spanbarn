@@ -39,6 +39,15 @@ spec:
         - name: spanbarn
           port: 8080
 
+    # Setup is GET-but-writes (idempotently creates pending project + setup
+    # API key on first visit), so it must hit the writer.
+    - match: Host(`spanbarn.wiebe.xyz`) && PathPrefix(`/api/v1/setup`)
+      kind: Rule
+      priority: 100
+      services:
+        - name: spanbarn
+          port: 8080
+
     # Reads — load-balanced across writer + ingest pods (both carry
     # spanbarn.io/serves-reads). When the writer is unready during a deploy,
     # k8s drops it from this Service's endpoints and the ingest pod (read-only
