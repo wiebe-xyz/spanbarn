@@ -36,18 +36,28 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
+          # startupProbe disables liveness/readiness until the container is
+          # actually up. With a 6 GB+ SQLite DB, a fresh migration (e.g. a
+          # CREATE INDEX) can take several minutes during which the binary
+          # isn't yet serving HTTP — without this the livenessProbe would
+          # crashloop the pod before the migration completes.
+          startupProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /api/v1/health
               port: 8080
-            initialDelaySeconds: 10
             periodSeconds: 20
             failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /api/v1/health
               port: 8080
-            initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 3
           volumeMounts:
