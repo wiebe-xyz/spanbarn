@@ -3,13 +3,13 @@ kind: Service
 metadata:
   name: spanbarn-reads
 spec:
-  # Selects any pod carrying the shared "serves-reads" label — currently the
-  # writer deployment and the ingest deployment (which opens the same DB
-  # read-only). When the writer pod is unready (deploy in progress), its
-  # endpoint drops out and traffic flows to the ingest pod only, keeping the
-  # dashboard alive.
+  # Only the ingest pod (read-only DB) serves dashboard reads. Putting the
+  # writer here too caused a race during Recreate rollouts: k8s endpoints
+  # update lags pod termination, so in-flight reads briefly got RST'd. The
+  # ingest pod uses RollingUpdate (maxSurge=1, maxUnavailable=0) so it has
+  # no equivalent gap of its own.
   selector:
-    spanbarn.io/serves-reads: "true"
+    app.kubernetes.io/name: spanbarn-ingest
   ports:
     - name: http
       port: 8080
