@@ -658,30 +658,25 @@ func TestProjectUsageStatsAll(t *testing.T) {
 	p1, _ := repo.CreateProject("alpha", "Alpha")
 	p2, _ := repo.CreateProject("beta", "Beta")
 
-	ingestAt := func(projectID int64, status, ago string) {
+	// ProjectUsageStatsAll reads from the aggregates table. Insert one aggregate
+	// row per (project, bucket) carrying the relevant count/error_count for the
+	// bucket window we want to test.
+	addAgg := func(projectID, count, errors int64, ago string) {
 		_, err := repo.db.Exec(
-			`INSERT INTO spans (project_id, trace_id, span_id, name, service, resource, kind, status, start_time_us, duration_us, ingested_at)
-			 VALUES (?, 'tr', hex(randomblob(8)), 'op', 'svc', '', 'server', ?, 1000, 500, datetime('now', ?))`,
-			projectID, status, ago)
+			`INSERT INTO aggregates (project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
+			 VALUES (?, 'svc', 'op', '', 'server', datetime('now', ?), ?, ?, 0, 0, 0, 0, 0)`,
+			projectID, ago, count, errors)
 		if err != nil {
-			t.Fatalf("insert span: %v", err)
+			t.Fatalf("insert aggregate: %v", err)
 		}
 	}
 
-	// p1: 10 recent ok spans + 20 older ok spans + 5 old errors
-	for i := 0; i < 10; i++ {
-		ingestAt(p1.ID, "ok", "-2 hours")
-	}
-	for i := 0; i < 20; i++ {
-		ingestAt(p1.ID, "ok", "-20 hours")
-	}
-	for i := 0; i < 5; i++ {
-		ingestAt(p1.ID, "error", "-20 hours")
-	}
-	// p2: 3 recent spans, 1 error
-	ingestAt(p2.ID, "ok", "-1 hours")
-	ingestAt(p2.ID, "ok", "-1 hours")
-	ingestAt(p2.ID, "error", "-1 hours")
+	// p1: 10 recent ok + 20 older ok + 5 old errors = 35 total, 5 errors, 10 recent.
+	addAgg(p1.ID, 10, 0, "-2 hours")
+	addAgg(p1.ID, 20, 0, "-20 hours")
+	addAgg(p1.ID, 5, 5, "-19 hours")
+	// p2: 3 recent (incl. 1 error) = 3 total, 1 error, 3 recent.
+	addAgg(p2.ID, 3, 1, "-1 hours")
 
 	stats, err := repo.ProjectUsageStatsAll(24)
 	if err != nil {

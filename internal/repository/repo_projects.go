@@ -119,19 +119,25 @@ type ProjectUsageStats struct {
 }
 
 // ProjectUsageStatsAll returns span count and error count per project for the last N hours.
-// Reads from raw spans via idx_spans_project_stats (ingested_at, project_id, status) — a
-// covering index that satisfies the full query without touching main table rows.
-// TODO: once aggregation runs continuously (not only at retention time), switch this to
-// query the aggregates table for O(N_buckets) instead of O(N_raw_spans) performance.
+// Reads from the pre-aggregated `aggregates` table — orders of magnitude fewer
+// rows than scanning raw spans. The aggregator writes one row per
+// (project, service, op, resource, kind, minute-bucket); a 24h window is at most
+// ~1440 buckets per (project, op) combination. Uses the covering index
+// idx_agg_stats(bucket, project_id, count, error_count) so SQLite can answer
+// the whole query from the index without main-table lookups.
+//
+// Note: bucket is derived from span start_time, not ingested_at, so this counts
+// "events that happened in the last N hours" rather than "events received in
+// the last N hours". For usage analytics that's the more useful definition.
 func (r *Repository) ProjectUsageStatsAll(hours int) ([]ProjectUsageStats, error) {
 	rows, err := r.db.Query(`
 		SELECT
 			project_id,
-			COUNT(*)                                                                          AS span_count,
-			SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END)             AS error_count,
-			SUM(CASE WHEN ingested_at >= datetime('now', '-4 hours') THEN 1 ELSE 0 END)      AS recent_span_count
-		FROM spans
-		WHERE ingested_at >= datetime('now', ?)
+			SUM(count)                                                                       AS span_count,
+			SUM(error_count)                                                                 AS error_count,
+			SUM(CASE WHEN bucket >= datetime('now', '-4 hours') THEN count ELSE 0 END)       AS recent_span_count
+		FROM aggregates
+		WHERE bucket >= datetime('now', ?)
 		GROUP BY project_id
 		ORDER BY span_count DESC`,
 		fmt.Sprintf("-%d hours", hours))
