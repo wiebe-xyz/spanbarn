@@ -1,26 +1,27 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
-const statsCacheTTL = 60 * time.Second
+const (
+	projectsStatsFresh = 1 * time.Hour
+	projectsStatsStale = 24 * time.Hour
+)
 
 type projectHandlers struct {
-	repo *repository.Repository
-
-	statsMu    sync.Mutex
-	statsCache []repository.ProjectUsageStats
-	statsAt    time.Time
+	repo  *repository.Repository
+	cache *cache.Cache
 }
 
 func (h *projectHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -123,34 +124,17 @@ func (h *projectHandlers) handleStats(w http.ResponseWriter, r *http.Request) {
 	_, span := apiTracer.Start(r.Context(), "api.projects.stats")
 	defer span.End()
 
-	h.statsMu.Lock()
-	if !h.statsAt.IsZero() && time.Since(h.statsAt) < statsCacheTTL {
-		cached := h.statsCache
-		h.statsMu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "private, max-age=60")
-		json.NewEncoder(w).Encode(cached)
-		return
-	}
-	h.statsMu.Unlock()
-
-	stats, err := h.repo.ProjectUsageStatsAll(24)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to query stats", "")
-		return
-	}
-	if stats == nil {
-		stats = []repository.ProjectUsageStats{}
-	}
-
-	h.statsMu.Lock()
-	h.statsCache = stats
-	h.statsAt = time.Now()
-	h.statsMu.Unlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "private, max-age=60")
-	json.NewEncoder(w).Encode(stats)
+	serveSWR(w, r, h.cache, "projects:stats:24h", projectsStatsFresh, projectsStatsStale,
+		func(_ context.Context) ([]repository.ProjectUsageStats, error) {
+			stats, err := h.repo.ProjectUsageStatsAll(24)
+			if err != nil {
+				return nil, err
+			}
+			if stats == nil {
+				stats = []repository.ProjectUsageStats{}
+			}
+			return stats, nil
+		})
 }
 
 type apiKeyResponse struct {

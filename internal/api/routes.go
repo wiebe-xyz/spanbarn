@@ -116,7 +116,7 @@ func (s *Server) registerRoutes() {
 
 	// Project endpoints — rate limited + session auth required.
 	if s.repo != nil && s.sessionMgr != nil {
-		ph := &projectHandlers{repo: s.repo}
+		ph := &projectHandlers{repo: s.repo, cache: s.cache}
 		sessionAuth := SessionMiddleware(s.sessionMgr)
 
 		s.mux.Handle("/api/v1/projects", apiRL(sessionAuth(ph)))
