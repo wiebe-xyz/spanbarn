@@ -5,3 +5,10 @@ resources:
   - namespace.yaml
   - ../base
   - ingress.yaml
+# Image tags are injected by the deploy workflow (sed-replaces __SHA__).
+# This avoids the ":latest" tag being applied — that tag isn't published.
+images:
+  - name: ghcr.io/wiebe-xyz/spanbarn/service
+    newTag: __SHA__
+  - name: ghcr.io/wiebe-xyz/spanbarn/web
+    newTag: __SHA__

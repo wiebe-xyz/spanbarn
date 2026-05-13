@@ -120,16 +120,17 @@ jobs:
         run: |
           set -euo pipefail
           SHA="${{ needs.preflight.outputs.sha }}"
+          # Inject the resolved SHA into the kustomization images: transform so
+          # the deployment carries an existing tag in a single rollout (no
+          # transient ":latest" — that tag isn't published).
+          sed -i.bak "s/__SHA__/${SHA}/g" deploy/k8s/production/kustomization.yaml
+          scp -o StrictHostKeyChecking=no \
+            deploy/k8s/production/kustomization.yaml \
+            "${K3S_USER}@${K3S_HOST}:/tmp/spanbarn-deploy/deploy/k8s/production/kustomization.yaml"
           ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
             set -euo pipefail
             kubectl -n ${NAMESPACE} delete ingress.networking.k8s.io/spanbarn --ignore-not-found
             kubectl apply -k /tmp/spanbarn-deploy/deploy/k8s/production
-            kubectl -n ${NAMESPACE} set image deployment/spanbarn \
-              spanbarn=${SERVICE_IMAGE}:${SHA}
-            kubectl -n ${NAMESPACE} set image deployment/spanbarn-ingest \
-              spanbarn-ingest=${SERVICE_IMAGE}:${SHA}
-            kubectl -n ${NAMESPACE} set image deployment/spanbarn-web \
-              spanbarn-web=${WEB_IMAGE}:${SHA}
             kubectl -n ${NAMESPACE} rollout status deployment/spanbarn --timeout=360s
             kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-ingest --timeout=360s
             kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-web --timeout=360s

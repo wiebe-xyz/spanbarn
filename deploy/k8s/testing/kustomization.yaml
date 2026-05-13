@@ -5,3 +5,8 @@ resources:
   - namespace.yaml
   - ../base
   - ingress.yaml
+images:
+  - name: ghcr.io/wiebe-xyz/spanbarn/service
+    newTag: __SHA__
+  - name: ghcr.io/wiebe-xyz/spanbarn/web
+    newTag: __SHA__
