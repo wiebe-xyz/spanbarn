@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
@@ -47,6 +48,7 @@ type Server struct {
 	repo           *repository.Repository
 	dbPath         string
 	spoolDir       string
+	cache          *cache.Cache
 	logger         *slog.Logger
 }
 
@@ -72,6 +74,13 @@ func WithPaths(dbPath, spoolDir string) ServerOption {
 	return func(s *Server) {
 		s.dbPath = dbPath
 		s.spoolDir = spoolDir
+	}
+}
+
+// WithCache attaches a cache used by stats endpoints for SWR caching.
+func WithCache(c *cache.Cache) ServerOption {
+	return func(s *Server) {
+		s.cache = c
 	}
 }
 

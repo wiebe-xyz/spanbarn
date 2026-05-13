@@ -12,6 +12,27 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
+// spanFallbackWindow caps how far back we ever scan the raw `spans` table when
+// merging unaggregated tail data into a query result. Since inline aggregation
+// upserts on every ingest batch (commit 5a2e173), anything older than this
+// window is already in the `aggregates` table — scanning further is pure cost
+// and was the cause of the "context deadline exceeded" issues (SPA-13/14/17).
+const spanFallbackWindow = 90 * time.Second
+
+// narrowFallback clamps `from` to be no earlier than now-spanFallbackWindow.
+// If `to` is older than that window, returns ok=false so the caller can skip
+// the raw-span query entirely.
+func narrowFallback(from, to time.Time) (time.Time, bool) {
+	cutoff := time.Now().UTC().Add(-spanFallbackWindow)
+	if !to.IsZero() && to.Before(cutoff) {
+		return time.Time{}, false
+	}
+	if from.IsZero() || from.Before(cutoff) {
+		return cutoff, true
+	}
+	return from, true
+}
+
 // ListServices returns aggregated metrics per service for the given time range.
 func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, to time.Time) ([]ServiceSummary, error) {
 	_, span := tracer.Start(ctx, "query.list_services")
@@ -72,9 +93,13 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 		st.buckets += a.Count
 	}
 
-	spanStats, err := s.repo.QueryServiceStatsFromSpans(projectID, from, to)
-	if err != nil {
-		s.logger.Warn("failed to query service stats from spans", "error", err)
+	var spanStats []repository.ServiceStats
+	if fbFrom, ok := narrowFallback(from, to); ok {
+		var err error
+		spanStats, err = s.repo.QueryServiceStatsFromSpans(projectID, fbFrom, to)
+		if err != nil {
+			s.logger.Warn("failed to query service stats from spans", "error", err)
+		}
 	}
 
 	type mergedStats struct {
@@ -197,9 +222,13 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 		st.aggCount += a.Count
 	}
 
-	spanStats, err := s.repo.QueryOperationStatsFromSpans(projectID, service, from, to)
-	if err != nil {
-		s.logger.Warn("failed to query operation stats from spans", "error", err)
+	var spanStats []repository.OperationStats
+	if fbFrom, ok := narrowFallback(from, to); ok {
+		var err error
+		spanStats, err = s.repo.QueryOperationStatsFromSpans(projectID, service, fbFrom, to)
+		if err != nil {
+			s.logger.Warn("failed to query operation stats from spans", "error", err)
+		}
 	}
 	for _, ss := range spanStats {
 		k := opKey{ss.Operation, ss.Resource, ss.Kind}
@@ -304,9 +333,13 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 		st.aggCount += a.Count
 	}
 
-	spanBuckets, err := s.repo.QuerySpanTimeseries(projectID, svcName, operation, from, to, int64(interval.Seconds()))
-	if err != nil {
-		s.logger.Warn("failed to query span timeseries", "error", err)
+	var spanBuckets []repository.SpanBucket
+	if fbFrom, ok := narrowFallback(from, to); ok {
+		var err error
+		spanBuckets, err = s.repo.QuerySpanTimeseries(projectID, svcName, operation, fbFrom, to, int64(interval.Seconds()))
+		if err != nil {
+			s.logger.Warn("failed to query span timeseries", "error", err)
+		}
 	}
 	for _, sb := range spanBuckets {
 		b := sb.Bucket.Truncate(interval)

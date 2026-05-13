@@ -76,11 +76,13 @@ func (s *Server) registerRoutes() {
 
 	// Settings + stats endpoints — rate limited + session auth required.
 	if s.repo != nil && s.sessionMgr != nil {
-		sh := &settingsHandlers{repo: s.repo, dbPath: s.dbPath, spoolDir: s.spoolDir}
+		sh := &settingsHandlers{repo: s.repo, dbPath: s.dbPath, spoolDir: s.spoolDir, cache: s.cache}
 		sessionAuth := SessionMiddleware(s.sessionMgr)
 
 		s.mux.Handle("/api/v1/settings", apiRL(sessionAuth(sh)))
-		s.mux.Handle("/api/v1/stats", apiRL(sessionAuth(sh)))
+		s.mux.Handle("/api/v1/stats/db-size", apiRL(sessionAuth(sh)))
+		s.mux.Handle("/api/v1/stats/counts", apiRL(sessionAuth(sh)))
+		s.mux.Handle("/api/v1/stats/runtime", apiRL(sessionAuth(sh)))
 	}
 
 	// Saved queries endpoints — rate limited + session auth required.

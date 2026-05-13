@@ -45,25 +45,30 @@ func (r *Repository) GetAllSettings() (map[string]string, error) {
 	return settings, rows.Err()
 }
 
-// DBStats holds database file and row count statistics.
-type DBStats struct {
+// DBSize holds filesystem size stats for the database and spool. Cheap to compute.
+type DBSize struct {
 	DBSizeBytes    int64 `json:"dbSizeBytes"`
-	SpanCount      int64 `json:"spanCount"`
-	AggregateCount int64 `json:"aggregateCount"`
-	ErrorSampleCount int64 `json:"errorSampleCount"`
 	SpoolSizeBytes int64 `json:"spoolSizeBytes"`
 }
 
-// GetDBStats returns database size and row count statistics.
-func (r *Repository) GetDBStats(dbPath, spoolDir string) (*DBStats, error) {
-	stats := &DBStats{}
+// DBCounts holds row-count statistics. Expensive — each COUNT(*) is a full
+// table scan on SQLite, so callers should cache aggressively.
+type DBCounts struct {
+	SpanCount        int64 `json:"spanCount"`
+	AggregateCount   int64 `json:"aggregateCount"`
+	ErrorSampleCount int64 `json:"errorSampleCount"`
+}
+
+// GetDBSize returns filesystem sizes for the SQLite db (+WAL) and the spool dir.
+func (r *Repository) GetDBSize(dbPath, spoolDir string) (*DBSize, error) {
+	size := &DBSize{}
 
 	if info, err := os.Stat(dbPath); err == nil {
-		stats.DBSizeBytes = info.Size()
+		size.DBSizeBytes = info.Size()
 	}
 	walPath := dbPath + "-wal"
 	if info, err := os.Stat(walPath); err == nil {
-		stats.DBSizeBytes += info.Size()
+		size.DBSizeBytes += info.Size()
 	}
 
 	if spoolDir != "" {
@@ -72,28 +77,32 @@ func (r *Repository) GetDBStats(dbPath, spoolDir string) (*DBStats, error) {
 			for _, e := range entries {
 				if !e.IsDir() {
 					if info, err := e.Info(); err == nil {
-						stats.SpoolSizeBytes += info.Size()
+						size.SpoolSizeBytes += info.Size()
 					}
 				}
 			}
 		}
 	}
 
-	counts := []struct {
+	_ = filepath.Clean(dbPath)
+	return size, nil
+}
+
+// GetDBCounts returns total row counts for spans, aggregates, and error_samples.
+func (r *Repository) GetDBCounts() (*DBCounts, error) {
+	counts := &DBCounts{}
+	tables := []struct {
 		table string
 		dest  *int64
 	}{
-		{"spans", &stats.SpanCount},
-		{"aggregates", &stats.AggregateCount},
-		{"error_samples", &stats.ErrorSampleCount},
+		{"spans", &counts.SpanCount},
+		{"aggregates", &counts.AggregateCount},
+		{"error_samples", &counts.ErrorSampleCount},
 	}
-	for _, c := range counts {
-		err := r.db.QueryRow(fmt.Sprintf("SELECT count(*) FROM %s", c.table)).Scan(c.dest)
-		if err != nil {
+	for _, c := range tables {
+		if err := r.db.QueryRow(fmt.Sprintf("SELECT count(*) FROM %s", c.table)).Scan(c.dest); err != nil {
 			return nil, fmt.Errorf("count %s: %w", c.table, err)
 		}
 	}
-
-	_ = filepath.Clean(dbPath)
-	return stats, nil
+	return counts, nil
 }

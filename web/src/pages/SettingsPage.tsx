@@ -2,19 +2,19 @@ import { useState, useEffect, useCallback, type ReactElement } from 'react'
 import { CheckCircle, XCircle, ExternalLink, Copy, Check, Key, ChevronDown, ChevronRight, Zap, HardDrive, MemoryStick } from 'lucide-react'
 import { fetchJSON } from '../api/client'
 
-type SystemStats = {
-  db: {
-    dbSizeBytes: number
-    spanCount: number
-    aggregateCount: number
-    errorSampleCount: number
-    spoolSizeBytes: number
-  }
-  memory: {
-    allocBytes: number
-    sysBytes: number
-    numGC: number
-  }
+type DBSize = {
+  dbSizeBytes: number
+  spoolSizeBytes: number
+}
+type DBCounts = {
+  spanCount: number
+  aggregateCount: number
+  errorSampleCount: number
+}
+type RuntimeStats = {
+  allocBytes: number
+  sysBytes: number
+  numGC: number
 }
 
 type RetentionSettings = {
@@ -34,19 +34,31 @@ function formatNumber(n: number): string {
   return n.toLocaleString()
 }
 
+function StatTile({ label, icon, value, sub, loading }: { label: string; icon?: ReactElement; value: string | null; sub?: string; loading?: boolean }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        {icon}
+        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{label}</span>
+      </div>
+      {loading || value === null
+        ? <div className="skeleton" style={{ height: 22, width: 80 }} />
+        : <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{value}</div>}
+      {sub && <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>{sub}</div>}
+    </div>
+  )
+}
+
 function SystemHealthPanel() {
-  const [stats, setStats] = useState<SystemStats | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [size, setSize] = useState<DBSize | null>(null)
+  const [counts, setCounts] = useState<DBCounts | null>(null)
+  const [runtime, setRuntime] = useState<RuntimeStats | null>(null)
 
   useEffect(() => {
-    fetchJSON<SystemStats>('/api/v1/stats')
-      .then(setStats)
-      .catch(() => {})
-      .finally(() => setLoading(false))
+    fetchJSON<DBSize>('/api/v1/stats/db-size').then(setSize).catch(() => {})
+    fetchJSON<RuntimeStats>('/api/v1/stats/runtime').then(setRuntime).catch(() => {})
+    fetchJSON<DBCounts>('/api/v1/stats/counts').then(setCounts).catch(() => {})
   }, [])
-
-  if (loading) return <div className="skeleton" style={{ height: 120 }} />
-  if (!stats) return null
 
   return (
     <div className="card" style={{ marginBottom: '1.5rem' }}>
@@ -54,37 +66,20 @@ function SystemHealthPanel() {
         System Health
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-            <HardDrive size={14} color="var(--accent)" />
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Database</span>
-          </div>
-          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatBytes(stats.db.dbSizeBytes)}</div>
-        </div>
-        <div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Spool</div>
-          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatBytes(stats.db.spoolSizeBytes)}</div>
-        </div>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-            <MemoryStick size={14} color="var(--accent)" />
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Memory</span>
-          </div>
-          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatBytes(stats.memory.allocBytes)}</div>
-          <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>of {formatBytes(stats.memory.sysBytes)} sys</div>
-        </div>
-        <div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Spans</div>
-          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatNumber(stats.db.spanCount)}</div>
-        </div>
-        <div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Aggregates</div>
-          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatNumber(stats.db.aggregateCount)}</div>
-        </div>
-        <div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Error Samples</div>
-          <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{formatNumber(stats.db.errorSampleCount)}</div>
-        </div>
+        <StatTile label="Database" icon={<HardDrive size={14} color="var(--accent)" />}
+          value={size ? formatBytes(size.dbSizeBytes) : null} loading={!size} />
+        <StatTile label="Spool"
+          value={size ? formatBytes(size.spoolSizeBytes) : null} loading={!size} />
+        <StatTile label="Memory" icon={<MemoryStick size={14} color="var(--accent)" />}
+          value={runtime ? formatBytes(runtime.allocBytes) : null}
+          sub={runtime ? `of ${formatBytes(runtime.sysBytes)} sys` : undefined}
+          loading={!runtime} />
+        <StatTile label="Spans"
+          value={counts ? formatNumber(counts.spanCount) : null} loading={!counts} />
+        <StatTile label="Aggregates"
+          value={counts ? formatNumber(counts.aggregateCount) : null} loading={!counts} />
+        <StatTile label="Error Samples"
+          value={counts ? formatNumber(counts.errorSampleCount) : null} loading={!counts} />
       </div>
     </div>
   )

@@ -59,18 +59,23 @@ func TestSettings(t *testing.T) {
 	}
 }
 
-func TestGetDBStats(t *testing.T) {
+func TestGetDBSizeAndCounts(t *testing.T) {
 	repo := setupTestDB(t)
 
-	stats, err := repo.GetDBStats(":memory:", "")
+	size, err := repo.GetDBSize(":memory:", "")
 	if err != nil {
-		t.Fatalf("GetDBStats: %v", err)
+		t.Fatalf("GetDBSize: %v", err)
 	}
-	if stats == nil {
-		t.Fatal("stats is nil")
+	if size == nil {
+		t.Fatal("size is nil")
 	}
-	if stats.SpanCount != 0 || stats.AggregateCount != 0 || stats.ErrorSampleCount != 0 {
-		t.Fatalf("expected zero counts, got %+v", stats)
+
+	counts, err := repo.GetDBCounts()
+	if err != nil {
+		t.Fatalf("GetDBCounts: %v", err)
+	}
+	if counts.SpanCount != 0 || counts.AggregateCount != 0 || counts.ErrorSampleCount != 0 {
+		t.Fatalf("expected zero counts, got %+v", counts)
 	}
 }
 

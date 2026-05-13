@@ -182,7 +182,7 @@ func run() error {
 		SessionSecret:  cfg.SessionSecret,
 		PublicURL:      cfg.PublicURL,
 	}
-	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, api.WithRepository(repo), api.WithAuthorizer(authorizer), api.WithPaths(cfg.DBPath, cfg.SpoolDir))
+	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, api.WithRepository(repo), api.WithAuthorizer(authorizer), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(querySvc.Cache()))
 
 	mux := http.NewServeMux()
 	loginRL := api.RateLimitMiddleware(api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), "login")

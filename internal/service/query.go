@@ -53,6 +53,11 @@ func (s *QueryService) SetCache(c *cache.Cache) {
 	s.cache = c
 }
 
+// Cache exposes the underlying cache instance for handlers outside the service.
+func (s *QueryService) Cache() *cache.Cache {
+	return s.cache
+}
+
 // --- Shared helpers ---
 
 func computePercentiles(durations []int64) (p50, p95, p99 int64) {

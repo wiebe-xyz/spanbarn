@@ -83,6 +83,60 @@ func Set(c *Cache, ctx context.Context, key string, value any) {
 	c.store.Set(ctx, key, data, c.ttl)
 }
 
+// swrEnvelope wraps a cached payload with a fresh-until timestamp so that
+// callers can implement stale-while-revalidate even against backends (Redis)
+// where expired entries are evicted. The store TTL is set to staleTTL, while
+// freshness is decided by FreshUntilUnix.
+type swrEnvelope struct {
+	F int64           `json:"f"`
+	P json.RawMessage `json:"p"`
+}
+
+// SetSWR stores value with a fresh window of freshTTL and a stale window of staleTTL.
+// staleTTL must be >= freshTTL; the entry is evicted after staleTTL.
+func SetSWR(c *Cache, ctx context.Context, key string, value any, freshTTL, staleTTL time.Duration) {
+	if c == nil {
+		return
+	}
+	if staleTTL < freshTTL {
+		staleTTL = freshTTL
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	envelope, err := json.Marshal(swrEnvelope{F: time.Now().Add(freshTTL).Unix(), P: payload})
+	if err != nil {
+		return
+	}
+	c.store.Set(ctx, key, envelope, staleTTL)
+}
+
+// GetSWR returns the cached value along with whether it is still fresh.
+// found=false means cache miss.
+func GetSWR[T any](c *Cache, ctx context.Context, key string) (value T, found bool, fresh bool) {
+	var zero T
+	if c == nil {
+		return zero, false, false
+	}
+	data, ok := c.store.Get(ctx, key)
+	if !ok {
+		data, ok = c.store.GetStale(ctx, key)
+		if !ok {
+			return zero, false, false
+		}
+	}
+	var env swrEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return zero, false, false
+	}
+	var result T
+	if err := json.Unmarshal(env.P, &result); err != nil {
+		return zero, false, false
+	}
+	return result, true, time.Now().Unix() < env.F
+}
+
 // --- In-memory store ---
 
 type memEntry struct {
