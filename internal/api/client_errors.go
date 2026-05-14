@@ -25,7 +25,11 @@ func (s *Server) handleClientError(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logger.Error("client error",
+	errType := payload.Type
+	if errType == "" {
+		errType = "Error"
+	}
+	s.logger.Error("client "+errType,
 		"error.type", payload.Type,
 		"error.message", payload.Message,
 		"error.stack", payload.Stack,
