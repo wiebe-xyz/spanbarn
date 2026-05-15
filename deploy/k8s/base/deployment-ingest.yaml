@@ -39,6 +39,10 @@ spec:
               value: "/tmp/spool"
             - name: SPANBARN_DB_PATH
               value: "/var/lib/spanbarn/spanbarn.db"
+            # Tell Go's GC the soft cap so it reacts to memory pressure before
+            # the cgroup OOM-kills us. ~90% of the 256Mi limit.
+            - name: GOMEMLIMIT
+              value: "230MiB"
           envFrom:
             - secretRef:
                 name: spanbarn-secrets
@@ -49,10 +53,10 @@ spec:
           resources:
             requests:
               cpu: 50m
-              memory: 32Mi
+              memory: 64Mi
             limits:
               cpu: 200m
-              memory: 128Mi
+              memory: 256Mi
           livenessProbe:
             httpGet:
               path: /api/v1/health
