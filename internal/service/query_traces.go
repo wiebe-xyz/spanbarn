@@ -164,11 +164,33 @@ func (s *QueryService) GetTrace(ctx context.Context, traceID string) (*TraceDeta
 		root = &spans[0]
 	}
 
+	totalSpans := len(spans)
+	truncated := false
+	if totalSpans > MaxTraceDetailSpans {
+		// Always keep the root in the truncated view; otherwise the UI loses
+		// the trace's identity. Stable order is start_time_us (set by repo).
+		rootID := root.SpanID
+		spans = spans[:MaxTraceDetailSpans]
+		hasRoot := false
+		for i := range spans {
+			if spans[i].SpanID == rootID {
+				hasRoot = true
+				break
+			}
+		}
+		if !hasRoot {
+			spans[0] = *root
+		}
+		truncated = true
+	}
+
 	return &TraceDetail{
 		TraceID:    traceID,
 		Spans:      spans,
 		DurationUs: root.DurationUs,
 		Service:    root.Service,
 		Name:       root.Name,
+		TotalSpans: totalSpans,
+		Truncated:  truncated,
 	}, nil
 }

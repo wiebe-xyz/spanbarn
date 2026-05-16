@@ -1,47 +1,54 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { LoginPage } from './pages/LoginPage'
-import { ServicesPage } from './pages/ServicesPage'
-import { OperationsPage } from './pages/OperationsPage'
-import { OperationDetailPage } from './pages/OperationDetailPage'
-import { TracesPage } from './pages/TracesPage'
-import { TraceDetailPage } from './pages/TraceDetailPage'
-import { DependenciesPage } from './pages/DependenciesPage'
-import { ServiceMapPage } from './pages/ServiceMapPage'
-import { LiveTailPage } from './pages/LiveTailPage'
-import { DatabasePage } from './pages/DatabasePage'
-import { DatabaseQueryDetailPage } from './pages/DatabaseQueryDetailPage'
-import { PromptsPage } from './pages/PromptsPage'
-import { PromptDetailPage } from './pages/PromptDetailPage'
-import { PagesPage } from './pages/PagesPage'
-import { PageDetailPage } from './pages/PageDetailPage'
-import { SettingsPage } from './pages/SettingsPage'
 import { DashboardLayout } from './components/DashboardLayout'
 import { TimeRangeProvider } from './contexts/TimeRangeContext'
+
+// Route-level code splitting: each page becomes its own chunk so initial
+// load only ships React + shell + the page you actually opened, instead of
+// the entire dashboard. Pages export named components, so unwrap them here.
+const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })))
+const ServicesPage = lazy(() => import('./pages/ServicesPage').then(m => ({ default: m.ServicesPage })))
+const OperationsPage = lazy(() => import('./pages/OperationsPage').then(m => ({ default: m.OperationsPage })))
+const OperationDetailPage = lazy(() => import('./pages/OperationDetailPage').then(m => ({ default: m.OperationDetailPage })))
+const TracesPage = lazy(() => import('./pages/TracesPage').then(m => ({ default: m.TracesPage })))
+const TraceDetailPage = lazy(() => import('./pages/TraceDetailPage').then(m => ({ default: m.TraceDetailPage })))
+const DependenciesPage = lazy(() => import('./pages/DependenciesPage').then(m => ({ default: m.DependenciesPage })))
+const ServiceMapPage = lazy(() => import('./pages/ServiceMapPage').then(m => ({ default: m.ServiceMapPage })))
+const LiveTailPage = lazy(() => import('./pages/LiveTailPage').then(m => ({ default: m.LiveTailPage })))
+const DatabasePage = lazy(() => import('./pages/DatabasePage').then(m => ({ default: m.DatabasePage })))
+const DatabaseQueryDetailPage = lazy(() => import('./pages/DatabaseQueryDetailPage').then(m => ({ default: m.DatabaseQueryDetailPage })))
+const PromptsPage = lazy(() => import('./pages/PromptsPage').then(m => ({ default: m.PromptsPage })))
+const PromptDetailPage = lazy(() => import('./pages/PromptDetailPage').then(m => ({ default: m.PromptDetailPage })))
+const PagesPage = lazy(() => import('./pages/PagesPage').then(m => ({ default: m.PagesPage })))
+const PageDetailPage = lazy(() => import('./pages/PageDetailPage').then(m => ({ default: m.PageDetailPage })))
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })))
 
 function App() {
   return (
     <BrowserRouter>
       <TimeRangeProvider>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/" element={<DashboardLayout />}>
-            <Route index element={<ServicesPage />} />
-            <Route path="services/:service" element={<OperationsPage />} />
-            <Route path="services/:service/operations/:operation" element={<OperationDetailPage />} />
-            <Route path="traces" element={<TracesPage />} />
-            <Route path="traces/:traceId" element={<TraceDetailPage />} />
-            <Route path="dependencies" element={<DependenciesPage />} />
-            <Route path="service-map" element={<ServiceMapPage />} />
-            <Route path="live" element={<LiveTailPage />} />
-            <Route path="database" element={<DatabasePage />} />
-            <Route path="database/detail" element={<DatabaseQueryDetailPage />} />
-            <Route path="prompts" element={<PromptsPage />} />
-            <Route path="prompts/:name" element={<PromptDetailPage />} />
-            <Route path="pages" element={<PagesPage />} />
-            <Route path="pages/:page" element={<PageDetailPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-          </Route>
-        </Routes>
+        <Suspense fallback={<div style={{ padding: 24, color: '#9ca3af' }}>Loading…</div>}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/" element={<DashboardLayout />}>
+              <Route index element={<ServicesPage />} />
+              <Route path="services/:service" element={<OperationsPage />} />
+              <Route path="services/:service/operations/:operation" element={<OperationDetailPage />} />
+              <Route path="traces" element={<TracesPage />} />
+              <Route path="traces/:traceId" element={<TraceDetailPage />} />
+              <Route path="dependencies" element={<DependenciesPage />} />
+              <Route path="service-map" element={<ServiceMapPage />} />
+              <Route path="live" element={<LiveTailPage />} />
+              <Route path="database" element={<DatabasePage />} />
+              <Route path="database/detail" element={<DatabaseQueryDetailPage />} />
+              <Route path="prompts" element={<PromptsPage />} />
+              <Route path="prompts/:name" element={<PromptDetailPage />} />
+              <Route path="pages" element={<PagesPage />} />
+              <Route path="pages/:page" element={<PageDetailPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+            </Route>
+          </Routes>
+        </Suspense>
       </TimeRangeProvider>
     </BrowserRouter>
   )

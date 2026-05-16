@@ -50,6 +50,8 @@ export type TraceDetail = {
   durationUs: number
   service: string
   name: string
+  totalSpans: number
+  truncated?: boolean
 }
 
 /** A single span within a trace. */

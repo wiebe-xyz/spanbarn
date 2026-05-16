@@ -425,12 +425,6 @@ export function TracesPage(): ReactElement {
                   key={trace.traceId}
                   onClick={() => navigate(`/traces/${trace.traceId}`)}
                   style={{ cursor: 'pointer', borderBottom: '1px solid #1f2937' }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.background = 'rgba(59,130,246,0.08)')
-                  }
-                  onMouseLeave={(e) =>
-                    (e.currentTarget.style.background = 'transparent')
-                  }
                 >
                   <td style={tdStyle}>
                     <code style={{ fontSize: 12 }}>

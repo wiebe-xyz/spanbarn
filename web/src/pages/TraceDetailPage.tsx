@@ -133,9 +133,17 @@ export function TraceDetailPage(): ReactElement {
           </div>
           <div>
             <span style={{ color: '#9ca3af', fontSize: 11, marginRight: 4 }}>Spans</span>
-            <span style={{ fontWeight: 600, color: '#e5e7eb' }}>{trace.spans.length}</span>
+            <span style={{ fontWeight: 600, color: '#e5e7eb' }}>
+              {trace.spans.length}
+              {trace.truncated ? ` of ${trace.totalSpans}` : ''}
+            </span>
           </div>
         </div>
+        {trace.truncated && (
+          <div style={{ marginTop: 8, padding: '6px 10px', background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: 6, fontSize: 12, color: '#facc15' }}>
+            Showing first {trace.spans.length} of {trace.totalSpans} spans — large traces are truncated for performance.
+          </div>
+        )}
       </div>
 
       {/* Waterfall */}

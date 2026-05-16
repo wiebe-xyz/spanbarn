@@ -52,13 +52,25 @@ type TraceSummary struct {
 }
 
 // TraceDetail holds a full trace with all its spans.
+//
+// Spans is capped at MaxTraceDetailSpans; when a trace exceeds the cap the
+// response includes only the first MaxTraceDetailSpans (by start_time_us)
+// and sets Truncated=true with TotalSpans set to the real count so the UI
+// can show "showing N of M spans".
 type TraceDetail struct {
 	TraceID    string            `json:"traceId"`
 	Spans      []repository.Span `json:"spans"`
 	DurationUs int64             `json:"durationUs"`
 	Service    string            `json:"service"`
 	Name       string            `json:"name"`
+	TotalSpans int               `json:"totalSpans"`
+	Truncated  bool              `json:"truncated,omitempty"`
 }
+
+// MaxTraceDetailSpans bounds a single trace-detail response. Picked because
+// past this point the UI's flat list becomes the bottleneck, not the API,
+// and the JSON payload grows into the multi-MB range.
+const MaxTraceDetailSpans = 2000
 
 // DependencySummary holds metrics for a single dependency target.
 type DependencySummary struct {
