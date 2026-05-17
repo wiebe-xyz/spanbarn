@@ -217,6 +217,200 @@ func (r *Repository) GetBoringTraceSpans(cutoff time.Time, slowThresholdUS int64
 	)
 }
 
+// TraceSummaryRow is the per-trace summary produced by SearchTraceSummaries.
+// Keeping this in the repo layer lets the SQL aggregate everything instead of
+// shipping raw spans to Go for a group-by.
+type TraceSummaryRow struct {
+	TraceID      string
+	StartTimeUs  int64
+	SpanCount    int
+	HasError     bool
+	RootName     string
+	RootService  string
+	RootDuration int64
+}
+
+// SearchTraceSummaries returns at most filter.Limit trace summaries matching
+// the filter, ordered by trace start time descending. The grouping happens
+// in SQL — old code fetched filter.Limit*5 raw spans and grouped in Go,
+// which was the dominant cost of the /traces page.
+//
+// minSpans (>0) filters out traces whose total span count falls below the
+// threshold; applied via HAVING so pagination respects it.
+//
+// Considers both `spans` and `error_samples` because old traces past span
+// retention may only have error_samples rows; without the UNION those
+// traces would disappear from search even though detail still works.
+func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSummaryRow, error) {
+	var where []string
+	var args []any
+	if f.ProjectID != 0 {
+		where = append(where, "project_id = ?")
+		args = append(args, f.ProjectID)
+	}
+	if f.Service != "" {
+		where = append(where, "service = ?")
+		args = append(args, f.Service)
+	}
+	if f.Operation != "" {
+		where = append(where, "name = ?")
+		args = append(args, f.Operation)
+	}
+	if f.Status != "" {
+		where = append(where, "status = ?")
+		args = append(args, f.Status)
+	}
+	if f.MinDuration > 0 {
+		where = append(where, "duration_us >= ?")
+		args = append(args, f.MinDuration)
+	}
+	if !f.From.IsZero() {
+		where = append(where, "ingested_at >= ?")
+		args = append(args, f.From)
+	}
+	if !f.To.IsZero() {
+		where = append(where, "ingested_at <= ?")
+		args = append(args, f.To)
+	}
+	whereSQL := ""
+	if len(where) > 0 {
+		whereSQL = " WHERE " + strings.Join(where, " AND ")
+	}
+
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	having := ""
+	if minSpans > 0 {
+		having = fmt.Sprintf(" HAVING COUNT(DISTINCT span_id) >= %d", minSpans)
+	}
+
+	// Args are reused for the two UNIONed selects (spans + error_samples).
+	doubled := make([]any, 0, len(args)*2)
+	doubled = append(doubled, args...)
+	doubled = append(doubled, args...)
+
+	q := fmt.Sprintf(`
+		SELECT trace_id,
+		       MIN(start_time_us)                                       AS start_us,
+		       COUNT(DISTINCT span_id)                                  AS span_count,
+		       MAX(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) AS has_error
+		FROM (
+			SELECT trace_id, span_id, status, start_time_us FROM spans%s
+			UNION ALL
+			SELECT trace_id, span_id, status, start_time_us FROM error_samples%s
+		)
+		GROUP BY trace_id%s
+		ORDER BY start_us DESC
+		LIMIT %d OFFSET %d`,
+		whereSQL, whereSQL, having, limit, f.Offset)
+
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, doubled...)
+	if err != nil {
+		return nil, err
+	}
+	type acc struct {
+		startUs   int64
+		spanCount int
+		hasError  bool
+	}
+	order := make([]string, 0, limit)
+	accs := make(map[string]*acc, limit)
+	for rows.Next() {
+		var traceID string
+		var startUs int64
+		var spanCount int
+		var hasErrorInt int
+		if err := rows.Scan(&traceID, &startUs, &spanCount, &hasErrorInt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		order = append(order, traceID)
+		accs[traceID] = &acc{startUs: startUs, spanCount: spanCount, hasError: hasErrorInt == 1}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(order) == 0 {
+		return nil, nil
+	}
+
+	// Step 2: look up the root span (parent_span_id NULL/'') per trace.
+	// Limited to the page we just fetched, so this is cheap.
+	placeholders := strings.Repeat("?,", len(order))
+	placeholders = placeholders[:len(placeholders)-1]
+	rootArgs := make([]any, 0, len(order)*2)
+	for _, t := range order {
+		rootArgs = append(rootArgs, t)
+	}
+	for _, t := range order {
+		rootArgs = append(rootArgs, t)
+	}
+	rootQ := fmt.Sprintf(`
+		SELECT trace_id, name, service, duration_us, start_time_us, COALESCE(parent_span_id,'') AS parent
+		FROM (
+			SELECT trace_id, name, service, duration_us, start_time_us, parent_span_id
+			FROM spans WHERE trace_id IN (%s)
+			UNION ALL
+			SELECT trace_id, name, service, duration_us, start_time_us, parent_span_id
+			FROM error_samples WHERE trace_id IN (%s)
+		)
+		ORDER BY (CASE WHEN COALESCE(parent_span_id,'') = '' THEN 0 ELSE 1 END), start_time_us`,
+		placeholders, placeholders)
+
+	rootCtx, rootCancel := r.queryContext()
+	defer rootCancel()
+	rrows, err := r.db.QueryContext(rootCtx, rootQ, rootArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rrows.Close()
+
+	type rootInfo struct {
+		name     string
+		service  string
+		duration int64
+		isRoot   bool
+	}
+	roots := make(map[string]rootInfo, len(order))
+	for rrows.Next() {
+		var traceID, name, service, parent string
+		var dur, startUs int64
+		if err := rrows.Scan(&traceID, &name, &service, &dur, &startUs, &parent); err != nil {
+			return nil, err
+		}
+		existing, ok := roots[traceID]
+		// Prefer a real root (parent==""), else first-seen.
+		isRoot := parent == ""
+		if !ok || (isRoot && !existing.isRoot) {
+			roots[traceID] = rootInfo{name: name, service: service, duration: dur, isRoot: isRoot}
+		}
+	}
+	if err := rrows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]TraceSummaryRow, 0, len(order))
+	for _, traceID := range order {
+		a := accs[traceID]
+		ri := roots[traceID]
+		out = append(out, TraceSummaryRow{
+			TraceID:      traceID,
+			StartTimeUs:  a.startUs,
+			SpanCount:    a.spanCount,
+			HasError:     a.hasError,
+			RootName:     ri.name,
+			RootService:  ri.service,
+			RootDuration: ri.duration,
+		})
+	}
+	return out, nil
+}
+
 func (r *Repository) StreamSpans(f SpanFilter, fn func(Span) error) error {
 	var where []string
 	var args []any

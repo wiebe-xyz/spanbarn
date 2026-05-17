@@ -18,6 +18,7 @@ var tracer = otel.Tracer("spanbarn/query")
 type QueryRepository interface {
 	QueryAggregates(filter repository.AggregateFilter) ([]repository.Aggregate, error)
 	QuerySpans(filter repository.SpanFilter) ([]repository.Span, error)
+	SearchTraceSummaries(filter repository.SpanFilter, minSpans int) ([]repository.TraceSummaryRow, error)
 	GetTraceByID(traceID string) ([]repository.Span, error)
 	QueryErrorSamples(filter repository.SpanFilter) ([]repository.Span, error)
 	QueryServiceStatsFromSpans(projectID int64, from, to time.Time) ([]repository.ServiceStats, error)

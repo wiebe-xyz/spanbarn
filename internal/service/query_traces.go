@@ -10,6 +10,10 @@ import (
 )
 
 // SearchTraces searches for traces matching the given filter.
+//
+// Grouping happens in SQL via SearchTraceSummaries — the previous
+// implementation fetched up to filter.Limit*5 raw spans and grouped them in
+// Go, which dominated /traces page latency on busy projects.
 func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilter) ([]TraceSummary, error) {
 	_, span := tracer.Start(ctx, "query.search_traces")
 	span.SetAttributes(
@@ -19,6 +23,10 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 	)
 	defer span.End()
 
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 50
+	}
 	sf := repository.SpanFilter{
 		ProjectID:   filter.ProjectID,
 		Service:     filter.Service,
@@ -27,94 +35,31 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 		MinDuration: filter.MinDurationUs,
 		From:        filter.From,
 		To:          filter.To,
-		Limit:       filter.Limit * 5,
-		Offset:      0,
+		Limit:       limit,
+		Offset:      filter.Offset,
 	}
 
-	spans, err := s.repo.QuerySpans(sf)
+	rows, err := s.repo.SearchTraceSummaries(sf, filter.MinSpans)
 	if err != nil {
 		return nil, err
 	}
 
-	errorSpans, err := s.repo.QueryErrorSamples(sf)
-	if err != nil {
-		s.logger.Warn("failed to query error samples", "error", err)
-	} else {
-		spans = append(spans, errorSpans...)
-	}
-
-	type traceInfo struct {
-		spans []repository.Span
-	}
-	byTrace := make(map[string]*traceInfo)
-	var traceOrder []string
-	for _, sp := range spans {
-		ti, ok := byTrace[sp.TraceID]
-		if !ok {
-			ti = &traceInfo{}
-			byTrace[sp.TraceID] = ti
-			traceOrder = append(traceOrder, sp.TraceID)
-		}
-		ti.spans = append(ti.spans, sp)
-	}
-
-	var result []TraceSummary
-	for _, traceID := range traceOrder {
-		ti := byTrace[traceID]
-
-		var root *repository.Span
-		for i := range ti.spans {
-			if ti.spans[i].ParentSpanID == "" {
-				root = &ti.spans[i]
-				break
-			}
-		}
-		if root == nil && len(ti.spans) > 0 {
-			root = &ti.spans[0]
-		}
-		if root == nil {
-			continue
-		}
-
+	result := make([]TraceSummary, 0, len(rows))
+	for _, r := range rows {
 		status := "ok"
-		for _, sp := range ti.spans {
-			if sp.Status == "error" {
-				status = "error"
-				break
-			}
+		if r.HasError {
+			status = "error"
 		}
-
-		seenSpans := make(map[string]bool)
-		for _, sp := range ti.spans {
-			seenSpans[sp.SpanID] = true
-		}
-
-		spanCount := len(seenSpans)
-		if filter.MinSpans > 0 && spanCount < filter.MinSpans {
-			continue
-		}
-
 		result = append(result, TraceSummary{
-			TraceID:      traceID,
-			RootSpanName: root.Name,
-			RootService:  root.Service,
-			DurationUs:   root.DurationUs,
-			SpanCount:    spanCount,
+			TraceID:      r.TraceID,
+			RootSpanName: r.RootName,
+			RootService:  r.RootService,
+			DurationUs:   r.RootDuration,
+			SpanCount:    r.SpanCount,
 			Status:       status,
-			StartTime:    time.UnixMicro(root.StartTimeUs),
+			StartTime:    time.UnixMicro(r.StartTimeUs),
 		})
 	}
-
-	if filter.Offset > 0 && filter.Offset < len(result) {
-		result = result[filter.Offset:]
-	} else if filter.Offset >= len(result) {
-		return []TraceSummary{}, nil
-	}
-
-	if filter.Limit > 0 && len(result) > filter.Limit {
-		result = result[:filter.Limit]
-	}
-
 	return result, nil
 }
 

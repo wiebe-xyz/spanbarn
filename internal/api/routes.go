@@ -42,20 +42,20 @@ func (s *Server) registerRoutes() {
 	if s.querySvc != nil && s.sessionMgr != nil {
 		qh := &queryHandlers{svc: s.querySvc}
 		sessionAuth := SessionMiddleware(s.sessionMgr)
-		cache30 := func(h http.Handler) http.Handler { return cacheMiddleware(30, h) }
+		cache60 := func(h http.Handler) http.Handler { return cacheMiddleware(60, h) }
 
-		s.mux.Handle("/api/v1/services", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleServices)))))
-		s.mux.Handle("/api/v1/services/", apiRL(sessionAuth(cache30(qh))))
-		s.mux.Handle("/api/v1/traces", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleTraces)))))
+		s.mux.Handle("/api/v1/services", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleServices)))))
+		s.mux.Handle("/api/v1/services/", apiRL(sessionAuth(cache60(qh))))
+		s.mux.Handle("/api/v1/traces", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleTraces)))))
 		s.mux.Handle("/api/v1/traces/", apiRL(sessionAuth(http.HandlerFunc(qh.handleTraceDetail))))
-		s.mux.Handle("/api/v1/dependencies", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleDependencies)))))
-		s.mux.Handle("/api/v1/database", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleDatabaseQueries)))))
+		s.mux.Handle("/api/v1/dependencies", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleDependencies)))))
+		s.mux.Handle("/api/v1/database", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleDatabaseQueries)))))
 		s.mux.Handle("/api/v1/database/detail", apiRL(sessionAuth(http.HandlerFunc(qh.handleDatabaseQueryDetail))))
-		s.mux.Handle("/api/v1/prompts", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handlePrompts)))))
+		s.mux.Handle("/api/v1/prompts", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handlePrompts)))))
 		s.mux.Handle("/api/v1/prompts/detail", apiRL(sessionAuth(http.HandlerFunc(qh.handlePromptDetail))))
-		s.mux.Handle("/api/v1/service-map", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleServiceMap)))))
-		s.mux.Handle("/api/v1/web-vitals", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleWebVitals)))))
-		s.mux.Handle("/api/v1/web-vitals/timeseries", apiRL(sessionAuth(cache30(http.HandlerFunc(qh.handleWebVitalsTimeseries)))))
+		s.mux.Handle("/api/v1/service-map", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleServiceMap)))))
+		s.mux.Handle("/api/v1/web-vitals", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleWebVitals)))))
+		s.mux.Handle("/api/v1/web-vitals/timeseries", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleWebVitalsTimeseries)))))
 	}
 
 	// Live tail SSE endpoint — session auth required.
