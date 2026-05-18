@@ -38,11 +38,16 @@ func buildDSN(dbPath string, readOnly bool) string {
 }
 
 // NewDB opens a SQLite database at dbPath with WAL mode, busy timeout, and foreign keys enabled.
+// MaxOpenConns is capped at 1: SQLite allows only one writer at a time, and when two goroutines
+// each hold a separate connection and try to upgrade a deferred transaction to a write lock they
+// deadlock each other — SQLite returns SQLITE_BUSY immediately, before busy_timeout can help.
+// Serialising through one connection means the second writer waits in Go's pool (not in SQLite).
 func NewDB(dbPath string) (*DB, error) {
 	db, err := sql.Open("sqlite", buildDSN(dbPath, false))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", dbPath, err)
 	}
+	db.SetMaxOpenConns(1)
 	return &DB{DB: db}, nil
 }
 
