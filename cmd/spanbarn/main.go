@@ -171,16 +171,19 @@ func run() error {
 	}
 
 	serverCfg := api.ServerConfig{
-		APIKey:         cfg.APIKey,
-		MaxBodyBytes:   cfg.MaxBodyBytes,
-		AllowedOrigins: cfg.AllowedOrigins,
-		Version:        Version,
-		MetricsToken:   cfg.MetricsToken,
-		LoginRate:      cfg.LoginRatePerMinute,
-		IngestRate:     cfg.IngestRatePerMinute,
-		APIRate:        cfg.APIRatePerMinute,
-		SessionSecret:  cfg.SessionSecret,
-		PublicURL:      cfg.PublicURL,
+		APIKey:             cfg.APIKey,
+		MaxBodyBytes:       cfg.MaxBodyBytes,
+		AllowedOrigins:     cfg.AllowedOrigins,
+		Version:            Version,
+		MetricsToken:       cfg.MetricsToken,
+		LoginRate:          cfg.LoginRatePerMinute,
+		IngestRate:         cfg.IngestRatePerMinute,
+		APIRate:            cfg.APIRatePerMinute,
+		SessionSecret:      cfg.SessionSecret,
+		PublicURL:          cfg.PublicURL,
+		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
+		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
+		FunnelBarnProject:  cfg.FunnelBarnProject,
 	}
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, api.WithRepository(repo), api.WithAuthorizer(authorizer), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(querySvc.Cache()))
 

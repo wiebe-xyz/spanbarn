@@ -11,6 +11,10 @@ func (s *Server) registerRoutes() {
 	// Health endpoint — no auth required.
 	s.mux.HandleFunc("/api/v1/health", s.handleHealth)
 
+	// Client-config endpoint — public, no auth. Exposes only non-secret values
+	// (e.g. funnelbarn project + ingest API key) that the SPA needs at boot.
+	s.mux.HandleFunc("/api/v1/client-config", s.handleClientConfig)
+
 	// Internal ingest endpoint — used by ingest pods to forward spans to writer.
 	// Uses raw API key auth (pod-to-pod, no need for SHA256/DB lookup).
 	if s.ingest != nil {

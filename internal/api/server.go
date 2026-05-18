@@ -16,16 +16,19 @@ import (
 
 // ServerConfig holds configuration for the HTTP server.
 type ServerConfig struct {
-	APIKey         string
-	MaxBodyBytes   int64
-	AllowedOrigins []string
-	Version        string
-	MetricsToken   string // Bearer token for /metrics; empty = no auth
-	LoginRate      int    // per-minute rate limit for login; 0 = default (10)
-	IngestRate     int    // per-minute rate limit for ingest; 0 = default (600)
-	APIRate        int    // per-minute rate limit for API queries; 0 = default (120)
-	SessionSecret  string
-	PublicURL      string
+	APIKey             string
+	MaxBodyBytes       int64
+	AllowedOrigins     []string
+	Version            string
+	MetricsToken       string // Bearer token for /metrics; empty = no auth
+	LoginRate          int    // per-minute rate limit for login; 0 = default (10)
+	IngestRate         int    // per-minute rate limit for ingest; 0 = default (600)
+	APIRate            int    // per-minute rate limit for API queries; 0 = default (120)
+	SessionSecret      string
+	PublicURL          string
+	FunnelBarnEndpoint string
+	FunnelBarnAPIKey   string
+	FunnelBarnProject  string
 }
 
 // Server is the HTTP server for SpanBarn.
@@ -39,6 +42,7 @@ type Server struct {
 	metricsToken   string
 	sessionSecret  string
 	publicURL      string
+	funnelBarn     funnelBarnConfig
 	rateLimiter    *RateLimiter
 	metrics        *Metrics
 	ingest         *ingest.Handler
@@ -50,6 +54,14 @@ type Server struct {
 	spoolDir       string
 	cache          *cache.Cache
 	logger         *slog.Logger
+}
+
+// funnelBarnConfig captures the public bits of the FunnelBarn integration
+// that the SPA needs at boot. Empty Endpoint disables analytics.
+type funnelBarnConfig struct {
+	Endpoint string
+	APIKey   string
+	Project  string
 }
 
 // ServerOption configures optional Server dependencies.
@@ -107,6 +119,11 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		metricsToken:   cfg.MetricsToken,
 		sessionSecret:  cfg.SessionSecret,
 		publicURL:      cfg.PublicURL,
+		funnelBarn: funnelBarnConfig{
+			Endpoint: cfg.FunnelBarnEndpoint,
+			APIKey:   cfg.FunnelBarnAPIKey,
+			Project:  cfg.FunnelBarnProject,
+		},
 		rateLimiter:    NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
 		metrics:        NewMetrics(),
 		ingest:         ingestHandler,
