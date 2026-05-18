@@ -5,6 +5,8 @@ resources:
   - namespace.yaml
   - ../base
   - ingress.yaml
+  - ingress-forward-domains.yaml
+  - middleware-sb-redirect.yaml
 # Image tags are injected by the deploy workflow (sed-replaces __SHA__).
 # This avoids the ":latest" tag being applied — that tag isn't published.
 images:
