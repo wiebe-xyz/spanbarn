@@ -82,6 +82,10 @@ export function AlertsPage(): ReactElement {
     }
   }, [])
 
+  // Initial fetch on mount. The cascading-renders warning is a false positive
+  // here: `load` is a stable useCallback (empty deps) and the setState calls
+  // run after an async network round-trip, not synchronously inside the effect.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load() }, [load])
 
   const openCreate = () => {
