@@ -432,15 +432,18 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	serverCfg := api.ServerConfig{
-		APIKey:         cfg.APIKey,
-		MaxBodyBytes:   cfg.MaxBodyBytes,
-		AllowedOrigins: cfg.AllowedOrigins,
-		Version:        Version,
-		LoginRate:      cfg.LoginRatePerMinute,
-		IngestRate:     cfg.IngestRatePerMinute,
-		APIRate:        cfg.APIRatePerMinute,
-		SessionSecret:  cfg.SessionSecret,
-		PublicURL:      cfg.PublicURL,
+		APIKey:             cfg.APIKey,
+		MaxBodyBytes:       cfg.MaxBodyBytes,
+		AllowedOrigins:     cfg.AllowedOrigins,
+		Version:            Version,
+		LoginRate:          cfg.LoginRatePerMinute,
+		IngestRate:         cfg.IngestRatePerMinute,
+		APIRate:            cfg.APIRatePerMinute,
+		SessionSecret:      cfg.SessionSecret,
+		PublicURL:          cfg.PublicURL,
+		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
+		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
+		FunnelBarnProject:  cfg.FunnelBarnProject,
 	}
 	opts := []api.ServerOption{api.WithAuthorizer(authorizer)}
 	if roRepo != nil {
