@@ -205,6 +205,23 @@ export type SavedQuery = {
   createdAt: string
 }
 
+/** A configured alert rule. */
+export type Alert = {
+  id: number
+  projectId: number
+  service: string
+  operation: string
+  type: 'latency' | 'error_rate'
+  threshold: number
+  comparisonWindow: number
+  cooldownMinutes: number
+  webhookUrl: string
+  email: string
+  enabled: boolean
+  lastTriggeredAt?: string
+  createdAt: string
+}
+
 /** Health check response. */
 export type HealthResponse = {
   status: string

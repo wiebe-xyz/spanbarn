@@ -11,6 +11,7 @@ import type {
   PromptSummary,
   PromptRecord,
   SavedQuery,
+  Alert,
   HealthResponse,
   TraceSearchParams,
   WebVitalSummary,
@@ -169,4 +170,22 @@ export const api = {
 
   getExportUrl: (from: string, to: string, service?: string, status?: string, limit?: number) =>
     `/api/v1/export${qs({ from, to, service, status, limit })}`,
+
+  listAlerts: (projectId = 1) =>
+    fetchJSON<Alert[]>(`/api/v1/alerts${qs({ project_id: projectId })}`),
+
+  createAlert: (alert: Omit<Alert, 'id' | 'createdAt' | 'lastTriggeredAt'>) =>
+    fetchJSON<Alert>('/api/v1/alerts', {
+      method: 'POST',
+      body: JSON.stringify(alert),
+    }),
+
+  updateAlert: (id: number, alert: Omit<Alert, 'id' | 'createdAt' | 'lastTriggeredAt'>) =>
+    fetchJSON<{ status: string }>(`/api/v1/alerts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(alert),
+    }),
+
+  deleteAlert: (id: number) =>
+    fetchJSON<{ status: string }>(`/api/v1/alerts/${id}`, { method: 'DELETE' }),
 }
