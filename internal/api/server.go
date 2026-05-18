@@ -54,6 +54,14 @@ type Server struct {
 	spoolDir       string
 	cache          *cache.Cache
 	logger         *slog.Logger
+	oidc           *auth.OIDCClient
+}
+
+// SetOIDCClient wires the optional iambarn OIDC login adapter. When set, the
+// frontend's client-config reports oidc.enabled=true and the SPA redirects to
+// /api/v1/oidc/login on the login screen. Local single-user login still works.
+func (s *Server) SetOIDCClient(c *auth.OIDCClient) {
+	s.oidc = c
 }
 
 // funnelBarnConfig captures the public bits of the FunnelBarn integration

@@ -27,6 +27,12 @@ func (s *Server) handleClientConfig(w http.ResponseWriter, _ *http.Request) {
 			"project":  s.funnelBarn.Project,
 		}
 	}
+	if s.oidc != nil {
+		resp["oidc"] = map[string]any{
+			"enabled":  true,
+			"loginURL": "/api/v1/oidc/login",
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)

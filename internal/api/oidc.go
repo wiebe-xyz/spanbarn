@@ -1,0 +1,123 @@
+package api
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"net/http"
+	"time"
+)
+
+const (
+	oidcStateCookie = "spanbarn_oidc_state"
+	oidcNonceCookie = "spanbarn_oidc_nonce"
+	oidcCookieTTL   = 10 * time.Minute
+)
+
+// handleOIDCLogin starts the OIDC authorization-code flow by redirecting the
+// browser to the iambarn authorize endpoint. State + nonce are stored in
+// short-lived, HttpOnly cookies and checked on the callback.
+func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
+	if s.oidc == nil {
+		writeError(w, http.StatusNotFound, "oidc not configured", "")
+		return
+	}
+	state := randomOIDCToken()
+	nonce := randomOIDCToken()
+	authURL, err := s.oidc.AuthorizeURL(state, nonce)
+	if err != nil {
+		s.logger.Warn("oidc: build authorize url", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "oidc unavailable", "")
+		return
+	}
+	secure := r.TLS != nil
+	http.SetCookie(w, oidcShortLivedCookie(oidcStateCookie, state, secure))
+	http.SetCookie(w, oidcShortLivedCookie(oidcNonceCookie, nonce, secure))
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+// handleOIDCCallback handles the redirect back from iambarn. On success it
+// issues a local session cookie that authenticates the browser for the SPA.
+func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
+	if s.oidc == nil {
+		writeError(w, http.StatusNotFound, "oidc not configured", "")
+		return
+	}
+	if s.sessionMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "session unavailable", "")
+		return
+	}
+	stateCookie, err := r.Cookie(oidcStateCookie)
+	if err != nil || stateCookie.Value == "" || stateCookie.Value != r.URL.Query().Get("state") {
+		s.logger.Warn("oidc: state mismatch")
+		writeError(w, http.StatusBadRequest, "oidc state mismatch", "")
+		return
+	}
+	nonceCookie, err := r.Cookie(oidcNonceCookie)
+	if err != nil || nonceCookie.Value == "" {
+		writeError(w, http.StatusBadRequest, "oidc nonce missing", "")
+		return
+	}
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		writeError(w, http.StatusBadRequest, "oidc code missing", "")
+		return
+	}
+	claims, err := s.oidc.Exchange(r.Context(), code, nonceCookie.Value)
+	if err != nil {
+		s.logger.Warn("oidc: exchange failed", "error", err)
+		writeError(w, http.StatusUnauthorized, "oidc exchange failed", "")
+		return
+	}
+	if !s.oidc.Allowed(claims) {
+		s.logger.Warn("oidc: access denied",
+			"sub", claims.Subject, "groups", claims.Groups, "roles", claims.Roles)
+		writeError(w, http.StatusForbidden, "access denied: user is not a member of the required group", "")
+		return
+	}
+	username := claims.PreferredName()
+	if username == "" {
+		username = "oidc-user"
+	}
+	token, err := s.sessionMgr.Create(username)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "session unavailable", "")
+		return
+	}
+	secure := r.TLS != nil
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session",
+		Value:    token,
+		Path:     "/",
+		Expires:  time.Now().Add(s.sessionMgr.TTL()),
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+	// Clear the short-lived state/nonce cookies.
+	http.SetCookie(w, oidcShortLivedCookie(oidcStateCookie, "", secure))
+	http.SetCookie(w, oidcShortLivedCookie(oidcNonceCookie, "", secure))
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func oidcShortLivedCookie(name, value string, secure bool) *http.Cookie {
+	maxAge := int(oidcCookieTTL.Seconds())
+	if value == "" {
+		maxAge = -1
+	}
+	return &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   maxAge,
+	}
+}
+
+func randomOIDCToken() string {
+	buf := make([]byte, 24)
+	_, _ = rand.Read(buf)
+	return base64.RawURLEncoding.EncodeToString(buf)
+}
+

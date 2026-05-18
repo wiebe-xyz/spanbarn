@@ -15,6 +15,11 @@ func (s *Server) registerRoutes() {
 	// (e.g. funnelbarn project + ingest API key) that the SPA needs at boot.
 	s.mux.HandleFunc("/api/v1/client-config", s.handleClientConfig)
 
+	// OIDC login flow — public, no auth required. Returns 404 when OIDC is not
+	// configured server-side, so the SPA can fall through to local login.
+	s.mux.HandleFunc("/api/v1/oidc/login", s.handleOIDCLogin)
+	s.mux.HandleFunc("/api/v1/oidc/callback", s.handleOIDCCallback)
+
 	// Internal ingest endpoint — used by ingest pods to forward spans to writer.
 	// Uses raw API key auth (pod-to-pod, no need for SHA256/DB lookup).
 	if s.ingest != nil {
