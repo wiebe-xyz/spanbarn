@@ -1,7 +1,30 @@
-import { useState, type FormEvent, type ReactElement } from 'react'
+import { useEffect, useState, type FormEvent, type ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Activity } from 'lucide-react'
 import { api, ApiError } from '../api/client'
+
+interface OIDCClientConfig {
+  oidc?: { enabled?: boolean; loginURL?: string }
+}
+
+// maybeRedirectToOIDC fetches /api/v1/client-config and, when the server
+// reports oidc.enabled, redirects the browser to the OIDC login URL. When
+// OIDC is not configured the call no-ops and the local password form is shown.
+async function maybeRedirectToOIDC(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/v1/client-config', { credentials: 'same-origin' })
+    if (!res.ok) return false
+    const cfg = (await res.json()) as OIDCClientConfig
+    const oc = cfg?.oidc
+    if (oc?.enabled && oc.loginURL) {
+      window.location.assign(oc.loginURL)
+      return true
+    }
+  } catch {
+    // Network error — fall back to the local login form silently.
+  }
+  return false
+}
 
 export function LoginPage(): ReactElement {
   const navigate = useNavigate()
@@ -9,6 +32,17 @@ export function LoginPage(): ReactElement {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [redirecting, setRedirecting] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    void maybeRedirectToOIDC().then((redirected) => {
+      if (!cancelled && !redirected) setRedirecting(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -26,6 +60,23 @@ export function LoginPage(): ReactElement {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (redirecting) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1rem',
+          color: 'var(--text-muted)',
+        }}
+      >
+        Loading…
+      </div>
+    )
   }
 
   return (

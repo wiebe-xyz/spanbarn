@@ -46,6 +46,11 @@ type Config struct {
 	CacheTTLSeconds        int
 	Mode                   string // "writer" (default) or "ingest"
 	WriterURL              string // URL of writer pod, used when Mode=ingest
+	OIDCIssuer             string // SPANBARN_OIDC_ISSUER — when all four OIDC vars are set, OIDC login is offered alongside local auth
+	OIDCClientID           string // SPANBARN_OIDC_CLIENT_ID
+	OIDCClientSecret       string // SPANBARN_OIDC_CLIENT_SECRET
+	OIDCRedirectURL        string // SPANBARN_OIDC_REDIRECT_URL
+	OIDCRequiredGroup      string // SPANBARN_OIDC_REQUIRED_GROUP — defaults to "spanbarn-users"
 }
 
 // Load reads configuration from SPANBARN_* environment variables with defaults.
@@ -88,6 +93,11 @@ func Load() Config {
 		CacheTTLSeconds:         getenvInt("SPANBARN_CACHE_TTL_SECONDS", 30),
 		Mode:                    getenv("SPANBARN_MODE", "writer"),
 		WriterURL:               os.Getenv("SPANBARN_WRITER_URL"),
+		OIDCIssuer:              os.Getenv("SPANBARN_OIDC_ISSUER"),
+		OIDCClientID:            os.Getenv("SPANBARN_OIDC_CLIENT_ID"),
+		OIDCClientSecret:        os.Getenv("SPANBARN_OIDC_CLIENT_SECRET"),
+		OIDCRedirectURL:         os.Getenv("SPANBARN_OIDC_REDIRECT_URL"),
+		OIDCRequiredGroup:       getenv("SPANBARN_OIDC_REQUIRED_GROUP", "spanbarn-users"),
 	}
 
 	if raw := os.Getenv("SPANBARN_ALLOWED_ORIGINS"); raw != "" {

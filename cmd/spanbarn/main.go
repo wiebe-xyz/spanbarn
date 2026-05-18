@@ -189,6 +189,9 @@ func run() error {
 		FunnelBarnProject:  cfg.FunnelBarnProject,
 	}
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, api.WithRepository(repo), api.WithAuthorizer(authorizer), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(querySvc.Cache()))
+	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
+		apiServer.SetOIDCClient(oidcClient)
+	}
 
 	api.WarmCaches(ctx, repo, querySvc.Cache(), logger)
 
@@ -237,6 +240,25 @@ func run() error {
 
 	logger.Info("shutdown complete")
 	return nil
+}
+
+// buildOIDCClient returns an OIDC adapter when all four SPANBARN_OIDC_* vars
+// are set, or nil otherwise (in which case the local single-user login is the
+// only auth path). Discovery is lazy so an unreachable issuer at startup does
+// not crash the process.
+func buildOIDCClient(cfg config.Config, logger *slog.Logger) *auth.OIDCClient {
+	oc := auth.OIDCConfig{
+		Issuer:        cfg.OIDCIssuer,
+		ClientID:      cfg.OIDCClientID,
+		ClientSecret:  cfg.OIDCClientSecret,
+		RedirectURL:   cfg.OIDCRedirectURL,
+		RequiredGroup: cfg.OIDCRequiredGroup,
+	}
+	if !oc.Enabled() {
+		return nil
+	}
+	logger.Info("oidc: enabled", "issuer", oc.Issuer, "client_id", oc.ClientID, "required_group", oc.RequiredGroup)
+	return auth.NewOIDCClient(oc)
 }
 
 func bootstrapAdmin(repo *repository.Repository, cfg config.Config, logger *slog.Logger) error {
@@ -457,6 +479,9 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
 	}
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, opts...)
+	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
+		apiServer.SetOIDCClient(oidcClient)
+	}
 
 	if roRepo != nil && queryCache != nil {
 		api.WarmCaches(ctx, roRepo, queryCache, logger)
