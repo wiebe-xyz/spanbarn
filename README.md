@@ -87,9 +87,9 @@ Lightweight SDKs that add zero-to-minimal overhead. Each SDK supports both the n
 
 | Language | Package | Status |
 |----------|---------|--------|
-| JavaScript/TypeScript | `@spanbarn/js` | Planned |
-| Go | `github.com/wiebe-xyz/spanbarn-go` | Planned |
-| Python | `spanbarn` | Planned |
+| JavaScript/TypeScript | `@spanbarn/js` | Available |
+| Go | `github.com/wiebe-xyz/spanbarn-go` | Available |
+| Python | `spanbarn` | Available |
 
 ### JavaScript SDK (Node.js + Browser)
 
@@ -195,6 +195,21 @@ spanbarn apikey create --project=my-app --scope=ingest
 | `SPANBARN_ALLOWED_ORIGINS` | `*` | CORS origins (CSV) |
 | `SPANBARN_SELF_ENDPOINT` | | Self-reporting endpoint |
 | `SPANBARN_SELF_API_KEY` | | Self-reporting API key |
+| `SPANBARN_ENVIRONMENT` | | Deployment environment tag (e.g. `production`) |
+| `SPANBARN_MODE` | | `ingest` to run as an ingest-only forwarding pod |
+| `SPANBARN_WRITER_URL` | | Writer pod URL (required when `SPANBARN_MODE=ingest`) |
+| `SPANBARN_ADMIN_PASSWORD_BCRYPT` | | Pre-hashed bcrypt password for the admin user |
+| `SPANBARN_REDIS_URL` | | Redis URL for distributed rate limiting and caching |
+| `SPANBARN_CACHE_TTL_SECONDS` | `60` | Dashboard query cache lifetime |
+| `SPANBARN_API_RATE_PER_MINUTE` | | API requests per minute per IP |
+| `SPANBARN_INGEST_RATE_PER_MINUTE` | | Ingest requests per minute per API key |
+| `SPANBARN_LOGIN_RATE_PER_MINUTE` | | Login attempts per minute per IP |
+| `SPANBARN_METRICS_TOKEN` | | Bearer token to protect the `/metrics` endpoint |
+| `SPANBARN_BUGBARN_ENDPOINT` | | BugBarn endpoint for error forwarding |
+| `SPANBARN_BUGBARN_API_KEY` | | BugBarn API key |
+| `SPANBARN_FUNNELBARN_ENDPOINT` | | FunnelBarn endpoint for analytics forwarding |
+| `SPANBARN_FUNNELBARN_API_KEY` | | FunnelBarn API key |
+| `SPANBARN_FUNNELBARN_PROJECT` | | FunnelBarn project slug |
 
 ## Architecture
 
