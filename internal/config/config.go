@@ -33,6 +33,9 @@ type Config struct {
 	SelfAPIKey             string
 	BugBarnEndpoint        string
 	BugBarnAPIKey          string
+	FunnelBarnEndpoint     string
+	FunnelBarnAPIKey       string
+	FunnelBarnProject      string
 	Environment            string
 	LoginRatePerMinute     int
 	IngestRatePerMinute    int
@@ -72,6 +75,9 @@ func Load() Config {
 		SelfAPIKey:              os.Getenv("SPANBARN_SELF_API_KEY"),
 		BugBarnEndpoint:         os.Getenv("SPANBARN_BUGBARN_ENDPOINT"),
 		BugBarnAPIKey:           os.Getenv("SPANBARN_BUGBARN_API_KEY"),
+		FunnelBarnEndpoint:      os.Getenv("SPANBARN_FUNNELBARN_ENDPOINT"),
+		FunnelBarnAPIKey:        os.Getenv("SPANBARN_FUNNELBARN_API_KEY"),
+		FunnelBarnProject:       getenv("SPANBARN_FUNNELBARN_PROJECT", "spanbarn"),
 		Environment:             getenv("SPANBARN_ENVIRONMENT", "development"),
 		LoginRatePerMinute:      getenvInt("SPANBARN_LOGIN_RATE_PER_MINUTE", 10),
 		IngestRatePerMinute:     getenvInt("SPANBARN_INGEST_RATE_PER_MINUTE", 1000),
