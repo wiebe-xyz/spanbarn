@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"sync"
 	"syscall"
 	"time"
 
@@ -110,6 +111,8 @@ func run() error {
 
 	ingestHandler.Start(ctx)
 
+	var wg sync.WaitGroup
+
 	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
 	aggregator := aggregation.NewAggregator(repo, aggInterval, logger)
 
@@ -117,7 +120,7 @@ func run() error {
 	w.SetAggregator(aggregator)
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
-	safeGo("worker", func() { w.Run(workerCtx) })
+	safeGo("worker", &wg, func() { w.Run(workerCtx) })
 
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
@@ -129,14 +132,14 @@ func run() error {
 	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
-	safeGo("retention", func() { retentionWorker.Run(retentionCtx) })
+	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
 	alertEval := alert.NewEvaluator(repo, alertNotifier, logger)
 	alertRunner := alert.NewRunner(alertEval, repo, time.Minute, logger)
 	alertCtx, alertCancel := context.WithCancel(ctx)
 	defer alertCancel()
-	safeGo("alert-runner", func() { alertRunner.Run(alertCtx) })
+	safeGo("alert-runner", &wg, func() { alertRunner.Run(alertCtx) })
 
 	apiKeyHash := cfg.APIKeySHA256
 	if apiKeyHash == "" && cfg.APIKey != "" {
@@ -230,6 +233,7 @@ func run() error {
 	retentionCancel()
 	ingestHandler.Stop()
 	workerCancel()
+	wg.Wait()
 
 	logger.Info("shutdown complete")
 	return nil
@@ -255,8 +259,10 @@ func bootstrapAdmin(repo *repository.Repository, cfg config.Config, logger *slog
 	return nil
 }
 
-func safeGo(name string, fn func()) {
+func safeGo(name string, wg *sync.WaitGroup, fn func()) {
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("goroutine panic",
@@ -374,8 +380,9 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 
 	ingestHandler.Start(ctx)
 
+	var wg sync.WaitGroup
 	fwd := forward.New(eventSpool, cfg.WriterURL, cfg.APIKey, logger)
-	safeGo("forwarder", func() { fwd.Run(ctx) })
+	safeGo("forwarder", &wg, func() { fwd.Run(ctx) })
 
 	// Open the writer's DB read-only so reads can be served when the writer
 	// pod is restarting. Mutation handlers will hit SQLite "readonly database"
@@ -498,6 +505,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	ingestHandler.Stop()
+	wg.Wait()
 	logger.Info("ingest shutdown complete")
 	return nil
 }
