@@ -6,28 +6,28 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`spanbarn-staging.nijmegen.wiebe.xyz`) && PathPrefix(`/v1/traces`)
+    - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/v1/traces`)
       kind: Rule
       services:
         - name: spanbarn-ingest
           port: 8080
-    - match: Host(`spanbarn-staging.nijmegen.wiebe.xyz`) && PathPrefix(`/api/v1/spans`)
+    - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/api/v1/spans`)
       kind: Rule
       services:
         - name: spanbarn-ingest
           port: 8080
-    - match: Host(`spanbarn-staging.nijmegen.wiebe.xyz`) && PathPrefix(`/api/v1/telemetry`)
+    - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/api/v1/telemetry`)
       kind: Rule
       services:
         - name: spanbarn-ingest
           port: 8080
-    - match: Host(`spanbarn-staging.nijmegen.wiebe.xyz`) && PathPrefix(`/api/v1/client-errors`)
+    - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/api/v1/client-errors`)
       kind: Rule
       services:
         - name: spanbarn-ingest
           port: 8080
 
-    - match: Host(`spanbarn-staging.nijmegen.wiebe.xyz`) && PathPrefix(`/api`) && (Method(`POST`) || Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))
+    - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/api`) && (Method(`POST`) || Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))
       kind: Rule
       priority: 100
       services:
@@ -35,25 +35,25 @@ spec:
           port: 8080
 
     # Setup is GET-but-writes (creates pending project + setup API key) — route to writer.
-    - match: Host(`spanbarn-staging.nijmegen.wiebe.xyz`) && PathPrefix(`/api/v1/setup`)
+    - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/api/v1/setup`)
       kind: Rule
       priority: 100
       services:
         - name: spanbarn
           port: 8080
 
-    - match: Host(`spanbarn-staging.nijmegen.wiebe.xyz`) && PathPrefix(`/api`)
+    - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/api`)
       kind: Rule
       services:
         - name: spanbarn-reads
           port: 8080
-    - match: Host(`spanbarn-staging.nijmegen.wiebe.xyz`) && PathPrefix(`/v1`)
+    - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/v1`)
       kind: Rule
       services:
         - name: spanbarn-reads
           port: 8080
 
-    - match: Host(`spanbarn-staging.nijmegen.wiebe.xyz`)
+    - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`))
       kind: Rule
       services:
         - name: spanbarn-web
