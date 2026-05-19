@@ -119,6 +119,7 @@ export function AlertsPage(): ReactElement {
     setError('')
     if (!form.service) { setError('Service is required'); return }
     if (!form.threshold) { setError('Threshold is required'); return }
+    if (!defaultProjectId) { setError('Projects still loading — please wait a moment and try again'); return }
 
     const payload = {
       projectId: defaultProjectId,

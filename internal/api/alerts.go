@@ -111,10 +111,6 @@ func (h *alertHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 
 	projectID := parseInt64Param(r, "project_id", 0)
-	if projectID == 0 {
-		writeError(w, http.StatusBadRequest, "project_id is required", "")
-		return
-	}
 
 	alerts, err := h.repo.ListAlerts(projectID)
 	if err != nil {
