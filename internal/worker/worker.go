@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
@@ -209,6 +210,133 @@ func (w *Worker) aggregateInline(ctx context.Context, spans []repository.Span) {
 	}
 	if err := w.aggregator.Persist(ctx, aggs); err != nil {
 		w.logger.Warn("worker: inline aggregate persist failed, retention will catch up", "error", err)
+	}
+}
+
+// RedisWorker consumes span batches from a Redis write queue and persists them
+// to the repository. It reuses the same retry and inline-aggregation logic as
+// the file-spool Worker.
+type RedisWorker struct {
+	queue      *queue.RedisQueue
+	repo       Repository
+	aggregator Aggregator
+	logger     *slog.Logger
+	metrics    Metrics
+}
+
+// NewRedisWorker creates a worker that drains the Redis write queue.
+func NewRedisWorker(q *queue.RedisQueue, repo Repository, logger *slog.Logger) *RedisWorker {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &RedisWorker{queue: q, repo: repo, logger: logger}
+}
+
+// SetAggregator wires in an aggregator for inline aggregation after each batch.
+func (w *RedisWorker) SetAggregator(a Aggregator) {
+	w.aggregator = a
+}
+
+// Run loops on BRPOP until ctx is cancelled.
+func (w *RedisWorker) Run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		records, err := w.queue.Consume(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			w.logger.Error("redis worker: consume failed", "error", err)
+			// Brief backoff to avoid spinning on a broken Redis connection.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+			continue
+		}
+		if len(records) == 0 {
+			// BRPOP timed out — no items, loop.
+			continue
+		}
+
+		w.processBatch(ctx, records)
+	}
+}
+
+func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanRecord) {
+	ctx, span := tracer.Start(ctx, "redis_worker.process_batch")
+	defer span.End()
+	span.SetAttributes(attribute.Int("batch.size", len(records)))
+
+	spans := convertRecords(records)
+
+	_, insertSpan := tracer.Start(ctx, "redis_worker.insert_spans")
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if err := w.repo.InsertSpans(ctx, spans); err != nil {
+			lastErr = err
+			w.logger.Info("redis worker: insert attempt failed",
+				"attempt", attempt,
+				"count", len(spans),
+				"error", err,
+			)
+			backoff := time.Duration(attempt*attempt) * 500 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				insertSpan.End()
+				return
+			case <-time.After(backoff):
+			}
+			continue
+		}
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		insertSpan.RecordError(lastErr)
+		insertSpan.SetStatus(codes.Error, lastErr.Error())
+	}
+	insertSpan.End()
+
+	if lastErr != nil {
+		span.SetAttributes(attribute.Int("dead_lettered", len(spans)))
+		w.logger.Error("redis worker: dead-lettering batch after retries",
+			"count", len(spans),
+			"error", lastErr,
+		)
+		w.metrics.mu.Lock()
+		w.metrics.ErrorCount += int64(len(spans))
+		w.metrics.mu.Unlock()
+		return
+	}
+
+	w.metrics.mu.Lock()
+	w.metrics.ProcessedCount += int64(len(spans))
+	w.metrics.mu.Unlock()
+
+	if promptRecs := extractPromptRecords(spans); len(promptRecs) > 0 {
+		if err := w.repo.InsertPromptRecords(ctx, promptRecs); err != nil {
+			w.logger.Warn("redis worker: insert prompt records", "count", len(promptRecs), "error", err)
+		}
+	}
+
+	if w.aggregator != nil {
+		aggs, err := w.aggregator.AggregateSpans(ctx, spans)
+		if err != nil {
+			w.logger.Warn("redis worker: inline aggregate failed", "error", err)
+			return
+		}
+		if len(aggs) > 0 {
+			if err := w.aggregator.Persist(ctx, aggs); err != nil {
+				w.logger.Warn("redis worker: inline aggregate persist failed", "error", err)
+			}
+		}
 	}
 }
 

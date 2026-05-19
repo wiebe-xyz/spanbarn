@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spanbarn-redis-queue
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: spanbarn-redis-queue
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: spanbarn-redis-queue
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          # noeviction: never silently drop queued spans under memory pressure.
+          # The cache Redis (spanbarn-redis) uses allkeys-lru; this one must not.
+          args: ["--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+          ports:
+            - containerPort: 6379
+              name: redis
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 320Mi
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 10

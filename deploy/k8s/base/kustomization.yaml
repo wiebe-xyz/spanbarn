@@ -9,6 +9,8 @@ resources:
   - service-web.yaml
   - deployment-redis.yaml
   - service-redis.yaml
+  - deployment-redis-queue.yaml
+  - service-redis-queue.yaml
   - configmap.yaml
   - pvc.yaml
   - service-reads.yaml

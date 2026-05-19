@@ -15,15 +15,16 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/alert"
 	"github.com/wiebe-xyz/spanbarn/internal/api"
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/forward"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
+	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
@@ -66,14 +67,28 @@ func run() error {
 		}
 	}
 
-	if cfg.Mode == "ingest" {
+	switch cfg.Mode {
+	case "ingest":
 		return runIngestMode(cfg, logger)
+	case "reader":
+		return runReaderMode(cfg, logger)
+	case "writer":
+		return runWriterMode(cfg, logger)
+	default:
+		return runStandalone(cfg, logger)
 	}
+}
 
+// runStandalone is the all-in-one single-node mode (docker-compose, small
+// self-hosted installs). No Redis queue required. Reads go to a dedicated
+// read-only DB connection so the writer goroutines are never starved by
+// dashboard queries.
+func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	if cfg.SessionSecret == "" {
 		slog.Warn("SPANBARN_SESSION_SECRET is not set; sessions will not persist across restarts")
 	}
 
+	// Write DB — MaxOpenConns(1), used exclusively by worker/retention/aggregation/alerts.
 	db, err := repository.NewDB(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -90,6 +105,18 @@ func run() error {
 		repo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 	}
 
+	// Read-only DB — used exclusively by the query service for dashboard reads.
+	// In WAL mode, readers and the single writer don't block each other.
+	roDB, err := repository.NewReadOnlyDB(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("open read-only database: %w", err)
+	}
+	defer roDB.Close()
+	queryRepo := repository.NewRepository(roDB.DB)
+	if cfg.QueryTimeoutSeconds > 0 {
+		queryRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
+	}
+
 	if cfg.AdminUsername != "" && cfg.AdminPassword != "" {
 		if err := bootstrapAdmin(repo, cfg, logger); err != nil {
 			return err
@@ -103,8 +130,8 @@ func run() error {
 	defer eventSpool.Close()
 	logger.Info("spool", "dir", cfg.SpoolDir)
 
-	queue := ingest.NewQueue(32768)
-	ingestHandler := ingest.NewHandler(queue, eventSpool, 5*time.Millisecond, logger)
+	ingestQueue := ingest.NewQueue(32768)
+	ingestHandler := ingest.NewHandler(ingestQueue, eventSpool, 5*time.Millisecond, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -150,7 +177,8 @@ func run() error {
 	userAuth := auth.NewUserAuthenticator(&userLookupAdapter{repo: repo}, logger)
 	sessionMgr := auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
 
-	querySvc := service.NewQueryService(repo, logger)
+	// Query service reads from the read-only DB, never contesting the write connection.
+	querySvc := service.NewQueryService(queryRepo, logger)
 
 	{
 		ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
@@ -188,12 +216,18 @@ func run() error {
 		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
 		FunnelBarnProject:  cfg.FunnelBarnProject,
 	}
-	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, api.WithRepository(repo), api.WithAuthorizer(authorizer), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(querySvc.Cache()))
+	// Mutations (trace exclusions, alerts CRUD) still use the write repo.
+	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger,
+		api.WithRepository(repo),
+		api.WithAuthorizer(authorizer),
+		api.WithPaths(cfg.DBPath, cfg.SpoolDir),
+		api.WithCache(querySvc.Cache()),
+	)
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
 	}
 
-	api.WarmCaches(ctx, repo, querySvc.Cache(), logger)
+	api.WarmCaches(ctx, queryRepo, querySvc.Cache(), logger)
 
 	mux := http.NewServeMux()
 	loginRL := api.RateLimitMiddleware(api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), "login")
@@ -239,6 +273,283 @@ func run() error {
 	wg.Wait()
 
 	logger.Info("shutdown complete")
+	return nil
+}
+
+// runReaderMode accepts OTLP spans, serves the read-only dashboard API, and
+// publishes batches to the Redis write queue. Multiple reader pods can run in
+// parallel; the single writer pod drains the queue.
+func runReaderMode(cfg config.Config, logger *slog.Logger) error {
+	if cfg.RedisQueueURL == "" {
+		return fmt.Errorf("SPANBARN_REDIS_QUEUE_URL is required in reader mode")
+	}
+
+	logger.Info("starting in reader mode", "redis_queue", cfg.RedisQueueURL)
+
+	writeQueue, err := queue.NewRedisQueue(cfg.RedisQueueURL)
+	if err != nil {
+		return fmt.Errorf("connect to write queue: %w", err)
+	}
+	defer writeQueue.Close()
+
+	eventSpool, err := spool.NewSpool(cfg.SpoolDir, cfg.MaxSpoolBytes)
+	if err != nil {
+		return fmt.Errorf("create spool: %w", err)
+	}
+	defer eventSpool.Close()
+
+	ingestQueue := ingest.NewQueue(32768)
+	ingestHandler := ingest.NewHandler(ingestQueue, eventSpool, 5*time.Millisecond, logger)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	ingestHandler.Start(ctx)
+
+	var wg sync.WaitGroup
+	fwd := forward.NewRedisForwarder(eventSpool, writeQueue, logger)
+	safeGo("redis-forwarder", &wg, func() { fwd.Run(ctx) })
+
+	var (
+		roRepo     *repository.Repository
+		keyLookup  auth.KeyLookup
+		querySvc   *service.QueryService
+		sessionMgr *auth.SessionManager
+		userAuth   *auth.UserAuthenticator
+		queryCache *cache.Cache
+	)
+	if cfg.DBPath != "" {
+		db, dbErr := repository.NewReadOnlyDB(cfg.DBPath)
+		if dbErr != nil {
+			logger.Warn("read-only DB unavailable, dashboard reads disabled", "error", dbErr)
+		} else {
+			defer db.Close()
+			roRepo = repository.NewRepository(db.DB)
+			if cfg.QueryTimeoutSeconds > 0 {
+				roRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
+			}
+			keyLookup = &readOnlyKeyLookupAdapter{repo: roRepo}
+
+			sessionMgr = auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
+			userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
+			querySvc = service.NewQueryService(roRepo, logger)
+
+			ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
+			var store cache.Store
+			if cfg.RedisURL != "" {
+				if rs, cacheErr := cache.NewRedisStore(cfg.RedisURL); cacheErr != nil {
+					logger.Warn("redis cache unavailable, falling back to in-memory", "error", cacheErr)
+					store = cache.NewMemoryStore()
+				} else {
+					store = rs
+				}
+			} else {
+				store = cache.NewMemoryStore()
+			}
+			queryCache = cache.New(store, ttl)
+			querySvc.SetCache(queryCache)
+			defer queryCache.Close()
+
+			logger.Info("read-only DB attached for dashboard", "path", cfg.DBPath)
+		}
+	}
+
+	staticKeyHash := cfg.APIKeySHA256
+	if staticKeyHash == "" && cfg.APIKey != "" {
+		staticKeyHash = auth.HashKey(cfg.APIKey)
+	}
+	authorizer := auth.NewAuthorizer(staticKeyHash, keyLookup, logger)
+
+	serverCfg := api.ServerConfig{
+		APIKey:             cfg.APIKey,
+		MaxBodyBytes:       cfg.MaxBodyBytes,
+		AllowedOrigins:     cfg.AllowedOrigins,
+		Version:            Version,
+		LoginRate:          cfg.LoginRatePerMinute,
+		IngestRate:         cfg.IngestRatePerMinute,
+		APIRate:            cfg.APIRatePerMinute,
+		SessionSecret:      cfg.SessionSecret,
+		PublicURL:          cfg.PublicURL,
+		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
+		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
+		FunnelBarnProject:  cfg.FunnelBarnProject,
+	}
+	opts := []api.ServerOption{api.WithAuthorizer(authorizer)}
+	if roRepo != nil {
+		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
+	}
+	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, opts...)
+	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
+		apiServer.SetOIDCClient(oidcClient)
+	}
+
+	if roRepo != nil && queryCache != nil {
+		api.WarmCaches(ctx, roRepo, queryCache, logger)
+	}
+
+	mux := http.NewServeMux()
+	if sessionMgr != nil && userAuth != nil {
+		loginRL := api.RateLimitMiddleware(
+			api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute),
+			"login",
+		)
+		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr)))
+		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+	}
+	mux.Handle("/", apiServer.Handler())
+
+	httpServer := &http.Server{
+		Addr:         cfg.Addr,
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("reader listening", "addr", cfg.Addr)
+		errCh <- httpServer.ListenAndServe()
+	}()
+
+	select {
+	case <-ctx.Done():
+		logger.Info("shutting down reader")
+	case err := <-errCh:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error("reader shutdown error", "error", err)
+	}
+
+	ingestHandler.Stop()
+	wg.Wait()
+	logger.Info("reader shutdown complete")
+	return nil
+}
+
+// runWriterMode drains the Redis write queue, writes spans to SQLite, and runs
+// background workers (aggregation, retention, alerts). It serves only a health
+// endpoint so k8s probes work. A single writer pod ensures SQLite has no write
+// contention.
+func runWriterMode(cfg config.Config, logger *slog.Logger) error {
+	if cfg.RedisQueueURL == "" {
+		return fmt.Errorf("SPANBARN_REDIS_QUEUE_URL is required in writer mode")
+	}
+
+	logger.Info("starting in writer mode", "redis_queue", cfg.RedisQueueURL)
+
+	db, err := repository.NewDB(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
+
+	if err := repository.Migrate(db.DB); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+	logger.Info("storage", "path", cfg.DBPath)
+
+	repo := repository.NewRepository(db.DB)
+	if cfg.QueryTimeoutSeconds > 0 {
+		repo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
+	}
+
+	if cfg.AdminUsername != "" && cfg.AdminPassword != "" {
+		if err := bootstrapAdmin(repo, cfg, logger); err != nil {
+			return err
+		}
+	}
+
+	writeQueue, err := queue.NewRedisQueue(cfg.RedisQueueURL)
+	if err != nil {
+		return fmt.Errorf("connect to write queue: %w", err)
+	}
+	defer writeQueue.Close()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var wg sync.WaitGroup
+
+	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
+	aggregator := aggregation.NewAggregator(repo, aggInterval, logger)
+
+	rw := worker.NewRedisWorker(writeQueue, &workerRepoAdapter{repo: repo}, logger)
+	rw.SetAggregator(aggregator)
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	defer workerCancel()
+	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
+
+	retentionCfg := retention.Config{
+		FullRetentionHours:        cfg.RetentionFullHours,
+		InterestingRetentionHours: cfg.RetentionInterestingHours,
+		ErrorRetentionDays:        cfg.RetentionErrorDays,
+		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
+		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
+	}
+	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
+	retentionCtx, retentionCancel := context.WithCancel(ctx)
+	defer retentionCancel()
+	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
+
+	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
+	alertEval := alert.NewEvaluator(repo, alertNotifier, logger)
+	alertRunner := alert.NewRunner(alertEval, repo, time.Minute, logger)
+	alertCtx, alertCancel := context.WithCancel(ctx)
+	defer alertCancel()
+	safeGo("alert-runner", &wg, func() { alertRunner.Run(alertCtx) })
+
+	// Minimal HTTP server — health probes only.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","mode":"writer"}`)
+	})
+
+	httpServer := &http.Server{
+		Addr:         cfg.Addr,
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("writer health endpoint", "addr", cfg.Addr)
+		errCh <- httpServer.ListenAndServe()
+	}()
+
+	select {
+	case <-ctx.Done():
+		logger.Info("shutting down writer")
+	case err := <-errCh:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error("writer health server shutdown error", "error", err)
+	}
+
+	alertCancel()
+	retentionCancel()
+	workerCancel()
+	wg.Wait()
+
+	logger.Info("writer shutdown complete")
 	return nil
 }
 

@@ -30,9 +30,12 @@ spec:
               name: http
           env:
             - name: SPANBARN_MODE
-              value: "ingest"
-            - name: SPANBARN_WRITER_URL
-              value: "http://spanbarn:8080"
+              value: "reader"
+            - name: SPANBARN_REDIS_QUEUE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: spanbarn-secrets
+                  key: SPANBARN_REDIS_QUEUE_URL
             - name: SPANBARN_ADDR
               value: ":8080"
             - name: SPANBARN_SPOOL_DIR

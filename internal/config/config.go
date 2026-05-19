@@ -43,9 +43,10 @@ type Config struct {
 	MetricsToken           string
 	QueryTimeoutSeconds    int
 	RedisURL               string
+	RedisQueueURL          string // SPANBARN_REDIS_QUEUE_URL — write queue Redis (separate from cache)
 	CacheTTLSeconds        int
-	Mode                   string // "writer" (default) or "ingest"
-	WriterURL              string // URL of writer pod, used when Mode=ingest
+	Mode                   string // "standalone" (default), "reader", "writer", or "ingest" (legacy)
+	WriterURL              string // URL of writer pod, used when Mode=ingest (legacy)
 	OIDCIssuer             string // SPANBARN_OIDC_ISSUER — when all four OIDC vars are set, OIDC login is offered alongside local auth
 	OIDCClientID           string // SPANBARN_OIDC_CLIENT_ID
 	OIDCClientSecret       string // SPANBARN_OIDC_CLIENT_SECRET
@@ -90,8 +91,9 @@ func Load() Config {
 		MetricsToken:            os.Getenv("SPANBARN_METRICS_TOKEN"),
 		QueryTimeoutSeconds:     getenvInt("SPANBARN_QUERY_TIMEOUT_SECONDS", 30),
 		RedisURL:                os.Getenv("SPANBARN_REDIS_URL"),
+		RedisQueueURL:           os.Getenv("SPANBARN_REDIS_QUEUE_URL"),
 		CacheTTLSeconds:         getenvInt("SPANBARN_CACHE_TTL_SECONDS", 30),
-		Mode:                    getenv("SPANBARN_MODE", "writer"),
+		Mode:                    getenv("SPANBARN_MODE", "standalone"),
 		WriterURL:               os.Getenv("SPANBARN_WRITER_URL"),
 		OIDCIssuer:              os.Getenv("SPANBARN_OIDC_ISSUER"),
 		OIDCClientID:            os.Getenv("SPANBARN_OIDC_CLIENT_ID"),

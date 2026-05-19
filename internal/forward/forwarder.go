@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
 
@@ -90,6 +91,78 @@ func (f *Forwarder) Run(ctx context.Context) {
 			cursor = newCursor
 			if err := f.spool.SaveCursor(cursor); err != nil {
 				f.logger.Error("failed to save cursor", "error", err)
+			}
+		}
+	}
+}
+
+// RedisForwarder reads SpanRecords from a spool and publishes them to a Redis
+// write queue. The file spool acts as the durability anchor: the cursor
+// advances only after a successful Publish, so a Redis outage causes the spool
+// to accumulate without losing data.
+type RedisForwarder struct {
+	spool  *spool.Spool
+	queue  *queue.RedisQueue
+	logger *slog.Logger
+}
+
+// NewRedisForwarder creates a RedisForwarder that drains sp into q.
+func NewRedisForwarder(sp *spool.Spool, q *queue.RedisQueue, logger *slog.Logger) *RedisForwarder {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &RedisForwarder{spool: sp, queue: q, logger: logger}
+}
+
+// Run starts the forwarding loop until ctx is cancelled.
+func (f *RedisForwarder) Run(ctx context.Context) {
+	cursor, err := f.spool.LoadCursor()
+	if err != nil {
+		f.logger.Warn("redis forwarder: failed to load cursor, starting from 0", "error", err)
+	}
+
+	ticker := time.NewTicker(defaultTickInterval)
+	defer ticker.Stop()
+
+	retryDelay := time.Duration(0)
+
+	for {
+		select {
+		case <-ctx.Done():
+			f.logger.Info("redis forwarder stopped")
+			return
+		case <-ticker.C:
+			if retryDelay > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(retryDelay):
+				}
+			}
+
+			records, newCursor, err := f.spool.Read(cursor, defaultBatchSize)
+			if err != nil {
+				f.logger.Error("redis forwarder: spool read failed", "error", err)
+				continue
+			}
+			if len(records) == 0 {
+				retryDelay = 0
+				continue
+			}
+
+			pubCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err = f.queue.Publish(pubCtx, records)
+			cancel()
+			if err != nil {
+				f.logger.Error("redis forwarder: publish failed, will retry", "error", err, "count", len(records))
+				retryDelay = min(retryDelay*2+time.Second, maxRetryDelay)
+				continue
+			}
+
+			retryDelay = 0
+			cursor = newCursor
+			if err := f.spool.SaveCursor(cursor); err != nil {
+				f.logger.Error("redis forwarder: failed to save cursor", "error", err)
 			}
 		}
 	}

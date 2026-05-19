@@ -24,6 +24,14 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+          env:
+            - name: SPANBARN_MODE
+              value: "writer"
+            - name: SPANBARN_REDIS_QUEUE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: spanbarn-secrets
+                  key: SPANBARN_REDIS_QUEUE_URL
           envFrom:
             - configMapRef:
                 name: spanbarn-config
