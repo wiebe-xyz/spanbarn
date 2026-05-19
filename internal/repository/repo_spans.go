@@ -301,13 +301,13 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 
 	q := fmt.Sprintf(`
 		SELECT trace_id,
-		       MIN(start_time_us)                                       AS start_us,
-		       COUNT(DISTINCT span_id)                                  AS span_count,
+		       MIN(start_time_us)                                                  AS start_us,
+		       COUNT(DISTINCT span_id)                                             AS span_count,
 		       MAX(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) AS has_error
 		FROM (
-			SELECT trace_id, span_id, status, start_time_us FROM spans%s
+			SELECT trace_id, span_id, status, start_time_us, COALESCE(parent_span_id,'') AS parent_span_id FROM spans%s
 			UNION ALL
-			SELECT trace_id, span_id, status, start_time_us FROM error_samples%s
+			SELECT trace_id, span_id, status, start_time_us, COALESCE(parent_span_id,'') AS parent_span_id FROM error_samples%s
 		)
 		GROUP BY trace_id%s
 		ORDER BY start_us DESC
