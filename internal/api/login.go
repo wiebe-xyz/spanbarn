@@ -76,6 +76,15 @@ func HandleLogout() http.HandlerFunc {
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 		})
+		// Clear the auth-method hint set by the OIDC callback so a
+		// subsequent local login does not inherit the OIDC marker.
+		http.SetCookie(w, &http.Cookie{
+			Name:     "spanbarn_auth_method",
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			SameSite: http.SameSiteLaxMode,
+		})
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

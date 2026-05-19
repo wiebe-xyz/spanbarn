@@ -28,3 +28,12 @@ export function fetchClientConfig(): Promise<ClientConfig> {
 export function _resetClientConfigCache(): void {
   cached = null
 }
+
+// True only when the current session was established via the iambarn OIDC
+// callback. Local password sessions don't have a remote profile to link to.
+export function isOIDCSession(): boolean {
+  if (typeof document === 'undefined') return false
+  return document.cookie
+    .split('; ')
+    .some((c) => c.startsWith('spanbarn_auth_method=oidc'))
+}

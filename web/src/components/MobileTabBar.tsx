@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { Activity, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut, UserCog } from 'lucide-react'
 import { api } from '../api/client'
-import { fetchClientConfig } from '../api/clientConfig'
+import { fetchClientConfig, isOIDCSession } from '../api/clientConfig'
 
 const tabs = [
   { to: '/', icon: Activity, label: 'Services' },
@@ -17,6 +17,10 @@ export function MobileTabBar(): ReactElement {
   const navigate = useNavigate()
 
   useEffect(() => {
+    // Only sessions actually opened via the iambarn OIDC callback should
+    // see the profile link — local password sessions don't have a remote
+    // profile to manage.
+    if (!isOIDCSession()) return
     let cancelled = false
     void fetchClientConfig().then((cfg) => {
       if (!cancelled && cfg.iambarn?.profile_url) {
