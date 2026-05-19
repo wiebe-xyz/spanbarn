@@ -165,6 +165,7 @@ type TraceSearchFilter struct {
 	Status        string
 	MinDurationUs int64
 	MinSpans      int
+	RootOnly      bool
 	From          time.Time
 	To            time.Time
 	Limit         int

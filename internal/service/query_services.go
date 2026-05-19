@@ -34,11 +34,14 @@ func narrowFallback(from, to time.Time) (time.Time, bool) {
 }
 
 // ListServices returns aggregated metrics per service for the given time range.
-func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, to time.Time) ([]ServiceSummary, error) {
+// When serverOnly is true, only server-kind spans are considered, which gives a
+// view of each service from the perspective of how it serves requests (entry
+// points) rather than its internal or outbound client calls.
+func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, to time.Time, serverOnly bool) ([]ServiceSummary, error) {
 	_, span := tracer.Start(ctx, "query.list_services")
 	defer span.End()
 
-	cacheKey := fmt.Sprintf("services:%d:%d:%d", projectID, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
+	cacheKey := fmt.Sprintf("services:%d:%d:%d:%v", projectID, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix(), serverOnly)
 	if cached, ok := cache.Get[[]ServiceSummary](s.cache, ctx, cacheKey); ok {
 		return cached, nil
 	}
@@ -47,7 +50,7 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 		if _, already := revalidating.LoadOrStore(cacheKey, true); !already {
 			go func() {
 				defer revalidating.Delete(cacheKey)
-				if result, err := s.listServicesUncached(context.Background(), projectID, from, to); err == nil {
+				if result, err := s.listServicesUncached(context.Background(), projectID, from, to, serverOnly); err == nil {
 					cache.Set(s.cache, context.Background(), cacheKey, result)
 				}
 			}()
@@ -55,7 +58,7 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 		return stale, nil
 	}
 
-	result, err := s.listServicesUncached(ctx, projectID, from, to)
+	result, err := s.listServicesUncached(ctx, projectID, from, to, serverOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -64,9 +67,14 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 	return result, nil
 }
 
-func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64, from, to time.Time) ([]ServiceSummary, error) {
+func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64, from, to time.Time, serverOnly bool) ([]ServiceSummary, error) {
+	kind := ""
+	if serverOnly {
+		kind = "server"
+	}
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: projectID,
+		Kind:      kind,
 		From:      from,
 		To:        to,
 		Limit:     10000,
@@ -96,7 +104,7 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 	var spanStats []repository.ServiceStats
 	if fbFrom, ok := narrowFallback(from, to); ok {
 		var err error
-		spanStats, err = s.repo.QueryServiceStatsFromSpans(projectID, fbFrom, to)
+		spanStats, err = s.repo.QueryServiceStatsFromSpans(projectID, fbFrom, to, kind)
 		if err != nil {
 			s.logger.Warn("failed to query service stats from spans", "error", err)
 		}
@@ -175,12 +183,13 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 }
 
 // ListOperations returns aggregated metrics per operation for a service.
-func (s *QueryService) ListOperations(ctx context.Context, projectID int64, service string, from, to time.Time) ([]OperationSummary, error) {
+// kind filters by span kind (e.g. "server" for entry points only); empty means all.
+func (s *QueryService) ListOperations(ctx context.Context, projectID int64, service string, from, to time.Time, kind string) ([]OperationSummary, error) {
 	_, span := tracer.Start(ctx, "query.list_operations")
 	span.SetAttributes(attribute.String("service", service))
 	defer span.End()
 
-	cacheKey := fmt.Sprintf("ops:%d:%s:%d:%d", projectID, service, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
+	cacheKey := fmt.Sprintf("ops:%d:%s:%s:%d:%d", projectID, service, kind, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
 	if cached, ok := cache.Get[[]OperationSummary](s.cache, ctx, cacheKey); ok {
 		return cached, nil
 	}
@@ -188,6 +197,7 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: projectID,
 		Service:   service,
+		Kind:      kind,
 		From:      from,
 		To:        to,
 		Limit:     10000,
@@ -225,7 +235,7 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 	var spanStats []repository.OperationStats
 	if fbFrom, ok := narrowFallback(from, to); ok {
 		var err error
-		spanStats, err = s.repo.QueryOperationStatsFromSpans(projectID, service, fbFrom, to)
+		spanStats, err = s.repo.QueryOperationStatsFromSpans(projectID, service, fbFrom, to, kind)
 		if err != nil {
 			s.logger.Warn("failed to query operation stats from spans", "error", err)
 		}

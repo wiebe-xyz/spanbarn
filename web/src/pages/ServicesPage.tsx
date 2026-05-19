@@ -55,6 +55,7 @@ export function ServicesPage(): ReactElement {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('spanCount')
   const [sortAsc, setSortAsc] = useState(false)
+  const [serverOnly, setServerOnly] = useState(true)
 
   const rangeHours = useMemo(() => {
     const r = RANGES.find((r) => r.value === range)
@@ -71,8 +72,8 @@ export function ServicesPage(): ReactElement {
 
     try {
       const [data, prev] = await Promise.all([
-        api.getServices(from, to),
-        api.getServices(prevFrom, prevTo),
+        api.getServices(from, to, serverOnly),
+        api.getServices(prevFrom, prevTo, serverOnly),
       ])
       setServices(data ?? [])
       setPrevServices(prev ?? [])
@@ -81,7 +82,7 @@ export function ServicesPage(): ReactElement {
     } finally {
       setLoading(false)
     }
-  }, [range])
+  }, [range, serverOnly])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
@@ -193,6 +194,23 @@ export function ServicesPage(): ReactElement {
               }}
             />
           </div>
+          <button
+            onClick={() => setServerOnly((v) => !v)}
+            title={serverOnly ? 'Showing server-kind entry points only. Click to show all span kinds.' : 'Showing all span kinds. Click to show entry points only.'}
+            style={{
+              padding: '5px 10px',
+              borderRadius: 6,
+              border: '1px solid var(--border)',
+              fontSize: 12,
+              cursor: 'pointer',
+              background: serverOnly ? 'var(--accent)' : 'var(--surface)',
+              color: serverOnly ? '#fff' : 'var(--text-muted)',
+              fontWeight: 500,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {serverOnly ? 'Entry points' : 'All spans'}
+          </button>
           <AutoRefresh value={refreshInterval} onChange={setRefreshInterval} onRefresh={fetchData} />
           <TimeRangeSelector value={range} onChange={setRange} />
         </div>

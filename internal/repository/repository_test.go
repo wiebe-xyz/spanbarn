@@ -493,7 +493,7 @@ func TestQueryOperationStatsFromSpans(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	stats, err := repo.QueryOperationStatsFromSpans(p.ID, "web", time.Time{}, time.Time{})
+	stats, err := repo.QueryOperationStatsFromSpans(p.ID, "web", time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("QueryOperationStatsFromSpans: %v", err)
 	}

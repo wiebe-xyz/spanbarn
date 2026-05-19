@@ -31,8 +31,9 @@ func (h *queryHandlers) handleServices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectID := parseInt64Param(r, "project_id", 0)
+	serverOnly := r.URL.Query().Get("server_only") == "true"
 
-	services, err := h.svc.ListServices(ctx, projectID, from, to)
+	services, err := h.svc.ListServices(ctx, projectID, from, to, serverOnly)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -63,7 +64,9 @@ func (h *queryHandlers) handleOperations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ops, err := h.svc.ListOperations(ctx, 0, svcName, from, to)
+	kind := r.URL.Query().Get("kind")
+
+	ops, err := h.svc.ListOperations(ctx, 0, svcName, from, to, kind)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -135,6 +138,7 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 		Status:        r.URL.Query().Get("status"),
 		MinDurationUs: parseInt64Param(r, "min_duration_us", 0),
 		MinSpans:      parseIntParam(r, "min_spans", 0),
+		RootOnly:      r.URL.Query().Get("root_only") == "true",
 		From:          from,
 		To:            to,
 		Limit:         limit,

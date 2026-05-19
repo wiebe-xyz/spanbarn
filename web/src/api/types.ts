@@ -235,6 +235,7 @@ export type TraceSearchParams = {
   status?: string
   minDurationUs?: number
   minSpans?: number
+  rootOnly?: boolean
   from: string
   to: string
   limit?: number

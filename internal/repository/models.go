@@ -72,6 +72,7 @@ type SpanFilter struct {
 	Operation   string
 	Status      string
 	MinDuration int64
+	RootOnly    bool
 	From        time.Time
 	To          time.Time
 	Limit       int
@@ -82,6 +83,7 @@ type AggregateFilter struct {
 	ProjectID int64
 	Service   string
 	Operation string
+	Kind      string
 	From      time.Time
 	To        time.Time
 	Limit     int

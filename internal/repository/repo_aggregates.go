@@ -81,6 +81,10 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 		where = append(where, "operation = ?")
 		args = append(args, f.Operation)
 	}
+	if f.Kind != "" {
+		where = append(where, "kind = ?")
+		args = append(args, f.Kind)
+	}
 	if !f.From.IsZero() {
 		where = append(where, "bucket >= ?")
 		args = append(args, f.From)

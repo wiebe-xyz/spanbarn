@@ -33,6 +33,7 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 		Operation:   filter.Operation,
 		Status:      filter.Status,
 		MinDuration: filter.MinDurationUs,
+		RootOnly:    filter.RootOnly,
 		From:        filter.From,
 		To:          filter.To,
 		Limit:       limit,

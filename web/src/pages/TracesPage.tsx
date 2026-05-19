@@ -18,6 +18,7 @@ type Filters = {
   status: string
   minDurationMs: string
   minSpans: string
+  rootOnly: boolean
   from: string
   to: string
 }
@@ -33,6 +34,7 @@ const defaultFilters = (): Filters => ({
   status: '',
   minDurationMs: '',
   minSpans: '',
+  rootOnly: true,
   from: toLocalDatetime(new Date(Date.now() - 3600_000)),
   to: toLocalDatetime(new Date()),
 })
@@ -45,6 +47,8 @@ function filtersFromParams(params: URLSearchParams): Filters {
     status: params.get('status') ?? defaults.status,
     minDurationMs: params.get('minDurationMs') ?? defaults.minDurationMs,
     minSpans: params.get('minSpans') ?? defaults.minSpans,
+    // rootOnly defaults to true; only stored in URL when explicitly turned off
+    rootOnly: params.get('rootOnly') !== 'false',
     from: params.get('from') ?? defaults.from,
     to: params.get('to') ?? defaults.to,
   }
@@ -57,6 +61,7 @@ function filtersToParams(filters: Filters): URLSearchParams {
   if (filters.status) params.set('status', filters.status)
   if (filters.minDurationMs) params.set('minDurationMs', filters.minDurationMs)
   if (filters.minSpans) params.set('minSpans', filters.minSpans)
+  if (!filters.rootOnly) params.set('rootOnly', 'false')
   params.set('from', filters.from)
   params.set('to', filters.to)
   return params
@@ -122,6 +127,7 @@ export function TracesPage(): ReactElement {
           const n = parseInt(filters.minSpans, 10)
           if (n > 0) params.set('min_spans', String(n))
         }
+        if (filters.rootOnly) params.set('root_only', 'true')
 
         const resp = await fetch(`${apiBase}/traces?${params}`)
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
@@ -147,7 +153,7 @@ export function TracesPage(): ReactElement {
     search(offset) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const updateFilter = (key: keyof Filters, value: string) => {
+  const updateFilter = (key: keyof Filters, value: string | boolean) => {
     setFilters((prev) => ({ ...prev, [key]: value }))
   }
 
@@ -299,6 +305,18 @@ export function TracesPage(): ReactElement {
               style={inputStyle}
             />
           </label>
+
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 12, color: '#9ca3af' }}>Root traces only</span>
+            <select
+              value={filters.rootOnly ? 'true' : 'false'}
+              onChange={(e) => updateFilter('rootOnly', e.target.value === 'true')}
+              style={inputStyle}
+            >
+              <option value="true">Yes (default)</option>
+              <option value="false">All traces</option>
+            </select>
+          </label>
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>
@@ -424,7 +442,15 @@ export function TracesPage(): ReactElement {
                 <tr
                   key={trace.traceId}
                   onClick={() => navigate(`/traces/${trace.traceId}`)}
-                  style={{ cursor: 'pointer', borderBottom: '1px solid #1f2937' }}
+                  style={{
+                    cursor: 'pointer',
+                    borderBottom: '1px solid #1f2937',
+                    borderLeft: trace.status === 'error'
+                      ? '3px solid #ef4444'
+                      : trace.durationUs > 2_000_000
+                        ? '3px solid #f97316'
+                        : '3px solid transparent',
+                  }}
                 >
                   <td style={tdStyle}>
                     <code style={{ fontSize: 12 }}>

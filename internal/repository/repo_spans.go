@@ -285,6 +285,14 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 	if minSpans > 0 {
 		having = fmt.Sprintf(" HAVING COUNT(DISTINCT span_id) >= %d", minSpans)
 	}
+	if f.RootOnly {
+		rootCheck := "MAX(CASE WHEN COALESCE(parent_span_id,'') = '' THEN 1 ELSE 0 END) = 1"
+		if having == "" {
+			having = " HAVING " + rootCheck
+		} else {
+			having += " AND " + rootCheck
+		}
+	}
 
 	// Args are reused for the two UNIONed selects (spans + error_samples).
 	doubled := make([]any, 0, len(args)*2)
@@ -512,13 +520,17 @@ type ServiceStats struct {
 	P99Us      int64
 }
 
-func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.Time) ([]ServiceStats, error) {
+func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.Time, kind string) ([]ServiceStats, error) {
 	var where []string
 	var args []any
 
 	if projectID != 0 {
 		where = append(where, "project_id = ?")
 		args = append(args, projectID)
+	}
+	if kind != "" {
+		where = append(where, "kind = ?")
+		args = append(args, kind)
 	}
 	if !from.IsZero() {
 		where = append(where, "ingested_at >= ?")
@@ -594,7 +606,7 @@ type OperationStats struct {
 	P99Us      int64
 }
 
-func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service string, from, to time.Time) ([]OperationStats, error) {
+func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service string, from, to time.Time, kind string) ([]OperationStats, error) {
 	var where []string
 	var args []any
 
@@ -604,6 +616,10 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 	if projectID != 0 {
 		where = append(where, "project_id = ?")
 		args = append(args, projectID)
+	}
+	if kind != "" {
+		where = append(where, "kind = ?")
+		args = append(args, kind)
 	}
 	if !from.IsZero() {
 		where = append(where, "ingested_at >= ?")

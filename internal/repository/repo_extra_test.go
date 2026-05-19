@@ -255,7 +255,7 @@ func TestQueryServiceStatsFromSpans(t *testing.T) {
 		makeSpan(p.ID, "t2", "s3", "worker", "job", "ok", 200),
 	})
 
-	stats, err := repo.QueryServiceStatsFromSpans(p.ID, time.Time{}, time.Time{})
+	stats, err := repo.QueryServiceStatsFromSpans(p.ID, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("QueryServiceStatsFromSpans: %v", err)
 	}

@@ -47,7 +47,7 @@ func TestListServices(t *testing.T) {
 	from := bucket.Add(-time.Hour)
 	to := bucket.Add(time.Hour)
 
-	result, err := svc.ListServices(context.Background(), 1, from, to)
+	result, err := svc.ListServices(context.Background(), 1, from, to, false)
 	if err != nil {
 		t.Fatalf("ListServices: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestListOperations(t *testing.T) {
 	from := bucket.Add(-time.Hour)
 	to := bucket.Add(time.Hour)
 
-	result, err := svc.ListOperations(context.Background(), 1, "web", from, to)
+	result, err := svc.ListOperations(context.Background(), 1, "web", from, to, "")
 	if err != nil {
 		t.Fatalf("ListOperations: %v", err)
 	}
@@ -405,7 +405,7 @@ func TestListServicesFromSpansPercentiles(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	result, err := svc.ListServices(context.Background(), 1, time.Time{}, time.Time{})
+	result, err := svc.ListServices(context.Background(), 1, time.Time{}, time.Time{}, false)
 	if err != nil {
 		t.Fatalf("ListServices: %v", err)
 	}

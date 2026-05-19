@@ -27,8 +27,9 @@ export function OperationsPage(): ReactElement {
   const [_timeseries, setTimeseries] = useState<TimeseriesBucket[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [kindFilter, setKindFilter] = useState('')
-  const [sortKey, setSortKey] = useState<string>('spanCount')
+  // 'server' by default surfaces entry-point operations; '' means all kinds.
+  const [kindFilter, setKindFilter] = useState('server')
+  const [sortKey, setSortKey] = useState<string>('score')
   const [sortAsc, setSortAsc] = useState(false)
 
   const fetchData = useCallback(async () => {
@@ -36,8 +37,8 @@ export function OperationsPage(): ReactElement {
     const { from, to } = getTimeRange(range)
     try {
       const [ops, ts] = await Promise.all([
-        api.getOperations(service, from, to),
-        // Get timeseries for the first operation or a wildcard
+        // kind filter is handled server-side so the backend only returns what we need
+        api.getOperations(service, from, to, kindFilter),
         api.getTimeseries(service, '*', from, to),
       ])
       setOperations(ops ?? [])
@@ -47,17 +48,12 @@ export function OperationsPage(): ReactElement {
     } finally {
       setLoading(false)
     }
-  }, [service, range])
+  }, [service, range, kindFilter])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     void fetchData()
   }, [fetchData])
-
-  const kinds = useMemo(() => {
-    const set = new Set(operations.map((o) => o.kind || 'internal'))
-    return Array.from(set).sort()
-  }, [operations])
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -68,14 +64,20 @@ export function OperationsPage(): ReactElement {
     }
   }
 
+  // Interestingness score: operations with errors or high tail-to-median ratio
+  // surface first. errorRate * 100 weights errors heavily; p99/p50 ratio catches
+  // operations that are usually fast but occasionally spike.
+  const enrichedOps = useMemo(() =>
+    operations.map((op) => ({
+      ...op,
+      score: op.errorRate * 100 + op.p99Us / Math.max(op.p50Us, 1),
+    })), [operations])
+
   const filteredOps = useMemo(() => {
-    let list = operations
+    let list = enrichedOps
     if (search) {
       const q = search.toLowerCase()
       list = list.filter((o) => o.operation.toLowerCase().includes(q) || (o.resource && o.resource.toLowerCase().includes(q)))
-    }
-    if (kindFilter) {
-      list = list.filter((o) => (o.kind || 'internal') === kindFilter)
     }
     const dir = sortAsc ? 1 : -1
     return [...list].sort((a, b) => {
@@ -84,7 +86,7 @@ export function OperationsPage(): ReactElement {
       if (typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv) * dir
       return ((av as number) - (bv as number)) * dir
     })
-  }, [operations, search, kindFilter, sortKey, sortAsc])
+  }, [enrichedOps, search, sortKey, sortAsc])
 
   const sortIcon = (key: string) => {
     if (sortKey !== key) return ''
@@ -152,10 +154,12 @@ export function OperationsPage(): ReactElement {
               outline: 'none',
             }}
           >
-            <option value="">All kinds</option>
-            {kinds.map((k) => (
-              <option key={k} value={k}>{k}</option>
-            ))}
+            <option value="">All</option>
+            <option value="server">Entry points (server)</option>
+            <option value="client">Outbound (client)</option>
+            <option value="internal">Internal</option>
+            <option value="producer">Producer</option>
+            <option value="consumer">Consumer</option>
           </select>
           <AutoRefresh value={refreshInterval} onChange={setRefreshInterval} onRefresh={fetchData} />
           <TimeRangeSelector value={range} onChange={setRange} />
@@ -228,7 +232,11 @@ export function OperationsPage(): ReactElement {
                 : filteredOps.map((op) => (
                     <tr
                       key={`${op.operation}-${op.resource}-${op.kind}`}
-                      style={{ cursor: 'pointer' }}
+                      style={{
+                        cursor: 'pointer',
+                        // Mute operations with no errors and sub-100ms p99 — they're not interesting
+                        opacity: op.errorRate === 0 && op.p99Us < 100_000 ? 0.45 : 1,
+                      }}
                       onClick={() =>
                         navigate(
                           `/services/${encodeURIComponent(service!)}/operations/${encodeURIComponent(op.operation)}`,

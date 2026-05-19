@@ -79,12 +79,12 @@ export const api = {
   logout: () =>
     fetchJSON<{ status: string }>('/api/v1/logout', { method: 'POST' }),
 
-  getServices: (from: string, to: string) =>
-    fetchJSON<ServiceSummary[]>(`/api/v1/services${qs({ from, to })}`),
+  getServices: (from: string, to: string, serverOnly = true) =>
+    fetchJSON<ServiceSummary[]>(`/api/v1/services${qs({ from, to, server_only: serverOnly ? 'true' : undefined })}`),
 
-  getOperations: (service: string, from: string, to: string) =>
+  getOperations: (service: string, from: string, to: string, kind = 'server') =>
     fetchJSON<OperationSummary[]>(
-      `/api/v1/services/${encodeURIComponent(service)}/operations${qs({ from, to })}`,
+      `/api/v1/services/${encodeURIComponent(service)}/operations${qs({ from, to, kind: kind || undefined })}`,
     ),
 
   getTimeseries: (
@@ -105,6 +105,7 @@ export const api = {
         operation: params.operation,
         status: params.status,
         min_duration_us: params.minDurationUs,
+        root_only: params.rootOnly ? 'true' : undefined,
         from: params.from,
         to: params.to,
         limit: params.limit,
