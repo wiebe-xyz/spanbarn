@@ -1,19 +1,33 @@
 package repository
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
 )
 
 func (r *Repository) ListAlerts(projectID int64) ([]Alert, error) {
-	rows, err := r.db.Query(
-		`SELECT id, project_id, service, operation, type, threshold,
-			comparison_window, cooldown_minutes, COALESCE(webhook_url,''), COALESCE(email,''),
-			enabled, last_triggered_at, created_at
-		FROM alerts WHERE project_id = ? ORDER BY id`,
-		projectID,
+	var (
+		rows *sql.Rows
+		err  error
 	)
+	if projectID == 0 {
+		rows, err = r.db.Query(
+			`SELECT id, project_id, service, operation, type, threshold,
+				comparison_window, cooldown_minutes, COALESCE(webhook_url,''), COALESCE(email,''),
+				enabled, last_triggered_at, created_at
+			FROM alerts ORDER BY id`,
+		)
+	} else {
+		rows, err = r.db.Query(
+			`SELECT id, project_id, service, operation, type, threshold,
+				comparison_window, cooldown_minutes, COALESCE(webhook_url,''), COALESCE(email,''),
+				enabled, last_triggered_at, created_at
+			FROM alerts WHERE project_id = ? ORDER BY id`,
+			projectID,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}

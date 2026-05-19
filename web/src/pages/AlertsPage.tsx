@@ -70,11 +70,17 @@ export function AlertsPage(): ReactElement {
   const [form, setForm] = useState<AlertFormState>(emptyForm())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [defaultProjectId, setDefaultProjectId] = useState(0)
 
   const load = useCallback(async () => {
     try {
-      const data = await api.listAlerts()
+      const [data, projects] = await Promise.all([
+        api.listAlerts(),
+        api.listProjects().catch(() => [] as { id: number; slug: string; name: string; status: string }[]),
+      ])
       setAlerts(data ?? [])
+      const active = (projects ?? []).find(p => p.status === 'active') ?? (projects ?? [])[0]
+      if (active) setDefaultProjectId(active.id)
     } catch {
       // handled by client
     } finally {
@@ -115,7 +121,7 @@ export function AlertsPage(): ReactElement {
     if (!form.threshold) { setError('Threshold is required'); return }
 
     const payload = {
-      projectId: 1,
+      projectId: defaultProjectId,
       service: form.service,
       operation: form.operation,
       type: form.type,

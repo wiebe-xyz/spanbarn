@@ -192,8 +192,11 @@ export const api = {
   deleteTraceExclusion: (id: number) =>
     fetchJSON<{ status: string }>(`/api/v1/trace-exclusions/${id}`, { method: 'DELETE' }),
 
-  listAlerts: (projectId = 1) =>
-    fetchJSON<Alert[]>(`/api/v1/alerts${qs({ project_id: projectId })}`),
+  listAlerts: (projectId = 0) =>
+    fetchJSON<Alert[]>(`/api/v1/alerts${qs({ project_id: projectId || undefined })}`),
+
+  listProjects: () =>
+    fetchJSON<{ id: number; slug: string; name: string; status: string }[]>('/api/v1/projects'),
 
   createAlert: (alert: Omit<Alert, 'id' | 'createdAt' | 'lastTriggeredAt'>) =>
     fetchJSON<Alert>('/api/v1/alerts', {
