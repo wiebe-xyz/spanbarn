@@ -8,24 +8,29 @@ spec:
   entryPoints:
     - websecure
   routes:
-    # Ingest paths — always handled by the ingest pod (spools to disk, forwards).
+    # Ingest paths — always handled by the reader/ingest pod.
+    # priority: 101 ensures these beat the generic POST /api rule (priority 100).
     - match: Host(`spanbarn.wiebe.xyz`) && PathPrefix(`/v1/traces`)
       kind: Rule
+      priority: 101
       services:
         - name: spanbarn-ingest
           port: 8080
     - match: Host(`spanbarn.wiebe.xyz`) && PathPrefix(`/api/v1/spans`)
       kind: Rule
+      priority: 101
       services:
         - name: spanbarn-ingest
           port: 8080
     - match: Host(`spanbarn.wiebe.xyz`) && PathPrefix(`/api/v1/telemetry`)
       kind: Rule
+      priority: 101
       services:
         - name: spanbarn-ingest
           port: 8080
     - match: Host(`spanbarn.wiebe.xyz`) && PathPrefix(`/api/v1/client-errors`)
       kind: Rule
+      priority: 101
       services:
         - name: spanbarn-ingest
           port: 8080

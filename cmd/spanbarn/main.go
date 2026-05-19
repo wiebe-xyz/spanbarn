@@ -439,13 +439,16 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 }
 
 // runWriterMode drains the Redis write queue, writes spans to SQLite, and runs
-// background workers (aggregation, retention, alerts). It serves only a health
-// endpoint so k8s probes work. A single writer pod ensures SQLite has no write
-// contention.
+// background workers (aggregation, retention, alerts). It also serves the full
+// mutation API (POST/PUT/DELETE) and login so that the Traefik ingress rule
+// that routes writes to the spanbarn service continues to work.
 //
-// The health endpoint is started first so k8s startup/liveness probes pass
-// immediately. The Redis queue connection and migrations happen concurrently —
-// the worker goroutine is launched once both are ready.
+// Startup order:
+//  1. Health endpoint starts immediately (k8s probes pass during migrations)
+//  2. DB open + migrations
+//  3. Read-only DB for query service (reads don't block the write connection)
+//  4. Full API server wired into the same mux (mutations + login now available)
+//  5. Redis queue connect + workers
 func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	if cfg.RedisQueueURL == "" {
 		return fmt.Errorf("SPANBARN_REDIS_QUEUE_URL is required in writer mode")
@@ -453,10 +456,14 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 
 	logger.Info("starting in writer mode", "redis_queue", cfg.RedisQueueURL)
 
+	if cfg.SessionSecret == "" {
+		slog.Warn("SPANBARN_SESSION_SECRET is not set; sessions will not persist across restarts")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Start the health endpoint immediately so k8s probes pass during startup.
+	// Step 1: health endpoint up immediately so startup probes pass during migrations.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -466,17 +473,18 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	httpServer := &http.Server{
 		Addr:         cfg.Addr,
 		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	httpErrCh := make(chan error, 1)
 	go func() {
-		logger.Info("writer health endpoint", "addr", cfg.Addr)
+		logger.Info("writer listening", "addr", cfg.Addr)
 		httpErrCh <- httpServer.ListenAndServe()
 	}()
 
-	// Open DB and run migrations (fast if already up-to-date).
+	// Step 2: write DB — MaxOpenConns(1), used by worker/retention/aggregation/alerts.
 	db, err := repository.NewDB(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -499,7 +507,78 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		}
 	}
 
-	// Connect to the write queue, retrying until the Redis pod is ready.
+	// Step 3: read-only DB for the query service — reads don't compete with writes.
+	roDB, err := repository.NewReadOnlyDB(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("open read-only database: %w", err)
+	}
+	defer roDB.Close()
+	queryRepo := repository.NewRepository(roDB.DB)
+	if cfg.QueryTimeoutSeconds > 0 {
+		queryRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
+	}
+
+	// Step 4: full API server wired into the already-listening mux.
+	apiKeyHash := cfg.APIKeySHA256
+	if apiKeyHash == "" && cfg.APIKey != "" {
+		apiKeyHash = auth.HashKey(cfg.APIKey)
+	}
+	authorizer := auth.NewAuthorizer(apiKeyHash, &keyLookupAdapter{repo: repo}, logger)
+	userAuth := auth.NewUserAuthenticator(&userLookupAdapter{repo: repo}, logger)
+	sessionMgr := auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
+
+	querySvc := service.NewQueryService(queryRepo, logger)
+	{
+		ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
+		var store cache.Store
+		if cfg.RedisURL != "" {
+			rs, cacheErr := cache.NewRedisStore(cfg.RedisURL)
+			if cacheErr != nil {
+				logger.Warn("redis cache unavailable, falling back to in-memory", "error", cacheErr)
+				store = cache.NewMemoryStore()
+			} else {
+				store = rs
+			}
+		} else {
+			store = cache.NewMemoryStore()
+		}
+		queryCache := cache.New(store, ttl)
+		querySvc.SetCache(queryCache)
+		defer queryCache.Close()
+	}
+
+	serverCfg := api.ServerConfig{
+		APIKey:             cfg.APIKey,
+		MaxBodyBytes:       cfg.MaxBodyBytes,
+		AllowedOrigins:     cfg.AllowedOrigins,
+		Version:            Version,
+		MetricsToken:       cfg.MetricsToken,
+		LoginRate:          cfg.LoginRatePerMinute,
+		IngestRate:         cfg.IngestRatePerMinute,
+		APIRate:            cfg.APIRatePerMinute,
+		SessionSecret:      cfg.SessionSecret,
+		PublicURL:          cfg.PublicURL,
+		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
+		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
+		FunnelBarnProject:  cfg.FunnelBarnProject,
+	}
+	// No ingest handler — OTLP goes to the reader pod per ingress rules.
+	apiServer := api.NewServerWithQuery(serverCfg, nil, querySvc, sessionMgr, logger,
+		api.WithRepository(repo),
+		api.WithAuthorizer(authorizer),
+		api.WithPaths(cfg.DBPath, cfg.SpoolDir),
+		api.WithCache(querySvc.Cache()),
+	)
+	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
+		apiServer.SetOIDCClient(oidcClient)
+	}
+	loginRL := api.RateLimitMiddleware(api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), "login")
+	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr)))
+	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+	mux.Handle("/", apiServer.Handler())
+	logger.Info("writer API ready")
+
+	// Step 5: Redis queue connect + workers.
 	logger.Info("connecting to write queue (retrying until ready)", "url", cfg.RedisQueueURL)
 	writeQueue, err := queue.NewRedisQueueWithRetry(ctx, cfg.RedisQueueURL)
 	if err != nil {
@@ -538,12 +617,12 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	defer alertCancel()
 	safeGo("alert-runner", &wg, func() { alertRunner.Run(alertCtx) })
 
-	errCh := httpErrCh
+	api.WarmCaches(ctx, queryRepo, querySvc.Cache(), logger)
 
 	select {
 	case <-ctx.Done():
 		logger.Info("shutting down writer")
-	case err := <-errCh:
+	case err := <-httpErrCh:
 		if !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
@@ -554,7 +633,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		logger.Error("writer health server shutdown error", "error", err)
+		logger.Error("writer shutdown error", "error", err)
 	}
 
 	alertCancel()

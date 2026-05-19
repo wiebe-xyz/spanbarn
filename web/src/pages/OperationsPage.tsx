@@ -232,11 +232,7 @@ export function OperationsPage(): ReactElement {
                 : filteredOps.map((op) => (
                     <tr
                       key={`${op.operation}-${op.resource}-${op.kind}`}
-                      style={{
-                        cursor: 'pointer',
-                        // Mute operations with no errors and sub-100ms p99 — they're not interesting
-                        opacity: op.errorRate === 0 && op.p99Us < 100_000 ? 0.45 : 1,
-                      }}
+                      style={{ cursor: 'pointer' }}
                       onClick={() =>
                         navigate(
                           `/services/${encodeURIComponent(service!)}/operations/${encodeURIComponent(op.operation)}`,
@@ -246,8 +242,6 @@ export function OperationsPage(): ReactElement {
                       <td style={{ maxWidth: 300 }}>
                         <span
                           style={{
-                            fontWeight: 600,
-                            color: 'var(--accent)',
                             display: 'block',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
