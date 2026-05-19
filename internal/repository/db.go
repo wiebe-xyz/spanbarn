@@ -1,17 +1,34 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/url"
 	"strings"
 
+	"github.com/XSAM/otelsql"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	_ "modernc.org/sqlite"
 )
 
 // DB wraps a *sql.DB connection to SQLite.
 type DB struct {
 	*sql.DB
+}
+
+func sqliteSpanName(_ context.Context, _ otelsql.Method, query string) string {
+	if query != "" {
+		if i := strings.IndexByte(query, ' '); i > 0 {
+			return "sqlite." + strings.ToLower(strings.TrimSpace(query[:i]))
+		}
+	}
+	return "sqlite.exec"
+}
+
+var otelOpts = []otelsql.Option{
+	otelsql.WithAttributes(semconv.DBSystemSqlite),
+	otelsql.WithSpanNameFormatter(sqliteSpanName),
 }
 
 // Pragmas are applied via DSN query params (_pragma=...) so they take effect on
@@ -43,11 +60,13 @@ func buildDSN(dbPath string, readOnly bool) string {
 // deadlock each other — SQLite returns SQLITE_BUSY immediately, before busy_timeout can help.
 // Serialising through one connection means the second writer waits in Go's pool (not in SQLite).
 func NewDB(dbPath string) (*DB, error) {
-	db, err := sql.Open("sqlite", buildDSN(dbPath, false))
+	db, err := otelsql.Open("sqlite", buildDSN(dbPath, false), otelOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", dbPath, err)
 	}
 	db.SetMaxOpenConns(1)
+	// Expose connection pool stats as OTel metrics (best-effort).
+	_, _ = otelsql.RegisterDBStatsMetrics(db, otelsql.WithAttributes(semconv.DBSystemSqlite))
 	return &DB{DB: db}, nil
 }
 
@@ -55,7 +74,7 @@ func NewDB(dbPath string) (*DB, error) {
 // Safe to use concurrently with a writer process on the same file when WAL mode
 // is active on that file.
 func NewReadOnlyDB(dbPath string) (*DB, error) {
-	db, err := sql.Open("sqlite", buildDSN(dbPath, true))
+	db, err := otelsql.Open("sqlite", buildDSN(dbPath, true), otelOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite read-only %s: %w", dbPath, err)
 	}
