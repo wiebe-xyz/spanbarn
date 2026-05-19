@@ -41,6 +41,37 @@ func NewRedisQueue(redisURL string) (*RedisQueue, error) {
 	return &RedisQueue{client: client}, nil
 }
 
+// NewRedisQueueWithRetry connects to Redis at redisURL, retrying with backoff
+// until ctx is cancelled or the connection succeeds. Used in writer mode where
+// the Redis queue pod may start after the writer pod during a rolling deploy.
+func NewRedisQueueWithRetry(ctx context.Context, redisURL string) (*RedisQueue, error) {
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("queue: parse redis url: %w", err)
+	}
+
+	backoff := time.Second
+	for {
+		client := redis.NewClient(opts)
+		pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err := client.Ping(pingCtx).Err()
+		cancel()
+		if err == nil {
+			return &RedisQueue{client: client}, nil
+		}
+		client.Close()
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("queue: context cancelled waiting for redis: %w", ctx.Err())
+		case <-time.After(backoff):
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+		}
+	}
+}
+
 // Publish serialises records as JSON and LPUSHes them to the queue in batches
 // of up to maxRecordsPerItem. Called by the RedisForwarder in reader mode.
 func (q *RedisQueue) Publish(ctx context.Context, records []model.SpanRecord) error {

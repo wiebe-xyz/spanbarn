@@ -286,11 +286,16 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 	logger.Info("starting in reader mode", "redis_queue", cfg.RedisQueueURL)
 
-	writeQueue, err := queue.NewRedisQueue(cfg.RedisQueueURL)
+	readerCtx, readerStop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer readerStop()
+
+	logger.Info("connecting to write queue (retrying until ready)", "url", cfg.RedisQueueURL)
+	writeQueue, err := queue.NewRedisQueueWithRetry(readerCtx, cfg.RedisQueueURL)
 	if err != nil {
 		return fmt.Errorf("connect to write queue: %w", err)
 	}
 	defer writeQueue.Close()
+	logger.Info("write queue connected")
 
 	eventSpool, err := spool.NewSpool(cfg.SpoolDir, cfg.MaxSpoolBytes)
 	if err != nil {
@@ -301,14 +306,12 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	ingestQueue := ingest.NewQueue(32768)
 	ingestHandler := ingest.NewHandler(ingestQueue, eventSpool, 5*time.Millisecond, logger)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	ingestHandler.Start(ctx)
+	ingestHandler.Start(readerCtx)
 
 	var wg sync.WaitGroup
 	fwd := forward.NewRedisForwarder(eventSpool, writeQueue, logger)
-	safeGo("redis-forwarder", &wg, func() { fwd.Run(ctx) })
+	safeGo("redis-forwarder", &wg, func() { fwd.Run(readerCtx) })
+
 
 	var (
 		roRepo     *repository.Repository
@@ -384,7 +387,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	if roRepo != nil && queryCache != nil {
-		api.WarmCaches(ctx, roRepo, queryCache, logger)
+		api.WarmCaches(readerCtx, roRepo, queryCache, logger)
 	}
 
 	mux := http.NewServeMux()
@@ -413,7 +416,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	}()
 
 	select {
-	case <-ctx.Done():
+	case <-readerCtx.Done():
 		logger.Info("shutting down reader")
 	case err := <-errCh:
 		if !errors.Is(err, http.ErrServerClosed) {
@@ -468,14 +471,16 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		}
 	}
 
-	writeQueue, err := queue.NewRedisQueue(cfg.RedisQueueURL)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	logger.Info("connecting to write queue (retrying until ready)", "url", cfg.RedisQueueURL)
+	writeQueue, err := queue.NewRedisQueueWithRetry(ctx, cfg.RedisQueueURL)
 	if err != nil {
 		return fmt.Errorf("connect to write queue: %w", err)
 	}
 	defer writeQueue.Close()
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	logger.Info("write queue connected")
 
 	var wg sync.WaitGroup
 
