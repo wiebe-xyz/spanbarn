@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Ban } from 'lucide-react'
 import type { SavedQuery, TraceSummary } from '../api/types'
@@ -84,13 +84,6 @@ export function TracesPage(): ReactElement {
   const [savingQuery, setSavingQuery] = useState(false)
   const [excludedOps, setExcludedOps] = useState<string[]>([])
 
-  const visibleTraces = useMemo(
-    () => excludedOps.length === 0
-      ? traces
-      : traces.filter((t) => !excludedOps.includes(t.rootSpanName)),
-    [traces, excludedOps],
-  )
-
   const excludeOp = (op: string) => setExcludedOps((prev) => prev.includes(op) ? prev : [...prev, op])
   const unexcludeOp = (op: string) => setExcludedOps((prev) => prev.filter((o) => o !== op))
 
@@ -140,6 +133,7 @@ export function TracesPage(): ReactElement {
           if (n > 0) params.set('min_spans', String(n))
         }
         if (filters.rootOnly) params.set('root_only', 'true')
+        for (const op of excludedOps) params.append('exclude_operation', op)
 
         const resp = await fetch(`${apiBase}/traces?${params}`)
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
@@ -157,13 +151,18 @@ export function TracesPage(): ReactElement {
         setLoading(false)
       }
     },
-    [filters, setSearchParams],
+    [filters, excludedOps, setSearchParams],
   )
 
   // Initial search
   useEffect(() => {
     search(offset) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-search from page 1 whenever the exclude list changes
+  useEffect(() => {
+    search(0) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
+  }, [excludedOps]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateFilter = (key: keyof Filters, value: string | boolean) => {
     setFilters((prev) => ({ ...prev, [key]: value }))
@@ -474,15 +473,15 @@ export function TracesPage(): ReactElement {
                 </td>
               </tr>
             )}
-            {!loading && visibleTraces.length === 0 && (
+            {!loading && traces.length === 0 && (
               <tr>
                 <td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280' }}>
-                  {traces.length > 0 ? 'All traces excluded — clear filters above' : 'No traces found'}
+                  No traces found
                 </td>
               </tr>
             )}
             {!loading &&
-              visibleTraces.map((trace) => (
+              traces.map((trace) => (
                 <tr
                   key={trace.traceId}
                   onClick={() => navigate(`/traces/${trace.traceId}`)}
@@ -538,7 +537,7 @@ export function TracesPage(): ReactElement {
       </div>
 
       {/* Pagination */}
-      {visibleTraces.length > 0 && (
+      {traces.length > 0 && (
         <div
           style={{
             display: 'flex',

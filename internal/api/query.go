@@ -133,16 +133,17 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := service.TraceSearchFilter{
-		Service:       r.URL.Query().Get("service"),
-		Operation:     r.URL.Query().Get("operation"),
-		Status:        r.URL.Query().Get("status"),
-		MinDurationUs: parseInt64Param(r, "min_duration_us", 0),
-		MinSpans:      parseIntParam(r, "min_spans", 0),
-		RootOnly:      r.URL.Query().Get("root_only") == "true",
-		From:          from,
-		To:            to,
-		Limit:         limit,
-		Offset:        parseIntParam(r, "offset", 0),
+		Service:           r.URL.Query().Get("service"),
+		Operation:         r.URL.Query().Get("operation"),
+		Status:            r.URL.Query().Get("status"),
+		MinDurationUs:     parseInt64Param(r, "min_duration_us", 0),
+		MinSpans:          parseIntParam(r, "min_spans", 0),
+		RootOnly:          r.URL.Query().Get("root_only") == "true",
+		ExcludeOperations: r.URL.Query()["exclude_operation"],
+		From:              from,
+		To:                to,
+		Limit:             limit,
+		Offset:            parseIntParam(r, "offset", 0),
 	}
 
 	traces, err := h.svc.SearchTraces(ctx, filter)

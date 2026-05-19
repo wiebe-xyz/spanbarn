@@ -159,15 +159,16 @@ type PromptSummary struct {
 
 // TraceSearchFilter holds parameters for searching traces.
 type TraceSearchFilter struct {
-	ProjectID     int64
-	Service       string
-	Operation     string
-	Status        string
-	MinDurationUs int64
-	MinSpans      int
-	RootOnly      bool
-	From          time.Time
-	To            time.Time
-	Limit         int
-	Offset        int
+	ProjectID         int64
+	Service           string
+	Operation         string
+	Status            string
+	MinDurationUs     int64
+	MinSpans          int
+	RootOnly          bool
+	ExcludeOperations []string
+	From              time.Time
+	To                time.Time
+	Limit             int
+	Offset            int
 }

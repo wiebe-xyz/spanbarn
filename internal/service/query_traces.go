@@ -28,16 +28,17 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 		limit = 50
 	}
 	sf := repository.SpanFilter{
-		ProjectID:   filter.ProjectID,
-		Service:     filter.Service,
-		Operation:   filter.Operation,
-		Status:      filter.Status,
-		MinDuration: filter.MinDurationUs,
-		RootOnly:    filter.RootOnly,
-		From:        filter.From,
-		To:          filter.To,
-		Limit:       limit,
-		Offset:      filter.Offset,
+		ProjectID:         filter.ProjectID,
+		Service:           filter.Service,
+		Operation:         filter.Operation,
+		Status:            filter.Status,
+		MinDuration:       filter.MinDurationUs,
+		RootOnly:          filter.RootOnly,
+		ExcludeOperations: filter.ExcludeOperations,
+		From:              filter.From,
+		To:                filter.To,
+		Limit:             limit,
+		Offset:            filter.Offset,
 	}
 
 	rows, err := s.repo.SearchTraceSummaries(sf, filter.MinSpans)

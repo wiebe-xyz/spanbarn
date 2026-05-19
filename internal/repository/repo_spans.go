@@ -264,6 +264,14 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 		where = append(where, "duration_us >= ?")
 		args = append(args, f.MinDuration)
 	}
+	if len(f.ExcludeOperations) > 0 {
+		placeholders := strings.Repeat("?,", len(f.ExcludeOperations))
+		placeholders = placeholders[:len(placeholders)-1]
+		where = append(where, "name NOT IN ("+placeholders+")")
+		for _, op := range f.ExcludeOperations {
+			args = append(args, op)
+		}
+	}
 	if !f.From.IsZero() {
 		where = append(where, "ingested_at >= ?")
 		args = append(args, f.From)

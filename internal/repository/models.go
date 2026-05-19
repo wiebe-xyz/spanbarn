@@ -66,17 +66,18 @@ type Aggregate struct {
 }
 
 type SpanFilter struct {
-	ProjectID   int64
-	TraceID     string
-	Service     string
-	Operation   string
-	Status      string
-	MinDuration int64
-	RootOnly    bool
-	From        time.Time
-	To          time.Time
-	Limit       int
-	Offset      int
+	ProjectID         int64
+	TraceID           string
+	Service           string
+	Operation         string
+	Status            string
+	MinDuration       int64
+	RootOnly          bool
+	ExcludeOperations []string
+	From              time.Time
+	To                time.Time
+	Limit             int
+	Offset            int
 }
 
 type AggregateFilter struct {
