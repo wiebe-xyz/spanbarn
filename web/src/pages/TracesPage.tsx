@@ -115,7 +115,7 @@ export function TracesPage(): ReactElement {
 
   useEffect(() => {
     api.getSavedQueries().then(setSavedQueries).catch(() => {})
-    void loadExclusions()
+    void loadExclusions() // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   }, [loadExclusions])
 
   // Fetch services for dropdown
@@ -213,7 +213,7 @@ export function TracesPage(): ReactElement {
   // Initial load
   useEffect(() => {
     if (viewMode === 'grouped') {
-      void searchGroups()
+      void searchGroups() // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     } else {
       void searchTraces(offset)
     }
@@ -222,14 +222,14 @@ export function TracesPage(): ReactElement {
   // When viewMode switches to 'detail' (after clicking a group row), fetch traces
   useEffect(() => {
     if (viewMode === 'detail') {
-      void searchTraces(0)
+      void searchTraces(0) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     }
   }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-search from page 1 when exclusions change (only in detail mode; groups load via own mechanism)
   useEffect(() => {
     if (viewMode === 'detail') {
-      void searchTraces(0)
+      void searchTraces(0) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     }
   }, [exclusions]) // eslint-disable-line react-hooks/exhaustive-deps
 

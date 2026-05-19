@@ -567,3 +567,70 @@ func TestGetDependencyTraces(t *testing.T) {
 		t.Fatalf("expected 0 traces for nonexistent, got %d", len(traces))
 	}
 }
+
+func TestListTraceGroups(t *testing.T) {
+	repo := setupTestRepo(t)
+	svc := NewQueryService(repo, nil)
+
+	// Insert root spans across two operations, one with errors.
+	makeSpan := func(projectID int64, traceID, spanID, service, name, status string, parentSpanID string) repository.Span {
+		return repository.Span{
+			ProjectID:    projectID,
+			TraceID:      traceID,
+			SpanID:       spanID,
+			ParentSpanID: parentSpanID,
+			Name:         name,
+			Service:      service,
+			Resource:     "/",
+			Kind:         "server",
+			Status:       status,
+			StartTimeUs:  time.Now().UnixMicro(),
+			DurationUs:   1000,
+			Attributes:   `{}`,
+			Events:       `[]`,
+		}
+	}
+
+	_ = repo.InsertSpans([]repository.Span{
+		makeSpan(1, "t1", "s1", "web", "GET /", "ok", ""),
+		makeSpan(1, "t2", "s2", "web", "GET /", "error", ""),
+		makeSpan(1, "t3", "s3", "web", "POST /users", "ok", ""),
+		makeSpan(1, "t1", "s4", "web", "db.query", "ok", "s1"), // child, excluded from groups
+	})
+
+	groups, err := svc.ListTraceGroups(context.Background(), TraceSearchFilter{
+		ProjectID: 1,
+		From:      time.Time{},
+		To:        time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("ListTraceGroups: %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
+	}
+
+	// Errors-first sort: GET / has errorCount=1, POST /users has 0.
+	if groups[0].Operation != "GET /" {
+		t.Errorf("expected GET / first (has errors), got %q", groups[0].Operation)
+	}
+	if groups[0].ErrorCount != 1 {
+		t.Errorf("expected 1 error in GET /, got %d", groups[0].ErrorCount)
+	}
+	if groups[0].Count != 2 {
+		t.Errorf("expected count 2 for GET /, got %d", groups[0].Count)
+	}
+
+	// Empty result when nothing matches filter.
+	none, err := svc.ListTraceGroups(context.Background(), TraceSearchFilter{
+		ProjectID: 1,
+		Status:    "error",
+		Service:   "nonexistent",
+	})
+	if err != nil {
+		t.Fatalf("ListTraceGroups empty: %v", err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("expected 0, got %d", len(none))
+	}
+}

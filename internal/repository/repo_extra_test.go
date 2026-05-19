@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -369,5 +370,162 @@ func TestPromptRecords(t *testing.T) {
 	}
 	if n != 2 {
 		t.Fatalf("expected 2 deleted, got %d", n)
+	}
+}
+
+func TestSearchTraceSummaries(t *testing.T) {
+	repo := setupTestDB(t)
+	p, _ := repo.CreateProject("proj", "Proj")
+
+	// Three traces: error trace (2 spans), ok trace (1 span), health trace (1 span, excluded).
+	root1 := makeSpan(p.ID, "trace-err", "span-r1", "web", "GET /slow", "error", 5000)
+	child1 := makeSpan(p.ID, "trace-err", "span-c1", "web", "db.query", "ok", 1000)
+	child1.ParentSpanID = "span-r1"
+	root2 := makeSpan(p.ID, "trace-ok", "span-r2", "api", "POST /create", "ok", 500)
+	rootHealth := makeSpan(p.ID, "trace-health", "span-h1", "probe", "GET /health", "ok", 1)
+
+	_ = repo.InsertSpans([]Span{root1, child1, root2, rootHealth})
+
+	rows, err := repo.SearchTraceSummaries(SpanFilter{ProjectID: p.ID, Limit: 10}, 0)
+	if err != nil {
+		t.Fatalf("SearchTraceSummaries: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 traces, got %d", len(rows))
+	}
+
+	// Errors-first sort.
+	rows, err = repo.SearchTraceSummaries(SpanFilter{
+		ProjectID: p.ID, Limit: 10, SortErrorsFirst: true,
+	}, 0)
+	if err != nil {
+		t.Fatalf("SearchTraceSummaries SortErrorsFirst: %v", err)
+	}
+	if len(rows) == 0 || !rows[0].HasError {
+		t.Fatalf("expected error trace first")
+	}
+
+	// RootOnly filter: all 3 traces have root spans.
+	rows, err = repo.SearchTraceSummaries(SpanFilter{
+		ProjectID: p.ID, Limit: 10, RootOnly: true,
+	}, 0)
+	if err != nil {
+		t.Fatalf("SearchTraceSummaries RootOnly: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 root traces, got %d", len(rows))
+	}
+
+	// ExcludeOperations removes the single-span health trace.
+	rows, err = repo.SearchTraceSummaries(SpanFilter{
+		ProjectID: p.ID, Limit: 10, ExcludeOperations: []string{"GET /health"},
+	}, 0)
+	if err != nil {
+		t.Fatalf("SearchTraceSummaries ExcludeOperations: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 traces after health exclusion, got %d", len(rows))
+	}
+}
+
+func TestQueryRootSpanGroups(t *testing.T) {
+	repo := setupTestDB(t)
+	p, _ := repo.CreateProject("proj", "Proj")
+
+	root1 := makeSpan(p.ID, "t1", "s1", "web", "GET /", "ok", 1000)
+	root2 := makeSpan(p.ID, "t2", "s2", "web", "GET /", "error", 2000)
+	root3 := makeSpan(p.ID, "t3", "s3", "api", "POST /users", "ok", 500)
+	child := makeSpan(p.ID, "t1", "s4", "web", "db.query", "ok", 100)
+	child.ParentSpanID = "s1"
+
+	_ = repo.InsertSpans([]Span{root1, root2, root3, child})
+
+	groups, err := repo.QueryRootSpanGroups(context.Background(), SpanFilter{
+		ProjectID: p.ID,
+	})
+	if err != nil {
+		t.Fatalf("QueryRootSpanGroups: %v", err)
+	}
+	// Only root spans (no parent): root1, root2, root3 — child excluded.
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups (GET / and POST /users), got %d", len(groups))
+	}
+
+	// Find GET / group — should have 2 entries (root1 + root2) and 1 error.
+	var getGroup *RootSpanGroup
+	for i := range groups {
+		if groups[i].Operation == "GET /" {
+			getGroup = &groups[i]
+		}
+	}
+	if getGroup == nil {
+		t.Fatal("GET / group not found")
+	}
+	if getGroup.Count != 2 {
+		t.Fatalf("expected count 2, got %d", getGroup.Count)
+	}
+	if getGroup.ErrorCount != 1 {
+		t.Fatalf("expected 1 error, got %d", getGroup.ErrorCount)
+	}
+	if len(getGroup.Durations) != 2 {
+		t.Fatalf("expected 2 durations, got %d", len(getGroup.Durations))
+	}
+
+	// ExcludeOperations.
+	groups, err = repo.QueryRootSpanGroups(context.Background(), SpanFilter{
+		ProjectID: p.ID, ExcludeOperations: []string{"GET /"},
+	})
+	if err != nil {
+		t.Fatalf("QueryRootSpanGroups exclude: %v", err)
+	}
+	if len(groups) != 1 || groups[0].Operation != "POST /users" {
+		t.Fatalf("expected only POST /users, got %v", groups)
+	}
+}
+
+func TestTraceExclusions(t *testing.T) {
+	repo := setupTestDB(t)
+	p, _ := repo.CreateProject("proj", "Proj")
+
+	// Empty.
+	excls, err := repo.ListTraceExclusions(p.ID)
+	if err != nil {
+		t.Fatalf("ListTraceExclusions empty: %v", err)
+	}
+	if len(excls) != 0 {
+		t.Fatalf("expected 0, got %d", len(excls))
+	}
+
+	// Create.
+	id1, err := repo.CreateTraceExclusion(p.ID, "GET /health")
+	if err != nil {
+		t.Fatalf("CreateTraceExclusion: %v", err)
+	}
+	if id1 == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+	_, _ = repo.CreateTraceExclusion(p.ID, "GET /metrics")
+
+	excls, _ = repo.ListTraceExclusions(p.ID)
+	if len(excls) != 2 {
+		t.Fatalf("expected 2, got %d", len(excls))
+	}
+
+	// ExcludedOperations.
+	ops, err := repo.ExcludedOperations(p.ID)
+	if err != nil {
+		t.Fatalf("ExcludedOperations: %v", err)
+	}
+	if len(ops) != 2 {
+		t.Fatalf("expected 2 ops, got %d", len(ops))
+	}
+
+	// Delete.
+	if err := repo.DeleteTraceExclusion(id1); err != nil {
+		t.Fatalf("DeleteTraceExclusion: %v", err)
+	}
+	excls, _ = repo.ListTraceExclusions(p.ID)
+	if len(excls) != 1 {
+		t.Fatalf("expected 1 after delete, got %d", len(excls))
 	}
 }
