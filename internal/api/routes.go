@@ -57,6 +57,7 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/services", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleServices)))))
 		s.mux.Handle("/api/v1/services/", apiRL(sessionAuth(cache60(qh))))
 		s.mux.Handle("/api/v1/traces", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleTraces)))))
+		s.mux.Handle("/api/v1/traces/groups", apiRL(sessionAuth(http.HandlerFunc(qh.handleTraceGroups))))
 		s.mux.Handle("/api/v1/traces/", apiRL(sessionAuth(http.HandlerFunc(qh.handleTraceDetail))))
 		s.mux.Handle("/api/v1/dependencies", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleDependencies)))))
 		s.mux.Handle("/api/v1/database", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleDatabaseQueries)))))
