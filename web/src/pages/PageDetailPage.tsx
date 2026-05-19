@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, type ReactElement } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, useSearchParams, Link } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
 import {
   LineChart,
@@ -60,6 +60,8 @@ type MetricTimeseries = {
 
 export function PageDetailPage(): ReactElement {
   const { page } = useParams<{ page: string }>()
+  const [searchParams] = useSearchParams()
+  const service = searchParams.get('service') ?? ''
   const decodedPage = decodeURIComponent(page ?? '/')
   const { range, setRange } = useTimeRange()
   const [metrics, setMetrics] = useState<MetricTimeseries[]>([])
@@ -70,8 +72,8 @@ export function PageDetailPage(): ReactElement {
     const { from, to } = getTimeRange(range)
     try {
       const [vitals, ...tsResults] = await Promise.all([
-        api.getWebVitals(from, to),
-        ...METRIC_ORDER.map((m) => api.getWebVitalsTimeseries(decodedPage, m, from, to)),
+        api.getWebVitals(from, to, service || undefined),
+        ...METRIC_ORDER.map((m) => api.getWebVitalsTimeseries(decodedPage, m, from, to, undefined, service || undefined)),
       ])
 
       const summaries = (vitals ?? []).filter((v: WebVitalSummary) => v.page === decodedPage)
@@ -89,7 +91,7 @@ export function PageDetailPage(): ReactElement {
     } finally {
       setLoading(false)
     }
-  }, [page, decodedPage, range])
+  }, [page, decodedPage, range, service])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
@@ -111,6 +113,12 @@ export function PageDetailPage(): ReactElement {
     <div>
       <div className="breadcrumb">
         <Link to="/pages">Pages</Link>
+        {service && (
+          <>
+            <ChevronRight size={14} />
+            <span>{service}</span>
+          </>
+        )}
         <ChevronRight size={14} />
         <span style={{ color: 'var(--text)' }}>{decodedPage}</span>
       </div>

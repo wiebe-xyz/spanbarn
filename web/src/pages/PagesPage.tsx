@@ -112,11 +112,11 @@ export function PagesPage(): ReactElement {
     const fetches: Promise<void>[] = []
 
     for (const v of vitals) {
-      const key = `${v.page}:${v.metric}`
+      const key = `${v.service}:${v.page}:${v.metric}`
       if (seen.has(key)) continue
       seen.add(key)
       fetches.push(
-        api.getWebVitalsTimeseries(v.page, v.metric, from, to, undefined, serviceFilter || undefined).then((buckets: WebVitalTimeseriesBucket[]) => {
+        api.getWebVitalsTimeseries(v.page, v.metric, from, to, undefined, v.service || undefined).then((buckets: WebVitalTimeseriesBucket[]) => {
           setTrends((prev) => {
             const next = new Map(prev)
             next.set(key, buckets.map((b) => b.p50Ms))
@@ -127,7 +127,7 @@ export function PagesPage(): ReactElement {
     }
 
     void Promise.all(fetches)
-  }, [vitals, range, serviceFilter])
+  }, [vitals, range])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
@@ -248,17 +248,15 @@ export function PagesPage(): ReactElement {
       ) : (
         serviceGroups.map((svcGroup) => (
           <div key={svcGroup.service} style={{ marginBottom: '1.5rem' }}>
-            {serviceGroups.length > 1 && (
-              <h3 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-                {svcGroup.service}
-              </h3>
-            )}
+            <h3 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+              {svcGroup.service}
+            </h3>
             {svcGroup.pages.map((group) => (
               <div
                 key={group.page}
                 className="card"
                 style={{ marginBottom: '1rem', padding: 0, overflow: 'hidden', cursor: 'pointer' }}
-                onClick={() => navigate(`/pages/${encodeURIComponent(group.page)}`)}
+                onClick={() => navigate(`/pages/${encodeURIComponent(group.page)}?service=${encodeURIComponent(svcGroup.service)}`)}
               >
                 <div
                   style={{
@@ -289,7 +287,7 @@ export function PagesPage(): ReactElement {
                         const v = group.metrics.get(metric)
                         if (!v) return null
                         const unit = METRIC_UNIT[metric]
-                        const trendData = trends.get(`${group.page}:${metric}`)
+                        const trendData = trends.get(`${svcGroup.service}:${group.page}:${metric}`)
                         return (
                           <tr key={metric}>
                             <td>
