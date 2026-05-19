@@ -2,7 +2,7 @@ import { type ReactElement, useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Activity, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe, UserCog } from 'lucide-react'
 import { api } from '../api/client'
-import { fetchClientConfig } from '../api/clientConfig'
+import { fetchClientConfig, isOIDCSession } from '../api/clientConfig'
 import { MobileTabBar } from './MobileTabBar'
 import { PWAInstallBanner } from './PWAInstallBanner'
 
@@ -34,6 +34,10 @@ export function DashboardLayout(): ReactElement {
   }, [location.pathname])
 
   useEffect(() => {
+    // Only sessions actually opened via the iambarn OIDC callback should
+    // see the profile link — local password sessions don't have a remote
+    // profile to manage.
+    if (!isOIDCSession()) return
     let cancelled = false
     void fetchClientConfig().then((cfg) => {
       if (!cancelled && cfg.iambarn?.profile_url) {

@@ -112,7 +112,7 @@ func TestClientConfigIAMBarnProfileURL(t *testing.T) {
 	if body.OIDC == nil {
 		t.Fatalf("oidc block should be present")
 	}
-	if body.IAMBarn.ProfileURL != "https://iam.example.com/admin" {
+	if body.IAMBarn.ProfileURL != "https://iam.example.com/admin#profile" {
 		t.Fatalf("unexpected profile_url: %q", body.IAMBarn.ProfileURL)
 	}
 }

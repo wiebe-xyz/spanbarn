@@ -84,12 +84,24 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secure := r.TLS != nil
+	expires := time.Now().Add(s.sessionMgr.TTL())
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
 		Value:    token,
 		Path:     "/",
-		Expires:  time.Now().Add(s.sessionMgr.TTL()),
+		Expires:  expires,
 		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+	// Non-HttpOnly hint so the SPA can show OIDC-specific UI (e.g. the
+	// IAMBarn profile link) only for sessions that actually came from
+	// iambarn. Same expiry as the session.
+	http.SetCookie(w, &http.Cookie{
+		Name:     "spanbarn_auth_method",
+		Value:    "oidc",
+		Path:     "/",
+		Expires:  expires,
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
