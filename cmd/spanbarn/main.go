@@ -442,6 +442,10 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 // background workers (aggregation, retention, alerts). It serves only a health
 // endpoint so k8s probes work. A single writer pod ensures SQLite has no write
 // contention.
+//
+// The health endpoint is started first so k8s startup/liveness probes pass
+// immediately. The Redis queue connection and migrations happen concurrently —
+// the worker goroutine is launched once both are ready.
 func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	if cfg.RedisQueueURL == "" {
 		return fmt.Errorf("SPANBARN_REDIS_QUEUE_URL is required in writer mode")
@@ -449,6 +453,30 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 
 	logger.Info("starting in writer mode", "redis_queue", cfg.RedisQueueURL)
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Start the health endpoint immediately so k8s probes pass during startup.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","mode":"writer"}`)
+	})
+
+	httpServer := &http.Server{
+		Addr:         cfg.Addr,
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+	}
+
+	httpErrCh := make(chan error, 1)
+	go func() {
+		logger.Info("writer health endpoint", "addr", cfg.Addr)
+		httpErrCh <- httpServer.ListenAndServe()
+	}()
+
+	// Open DB and run migrations (fast if already up-to-date).
 	db, err := repository.NewDB(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
@@ -471,9 +499,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
+	// Connect to the write queue, retrying until the Redis pod is ready.
 	logger.Info("connecting to write queue (retrying until ready)", "url", cfg.RedisQueueURL)
 	writeQueue, err := queue.NewRedisQueueWithRetry(ctx, cfg.RedisQueueURL)
 	if err != nil {
@@ -512,25 +538,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	defer alertCancel()
 	safeGo("alert-runner", &wg, func() { alertRunner.Run(alertCtx) })
 
-	// Minimal HTTP server — health probes only.
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","mode":"writer"}`)
-	})
-
-	httpServer := &http.Server{
-		Addr:         cfg.Addr,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		logger.Info("writer health endpoint", "addr", cfg.Addr)
-		errCh <- httpServer.ListenAndServe()
-	}()
+	errCh := httpErrCh
 
 	select {
 	case <-ctx.Done():
