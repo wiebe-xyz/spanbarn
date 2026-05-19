@@ -41,10 +41,11 @@ func (s *Server) registerRoutes() {
 		ingestAuth = func(next http.Handler) http.Handler { return apiKeyAuth(s.apiKey, next) }
 		otlpAuth = func(next http.Handler) http.Handler { return apiKeyOrBearerAuth(s.apiKey, next) }
 	}
-	s.mux.Handle("/api/v1/spans", ingestRL(ingestAuth(http.HandlerFunc(s.handleIngest))))
-
-	// OTLP/HTTP endpoint — rate limited + API key or Bearer auth required.
-	s.mux.Handle("/v1/traces", ingestRL(otlpAuth(http.HandlerFunc(s.handleOTLP))))
+	if s.ingest != nil {
+		s.mux.Handle("/api/v1/spans", ingestRL(ingestAuth(http.HandlerFunc(s.handleIngest))))
+		// OTLP/HTTP endpoint — only registered when there is an ingest handler.
+		s.mux.Handle("/v1/traces", ingestRL(otlpAuth(http.HandlerFunc(s.handleOTLP))))
+	}
 
 	// Query endpoints — rate limited + session auth required.
 	// List/aggregate endpoints get a short cache (30s); detail endpoints are not cached.
