@@ -54,6 +54,7 @@ export function LiveTailPage(): ReactElement {
     es.onmessage = (event) => {
       try {
         const span = JSON.parse(event.data) as LiveSpan
+        if (!span || typeof span !== 'object') return
         if (pausedRef.current) {
           bufferRef.current = [span, ...bufferRef.current].slice(0, MAX_SPANS)
           setBufferCount(bufferRef.current.length)
@@ -204,7 +205,7 @@ export function LiveTailPage(): ReactElement {
                       style={{ fontSize: '0.8125rem', color: 'var(--accent)', cursor: 'pointer' }}
                       onClick={() => s.trace_id && navigate(`/traces/${s.trace_id}`)}
                     >
-                      {s.trace_id ? `${s.trace_id.slice(0, 16)}...` : '-'}
+                      {typeof s.trace_id === 'string' && s.trace_id ? `${s.trace_id.slice(0, 16)}...` : '-'}
                     </td>
                   </tr>
                 ))
