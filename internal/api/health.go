@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -31,6 +32,11 @@ func (s *Server) handleClientConfig(w http.ResponseWriter, _ *http.Request) {
 		resp["oidc"] = map[string]any{
 			"enabled":  true,
 			"loginURL": "/api/v1/oidc/login",
+		}
+		if issuer := strings.TrimRight(s.oidc.Config().Issuer, "/"); issuer != "" {
+			resp["iambarn"] = map[string]string{
+				"profile_url": issuer + "/admin",
+			}
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
