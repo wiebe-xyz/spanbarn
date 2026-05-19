@@ -27,6 +27,23 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 	if limit <= 0 {
 		limit = 50
 	}
+
+	// Merge caller-supplied exclusions with project-level saved exclusions.
+	excluded := filter.ExcludeOperations
+	if filter.ProjectID != 0 {
+		if saved, err := s.repo.ExcludedOperations(filter.ProjectID); err == nil && len(saved) > 0 {
+			seen := make(map[string]bool, len(excluded))
+			for _, op := range excluded {
+				seen[op] = true
+			}
+			for _, op := range saved {
+				if !seen[op] {
+					excluded = append(excluded, op)
+				}
+			}
+		}
+	}
+
 	sf := repository.SpanFilter{
 		ProjectID:         filter.ProjectID,
 		Service:           filter.Service,
@@ -34,7 +51,7 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 		Status:            filter.Status,
 		MinDuration:       filter.MinDurationUs,
 		RootOnly:          filter.RootOnly,
-		ExcludeOperations: filter.ExcludeOperations,
+		ExcludeOperations: excluded,
 		From:              filter.From,
 		To:                filter.To,
 		Limit:             limit,

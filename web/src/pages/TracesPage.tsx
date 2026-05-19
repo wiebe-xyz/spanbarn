@@ -82,16 +82,38 @@ export function TracesPage(): ReactElement {
   })
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([])
   const [savingQuery, setSavingQuery] = useState(false)
-  const [excludedOps, setExcludedOps] = useState<string[]>([])
 
-  const excludeOp = (op: string) => setExcludedOps((prev) => prev.includes(op) ? prev : [...prev, op])
-  const unexcludeOp = (op: string) => setExcludedOps((prev) => prev.filter((o) => o !== op))
+  type Exclusion = { id: number; operation: string }
+  const [exclusions, setExclusions] = useState<Exclusion[]>([])
+
+  const loadExclusions = useCallback(async () => {
+    try {
+      const data = await api.listTraceExclusions()
+      setExclusions(data ?? [])
+    } catch { /* ignore */ }
+  }, [])
+
+  const excludeOp = async (op: string) => {
+    if (exclusions.some((e) => e.operation === op)) return
+    try {
+      const { id } = await api.createTraceExclusion(op)
+      setExclusions((prev) => [...prev, { id, operation: op }])
+    } catch { /* ignore */ }
+  }
+
+  const unexcludeOp = async (id: number) => {
+    try {
+      await api.deleteTraceExclusion(id)
+      setExclusions((prev) => prev.filter((e) => e.id !== id))
+    } catch { /* ignore */ }
+  }
 
   const apiBase = '/api/v1'
 
   useEffect(() => {
     api.getSavedQueries().then(setSavedQueries).catch(() => {})
-  }, [])
+    void loadExclusions()
+  }, [loadExclusions])
 
   // Fetch services for dropdown
   useEffect(() => {
@@ -133,7 +155,8 @@ export function TracesPage(): ReactElement {
           if (n > 0) params.set('min_spans', String(n))
         }
         if (filters.rootOnly) params.set('root_only', 'true')
-        for (const op of excludedOps) params.append('exclude_operation', op)
+        // ad-hoc exclusions from the ban icon (backend auto-applies saved ones)
+        for (const e of exclusions) params.append('exclude_operation', e.operation)
 
         const resp = await fetch(`${apiBase}/traces?${params}`)
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
@@ -151,7 +174,7 @@ export function TracesPage(): ReactElement {
         setLoading(false)
       }
     },
-    [filters, excludedOps, setSearchParams],
+    [filters, exclusions, setSearchParams],
   )
 
   // Initial search
@@ -159,10 +182,10 @@ export function TracesPage(): ReactElement {
     search(offset) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-search from page 1 whenever the exclude list changes
+  // Re-search from page 1 whenever the saved exclusions change
   useEffect(() => {
     search(0) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
-  }, [excludedOps]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [exclusions]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateFilter = (key: keyof Filters, value: string | boolean) => {
     setFilters((prev) => ({ ...prev, [key]: value }))
@@ -419,22 +442,22 @@ export function TracesPage(): ReactElement {
         </div>
       )}
 
-      {/* Excluded operations chips */}
-      {excludedOps.length > 0 && (
+      {/* Saved exclusion chips */}
+      {exclusions.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
           <span style={{ fontSize: 12, color: '#6b7280' }}>Excluding:</span>
-          {excludedOps.map((op) => (
+          {exclusions.map((e) => (
             <span
-              key={op}
+              key={e.id}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 5,
                 background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
                 borderRadius: 12, padding: '2px 8px', fontSize: 12, color: '#fca5a5',
               }}
             >
-              {op}
+              {e.operation}
               <span
-                onClick={() => unexcludeOp(op)}
+                onClick={() => unexcludeOp(e.id)}
                 style={{ cursor: 'pointer', color: '#f87171', fontSize: 14, lineHeight: 1 }}
                 title="Remove exclusion"
               >
@@ -442,12 +465,6 @@ export function TracesPage(): ReactElement {
               </span>
             </span>
           ))}
-          <button
-            onClick={() => setExcludedOps([])}
-            style={{ fontSize: 11, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
-          >
-            clear all
-          </button>
         </div>
       )}
 
@@ -503,7 +520,7 @@ export function TracesPage(): ReactElement {
                   <td style={{ ...tdStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span>{trace.rootSpanName}</span>
                     <span
-                      onClick={(e) => { e.stopPropagation(); excludeOp(trace.rootSpanName) }}
+                      onClick={(e) => { e.stopPropagation(); void excludeOp(trace.rootSpanName) }}
                       title={`Exclude "${trace.rootSpanName}" from results`}
                       style={{ color: '#4b5563', cursor: 'pointer', flexShrink: 0, lineHeight: 1, display: 'flex' }}
                       onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#ef4444' }}

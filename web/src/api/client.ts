@@ -172,6 +172,20 @@ export const api = {
   getExportUrl: (from: string, to: string, service?: string, status?: string, limit?: number) =>
     `/api/v1/export${qs({ from, to, service, status, limit })}`,
 
+  listTraceExclusions: (projectId = 1) =>
+    fetchJSON<{ id: number; projectId: number; operation: string; createdAt: string }[]>(
+      `/api/v1/trace-exclusions${qs({ project_id: projectId })}`,
+    ),
+
+  createTraceExclusion: (operation: string, projectId = 1) =>
+    fetchJSON<{ id: number }>('/api/v1/trace-exclusions', {
+      method: 'POST',
+      body: JSON.stringify({ projectId, operation }),
+    }),
+
+  deleteTraceExclusion: (id: number) =>
+    fetchJSON<{ status: string }>(`/api/v1/trace-exclusions/${id}`, { method: 'DELETE' }),
+
   listAlerts: (projectId = 1) =>
     fetchJSON<Alert[]>(`/api/v1/alerts${qs({ project_id: projectId })}`),
 

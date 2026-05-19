@@ -21,6 +21,7 @@ type QueryRepository interface {
 	SearchTraceSummaries(filter repository.SpanFilter, minSpans int) ([]repository.TraceSummaryRow, error)
 	GetTraceByID(traceID string) ([]repository.Span, error)
 	QueryErrorSamples(filter repository.SpanFilter) ([]repository.Span, error)
+	ExcludedOperations(projectID int64) ([]string, error)
 	QueryServiceStatsFromSpans(projectID int64, from, to time.Time, kind string) ([]repository.ServiceStats, error)
 	QueryOperationStatsFromSpans(projectID int64, service string, from, to time.Time, kind string) ([]repository.OperationStats, error)
 	QuerySpanTimeseries(projectID int64, service, operation string, from, to time.Time, intervalSec int64) ([]repository.SpanBucket, error)

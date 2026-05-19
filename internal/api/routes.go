@@ -103,6 +103,15 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/saved-queries/", apiRL(sessionAuth(sqh)))
 	}
 
+	// Trace exclusions — persistent operation-level filters per project.
+	if s.repo != nil && s.sessionMgr != nil {
+		teh := &traceExclusionHandlers{repo: s.repo}
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+
+		s.mux.Handle("/api/v1/trace-exclusions", apiRL(sessionAuth(teh)))
+		s.mux.Handle("/api/v1/trace-exclusions/", apiRL(sessionAuth(teh)))
+	}
+
 	// Frontend telemetry — session auth, accepts same format as /api/v1/spans.
 	if s.ingest != nil && s.sessionMgr != nil {
 		sessionAuth := SessionMiddleware(s.sessionMgr)

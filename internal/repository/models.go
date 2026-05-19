@@ -141,6 +141,13 @@ type PromptFilter struct {
 	Offset       int
 }
 
+type TraceExclusion struct {
+	ID        int64     `json:"id"`
+	ProjectID int64     `json:"projectId"`
+	Operation string    `json:"operation"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 type Alert struct {
 	ID               int64        `json:"id"`
 	ProjectID        int64        `json:"projectId"`
