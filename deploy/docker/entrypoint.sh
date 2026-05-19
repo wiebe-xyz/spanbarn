@@ -1,7 +1,11 @@
 #!/bin/sh
 set -eu
 
-if [ -z "${LITESTREAM_ACCESS_KEY_ID:-}" ] || [ "${SPANBARN_MODE:-}" = "ingest" ]; then
+# reader and ingest modes open the DB read-only — Litestream must not run.
+# writer mode (default when Litestream creds are present) replicates the WAL.
+if [ -z "${LITESTREAM_ACCESS_KEY_ID:-}" ] || \
+   [ "${SPANBARN_MODE:-}" = "ingest" ] || \
+   [ "${SPANBARN_MODE:-}" = "reader" ]; then
   exec spanbarn
 fi
 
