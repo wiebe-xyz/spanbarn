@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -51,6 +52,7 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 		Status:            filter.Status,
 		MinDuration:       filter.MinDurationUs,
 		RootOnly:          filter.RootOnly,
+		SortErrorsFirst:   filter.SortErrorsFirst,
 		ExcludeOperations: excluded,
 		From:              filter.From,
 		To:                filter.To,
@@ -80,6 +82,77 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 		})
 	}
 	return result, nil
+}
+
+// ListTraceGroups returns per-operation aggregates over root spans for the grouped traces view.
+// Results are sorted by error count descending, then by total count descending.
+func (s *QueryService) ListTraceGroups(ctx context.Context, filter TraceSearchFilter) ([]TraceGroupSummary, error) {
+	_, span := tracer.Start(ctx, "query.list_trace_groups")
+	span.SetAttributes(
+		attribute.String("service", filter.Service),
+		attribute.String("status", filter.Status),
+	)
+	defer span.End()
+
+	// Merge saved exclusions with caller-supplied ones.
+	excluded := filter.ExcludeOperations
+	if filter.ProjectID != 0 {
+		if saved, err := s.repo.ExcludedOperations(filter.ProjectID); err == nil && len(saved) > 0 {
+			seen := make(map[string]bool, len(excluded))
+			for _, op := range excluded {
+				seen[op] = true
+			}
+			for _, op := range saved {
+				if !seen[op] {
+					excluded = append(excluded, op)
+				}
+			}
+		}
+	}
+
+	sf := repository.SpanFilter{
+		ProjectID:         filter.ProjectID,
+		Service:           filter.Service,
+		Status:            filter.Status,
+		MinDuration:       filter.MinDurationUs,
+		ExcludeOperations: excluded,
+		From:              filter.From,
+		To:                filter.To,
+	}
+
+	groups, err := s.repo.QueryRootSpanGroups(ctx, sf)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]TraceGroupSummary, 0, len(groups))
+	for _, g := range groups {
+		p50, p95, p99 := computePercentiles(g.Durations)
+		errorRate := 0.0
+		if g.Count > 0 {
+			errorRate = float64(g.ErrorCount) / float64(g.Count)
+		}
+		out = append(out, TraceGroupSummary{
+			Operation:  g.Operation,
+			Service:    g.Service,
+			Count:      g.Count,
+			ErrorCount: g.ErrorCount,
+			ErrorRate:  errorRate,
+			P50Us:      p50,
+			P95Us:      p95,
+			P99Us:      p99,
+		})
+	}
+
+	// Sort: errors first, then by count desc.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ErrorCount != out[j].ErrorCount {
+			return out[i].ErrorCount > out[j].ErrorCount
+		}
+		return out[i].Count > out[j].Count
+	})
+
+	return out, nil
 }
 
 // GetTrace returns full trace detail for a given trace ID.

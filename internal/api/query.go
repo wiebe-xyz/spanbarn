@@ -155,6 +155,40 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, traces)
 }
 
+func (h *queryHandlers) handleTraceGroups(w http.ResponseWriter, r *http.Request) {
+	ctx, span := apiTracer.Start(r.Context(), "api.query.trace_groups")
+	defer span.End()
+
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	from, to, err := parseTimeRange(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+		return
+	}
+
+	filter := service.TraceSearchFilter{
+		ProjectID:         parseInt64Param(r, "project_id", 0),
+		Service:           r.URL.Query().Get("service"),
+		Status:            r.URL.Query().Get("status"),
+		MinDurationUs:     parseInt64Param(r, "min_duration_us", 0),
+		ExcludeOperations: r.URL.Query()["exclude_operation"],
+		From:              from,
+		To:                to,
+	}
+
+	groups, err := h.svc.ListTraceGroups(ctx, filter)
+	if err != nil {
+		writeServerError(w, r, "query failed", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, groups)
+}
+
 func (h *queryHandlers) handleTraceDetail(w http.ResponseWriter, r *http.Request) {
 	ctx, span := apiTracer.Start(r.Context(), "api.query.trace_detail")
 	defer span.End()
@@ -435,6 +469,9 @@ func (h *queryHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case len(parts) == 3:
 			// GET /api/v1/traces
 			h.handleTraces(w, r)
+		case len(parts) == 4 && parts[3] == "groups":
+			// GET /api/v1/traces/groups
+			h.handleTraceGroups(w, r)
 		case len(parts) == 4:
 			// GET /api/v1/traces/{traceId}
 			h.handleTraceDetail(w, r)

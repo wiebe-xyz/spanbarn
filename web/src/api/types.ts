@@ -43,6 +43,18 @@ export type TraceSummary = {
   startTime: string
 }
 
+/** Aggregated metrics for a group of traces sharing the same root operation. */
+export type TraceGroupSummary = {
+  operation: string
+  service: string
+  count: number
+  errorCount: number
+  errorRate: number
+  p50Us: number
+  p95Us: number
+  p99Us: number
+}
+
 /** Full trace with all spans. */
 export type TraceDetail = {
   traceId: string

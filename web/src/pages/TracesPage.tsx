@@ -2,7 +2,7 @@ import type { ReactElement } from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Ban } from 'lucide-react'
-import type { SavedQuery, TraceSummary } from '../api/types'
+import type { SavedQuery, TraceSummary, TraceGroupSummary } from '../api/types'
 import { api } from '../api/client'
 import {
   durationColor,
@@ -48,7 +48,6 @@ function filtersFromParams(params: URLSearchParams): Filters {
     status: params.get('status') ?? defaults.status,
     minDurationMs: params.get('minDurationMs') ?? defaults.minDurationMs,
     minSpans: params.get('minSpans') ?? defaults.minSpans,
-    // rootOnly defaults to true; only stored in URL when explicitly turned off
     rootOnly: params.get('rootOnly') !== 'false',
     from: params.get('from') ?? defaults.from,
     to: params.get('to') ?? defaults.to,
@@ -72,6 +71,12 @@ export function TracesPage(): ReactElement {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [filters, setFilters] = useState<Filters>(() => filtersFromParams(searchParams))
+
+  // View mode: 'grouped' = per-operation aggregate, 'detail' = individual traces for one operation
+  const [viewMode, setViewMode] = useState<'grouped' | 'detail'>(() =>
+    searchParams.get('operation') ? 'detail' : 'grouped',
+  )
+  const [groups, setGroups] = useState<TraceGroupSummary[]>([])
   const [traces, setTraces] = useState<TraceSummary[]>([])
   const [services, setServices] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -108,8 +113,6 @@ export function TracesPage(): ReactElement {
     } catch { /* ignore */ }
   }
 
-  const apiBase = '/api/v1'
-
   useEffect(() => {
     api.getSavedQueries().then(setSavedQueries).catch(() => {})
     void loadExclusions()
@@ -121,17 +124,38 @@ export function TracesPage(): ReactElement {
       from: new Date(filters.from).toISOString(),
       to: new Date(filters.to).toISOString(),
     })
-    fetch(`${apiBase}/services?${params}`)
+    fetch(`/api/v1/services?${params}`)
       .then((r) => r.json())
       .then((data: Array<{ service: string }>) => {
         setServices(data.map((d) => d.service))
       })
-      .catch(() => {
-        /* ignore - services dropdown is optional */
-      })
+      .catch(() => { /* ignore */ })
   }, [filters.from, filters.to])
 
-  const search = useCallback(
+  const searchGroups = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const minDurUs = filters.minDurationMs ? Math.round(parseFloat(filters.minDurationMs) * 1000) : undefined
+      const data = await api.getTraceGroups(
+        new Date(filters.from).toISOString(),
+        new Date(filters.to).toISOString(),
+        filters.service || undefined,
+        filters.status && filters.status !== 'all' ? filters.status : undefined,
+        minDurUs && minDurUs > 0 ? minDurUs : undefined,
+      )
+      setGroups(data ?? [])
+      const urlParams = filtersToParams(filters)
+      setSearchParams(urlParams, { replace: true })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Search failed')
+      setGroups([])
+    } finally {
+      setLoading(false)
+    }
+  }, [filters, setSearchParams])
+
+  const searchTraces = useCallback(
     async (newOffset: number = 0) => {
       setLoading(true)
       setError(null)
@@ -141,11 +165,11 @@ export function TracesPage(): ReactElement {
           to: new Date(filters.to).toISOString(),
           limit: String(PAGE_SIZE),
           offset: String(newOffset),
+          sort_errors_first: 'true',
         })
         if (filters.service) params.set('service', filters.service)
         if (filters.operation) params.set('operation', filters.operation)
-        if (filters.status && filters.status !== 'all')
-          params.set('status', filters.status)
+        if (filters.status && filters.status !== 'all') params.set('status', filters.status)
         if (filters.minDurationMs) {
           const us = parseFloat(filters.minDurationMs) * 1000
           if (us > 0) params.set('min_duration_us', String(Math.round(us)))
@@ -155,10 +179,9 @@ export function TracesPage(): ReactElement {
           if (n > 0) params.set('min_spans', String(n))
         }
         if (filters.rootOnly) params.set('root_only', 'true')
-        // ad-hoc exclusions from the ban icon (backend auto-applies saved ones)
         for (const e of exclusions) params.append('exclude_operation', e.operation)
 
-        const resp = await fetch(`${apiBase}/traces?${params}`)
+        const resp = await fetch(`/api/v1/traces?${params}`)
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
         const data: TraceSummary[] = await resp.json()
         setTraces(data)
@@ -177,18 +200,49 @@ export function TracesPage(): ReactElement {
     [filters, exclusions, setSearchParams],
   )
 
-  // Initial search
+  const openOperationDetail = (operation: string, service: string) => {
+    setFilters((prev) => ({ ...prev, operation, service }))
+    setViewMode('detail')
+  }
+
+  const backToGroups = () => {
+    setFilters((prev) => ({ ...prev, operation: '' }))
+    setViewMode('grouped')
+  }
+
+  // Initial load
   useEffect(() => {
-    search(offset) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
+    if (viewMode === 'grouped') {
+      void searchGroups()
+    } else {
+      void searchTraces(offset)
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-search from page 1 whenever the saved exclusions change
+  // When viewMode switches to 'detail' (after clicking a group row), fetch traces
   useEffect(() => {
-    search(0) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
+    if (viewMode === 'detail') {
+      void searchTraces(0)
+    }
+  }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-search from page 1 when exclusions change (only in detail mode; groups load via own mechanism)
+  useEffect(() => {
+    if (viewMode === 'detail') {
+      void searchTraces(0)
+    }
   }, [exclusions]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateFilter = (key: keyof Filters, value: string | boolean) => {
     setFilters((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const handleSearch = () => {
+    if (viewMode === 'grouped') {
+      void searchGroups()
+    } else {
+      void searchTraces(0)
+    }
   }
 
   const saveCurrentQuery = async () => {
@@ -233,16 +287,21 @@ export function TracesPage(): ReactElement {
     try {
       await api.deleteSavedQuery(id)
       setSavedQueries((prev) => prev.filter((q) => q.id !== id))
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }
 
   return (
     <div style={{ padding: 24 }}>
-      <h1 style={{ fontSize: 20, fontWeight: 600, marginBottom: 16 }}>
-        Traces
-      </h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        {viewMode === 'detail' && (
+          <button onClick={backToGroups} style={{ ...buttonStyle, background: 'transparent', border: '1px solid #374151', padding: '4px 12px' }}>
+            ← Back
+          </button>
+        )}
+        <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>
+          {viewMode === 'detail' ? `Traces — ${filters.operation}` : 'Traces'}
+        </h1>
+      </div>
 
       {/* Filters */}
       <div style={{ marginBottom: 16 }}>
@@ -263,23 +322,23 @@ export function TracesPage(): ReactElement {
             >
               <option value="">All services</option>
               {services.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
+                <option key={s} value={s}>{s}</option>
               ))}
             </select>
           </label>
 
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span style={{ fontSize: 12, color: '#9ca3af' }}>Operation</span>
-            <input
-              type="text"
-              placeholder="e.g. GET /api/users"
-              value={filters.operation}
-              onChange={(e) => updateFilter('operation', e.target.value)}
-              style={inputStyle}
-            />
-          </label>
+          {viewMode === 'detail' && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 12, color: '#9ca3af' }}>Operation</span>
+              <input
+                type="text"
+                placeholder="e.g. GET /api/users"
+                value={filters.operation}
+                onChange={(e) => updateFilter('operation', e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+          )}
 
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span style={{ fontSize: 12, color: '#9ca3af' }}>Status</span>
@@ -307,18 +366,20 @@ export function TracesPage(): ReactElement {
             />
           </label>
 
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span style={{ fontSize: 12, color: '#9ca3af' }}>Min Spans</span>
-            <input
-              type="number"
-              min="0"
-              step="1"
-              placeholder="0"
-              value={filters.minSpans}
-              onChange={(e) => updateFilter('minSpans', e.target.value)}
-              style={inputStyle}
-            />
-          </label>
+          {viewMode === 'detail' && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 12, color: '#9ca3af' }}>Min Spans</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                placeholder="0"
+                value={filters.minSpans}
+                onChange={(e) => updateFilter('minSpans', e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+          )}
 
           <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span style={{ fontSize: 12, color: '#9ca3af' }}>From</span>
@@ -340,60 +401,66 @@ export function TracesPage(): ReactElement {
             />
           </label>
 
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span style={{ fontSize: 12, color: '#9ca3af' }}>Root traces only</span>
-            <select
-              value={filters.rootOnly ? 'true' : 'false'}
-              onChange={(e) => updateFilter('rootOnly', e.target.value === 'true')}
-              style={inputStyle}
-            >
-              <option value="true">Yes (default)</option>
-              <option value="false">All traces</option>
-            </select>
-          </label>
+          {viewMode === 'detail' && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 12, color: '#9ca3af' }}>Root traces only</span>
+              <select
+                value={filters.rootOnly ? 'true' : 'false'}
+                onChange={(e) => updateFilter('rootOnly', e.target.value === 'true')}
+                style={inputStyle}
+              >
+                <option value="true">Yes (default)</option>
+                <option value="false">All traces</option>
+              </select>
+            </label>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => search(0)} style={buttonStyle}>
+          <button onClick={handleSearch} style={buttonStyle}>
             Search
           </button>
-          <a
-            href={api.getExportUrl(
-              new Date(filters.from).toISOString(),
-              new Date(filters.to).toISOString(),
-              filters.service || undefined,
-              filters.status && filters.status !== 'all' ? filters.status : undefined,
-            )}
-            download="spans.ndjson"
-            style={{
-              ...buttonStyle,
-              background: 'transparent',
-              border: '1px solid #374151',
-              textDecoration: 'none',
-              display: 'inline-flex',
-              alignItems: 'center',
-            }}
-          >
-            Export
-          </a>
-          <button
-            onClick={saveCurrentQuery}
-            disabled={savingQuery || !(filters.service || filters.operation || filters.status || filters.minDurationMs)}
-            style={{
-              ...buttonStyle,
-              background: 'transparent',
-              border: '1px solid #374151',
-              opacity: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 1 : 0.4,
-              cursor: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 'pointer' : 'not-allowed',
-            }}
-          >
-            {savingQuery ? 'Saving...' : 'Save Query'}
-          </button>
+          {viewMode === 'detail' && (
+            <>
+              <a
+                href={api.getExportUrl(
+                  new Date(filters.from).toISOString(),
+                  new Date(filters.to).toISOString(),
+                  filters.service || undefined,
+                  filters.status && filters.status !== 'all' ? filters.status : undefined,
+                )}
+                download="spans.ndjson"
+                style={{
+                  ...buttonStyle,
+                  background: 'transparent',
+                  border: '1px solid #374151',
+                  textDecoration: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                }}
+              >
+                Export
+              </a>
+              <button
+                onClick={saveCurrentQuery}
+                disabled={savingQuery || !(filters.service || filters.operation || filters.status || filters.minDurationMs)}
+                style={{
+                  ...buttonStyle,
+                  background: 'transparent',
+                  border: '1px solid #374151',
+                  opacity: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 1 : 0.4,
+                  cursor: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 'pointer' : 'not-allowed',
+                }}
+              >
+                {savingQuery ? 'Saving...' : 'Save Query'}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       {/* Saved queries */}
-      {savedQueries.length > 0 && (
+      {viewMode === 'detail' && savedQueries.length > 0 && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
           <span style={{ fontSize: 12, color: '#6b7280', alignSelf: 'center' }}>Saved:</span>
           {savedQueries.map((q) => (
@@ -442,7 +509,7 @@ export function TracesPage(): ReactElement {
         </div>
       )}
 
-      {/* Saved exclusion chips */}
+      {/* Exclusion chips */}
       {exclusions.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
           <span style={{ fontSize: 12, color: '#6b7280' }}>Excluding:</span>
@@ -468,129 +535,203 @@ export function TracesPage(): ReactElement {
         </div>
       )}
 
-      {/* Results table */}
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid #374151' }}>
-              <th style={thStyle}>Trace ID</th>
-              <th style={thStyle}>Root Span</th>
-              <th style={thStyle}>Service</th>
-              <th style={thStyle}>Duration</th>
-              <th style={thStyle}>Spans</th>
-              <th style={thStyle}>Status</th>
-              <th style={thStyle}>Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr>
-                <td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#9ca3af' }}>
-                  Loading...
-                </td>
+      {/* Grouped view */}
+      {viewMode === 'grouped' && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #374151' }}>
+                <th style={thStyle}>Operation</th>
+                <th style={thStyle}>Service</th>
+                <th style={thStyle}>Count</th>
+                <th style={thStyle}>Errors</th>
+                <th style={thStyle}>Error Rate</th>
+                <th style={thStyle}>P50</th>
+                <th style={thStyle}>P95</th>
+                <th style={thStyle}>P99</th>
               </tr>
-            )}
-            {!loading && traces.length === 0 && (
-              <tr>
-                <td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280' }}>
-                  No traces found
-                </td>
-              </tr>
-            )}
-            {!loading &&
-              traces.map((trace) => (
-                <tr
-                  key={trace.traceId}
-                  onClick={() => navigate(`/traces/${trace.traceId}`)}
-                  style={{
-                    cursor: 'pointer',
-                    borderBottom: '1px solid #1f2937',
-                    borderLeft: trace.status === 'error'
-                      ? '3px solid #ef4444'
-                      : trace.durationUs > 2_000_000
-                        ? '3px solid #f97316'
-                        : '3px solid transparent',
-                  }}
-                >
-                  <td style={tdStyle}>
-                    <code style={{ fontSize: 12 }}>
-                      {truncateId(trace.traceId)}
-                    </code>
-                  </td>
-                  <td style={{ ...tdStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span>{trace.rootSpanName}</span>
-                    <span
-                      onClick={(e) => { e.stopPropagation(); void excludeOp(trace.rootSpanName) }}
-                      title={`Exclude "${trace.rootSpanName}" from results`}
-                      style={{ color: '#4b5563', cursor: 'pointer', flexShrink: 0, lineHeight: 1, display: 'flex' }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#ef4444' }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = '#4b5563' }}
-                    >
-                      <Ban size={12} />
-                    </span>
-                  </td>
-                  <td style={tdStyle}>{trace.rootService}</td>
-                  <td style={{ ...tdStyle, color: durationColor(trace.durationUs) }}>
-                    {formatDuration(trace.durationUs)}
-                  </td>
-                  <td style={tdStyle}>{trace.spanCount}</td>
-                  <td style={tdStyle}>
-                    <span
-                      style={{
-                        color: statusColor(trace.status),
-                        fontWeight: 500,
-                      }}
-                    >
-                      {trace.status}
-                    </span>
-                  </td>
-                  <td style={{ ...tdStyle, color: '#9ca3af', fontSize: 12 }}>
-                    {new Date(trace.startTime).toLocaleString()}
+            </thead>
+            <tbody>
+              {loading && (
+                <tr>
+                  <td colSpan={8} style={{ ...tdStyle, textAlign: 'center', color: '#9ca3af' }}>
+                    Loading...
                   </td>
                 </tr>
-              ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pagination */}
-      {traces.length > 0 && (
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginTop: 12,
-            fontSize: 13,
-          }}
-        >
-          <button
-            onClick={() => search(Math.max(0, offset - PAGE_SIZE))}
-            disabled={offset === 0}
-            style={{
-              ...buttonStyle,
-              opacity: offset === 0 ? 0.5 : 1,
-              cursor: offset === 0 ? 'not-allowed' : 'pointer',
-            }}
-          >
-            Previous
-          </button>
-          <span style={{ color: '#9ca3af' }}>
-            Showing {offset + 1}
-            {traces.length > 0 ? ` - ${offset + traces.length}` : ''}
-          </span>
-          <button
-            onClick={() => search(offset + PAGE_SIZE)}
-            disabled={traces.length < PAGE_SIZE}
-            style={{
-              ...buttonStyle,
-              opacity: traces.length < PAGE_SIZE ? 0.5 : 1,
-              cursor: traces.length < PAGE_SIZE ? 'not-allowed' : 'pointer',
-            }}
-          >
-            Next
-          </button>
+              )}
+              {!loading && groups.length === 0 && (
+                <tr>
+                  <td colSpan={8} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280' }}>
+                    No traces found
+                  </td>
+                </tr>
+              )}
+              {!loading && groups.map((g) => {
+                const hasErrors = g.errorCount > 0
+                return (
+                  <tr
+                    key={`${g.service}:${g.operation}`}
+                    onClick={() => openOperationDetail(g.operation, g.service)}
+                    style={{
+                      cursor: 'pointer',
+                      borderBottom: '1px solid #1f2937',
+                      borderLeft: hasErrors ? '3px solid #ef4444' : '3px solid transparent',
+                    }}
+                  >
+                    <td style={tdStyle}>
+                      <span
+                        title={`Click to see individual traces for "${g.operation}"`}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                      >
+                        {g.operation}
+                        <span
+                          onClick={(e) => { e.stopPropagation(); void excludeOp(g.operation) }}
+                          title={`Exclude "${g.operation}" from results`}
+                          style={{ color: '#4b5563', cursor: 'pointer', flexShrink: 0, lineHeight: 1, display: 'flex' }}
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#ef4444' }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = '#4b5563' }}
+                        >
+                          <Ban size={12} />
+                        </span>
+                      </span>
+                    </td>
+                    <td style={{ ...tdStyle, color: '#9ca3af' }}>{g.service}</td>
+                    <td style={tdStyle}>{g.count.toLocaleString()}</td>
+                    <td style={{ ...tdStyle, color: hasErrors ? '#ef4444' : '#6b7280' }}>
+                      {g.errorCount.toLocaleString()}
+                    </td>
+                    <td style={{ ...tdStyle, color: hasErrors ? '#ef4444' : '#6b7280' }}>
+                      {(g.errorRate * 100).toFixed(1)}%
+                    </td>
+                    <td style={{ ...tdStyle, color: durationColor(g.p50Us) }}>{formatDuration(g.p50Us)}</td>
+                    <td style={{ ...tdStyle, color: durationColor(g.p95Us) }}>{formatDuration(g.p95Us)}</td>
+                    <td style={{ ...tdStyle, color: durationColor(g.p99Us) }}>{formatDuration(g.p99Us)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
+      )}
+
+      {/* Detail view */}
+      {viewMode === 'detail' && (
+        <>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #374151' }}>
+                  <th style={thStyle}>Trace ID</th>
+                  <th style={thStyle}>Root Span</th>
+                  <th style={thStyle}>Service</th>
+                  <th style={thStyle}>Duration</th>
+                  <th style={thStyle}>Spans</th>
+                  <th style={thStyle}>Status</th>
+                  <th style={thStyle}>Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && (
+                  <tr>
+                    <td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#9ca3af' }}>
+                      Loading...
+                    </td>
+                  </tr>
+                )}
+                {!loading && traces.length === 0 && (
+                  <tr>
+                    <td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280' }}>
+                      No traces found
+                    </td>
+                  </tr>
+                )}
+                {!loading && traces.map((trace) => (
+                  <tr
+                    key={trace.traceId}
+                    onClick={() => navigate(`/traces/${trace.traceId}`)}
+                    style={{
+                      cursor: 'pointer',
+                      borderBottom: '1px solid #1f2937',
+                      borderLeft: trace.status === 'error'
+                        ? '3px solid #ef4444'
+                        : trace.durationUs > 2_000_000
+                          ? '3px solid #f97316'
+                          : '3px solid transparent',
+                    }}
+                  >
+                    <td style={tdStyle}>
+                      <code style={{ fontSize: 12 }}>{truncateId(trace.traceId)}</code>
+                    </td>
+                    <td style={{ ...tdStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>{trace.rootSpanName}</span>
+                      <span
+                        onClick={(e) => { e.stopPropagation(); void excludeOp(trace.rootSpanName) }}
+                        title={`Exclude "${trace.rootSpanName}" from results`}
+                        style={{ color: '#4b5563', cursor: 'pointer', flexShrink: 0, lineHeight: 1, display: 'flex' }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#ef4444' }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = '#4b5563' }}
+                      >
+                        <Ban size={12} />
+                      </span>
+                    </td>
+                    <td style={tdStyle}>{trace.rootService}</td>
+                    <td style={{ ...tdStyle, color: durationColor(trace.durationUs) }}>
+                      {formatDuration(trace.durationUs)}
+                    </td>
+                    <td style={tdStyle}>{trace.spanCount}</td>
+                    <td style={tdStyle}>
+                      <span style={{ color: statusColor(trace.status), fontWeight: 500 }}>
+                        {trace.status}
+                      </span>
+                    </td>
+                    <td style={{ ...tdStyle, color: '#9ca3af', fontSize: 12 }}>
+                      {new Date(trace.startTime).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {traces.length > 0 && (
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginTop: 12,
+                fontSize: 13,
+              }}
+            >
+              <button
+                onClick={() => searchTraces(Math.max(0, offset - PAGE_SIZE))}
+                disabled={offset === 0}
+                style={{
+                  ...buttonStyle,
+                  opacity: offset === 0 ? 0.5 : 1,
+                  cursor: offset === 0 ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Previous
+              </button>
+              <span style={{ color: '#9ca3af' }}>
+                Showing {offset + 1}{traces.length > 0 ? ` - ${offset + traces.length}` : ''}
+              </span>
+              <button
+                onClick={() => searchTraces(offset + PAGE_SIZE)}
+                disabled={traces.length < PAGE_SIZE}
+                style={{
+                  ...buttonStyle,
+                  opacity: traces.length < PAGE_SIZE ? 0.5 : 1,
+                  cursor: traces.length < PAGE_SIZE ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

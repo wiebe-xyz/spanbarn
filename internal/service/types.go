@@ -166,9 +166,22 @@ type TraceSearchFilter struct {
 	MinDurationUs     int64
 	MinSpans          int
 	RootOnly          bool
+	SortErrorsFirst   bool
 	ExcludeOperations []string
 	From              time.Time
 	To                time.Time
 	Limit             int
 	Offset            int
+}
+
+// TraceGroupSummary holds aggregated metrics for a group of traces sharing the same root operation.
+type TraceGroupSummary struct {
+	Operation  string  `json:"operation"`
+	Service    string  `json:"service"`
+	Count      int64   `json:"count"`
+	ErrorCount int64   `json:"errorCount"`
+	ErrorRate  float64 `json:"errorRate"`
+	P50Us      int64   `json:"p50Us"`
+	P95Us      int64   `json:"p95Us"`
+	P99Us      int64   `json:"p99Us"`
 }

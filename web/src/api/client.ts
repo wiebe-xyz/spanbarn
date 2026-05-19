@@ -3,6 +3,7 @@ import type {
   OperationSummary,
   TimeseriesBucket,
   TraceSummary,
+  TraceGroupSummary,
   TraceDetail,
   DependencySummary,
   ServiceMap,
@@ -111,6 +112,11 @@ export const api = {
         limit: params.limit,
         offset: params.offset,
       })}`,
+    ),
+
+  getTraceGroups: (from: string, to: string, service?: string, status?: string, minDurationUs?: number) =>
+    fetchJSON<TraceGroupSummary[]>(
+      `/api/v1/traces/groups${qs({ from, to, service, status, min_duration_us: minDurationUs })}`,
     ),
 
   getTrace: (traceId: string) =>

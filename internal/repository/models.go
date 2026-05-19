@@ -73,11 +73,21 @@ type SpanFilter struct {
 	Status            string
 	MinDuration       int64
 	RootOnly          bool
+	SortErrorsFirst   bool
 	ExcludeOperations []string
 	From              time.Time
 	To                time.Time
 	Limit             int
 	Offset            int
+}
+
+// RootSpanGroup holds per-operation aggregate stats computed from root spans.
+type RootSpanGroup struct {
+	Operation  string
+	Service    string
+	Count      int64
+	ErrorCount int64
+	Durations  []int64 // raw durations for percentile computation in the service layer
 }
 
 type AggregateFilter struct {

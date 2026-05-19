@@ -307,6 +307,11 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 	doubled = append(doubled, args...)
 	doubled = append(doubled, args...)
 
+	orderBy := "start_us DESC"
+	if f.SortErrorsFirst {
+		orderBy = "has_error DESC, start_us DESC"
+	}
+
 	q := fmt.Sprintf(`
 		SELECT trace_id,
 		       MIN(start_time_us)                                                  AS start_us,
@@ -318,7 +323,7 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 			SELECT trace_id, span_id, status, start_time_us, COALESCE(parent_span_id,'') AS parent_span_id FROM error_samples%s
 		)
 		GROUP BY trace_id%s
-		ORDER BY start_us DESC
+		ORDER BY `+orderBy+`
 		LIMIT %d OFFSET %d`,
 		whereSQL, whereSQL, having, limit, f.Offset)
 
@@ -691,6 +696,109 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 		})
 	}
 	return result, nil
+}
+
+// QueryRootSpanGroups aggregates root spans (parent_span_id = '') by operation name,
+// returning count, error count, and raw durations for percentile computation.
+// Uses the idx_spans_root_ingested partial index for efficient scanning.
+func (r *Repository) QueryRootSpanGroups(ctx context.Context, f SpanFilter) ([]RootSpanGroup, error) {
+	var where []string
+	var args []any
+
+	where = append(where, "COALESCE(parent_span_id,'') = ''")
+
+	if f.ProjectID != 0 {
+		where = append(where, "project_id = ?")
+		args = append(args, f.ProjectID)
+	}
+	if f.Service != "" {
+		where = append(where, "service = ?")
+		args = append(args, f.Service)
+	}
+	if f.Status != "" {
+		where = append(where, "status = ?")
+		args = append(args, f.Status)
+	}
+	if f.MinDuration > 0 {
+		where = append(where, "duration_us >= ?")
+		args = append(args, f.MinDuration)
+	}
+	if len(f.ExcludeOperations) > 0 {
+		placeholders := strings.Repeat("?,", len(f.ExcludeOperations))
+		placeholders = placeholders[:len(placeholders)-1]
+		where = append(where, "name NOT IN ("+placeholders+")")
+		for _, op := range f.ExcludeOperations {
+			args = append(args, op)
+		}
+	}
+	if !f.From.IsZero() {
+		where = append(where, "ingested_at >= ?")
+		args = append(args, f.From)
+	}
+	if !f.To.IsZero() {
+		where = append(where, "ingested_at <= ?")
+		args = append(args, f.To)
+	}
+
+	whereClause := "WHERE " + strings.Join(where, " AND ")
+
+	q := fmt.Sprintf(`
+		SELECT name, service, duration_us,
+		       CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END AS is_error
+		FROM spans
+		%s
+		ORDER BY name, service, duration_us`, whereClause)
+
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type groupKey struct{ operation, service string }
+	type groupVal struct {
+		count      int64
+		errorCount int64
+		durations  []int64
+	}
+	byOp := make(map[groupKey]*groupVal)
+	var order []groupKey
+	for rows.Next() {
+		var name, service string
+		var dur int64
+		var isError int
+		if err := rows.Scan(&name, &service, &dur, &isError); err != nil {
+			return nil, err
+		}
+		k := groupKey{name, service}
+		v, ok := byOp[k]
+		if !ok {
+			v = &groupVal{}
+			byOp[k] = v
+			order = append(order, k)
+		}
+		v.count++
+		v.durations = append(v.durations, dur)
+		if isError == 1 {
+			v.errorCount++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]RootSpanGroup, 0, len(order))
+	for _, k := range order {
+		v := byOp[k]
+		out = append(out, RootSpanGroup{
+			Operation:  k.operation,
+			Service:    k.service,
+			Count:      v.count,
+			ErrorCount: v.errorCount,
+			Durations:  v.durations,
+		})
+	}
+	return out, nil
 }
 
 // percentileFromSorted computes a percentile from an already-sorted slice.
