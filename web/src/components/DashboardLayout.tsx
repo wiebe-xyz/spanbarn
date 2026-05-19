@@ -1,7 +1,8 @@
-import { type ReactElement, useEffect } from 'react'
+import { type ReactElement, useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe } from 'lucide-react'
+import { Activity, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe, UserCog } from 'lucide-react'
 import { api } from '../api/client'
+import { fetchClientConfig } from '../api/clientConfig'
 import { MobileTabBar } from './MobileTabBar'
 import { PWAInstallBanner } from './PWAInstallBanner'
 
@@ -21,6 +22,7 @@ const navItems = [
 export function DashboardLayout(): ReactElement {
   const navigate = useNavigate()
   const location = useLocation()
+  const [iambarnProfileURL, setIambarnProfileURL] = useState<string | null>(null)
 
   useEffect(() => {
     if (navigator.serviceWorker?.controller) {
@@ -30,6 +32,18 @@ export function DashboardLayout(): ReactElement {
       })
     }
   }, [location.pathname])
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchClientConfig().then((cfg) => {
+      if (!cancelled && cfg.iambarn?.profile_url) {
+        setIambarnProfileURL(cfg.iambarn.profile_url)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleLogout = async () => {
     try {
@@ -98,8 +112,28 @@ export function DashboardLayout(): ReactElement {
           ))}
         </nav>
 
-        {/* Logout */}
+        {/* User actions */}
         <div style={{ padding: '0.75rem 0.5rem', borderTop: '1px solid var(--border)' }}>
+          {iambarnProfileURL && (
+            <a
+              href={iambarnProfileURL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn"
+              style={{
+                width: '100%',
+                justifyContent: 'center',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                marginBottom: '0.25rem',
+                textDecoration: 'none',
+              }}
+            >
+              <UserCog size={16} />
+              Edit IAMBarn profile
+            </a>
+          )}
           <button
             onClick={handleLogout}
             className="btn"

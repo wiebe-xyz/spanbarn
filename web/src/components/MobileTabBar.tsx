@@ -1,7 +1,8 @@
-import { useState, type ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut } from 'lucide-react'
+import { Activity, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut, UserCog } from 'lucide-react'
 import { api } from '../api/client'
+import { fetchClientConfig } from '../api/clientConfig'
 
 const tabs = [
   { to: '/', icon: Activity, label: 'Services' },
@@ -12,7 +13,20 @@ const tabs = [
 
 export function MobileTabBar(): ReactElement {
   const [moreOpen, setMoreOpen] = useState(false)
+  const [iambarnProfileURL, setIambarnProfileURL] = useState<string | null>(null)
   const navigate = useNavigate()
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchClientConfig().then((cfg) => {
+      if (!cancelled && cfg.iambarn?.profile_url) {
+        setIambarnProfileURL(cfg.iambarn.profile_url)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleLogout = async () => {
     try {
@@ -169,6 +183,29 @@ export function MobileTabBar(): ReactElement {
             <Settings size={18} />
             Settings
           </NavLink>
+          {iambarnProfileURL && (
+            <a
+              href={iambarnProfileURL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setMoreOpen(false)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.625rem',
+                width: '100%',
+                padding: '0.625rem 0.75rem',
+                borderRadius: '0.5rem',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+                color: 'var(--text-muted)',
+                textDecoration: 'none',
+              }}
+            >
+              <UserCog size={18} />
+              Edit IAMBarn profile
+            </a>
+          )}
           <button
             onClick={() => {
               setMoreOpen(false)
