@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Ban } from 'lucide-react'
 import type { SavedQuery, TraceSummary } from '../api/types'
 import { api } from '../api/client'
 import {
@@ -81,6 +82,17 @@ export function TracesPage(): ReactElement {
   })
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([])
   const [savingQuery, setSavingQuery] = useState(false)
+  const [excludedOps, setExcludedOps] = useState<string[]>([])
+
+  const visibleTraces = useMemo(
+    () => excludedOps.length === 0
+      ? traces
+      : traces.filter((t) => !excludedOps.includes(t.rootSpanName)),
+    [traces, excludedOps],
+  )
+
+  const excludeOp = (op: string) => setExcludedOps((prev) => prev.includes(op) ? prev : [...prev, op])
+  const unexcludeOp = (op: string) => setExcludedOps((prev) => prev.filter((o) => o !== op))
 
   const apiBase = '/api/v1'
 
@@ -408,6 +420,38 @@ export function TracesPage(): ReactElement {
         </div>
       )}
 
+      {/* Excluded operations chips */}
+      {excludedOps.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: '#6b7280' }}>Excluding:</span>
+          {excludedOps.map((op) => (
+            <span
+              key={op}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                borderRadius: 12, padding: '2px 8px', fontSize: 12, color: '#fca5a5',
+              }}
+            >
+              {op}
+              <span
+                onClick={() => unexcludeOp(op)}
+                style={{ cursor: 'pointer', color: '#f87171', fontSize: 14, lineHeight: 1 }}
+                title="Remove exclusion"
+              >
+                &times;
+              </span>
+            </span>
+          ))}
+          <button
+            onClick={() => setExcludedOps([])}
+            style={{ fontSize: 11, color: '#6b7280', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
+          >
+            clear all
+          </button>
+        </div>
+      )}
+
       {/* Results table */}
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -430,15 +474,15 @@ export function TracesPage(): ReactElement {
                 </td>
               </tr>
             )}
-            {!loading && traces.length === 0 && (
+            {!loading && visibleTraces.length === 0 && (
               <tr>
                 <td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280' }}>
-                  No traces found
+                  {traces.length > 0 ? 'All traces excluded — clear filters above' : 'No traces found'}
                 </td>
               </tr>
             )}
             {!loading &&
-              traces.map((trace) => (
+              visibleTraces.map((trace) => (
                 <tr
                   key={trace.traceId}
                   onClick={() => navigate(`/traces/${trace.traceId}`)}
@@ -457,7 +501,18 @@ export function TracesPage(): ReactElement {
                       {truncateId(trace.traceId)}
                     </code>
                   </td>
-                  <td style={tdStyle}>{trace.rootSpanName}</td>
+                  <td style={{ ...tdStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>{trace.rootSpanName}</span>
+                    <span
+                      onClick={(e) => { e.stopPropagation(); excludeOp(trace.rootSpanName) }}
+                      title={`Exclude "${trace.rootSpanName}" from results`}
+                      style={{ color: '#4b5563', cursor: 'pointer', flexShrink: 0, lineHeight: 1, display: 'flex' }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#ef4444' }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = '#4b5563' }}
+                    >
+                      <Ban size={12} />
+                    </span>
+                  </td>
                   <td style={tdStyle}>{trace.rootService}</td>
                   <td style={{ ...tdStyle, color: durationColor(trace.durationUs) }}>
                     {formatDuration(trace.durationUs)}
@@ -483,7 +538,7 @@ export function TracesPage(): ReactElement {
       </div>
 
       {/* Pagination */}
-      {traces.length > 0 && (
+      {visibleTraces.length > 0 && (
         <div
           style={{
             display: 'flex',
