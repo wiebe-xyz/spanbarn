@@ -42,6 +42,15 @@ spec:
         - name: spanbarn
           port: 8080
 
+    # Well-known theme manifest served by the Go backend, not the SPA.
+    # priority: 101 beats the static frontend catch-all.
+    - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && Path(`/.well-known/iambarn-theme.json`)
+      kind: Rule
+      priority: 101
+      services:
+        - name: spanbarn-reads
+          port: 8080
+
     - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/api`)
       kind: Rule
       services:

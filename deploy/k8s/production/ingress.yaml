@@ -53,6 +53,16 @@ spec:
         - name: spanbarn
           port: 8080
 
+    # Well-known theme manifest served by the Go backend, not the SPA.
+    # priority: 101 beats the static frontend catch-all so it doesn't fall
+    # through to index.html.
+    - match: Host(`spanbarn.wiebe.xyz`) && Path(`/.well-known/iambarn-theme.json`)
+      kind: Rule
+      priority: 101
+      services:
+        - name: spanbarn-reads
+          port: 8080
+
     # Reads — load-balanced across writer + ingest pods (both carry
     # spanbarn.io/serves-reads). When the writer is unready during a deploy,
     # k8s drops it from this Service's endpoints and the ingest pod (read-only
