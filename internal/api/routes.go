@@ -15,6 +15,11 @@ func (s *Server) registerRoutes() {
 	// (e.g. funnelbarn project + ingest API key) that the SPA needs at boot.
 	s.mux.HandleFunc("/api/v1/client-config", s.handleClientConfig)
 
+	// IAMBarn theme manifest — public, no auth, no redirects. Served at the
+	// well-known path so IAMBarn can adopt SpanBarn's brand on its login page
+	// when users arrive via an OAuth authorize redirect from this host.
+	s.mux.HandleFunc("/.well-known/iambarn-theme.json", s.handleThemeManifest)
+
 	// OIDC login flow — public, no auth required. Returns 404 when OIDC is not
 	// configured server-side, so the SPA can fall through to local login.
 	s.mux.HandleFunc("/api/v1/oidc/login", s.handleOIDCLogin)
