@@ -86,3 +86,75 @@ spec:
           port: 8080
   tls:
     secretName: spanbarn-wiebe-xyz-tls
+---
+# sb.bananasketch.nl — custom domain alias for SpanBarn.
+# Uses a standard Ingress (not IngressRoute) so cert-manager can issue a
+# separate TLS cert. Method-based write/read split is not needed here;
+# all ingest and API paths are functional without it.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spanbarn-bananasketch-nl
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-cloudflare
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: sb.bananasketch.nl
+      http:
+        paths:
+          - path: /v1/traces
+            pathType: Prefix
+            backend:
+              service:
+                name: spanbarn-ingest
+                port:
+                  name: http
+          - path: /api/v1/spans
+            pathType: Prefix
+            backend:
+              service:
+                name: spanbarn-ingest
+                port:
+                  name: http
+          - path: /api/v1/telemetry
+            pathType: Prefix
+            backend:
+              service:
+                name: spanbarn-ingest
+                port:
+                  name: http
+          - path: /api/v1/client-errors
+            pathType: Prefix
+            backend:
+              service:
+                name: spanbarn-ingest
+                port:
+                  name: http
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: spanbarn-reads
+                port:
+                  name: http
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: spanbarn
+                port:
+                  name: http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: spanbarn-web
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - sb.bananasketch.nl
+      secretName: sb-bananasketch-nl-tls
