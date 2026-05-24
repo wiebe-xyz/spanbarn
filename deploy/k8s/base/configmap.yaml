@@ -10,5 +10,5 @@ data:
   SPANBARN_RETENTION_ERROR_DAYS: "30"
   SPANBARN_RETENTION_AGGREGATED_DAYS: "365"
   SPANBARN_BUGBARN_ENDPOINT: "https://bugbarn.wiebe.xyz"
-  SPANBARN_SELF_ENDPOINT: "http://spanbarn:8080"
+  SPANBARN_SELF_ENDPOINT: "http://spanbarn-ingest:8080"
   SPANBARN_REDIS_URL: "redis://spanbarn-redis:6379"

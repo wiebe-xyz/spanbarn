@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/XSAM/otelsql"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -43,6 +45,11 @@ func buildDSN(dbPath string, readOnly bool) string {
 	if !readOnly {
 		q.Add("_pragma", "journal_mode(WAL)")
 		q.Add("_pragma", "synchronous(NORMAL)")
+		// Disable automatic passive checkpoints; the writer runs explicit TRUNCATE
+		// checkpoints on a fixed interval instead. Passive checkpoints silently
+		// stop at any reader snapshot boundary, so they cannot prevent unbounded
+		// WAL growth under sustained read load.
+		q.Add("_pragma", "wal_autocheckpoint(0)")
 	}
 	if readOnly {
 		q.Set("mode", "ro")
@@ -84,4 +91,32 @@ func NewReadOnlyDB(dbPath string) (*DB, error) {
 // Close closes the underlying database connection.
 func (d *DB) Close() error {
 	return d.DB.Close()
+}
+
+// RunPeriodicCheckpoint blocks until ctx is cancelled, issuing a WAL TRUNCATE
+// checkpoint on each tick. TRUNCATE waits (within busy_timeout) for all readers
+// to release their snapshots before copying frames back to the database file and
+// zeroing the WAL. This is the only checkpoint mode that guarantees WAL size is
+// bounded regardless of read load. Call from a dedicated goroutine in the single
+// writer process only.
+func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, log *slog.Logger) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			var busy, walFrames, checkpointed int
+			if err := d.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
+				if ctx.Err() == nil {
+					log.Warn("wal checkpoint error", "error", err)
+				}
+				continue
+			}
+			if busy != 0 {
+				log.Warn("wal checkpoint blocked by active reader", "wal_frames", walFrames, "checkpointed", checkpointed)
+			}
+		}
+	}
 }

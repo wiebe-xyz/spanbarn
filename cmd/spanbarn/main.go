@@ -148,6 +148,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("worker", &wg, func() { w.Run(workerCtx) })
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
 
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
@@ -597,6 +598,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
 
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,

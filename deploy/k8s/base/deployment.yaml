@@ -27,6 +27,8 @@ spec:
           env:
             - name: SPANBARN_MODE
               value: "writer"
+            - name: GOMEMLIMIT
+              value: "230MiB"
             - name: SPANBARN_REDIS_QUEUE_URL
               valueFrom:
                 secretKeyRef:
