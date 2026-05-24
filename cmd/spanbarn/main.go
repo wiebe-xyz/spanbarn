@@ -105,6 +105,15 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		repo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 	}
 
+	// Dedicated checkpoint connection — separate from the writer pool so the
+	// periodic WAL checkpoint does not queue behind the worker's aggregate-upsert
+	// transactions (which hold the single writer connection for a full BEGIN…COMMIT).
+	ckptDB, err := repository.NewCheckpointDB(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("open checkpoint database: %w", err)
+	}
+	defer ckptDB.Close()
+
 	// Read-only DB — used exclusively by the query service for dashboard reads.
 	// In WAL mode, readers and the single writer don't block each other.
 	roDB, err := repository.NewReadOnlyDB(cfg.DBPath)
@@ -148,7 +157,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("worker", &wg, func() { w.Run(workerCtx) })
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	safeGo("wal-checkpoint", &wg, func() { ckptDB.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
 
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
@@ -272,6 +281,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	ingestHandler.Stop()
 	workerCancel()
 	wg.Wait()
+	ckptDB.FinalCheckpoint(logger)
 
 	logger.Info("shutdown complete")
 	return nil
@@ -508,6 +518,15 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		}
 	}
 
+	// Dedicated checkpoint connection — separate from the writer pool so the
+	// periodic WAL checkpoint does not queue behind the worker's aggregate-upsert
+	// transactions (which hold the single writer connection for a full BEGIN…COMMIT).
+	ckptDB, err := repository.NewCheckpointDB(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("open checkpoint database: %w", err)
+	}
+	defer ckptDB.Close()
+
 	// Step 3: read-only DB for the query service — reads don't compete with writes.
 	roDB, err := repository.NewReadOnlyDB(cfg.DBPath)
 	if err != nil {
@@ -598,7 +617,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	safeGo("wal-checkpoint", &wg, func() { ckptDB.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
 
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
@@ -642,6 +661,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionCancel()
 	workerCancel()
 	wg.Wait()
+	ckptDB.FinalCheckpoint(logger)
 
 	logger.Info("writer shutdown complete")
 	return nil

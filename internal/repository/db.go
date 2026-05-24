@@ -93,13 +93,34 @@ func (d *DB) Close() error {
 	return d.DB.Close()
 }
 
+// NewCheckpointDB opens a dedicated write connection to dbPath used exclusively
+// for periodic WAL checkpoints. Keeping it separate from the writer pool means
+// checkpoint queries never queue behind a long aggregate-upsert transaction
+// (which holds the single MaxOpenConns(1) writer connection for the full
+// BEGIN…COMMIT duration).
+func NewCheckpointDB(dbPath string) (*DB, error) {
+	db, err := otelsql.Open("sqlite", buildDSN(dbPath, false), otelOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("open checkpoint sqlite %s: %w", dbPath, err)
+	}
+	db.SetMaxOpenConns(1)
+	return &DB{DB: db}, nil
+}
+
 // RunPeriodicCheckpoint blocks until ctx is cancelled, issuing a WAL TRUNCATE
-// checkpoint on each tick. TRUNCATE waits (within busy_timeout) for all readers
-// to release their snapshots before copying frames back to the database file and
-// zeroing the WAL. This is the only checkpoint mode that guarantees WAL size is
-// bounded regardless of read load. Call from a dedicated goroutine in the single
-// writer process only.
+// checkpoint on each tick. When a checkpoint returns busy=1 (a reader snapshot
+// blocks full WAL backfill), it retries every retryInterval until the readers
+// release or the next full-interval tick arrives.
+//
+// Note: TRUNCATE mode does NOT automatically retry via busy_timeout when readers
+// block WAL backfill — it returns SQLITE_BUSY immediately in that phase. busy_timeout
+// only applies to write-lock conflicts between concurrent writers. Application-level
+// retry (done here) is required to eventually drain the WAL under read load.
+//
+// Call from a dedicated goroutine using a connection opened by NewCheckpointDB,
+// not the main writer DB, so checkpoint queries do not queue behind write transactions.
 func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, log *slog.Logger) {
+	retryInterval := 5 * time.Second
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -107,16 +128,43 @@ func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, 
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			var busy, walFrames, checkpointed int
-			if err := d.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
-				if ctx.Err() == nil {
-					log.Warn("wal checkpoint error", "error", err)
-				}
-				continue
+			d.checkpoint(ctx, retryInterval, log)
+		}
+	}
+}
+
+// FinalCheckpoint runs one WAL TRUNCATE checkpoint on a fresh context. Call
+// after all writers have stopped (e.g. after wg.Wait()) and before db.Close(),
+// so the WAL is merged into the main file on every clean shutdown.
+// With wal_autocheckpoint(0), db.Close() does not checkpoint automatically.
+func (d *DB) FinalCheckpoint(log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	d.checkpoint(ctx, 0, log)
+}
+
+func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) {
+	for {
+		var busy, walFrames, checkpointed int
+		if err := d.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
+			if ctx.Err() == nil {
+				log.Warn("wal checkpoint error", "error", err)
 			}
-			if busy != 0 {
-				log.Warn("wal checkpoint blocked by active reader", "wal_frames", walFrames, "checkpointed", checkpointed)
-			}
+			return
+		}
+		if busy == 0 {
+			return
+		}
+		// busy=1: a reader snapshot is blocking full WAL backfill. Retry after a
+		// short interval so the WAL can be drained once the reader finishes.
+		log.Debug("wal checkpoint blocked by reader, retrying", "wal_frames", walFrames, "checkpointed", checkpointed)
+		if retryInterval == 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(retryInterval):
 		}
 	}
 }
