@@ -167,4 +167,7 @@ func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *s
 		case <-time.After(retryInterval):
 		}
 	}
+	// Reclaim up to 5000 freed pages (~20 MiB) per tick. No-op when
+	// auto_vacuum != INCREMENTAL (i.e. before migration 018 has run).
+	_, _ = d.ExecContext(ctx, "PRAGMA incremental_vacuum(5000)")
 }
