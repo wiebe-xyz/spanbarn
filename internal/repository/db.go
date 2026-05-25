@@ -153,6 +153,9 @@ func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *s
 			return
 		}
 		if busy == 0 {
+			// Reclaim up to 5000 freed pages (~20 MiB) per tick. No-op when
+			// auto_vacuum != INCREMENTAL (i.e. before migration 018 has run).
+			_, _ = d.ExecContext(ctx, "PRAGMA incremental_vacuum(5000)")
 			return
 		}
 		// busy=1: a reader snapshot is blocking full WAL backfill. Retry after a
@@ -167,7 +170,4 @@ func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *s
 		case <-time.After(retryInterval):
 		}
 	}
-	// Reclaim up to 5000 freed pages (~20 MiB) per tick. No-op when
-	// auto_vacuum != INCREMENTAL (i.e. before migration 018 has run).
-	_, _ = d.ExecContext(ctx, "PRAGMA incremental_vacuum(5000)")
 }
