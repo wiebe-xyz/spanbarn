@@ -132,9 +132,20 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 }
 
 func (r *Repository) DeleteAggregatesOlderThan(cutoff time.Time) (int64, error) {
-	res, err := r.db.Exec("DELETE FROM aggregates WHERE bucket < ?", cutoff)
-	if err != nil {
-		return 0, err
+	var total int64
+	for {
+		res, err := r.db.Exec(
+			"DELETE FROM aggregates WHERE rowid IN (SELECT rowid FROM aggregates WHERE bucket < ? LIMIT 1000)",
+			cutoff,
+		)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n == 0 {
+			break
+		}
 	}
-	return res.RowsAffected()
+	return total, nil
 }
