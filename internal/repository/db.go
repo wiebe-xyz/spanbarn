@@ -93,20 +93,6 @@ func (d *DB) Close() error {
 	return d.DB.Close()
 }
 
-// NewCheckpointDB opens a dedicated write connection to dbPath used exclusively
-// for periodic WAL checkpoints. Keeping it separate from the writer pool means
-// checkpoint queries never queue behind a long aggregate-upsert transaction
-// (which holds the single MaxOpenConns(1) writer connection for the full
-// BEGIN…COMMIT duration).
-func NewCheckpointDB(dbPath string) (*DB, error) {
-	db, err := otelsql.Open("sqlite", buildDSN(dbPath, false), otelOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("open checkpoint sqlite %s: %w", dbPath, err)
-	}
-	db.SetMaxOpenConns(1)
-	return &DB{DB: db}, nil
-}
-
 // RunPeriodicCheckpoint blocks until ctx is cancelled, issuing a WAL TRUNCATE
 // checkpoint on each tick. When a checkpoint returns busy=1 (a reader snapshot
 // blocks full WAL backfill), it retries every retryInterval until the readers
@@ -117,8 +103,19 @@ func NewCheckpointDB(dbPath string) (*DB, error) {
 // only applies to write-lock conflicts between concurrent writers. Application-level
 // retry (done here) is required to eventually drain the WAL under read load.
 //
-// Call from a dedicated goroutine using a connection opened by NewCheckpointDB,
-// not the main writer DB, so checkpoint queries do not queue behind write transactions.
+// Call on the same writer *DB as every other writer. An earlier version used a
+// dedicated second connection to avoid queueing behind worker transactions, but
+// SQLite still only allows one writer at a time at the file level — a second
+// connection just moves the contention from Go's pool into SQLite's lock
+// machinery, where a deferred-tx upgrade against this connection's RESERVED
+// lock returns SQLITE_BUSY immediately and bypasses busy_timeout (root cause of
+// SPA-27). In-process serialisation via MaxOpenConns(1) is cheap because the
+// write transactions are tiny (small aggregate upserts, short CRUD txs).
+//
+// Long-horizon plan: hand off WAL maintenance to Litestream, the same way
+// BugBarn and FunnelBarn do. Once Litestream is doing the periodic checkpoint
+// as part of its replication loop, this goroutine can go away entirely and
+// "snapshots are not the writer's problem" becomes literally true.
 func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, log *slog.Logger) {
 	retryInterval := 5 * time.Second
 	t := time.NewTicker(interval)
