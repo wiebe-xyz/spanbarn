@@ -43,6 +43,11 @@ func NewDB(dbPath string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", dbPath, err)
 	}
+	// SQLite allows only one writer at a time. Capping the pool to a single
+	// connection serializes writes in Go instead of letting two deferred
+	// transactions race to upgrade their locks — that race returns SQLITE_BUSY
+	// immediately and bypasses busy_timeout.
+	db.SetMaxOpenConns(1)
 	return &DB{DB: db}, nil
 }
 
