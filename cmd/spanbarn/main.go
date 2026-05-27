@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -717,18 +716,8 @@ func safeGo(name string, wg *sync.WaitGroup, fn func()) {
 // litestreamActive returns true when this process is running as the -exec child
 // of Litestream. In that case Litestream owns WAL checkpointing as part of its
 // replication cycle; spanbarn must not run a competing checkpoint goroutine.
-// Detection mirrors the entrypoint.sh placeholder check.
 func litestreamActive() bool {
-	key := os.Getenv("LITESTREAM_ACCESS_KEY_ID")
-	if key == "" {
-		return false
-	}
-	for _, prefix := range []string{"REPLACE", "CHANGEME", "TODO", "PLACEHOLDER"} {
-		if strings.HasPrefix(key, prefix) {
-			return false
-		}
-	}
-	return true
+	return os.Getenv("LITESTREAM_ACCESS_KEY_ID") != ""
 }
 
 func parseAggregationInterval(s string) time.Duration {
