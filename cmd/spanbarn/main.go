@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -148,7 +149,11 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("worker", &wg, func() { w.Run(workerCtx) })
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	if !litestreamActive() {
+		safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	} else {
+		logger.Info("litestream detected: WAL checkpointing delegated to litestream")
+	}
 
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
@@ -599,7 +604,11 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	if !litestreamActive() {
+		safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	} else {
+		logger.Info("litestream detected: WAL checkpointing delegated to litestream")
+	}
 
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
@@ -703,6 +712,23 @@ func safeGo(name string, wg *sync.WaitGroup, fn func()) {
 		}()
 		fn()
 	}()
+}
+
+// litestreamActive returns true when this process is running as the -exec child
+// of Litestream. In that case Litestream owns WAL checkpointing as part of its
+// replication cycle; spanbarn must not run a competing checkpoint goroutine.
+// Detection mirrors the entrypoint.sh placeholder check.
+func litestreamActive() bool {
+	key := os.Getenv("LITESTREAM_ACCESS_KEY_ID")
+	if key == "" {
+		return false
+	}
+	for _, prefix := range []string{"REPLACE", "CHANGEME", "TODO", "PLACEHOLDER"} {
+		if strings.HasPrefix(key, prefix) {
+			return false
+		}
+	}
+	return true
 }
 
 func parseAggregationInterval(s string) time.Duration {
