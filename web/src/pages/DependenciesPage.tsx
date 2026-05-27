@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactElement } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { DependencySummary } from '../api/types'
@@ -22,16 +22,26 @@ export function DependenciesPage(): ReactElement {
   const [loading, setLoading] = useState(true)
   const [sortField, setSortField] = useState<SortField>('callCount')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const fetchIdRef = useRef(0)
+
+  useEffect(() => {
+    setLoading(true)
+  }, [range, serviceFilter])
 
   const fetchData = useCallback(async () => {
+    const id = ++fetchIdRef.current
     const { from, to } = getTimeRange(range)
     try {
       const data = await api.getDependencies(from, to, serviceFilter || undefined)
-      setDependencies(data ?? [])
+      if (id === fetchIdRef.current) {
+        setDependencies(data ?? [])
+      }
     } catch {
       // handled by client (401 redirect, etc.)
     } finally {
-      setLoading(false)
+      if (id === fetchIdRef.current) {
+        setLoading(false)
+      }
     }
   }, [range, serviceFilter])
 

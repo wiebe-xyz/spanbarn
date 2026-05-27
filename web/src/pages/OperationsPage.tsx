@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactElement } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ChevronRight, Search } from 'lucide-react'
 import {
@@ -31,9 +31,15 @@ export function OperationsPage(): ReactElement {
   const [kindFilter, setKindFilter] = useState('server')
   const [sortKey, setSortKey] = useState<string>('score')
   const [sortAsc, setSortAsc] = useState(false)
+  const fetchIdRef = useRef(0)
+
+  useEffect(() => {
+    setLoading(true)
+  }, [service, range, kindFilter])
 
   const fetchData = useCallback(async () => {
     if (!service) return
+    const id = ++fetchIdRef.current
     const { from, to } = getTimeRange(range)
     try {
       const [ops, ts] = await Promise.all([
@@ -41,12 +47,16 @@ export function OperationsPage(): ReactElement {
         api.getOperations(service, from, to, kindFilter),
         api.getTimeseries(service, '*', from, to),
       ])
-      setOperations(ops ?? [])
-      setTimeseries(ts ?? [])
+      if (id === fetchIdRef.current) {
+        setOperations(ops ?? [])
+        setTimeseries(ts ?? [])
+      }
     } catch {
       // handled by client
     } finally {
-      setLoading(false)
+      if (id === fetchIdRef.current) {
+        setLoading(false)
+      }
     }
   }, [service, range, kindFilter])
 

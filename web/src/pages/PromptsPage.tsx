@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import type { PromptSummary } from '../api/types'
@@ -44,17 +44,32 @@ export function PromptsPage(): ReactElement {
   const [sortField, setSortField] = useState<SortField>('totalCostUsd')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const navigate = useNavigate()
+  const fetchIdRef = useRef(0)
 
-  const fetchData = useCallback(() => {
+  useEffect(() => {
     setLoading(true)
+  }, [range, serviceFilter])
+
+  const fetchData = useCallback(async () => {
+    const id = ++fetchIdRef.current
     const { from, to } = getTimeRange(range)
-    return api.getPrompts(from, to, serviceFilter || undefined).then((data) => {
-      setPrompts(data ?? [])
-    }).catch(() => {}).finally(() => { setLoading(false) })
+    try {
+      const data = await api.getPrompts(from, to, serviceFilter || undefined)
+      if (id === fetchIdRef.current) {
+        setPrompts(data ?? [])
+      }
+    } catch {
+      // handled by client
+    } finally {
+      if (id === fetchIdRef.current) {
+        setLoading(false)
+      }
+    }
   }, [range, serviceFilter])
 
   useEffect(() => {
-    fetchData() // eslint-disable-line react-hooks/set-state-in-effect -- async fetch pattern
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
+    void fetchData()
   }, [fetchData])
 
   const handleSort = (field: SortField) => {

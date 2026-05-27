@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactElement } from 'react'
 import { Search } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
@@ -91,16 +91,26 @@ export function PagesPage(): ReactElement {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [serviceFilter, setServiceFilter] = useState('')
+  const fetchIdRef = useRef(0)
+
+  useEffect(() => {
+    setLoading(true)
+  }, [range, serviceFilter])
 
   const fetchData = useCallback(async () => {
+    const id = ++fetchIdRef.current
     const { from, to } = getTimeRange(range)
     try {
       const data = await api.getWebVitals(from, to, serviceFilter || undefined)
-      setVitals(data ?? [])
+      if (id === fetchIdRef.current) {
+        setVitals(data ?? [])
+      }
     } catch {
       // handled by client
     } finally {
-      setLoading(false)
+      if (id === fetchIdRef.current) {
+        setLoading(false)
+      }
     }
   }, [range, serviceFilter])
 

@@ -123,6 +123,7 @@ export function ServiceMapPage(): ReactElement {
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const fetchIdRef = useRef(0)
   const [dims, setDims] = useState({ width: 900, height: 500 })
 
   useEffect(() => {
@@ -136,15 +137,24 @@ export function ServiceMapPage(): ReactElement {
     return () => obs.disconnect()
   }, [])
 
+  useEffect(() => {
+    setLoading(true)
+  }, [range])
+
   const fetchData = useCallback(async () => {
+    const id = ++fetchIdRef.current
     const { from, to } = getTimeRange(range)
     try {
       const sm = await api.getServiceMap(from, to)
-      setData(sm)
+      if (id === fetchIdRef.current) {
+        setData(sm)
+      }
     } catch {
       // handled by client
     } finally {
-      setLoading(false)
+      if (id === fetchIdRef.current) {
+        setLoading(false)
+      }
     }
   }, [range])
 

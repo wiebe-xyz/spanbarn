@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import { api } from '../api/client'
@@ -56,6 +56,11 @@ export function ServicesPage(): ReactElement {
   const [sortKey, setSortKey] = useState<SortKey>('spanCount')
   const [sortAsc, setSortAsc] = useState(false)
   const [serverOnly, setServerOnly] = useState(true)
+  const fetchIdRef = useRef(0)
+
+  useEffect(() => {
+    setLoading(true)
+  }, [range, serverOnly])
 
   const rangeHours = useMemo(() => {
     const r = RANGES.find((r) => r.value === range)
@@ -63,6 +68,7 @@ export function ServicesPage(): ReactElement {
   }, [range])
 
   const fetchData = useCallback(async () => {
+    const id = ++fetchIdRef.current
     const { from, to } = getTimeRange(range)
     const fromDate = new Date(from)
     const toDate = new Date(to)
@@ -75,12 +81,16 @@ export function ServicesPage(): ReactElement {
         api.getServices(from, to, serverOnly),
         api.getServices(prevFrom, prevTo, serverOnly),
       ])
-      setServices(data ?? [])
-      setPrevServices(prev ?? [])
+      if (id === fetchIdRef.current) {
+        setServices(data ?? [])
+        setPrevServices(prev ?? [])
+      }
     } catch {
       // handled by client
     } finally {
-      setLoading(false)
+      if (id === fetchIdRef.current) {
+        setLoading(false)
+      }
     }
   }, [range, serverOnly])
 

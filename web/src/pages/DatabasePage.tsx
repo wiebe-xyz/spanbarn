@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type ReactElement } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import type { DatabaseQuerySummary } from '../api/types'
@@ -21,16 +21,26 @@ export function DatabasePage(): ReactElement {
   const [sortField, setSortField] = useState<SortField>('totalTimeUs')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const navigate = useNavigate()
+  const fetchIdRef = useRef(0)
+
+  useEffect(() => {
+    setLoading(true)
+  }, [range, serviceFilter])
 
   const fetchData = useCallback(async () => {
+    const id = ++fetchIdRef.current
     const { from, to } = getTimeRange(range)
     try {
       const data = await api.getDatabaseQueries(from, to, serviceFilter || undefined)
-      setQueries(data ?? [])
+      if (id === fetchIdRef.current) {
+        setQueries(data ?? [])
+      }
     } catch {
       // handled by client
     } finally {
-      setLoading(false)
+      if (id === fetchIdRef.current) {
+        setLoading(false)
+      }
     }
   }, [range, serviceFilter])
 
