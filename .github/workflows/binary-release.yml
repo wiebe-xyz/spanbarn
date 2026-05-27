@@ -140,7 +140,7 @@ jobs:
             --target debs/
 
       - name: Upload .deb artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: debs-${{ matrix.arch }}
           path: debs/*.deb
@@ -182,7 +182,7 @@ jobs:
           for f in *.tar.gz; do sha256sum "$f" > "${f}.sha256"; done
 
       - name: Upload tarball artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: darwin-${{ matrix.arch }}
           path: dist/*.tar.gz*
@@ -194,7 +194,7 @@ jobs:
     needs: [tag, build-debs, build-darwin-tarballs]
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
