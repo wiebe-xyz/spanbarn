@@ -3,6 +3,8 @@ package repository
 import (
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 )
 
 func (r *Repository) CreateProject(slug, name string) (Project, error) {
@@ -63,19 +65,23 @@ func (r *Repository) ListProjectIDs() ([]int64, error) {
 }
 
 func (r *Repository) EnsureProjectPending(slug, name string) (Project, error) {
-	p, err := r.GetProjectBySlug(slug)
-	if err == nil {
-		return p, nil
+	for attempt := range 3 {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+		}
+		_, err := r.db.Exec(
+			"INSERT OR IGNORE INTO projects (slug, name, status) VALUES (?, ?, 'pending')",
+			slug, name,
+		)
+		if err != nil {
+			if strings.Contains(err.Error(), "SQLITE_BUSY") && attempt < 2 {
+				continue
+			}
+			return Project{}, err
+		}
+		return r.GetProjectBySlug(slug)
 	}
-	if err != sql.ErrNoRows {
-		return Project{}, err
-	}
-	res, err := r.db.Exec("INSERT INTO projects (slug, name, status) VALUES (?, ?, 'pending')", slug, name)
-	if err != nil {
-		return Project{}, err
-	}
-	id, _ := res.LastInsertId()
-	return r.getProjectByID(id)
+	return Project{}, fmt.Errorf("ensure project pending: exhausted retries")
 }
 
 func (r *Repository) ApproveProject(id int64) (Project, error) {
