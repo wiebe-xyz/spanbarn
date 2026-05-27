@@ -138,6 +138,7 @@ export function ServiceMapPage(): ReactElement {
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: reset loading when query params change
     setLoading(true)
   }, [range])
 

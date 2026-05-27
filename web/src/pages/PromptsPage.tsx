@@ -47,6 +47,7 @@ export function PromptsPage(): ReactElement {
   const fetchIdRef = useRef(0)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: reset loading when query params change
     setLoading(true)
   }, [range, serviceFilter])
 
