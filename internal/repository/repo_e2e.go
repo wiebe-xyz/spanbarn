@@ -9,12 +9,16 @@ const E2EAccountTTL = 7 * 24 * time.Hour
 // the normal password form; they are only accessible through the E2E session
 // endpoint while e2e_enabled is true on the associated project.
 func (r *Repository) UpsertE2EUser(username string, expiresAt time.Time) (User, error) {
-	_, err := r.db.Exec(`
-		INSERT INTO users (username, password_hash, e2e_expires_at)
-		VALUES (?, '', ?)
-		ON CONFLICT(username) DO UPDATE SET e2e_expires_at = excluded.e2e_expires_at
-	`, username, expiresAt)
-	if err != nil {
+	if _, err := r.db.Exec(
+		"INSERT OR IGNORE INTO users (username, password_hash) VALUES (?, '')",
+		username,
+	); err != nil {
+		return User{}, err
+	}
+	if _, err := r.db.Exec(
+		"UPDATE users SET e2e_expires_at = ? WHERE username = ?",
+		expiresAt, username,
+	); err != nil {
 		return User{}, err
 	}
 	return r.GetUserByUsername(username)
