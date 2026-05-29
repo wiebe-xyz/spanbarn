@@ -10,7 +10,7 @@ import (
 )
 
 // handleE2ESession issues a browser session for an E2E test account without
-// requiring the OIDC flow.
+// requiring the OIDC flow. It is disabled entirely in production.
 //
 // Two modes of authentication are accepted:
 //
@@ -18,15 +18,17 @@ import (
 //     is created for a user named "e2e:<project-slug>".
 //
 //  2. Static admin key (project ID 0 / scope "full") — bypasses the
-//     e2e_enabled flag. The session is created for the user "e2e:admin". This
-//     is intended for CI pipelines that own the server admin key and don't
-//     want to maintain a separate project-scoped key.
+//     e2e_enabled flag. Intended for CI pipelines on non-production instances.
 //
-// The E2E account is created (or its expiry refreshed) and expires after
-// repository.E2EAccountTTL (7 days). The retention worker deletes it.
+// The E2E account expires after repository.E2EAccountTTL (7 days) and is
+// deleted by the retention worker.
 func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+	if s.environment == "production" {
+		writeError(w, http.StatusForbidden, "e2e sessions are disabled in production", "")
 		return
 	}
 	if s.sessionMgr == nil {

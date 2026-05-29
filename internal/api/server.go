@@ -20,6 +20,7 @@ type ServerConfig struct {
 	MaxBodyBytes       int64
 	AllowedOrigins     []string
 	Version            string
+	Environment        string // e.g. "production", "staging", "testing"
 	MetricsToken       string // Bearer token for /metrics; empty = no auth
 	LoginRate          int    // per-minute rate limit for login; 0 = default (10)
 	IngestRate         int    // per-minute rate limit for ingest; 0 = default (600)
@@ -39,6 +40,7 @@ type Server struct {
 	maxBodyBytes   int64
 	allowedOrigins []string
 	version        string
+	environment    string
 	metricsToken   string
 	sessionSecret  string
 	publicURL      string
@@ -124,6 +126,7 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		maxBodyBytes:   cfg.MaxBodyBytes,
 		allowedOrigins: cfg.AllowedOrigins,
 		version:        cfg.Version,
+		environment:    cfg.Environment,
 		metricsToken:   cfg.MetricsToken,
 		sessionSecret:  cfg.SessionSecret,
 		publicURL:      cfg.PublicURL,
