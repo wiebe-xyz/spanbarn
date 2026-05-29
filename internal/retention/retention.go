@@ -28,6 +28,7 @@ type Repository interface {
 	InsertErrorSamples(spans []repository.Span) error
 	DeleteErrorSamplesOlderThan(cutoff time.Time) (int64, error)
 	DeleteAggregatesOlderThan(cutoff time.Time) (int64, error)
+	DeleteExpiredE2EUsers(now time.Time) (int64, error)
 	GetSetting(key string) (string, error)
 }
 
@@ -233,6 +234,10 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	e2eUsersDeleted, err := w.repo.DeleteExpiredE2EUsers(now)
+	if err != nil {
+		return err
+	}
 
 	span.SetAttributes(
 		attribute.Int64("boring_spans_deleted", boringDeleted),
@@ -241,6 +246,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		attribute.Int64("spans_deleted", spansDeleted),
 		attribute.Int64("error_samples_deleted", errorSamplesDeleted),
 		attribute.Int64("aggregates_deleted", aggregatesDeleted),
+		attribute.Int64("e2e_users_deleted", e2eUsersDeleted),
 	)
 	w.logger.Info("retention cycle complete",
 		"boring_spans_deleted", boringDeleted,
@@ -249,6 +255,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		"spans_deleted", spansDeleted,
 		"error_samples_deleted", errorSamplesDeleted,
 		"aggregates_deleted", aggregatesDeleted,
+		"e2e_users_deleted", e2eUsersDeleted,
 	)
 	return nil
 }
