@@ -10,14 +10,20 @@ import (
 )
 
 // handleE2ESession issues a browser session for an E2E test account without
-// requiring the OIDC flow. The request must be authenticated with a project
-// API key, and the project must have e2e_enabled = true.
+// requiring the OIDC flow.
 //
-// A dedicated user account named "e2e:<project-slug>" is created (or its
-// expiry refreshed) and a normal session cookie is set. The account is
-// automatically deleted after repository.E2EAccountTTL (7 days) by the
-// retention worker, which also invalidates any outstanding sessions because
-// subsequent session renewals would fail to find the user.
+// Two modes of authentication are accepted:
+//
+//  1. Project API key — the project must have e2e_enabled = true. The session
+//     is created for a user named "e2e:<project-slug>".
+//
+//  2. Static admin key (project ID 0 / scope "full") — bypasses the
+//     e2e_enabled flag. The session is created for the user "e2e:admin". This
+//     is intended for CI pipelines that own the server admin key and don't
+//     want to maintain a separate project-scoped key.
+//
+// The E2E account is created (or its expiry refreshed) and expires after
+// repository.E2EAccountTTL (7 days). The retention worker deletes it.
 func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -29,19 +35,25 @@ func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectID := GetProjectID(r.Context())
-	project, err := s.repo.GetProjectByID(projectID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not load project", "")
-		return
-	}
-	if !project.E2EEnabled {
-		writeError(w, http.StatusForbidden, "e2e mode is not enabled for this project", "")
-		return
+
+	var username string
+	if projectID == 0 {
+		// Static admin key — no project lookup needed.
+		username = "e2e:admin"
+	} else {
+		project, err := s.repo.GetProjectByID(projectID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not load project", "")
+			return
+		}
+		if !project.E2EEnabled {
+			writeError(w, http.StatusForbidden, "e2e mode is not enabled for this project", "")
+			return
+		}
+		username = fmt.Sprintf("e2e:%s", project.Slug)
 	}
 
-	username := fmt.Sprintf("e2e:%s", project.Slug)
 	expiresAt := time.Now().UTC().Add(repository.E2EAccountTTL)
-
 	if _, err := s.repo.UpsertE2EUser(username, expiresAt); err != nil {
 		s.logger.Error("e2e: upsert user", "username", username, "error", err)
 		writeError(w, http.StatusInternalServerError, "could not create e2e account", "")
@@ -77,7 +89,7 @@ func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"username":          username,
+		"username":           username,
 		"account_expires_at": expiresAt.Format(time.RFC3339),
 		"session_expires_at": sessionExpires.Format(time.RFC3339),
 	})

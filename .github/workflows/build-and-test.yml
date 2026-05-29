@@ -305,36 +305,10 @@ jobs:
           set -euo pipefail
           STAGING_URL=https://spanbarn.staging.wiebe.xyz
 
-          # Decrypt credentials needed to bootstrap E2E mode.
-          SESSION_SECRET=$(sops -d --extract '["stringData"]["SPANBARN_SESSION_SECRET"]' deploy/k8s/staging/secret.yaml)
-          ADMIN_PASSWORD=$(sops -d --extract '["stringData"]["SPANBARN_ADMIN_PASSWORD"]' deploy/k8s/staging/secret.yaml)
-          echo "::add-mask::$SESSION_SECRET"
-          echo "::add-mask::$ADMIN_PASSWORD"
-
-          # Derive the deterministic ingest API key for the spanbarn project.
-          E2E_API_KEY=$(python3 -c "
-          import hmac, hashlib, sys
-          secret = sys.argv[1].encode()
-          mac = hmac.new(secret, b'setup:spanbarn', hashlib.sha256).hexdigest()
-          print(mac[:40])
-          " "$SESSION_SECRET")
+          # Decrypt the server admin API key (scope=full, projectID=0).
+          # handleE2ESession accepts this key and bypasses the e2e_enabled check.
+          E2E_API_KEY=$(sops -d --extract '["stringData"]["E2E_API_KEY"]' deploy/k8s/staging/secret.yaml)
           echo "::add-mask::$E2E_API_KEY"
-
-          # Login with native admin credentials and enable E2E mode for the project.
-          curl -sf -c /tmp/sb-cookies.txt -X POST "${STAGING_URL}/api/v1/login" \
-            -H "Content-Type: application/json" \
-            -d "{\"username\":\"admin\",\"password\":\"${ADMIN_PASSWORD}\"}" > /dev/null
-          PROJECT_ID=$(curl -sf "${STAGING_URL}/api/v1/projects" \
-            -b /tmp/sb-cookies.txt \
-            | python3 -c "
-          import json, sys
-          for p in json.load(sys.stdin):
-              if p['slug'] == 'spanbarn':
-                  print(p['id']); break
-          ")
-          curl -sf -X POST "${STAGING_URL}/api/v1/projects/${PROJECT_ID}/e2e" \
-            -b /tmp/sb-cookies.txt > /dev/null
-          echo "E2E mode enabled for project ${PROJECT_ID}"
 
           cd "$(git rev-parse --show-toplevel)"
           npm install
