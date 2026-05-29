@@ -139,6 +139,11 @@ func (s *Server) registerRoutes() {
 		s.mux.HandleFunc("/api/v1/setup/{slug}", s.handleSetup)
 	}
 
+	// E2E session endpoint — API key auth required; only works when e2e_enabled.
+	if s.repo != nil && s.sessionMgr != nil && s.authorizer != nil {
+		s.mux.Handle("/api/v1/e2e/session", ingestRL(ingestAuth(http.HandlerFunc(s.handleE2ESession))))
+	}
+
 	// Project endpoints — rate limited + session auth required.
 	if s.repo != nil && s.sessionMgr != nil {
 		ph := &projectHandlers{repo: s.repo, cache: s.cache}

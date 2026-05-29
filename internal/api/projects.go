@@ -73,6 +73,16 @@ func (h *projectHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
+	case "e2e":
+		switch r.Method {
+		case http.MethodPost:
+			h.handleEnableE2E(w, r, id)
+		case http.MethodDelete:
+			h.handleDisableE2E(w, r, id)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		}
+		return
 	}
 
 	writeError(w, http.StatusNotFound, "not found", "")
@@ -173,4 +183,40 @@ func (h *projectHandlers) handleListAPIKeys(w http.ResponseWriter, r *http.Reque
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+func (h *projectHandlers) handleEnableE2E(w http.ResponseWriter, r *http.Request, id int64) {
+	_, span := apiTracer.Start(r.Context(), "api.projects.enable_e2e")
+	defer span.End()
+	span.SetAttributes(attribute.Int64("project.id", id))
+
+	if err := h.repo.SetProjectE2E(id, true); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to enable e2e", "")
+		return
+	}
+	p, err := h.repo.GetProjectByID(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load project", "")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(p)
+}
+
+func (h *projectHandlers) handleDisableE2E(w http.ResponseWriter, r *http.Request, id int64) {
+	_, span := apiTracer.Start(r.Context(), "api.projects.disable_e2e")
+	defer span.End()
+	span.SetAttributes(attribute.Int64("project.id", id))
+
+	if err := h.repo.SetProjectE2E(id, false); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to disable e2e", "")
+		return
+	}
+	p, err := h.repo.GetProjectByID(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load project", "")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(p)
 }

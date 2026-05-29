@@ -9,8 +9,8 @@ func (r *Repository) CreateUser(username, passwordHash string) error {
 
 func (r *Repository) GetUserByUsername(username string) (User, error) {
 	var u User
-	err := r.db.QueryRow("SELECT id, username, password_hash, created_at FROM users WHERE username = ?", username).
-		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt)
+	err := r.db.QueryRow("SELECT id, username, password_hash, e2e_expires_at, created_at FROM users WHERE username = ?", username).
+		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.E2EExpiresAt, &u.CreatedAt)
 	return u, err
 }
 
@@ -39,7 +39,7 @@ func (r *Repository) DeleteUser(username string) error {
 }
 
 func (r *Repository) ListUsers() ([]User, error) {
-	rows, err := r.db.Query("SELECT id, username, password_hash, created_at FROM users ORDER BY id")
+	rows, err := r.db.Query("SELECT id, username, password_hash, e2e_expires_at, created_at FROM users ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (r *Repository) ListUsers() ([]User, error) {
 	var out []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.E2EExpiresAt, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

@@ -303,6 +303,37 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(b, "Ask your SpanBarn admin to approve this project in Settings.\n\n---\n\n")
 	}
 
+	fmt.Fprintf(b, "## E2E Testing\n\n")
+	if project.E2EEnabled {
+		e2eSessionURL := publicURL + "/api/v1/e2e/session"
+		fmt.Fprintf(b, "> **E2E mode is enabled** for this project. Automated tests can obtain a browser\n")
+		fmt.Fprintf(b, "> session without the OIDC flow. E2E accounts are automatically deleted **7 days**\n")
+		fmt.Fprintf(b, "> after creation.\n\n")
+		fmt.Fprintf(b, "### Creating an E2E session\n\n")
+		fmt.Fprintf(b, "POST to the session endpoint with your ingest API key. The response sets a `session`\n")
+		fmt.Fprintf(b, "cookie that your test browser context can use immediately.\n\n")
+		fmt.Fprintf(b, "```bash\ncurl -s -c cookies.txt -X POST '%s' \\\n", e2eSessionURL)
+		fmt.Fprintf(b, "  -H 'Authorization: Bearer %s'\n```\n\n", plaintext)
+		fmt.Fprintf(b, "### Playwright example\n\n")
+		fmt.Fprintf(b, "```typescript\nawait page.request.post('%s', {\n", e2eSessionURL)
+		fmt.Fprintf(b, "  headers: { Authorization: 'Bearer %s' },\n})\n", plaintext)
+		fmt.Fprintf(b, "await page.goto('%s') // session cookie is now active\n```\n\n", publicURL)
+		fmt.Fprintf(b, "| | |\n|---|---|\n")
+		fmt.Fprintf(b, "| Session endpoint | `%s` |\n", e2eSessionURL)
+		fmt.Fprintf(b, "| Account TTL | 7 days (auto-deleted) |\n")
+		fmt.Fprintf(b, "| Session TTL | ~12 h (same as normal login) |\n\n")
+		fmt.Fprintf(b, "> To disable: `DELETE %s/api/v1/projects/%d/e2e` (requires admin session).\n\n", publicURL, project.ID)
+	} else {
+		fmt.Fprintf(b, "E2E mode is **not enabled** for this project.\n\n")
+		fmt.Fprintf(b, "When enabled, automated tests can POST to `/api/v1/e2e/session` with the ingest\n")
+		fmt.Fprintf(b, "API key to obtain a browser session — no OIDC email flow required. E2E accounts\n")
+		fmt.Fprintf(b, "expire automatically after 7 days.\n\n")
+		fmt.Fprintf(b, "To enable (requires admin session):\n\n")
+		fmt.Fprintf(b, "```bash\ncurl -s -X POST '%s/api/v1/projects/%d/e2e' \\\n", publicURL, project.ID)
+		fmt.Fprintf(b, "  -H 'Cookie: session=<admin-session>'\n```\n\n")
+	}
+	fmt.Fprintf(b, "---\n\n")
+
 	fmt.Fprintf(b, "## LLM / Prompt Instrumentation\n\n")
 	fmt.Fprintf(b, "SpanBarn tracks LLM calls as first-class spans using the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/).\n")
 	fmt.Fprintf(b, "Instrument your prompt calls to see them on the **Prompts** dashboard with cost, latency, token usage, and error tracking.\n\n")

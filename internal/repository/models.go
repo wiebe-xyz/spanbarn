@@ -6,18 +6,20 @@ import (
 )
 
 type Project struct {
-	ID        int64     `json:"id"`
-	Slug      string    `json:"slug"`
-	Name      string    `json:"name"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID         int64     `json:"id"`
+	Slug       string    `json:"slug"`
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	E2EEnabled bool      `json:"e2eEnabled"`
+	CreatedAt  time.Time `json:"createdAt"`
 }
 
 type User struct {
-	ID           int64     `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID           int64        `json:"id"`
+	Username     string       `json:"username"`
+	PasswordHash string       `json:"-"`
+	E2EExpiresAt sql.NullTime `json:"e2eExpiresAt,omitempty"`
+	CreatedAt    time.Time    `json:"createdAt"`
 }
 
 type APIKey struct {

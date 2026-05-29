@@ -18,20 +18,24 @@ func (r *Repository) CreateProject(slug, name string) (Project, error) {
 
 func (r *Repository) getProjectByID(id int64) (Project, error) {
 	var p Project
-	err := r.db.QueryRow("SELECT id, slug, name, status, created_at FROM projects WHERE id = ?", id).
-		Scan(&p.ID, &p.Slug, &p.Name, &p.Status, &p.CreatedAt)
+	err := r.db.QueryRow("SELECT id, slug, name, status, e2e_enabled, created_at FROM projects WHERE id = ?", id).
+		Scan(&p.ID, &p.Slug, &p.Name, &p.Status, &p.E2EEnabled, &p.CreatedAt)
 	return p, err
+}
+
+func (r *Repository) GetProjectByID(id int64) (Project, error) {
+	return r.getProjectByID(id)
 }
 
 func (r *Repository) GetProjectBySlug(slug string) (Project, error) {
 	var p Project
-	err := r.db.QueryRow("SELECT id, slug, name, status, created_at FROM projects WHERE slug = ?", slug).
-		Scan(&p.ID, &p.Slug, &p.Name, &p.Status, &p.CreatedAt)
+	err := r.db.QueryRow("SELECT id, slug, name, status, e2e_enabled, created_at FROM projects WHERE slug = ?", slug).
+		Scan(&p.ID, &p.Slug, &p.Name, &p.Status, &p.E2EEnabled, &p.CreatedAt)
 	return p, err
 }
 
 func (r *Repository) ListProjects() ([]Project, error) {
-	rows, err := r.db.Query("SELECT id, slug, name, status, created_at FROM projects ORDER BY id")
+	rows, err := r.db.Query("SELECT id, slug, name, status, e2e_enabled, created_at FROM projects ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -39,12 +43,28 @@ func (r *Repository) ListProjects() ([]Project, error) {
 	var out []Project
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Status, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Status, &p.E2EEnabled, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+func (r *Repository) SetProjectE2E(id int64, enabled bool) error {
+	v := 0
+	if enabled {
+		v = 1
+	}
+	res, err := r.db.Exec("UPDATE projects SET e2e_enabled = ? WHERE id = ?", v, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (r *Repository) ListProjectIDs() ([]int64, error) {
