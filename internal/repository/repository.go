@@ -19,12 +19,23 @@ const DefaultQueryTimeout = 30 * time.Second
 type Repository struct {
 	db           *sql.DB
 	queryTimeout time.Duration
+	readOnly     bool
 }
 
 // NewRepository creates a Repository backed by the given database connection.
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db, queryTimeout: DefaultQueryTimeout}
 }
+
+// NewReadOnlyRepository creates a Repository that is flagged as read-only.
+// Write operations will fail at the SQLite level; this flag lets callers skip
+// registering write-only endpoints on pods that open read-only connections.
+func NewReadOnlyRepository(db *sql.DB) *Repository {
+	return &Repository{db: db, queryTimeout: DefaultQueryTimeout, readOnly: true}
+}
+
+// ReadOnly reports whether this repository was opened against a read-only DB.
+func (r *Repository) ReadOnly() bool { return r.readOnly }
 
 // SetQueryTimeout overrides the default query timeout.
 func (r *Repository) SetQueryTimeout(d time.Duration) {

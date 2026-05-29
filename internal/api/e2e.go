@@ -56,7 +56,7 @@ func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().UTC().Add(repository.E2EAccountTTL)
 	if _, err := s.repo.UpsertE2EUser(username, expiresAt); err != nil {
 		s.logger.Error("e2e: upsert user", "username", username, "error", err)
-		writeError(w, http.StatusInternalServerError, "could not create e2e account", err.Error())
+		writeError(w, http.StatusInternalServerError, "could not create e2e account", "")
 		return
 	}
 

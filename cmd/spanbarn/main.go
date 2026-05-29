@@ -333,7 +333,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 			logger.Warn("read-only DB unavailable, dashboard reads disabled", "error", dbErr)
 		} else {
 			defer db.Close()
-			roRepo = repository.NewRepository(db.DB)
+			roRepo = repository.NewReadOnlyRepository(db.DB)
 			if cfg.QueryTimeoutSeconds > 0 {
 				roRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 			}
@@ -841,7 +841,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 			logger.Warn("read-only DB unavailable, API key validation limited to static key", "error", dbErr)
 		} else {
 			defer db.Close()
-			roRepo = repository.NewRepository(db.DB)
+			roRepo = repository.NewReadOnlyRepository(db.DB)
 			if cfg.QueryTimeoutSeconds > 0 {
 				roRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 			}
