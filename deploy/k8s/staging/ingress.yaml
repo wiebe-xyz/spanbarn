@@ -29,7 +29,7 @@ spec:
 
     - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/api`) && (Method(`POST`) || Method(`PUT`) || Method(`PATCH`) || Method(`DELETE`))
       kind: Rule
-      priority: 100
+      priority: 200
       services:
         - name: spanbarn
           port: 8080
@@ -37,7 +37,7 @@ spec:
     # Setup is GET-but-writes (creates pending project + setup API key) — route to writer.
     - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/api/v1/setup`)
       kind: Rule
-      priority: 100
+      priority: 200
       services:
         - name: spanbarn
           port: 8080

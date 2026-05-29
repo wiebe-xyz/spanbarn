@@ -140,8 +140,7 @@ func (s *Server) registerRoutes() {
 	}
 
 	// E2E session endpoint — API key auth required; only works when e2e_enabled.
-	// Not registered on read-only pods (reader mode) to prevent write errors.
-	if s.repo != nil && !s.repo.ReadOnly() && s.sessionMgr != nil && s.authorizer != nil {
+	if s.repo != nil && s.sessionMgr != nil && s.authorizer != nil {
 		s.mux.Handle("/api/v1/e2e/session", ingestRL(ingestAuth(http.HandlerFunc(s.handleE2ESession))))
 	}
 
