@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -472,21 +471,10 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Step 1: health endpoint up immediately so the startup probe can begin
-	// counting. During migrations the endpoint returns 503 so the readiness
-	// probe withholds traffic until the full API is wired — this prevents
-	// requests hitting the pod before handlers (e.g. E2E session, API routes)
-	// are registered. The startup probe's failureThreshold gives up to 10
-	// minutes for slow migrations (e.g. CREATE INDEX on a large table).
-	var apiReady atomic.Bool
+	// Step 1: health endpoint up immediately so startup probes pass during migrations.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if !apiReady.Load() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprintf(w, `{"status":"migrating","mode":"writer"}`)
-			return
-		}
 		fmt.Fprintf(w, `{"status":"ok","mode":"writer"}`)
 	})
 
@@ -597,7 +585,6 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr)))
 	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
 	mux.Handle("/", apiServer.Handler())
-	apiReady.Store(true)
 	logger.Info("writer API ready")
 
 	// Step 5: Redis queue connect + workers.
@@ -620,6 +607,25 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// contention. With the mutex each side waits at the Go level (cheap) and
 	// SQLite only ever sees one writer at a time.
 	writeMu := &sync.Mutex{}
+
+	// Create the boring-trace covering index in the background so it doesn't
+	// block pod startup or the rollout. It acquires the write mutex so it
+	// doesn't race with the retention worker or span inserts. On a fresh DB
+	// this takes milliseconds; on a large DB it may take minutes — either way
+	// it is safe to run concurrently with reads and completes before any
+	// retention cycle would notice a performance difference.
+	safeGo("index-boring-trace", &wg, func() {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		logger.Info("creating idx_spans_boring_trace (background)")
+		_, err := db.DB.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_spans_boring_trace
+			ON spans(ingested_at, trace_id, status, duration_us)`)
+		if err != nil && ctx.Err() == nil {
+			logger.Warn("idx_spans_boring_trace creation failed", "error", err)
+		} else if ctx.Err() == nil {
+			logger.Info("idx_spans_boring_trace ready")
+		}
+	})
 
 	rw := worker.NewRedisWorker(writeQueue, &workerRepoAdapter{repo: repo}, logger)
 	rw.SetAggregator(aggregator)
