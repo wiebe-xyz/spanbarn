@@ -609,15 +609,13 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	writeMu := &sync.Mutex{}
 
 	// Create the boring-trace covering index in the background so it doesn't
-	// block pod startup or the rollout. It acquires the write mutex so it
-	// doesn't race with the retention worker or span inserts. On a fresh DB
-	// this takes milliseconds; on a large DB it may take minutes — either way
-	// it is safe to run concurrently with reads and completes before any
-	// retention cycle would notice a performance difference.
+	// block pod startup or rollout. SQLite's own locking serialises this with
+	// concurrent reads/writes; the span worker's retry logic absorbs any
+	// SQLITE_BUSY errors during the build. On a fresh DB this takes
+	// milliseconds; on a large DB it may take several minutes — either way
+	// it is a one-time cost and subsequent retention cycles will be fast.
 	safeGo("index-boring-trace", &wg, func() {
-		writeMu.Lock()
-		defer writeMu.Unlock()
-		logger.Info("creating idx_spans_boring_trace (background)")
+		logger.Info("ensuring idx_spans_boring_trace (background)")
 		_, err := db.DB.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_spans_boring_trace
 			ON spans(ingested_at, trace_id, status, duration_us)`)
 		if err != nil && ctx.Err() == nil {
