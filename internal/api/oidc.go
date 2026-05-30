@@ -62,12 +62,13 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "oidc code missing", "")
 		return
 	}
-	claims, err := s.oidc.Exchange(r.Context(), code, nonceCookie.Value)
+	exchanged, err := s.oidc.ExchangeFull(r.Context(), code, nonceCookie.Value)
 	if err != nil {
 		s.logger.Warn("oidc: exchange failed", "error", err)
 		writeError(w, http.StatusUnauthorized, "oidc exchange failed", "")
 		return
 	}
+	claims := exchanged.Claims
 	if !s.oidc.Allowed(claims) {
 		s.logger.Warn("oidc: access denied",
 			"sub", claims.Subject, "groups", claims.Groups, "roles", claims.Roles)
@@ -94,9 +95,22 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
-	// Non-HttpOnly hint so the SPA can show OIDC-specific UI (e.g. the
-	// IAMBarn profile link) only for sessions that actually came from
-	// iambarn. Same expiry as the session.
+	// Store the OIDC access token so SpanBarn can proxy iambarn-profile widget
+	// API calls server-to-server. HttpOnly prevents JS access; the proxy
+	// handler reads it for outbound Bearer requests to IamBarn.
+	if exchanged.AccessToken != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "spanbarn_iam_token",
+			Value:    exchanged.AccessToken,
+			Path:     "/",
+			Expires:  expires,
+			HttpOnly: true,
+			Secure:   secure,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
+	// Non-HttpOnly hint so the SPA can show OIDC-specific UI only for
+	// sessions that actually came from iambarn. Same expiry as the session.
 	http.SetCookie(w, &http.Cookie{
 		Name:     "spanbarn_auth_method",
 		Value:    "oidc",

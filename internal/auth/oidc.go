@@ -65,35 +65,48 @@ func (c *OIDCClient) AuthorizeURL(state, nonce string) (string, error) {
 	return c.oauth.AuthCodeURL(state, oidcv3.Nonce(nonce)), nil
 }
 
-// Exchange swaps an authorization code for tokens and verifies the ID token's
-// signature + audience + nonce. Returns the parsed ID-token claims on success.
-func (c *OIDCClient) Exchange(ctx context.Context, code, nonce string) (OIDCClaims, error) {
+// ExchangeResult holds the parsed claims and the raw OIDC access token.
+type ExchangeResult struct {
+	Claims      OIDCClaims
+	AccessToken string
+}
+
+// ExchangeFull swaps an authorization code for tokens, verifies the ID token,
+// and returns both the parsed claims and the raw access token in one call.
+func (c *OIDCClient) ExchangeFull(ctx context.Context, code, nonce string) (ExchangeResult, error) {
 	if err := c.ensureReady(ctx); err != nil {
-		return OIDCClaims{}, err
+		return ExchangeResult{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
 	tok, err := c.oauth.Exchange(ctx, code)
 	if err != nil {
-		return OIDCClaims{}, fmt.Errorf("oidc: token exchange: %w", err)
+		return ExchangeResult{}, fmt.Errorf("oidc: token exchange: %w", err)
 	}
 	rawID, ok := tok.Extra("id_token").(string)
 	if !ok || rawID == "" {
-		return OIDCClaims{}, errors.New("oidc: token response missing id_token")
+		return ExchangeResult{}, errors.New("oidc: token response missing id_token")
 	}
 	idToken, err := c.verifier.Verify(ctx, rawID)
 	if err != nil {
-		return OIDCClaims{}, fmt.Errorf("oidc: verify id_token: %w", err)
+		return ExchangeResult{}, fmt.Errorf("oidc: verify id_token: %w", err)
 	}
 	if idToken.Nonce != nonce {
-		return OIDCClaims{}, errors.New("oidc: nonce mismatch")
+		return ExchangeResult{}, errors.New("oidc: nonce mismatch")
 	}
 	var claims OIDCClaims
 	if err := idToken.Claims(&claims); err != nil {
-		return OIDCClaims{}, fmt.Errorf("oidc: decode claims: %w", err)
+		return ExchangeResult{}, fmt.Errorf("oidc: decode claims: %w", err)
 	}
-	return claims, nil
+	return ExchangeResult{Claims: claims, AccessToken: tok.AccessToken}, nil
+}
+
+// Exchange swaps an authorization code for tokens and verifies the ID token's
+// signature + audience + nonce. Returns the parsed ID-token claims on success.
+func (c *OIDCClient) Exchange(ctx context.Context, code, nonce string) (OIDCClaims, error) {
+	r, err := c.ExchangeFull(ctx, code, nonce)
+	return r.Claims, err
 }
 
 // Allowed returns true if the claims grant access to this barn.

@@ -203,6 +203,7 @@ export function DashboardLayout(): ReactElement {
         {profileOpen && iambarnIssuer && (
           <IambarnProfileModal
             issuer={iambarnIssuer}
+            proxyUrl={window.location.origin + '/iam-proxy'}
             triggerRef={chipRef}
             onClose={() => setProfileOpen(false)}
             onLogout={handleLogout}

@@ -23,6 +23,14 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/me", apiRL(sessionAuth(http.HandlerFunc(s.handleMe))))
 	}
 
+	// IamBarn proxy — session auth required. Forwards iambarn-profile widget
+	// requests to IamBarn using the stored OIDC access token so the widget
+	// works same-origin without cross-site cookie issues.
+	if s.sessionMgr != nil && s.oidc != nil {
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+		s.mux.Handle("/iam-proxy/", sessionAuth(http.HandlerFunc(s.handleIAMProxy)))
+	}
+
 	// IAMBarn theme manifest — public, no auth, no redirects. Served at the
 	// well-known path so IAMBarn can adopt SpanBarn's brand on its login page
 	// when users arrive via an OAuth authorize redirect from this host.

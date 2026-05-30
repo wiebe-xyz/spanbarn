@@ -40,12 +40,13 @@ const widgetStyle: CSSProperties = {
 
 interface Props {
   issuer: string
+  proxyUrl: string
   triggerRef: React.RefObject<HTMLButtonElement | null>
   onClose: () => void
   onLogout: () => void
 }
 
-export function IambarnProfileModal({ issuer, triggerRef, onClose, onLogout }: Props): ReactElement {
+export function IambarnProfileModal({ issuer, proxyUrl, triggerRef, onClose, onLogout }: Props): ReactElement {
   const [pos, setPos] = useState({ bottom: 64, left: 8, width: 268 })
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -96,7 +97,7 @@ export function IambarnProfileModal({ issuer, triggerRef, onClose, onLogout }: P
         boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
       }}
     >
-      <iambarn-profile server-url={issuer} style={widgetStyle} />
+      <iambarn-profile server-url={proxyUrl} style={widgetStyle} />
       <div
         style={{
           padding: '0.5rem 0.75rem',
