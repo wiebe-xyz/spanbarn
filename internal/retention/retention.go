@@ -16,10 +16,21 @@ import (
 
 var tracer = otel.Tracer("spanbarn/retention")
 
-const defaultBatchSize = 5000
+const (
+	defaultBatchSize = 5000
+	// maxSpansPerCycle caps how many spans each RunOnce call will aggregate and
+	// delete. Keeping cycles short prevents long write-lock holds that starve
+	// the span-insert path. Any backlog beyond this cap is picked up on the
+	// next tick.
+	maxSpansPerCycle = 20_000
+	// largeBacklogWarn is the span count above which we emit a warning so
+	// operators know the table has grown unexpectedly large.
+	largeBacklogWarn = 1_000_000
+)
 
 // Repository defines the data-access methods the retention worker needs.
 type Repository interface {
+	CountSpansOlderThan(cutoff time.Time) (int64, error)
 	GetSpansForAggregation(cutoff time.Time, limit int) ([]repository.Span, error)
 	GetBoringTraceSpans(cutoff time.Time, slowThresholdUS int64, limit int) ([]repository.Span, error)
 	DeleteSpansByIDs(ids []int64) (int64, error)
@@ -150,6 +161,10 @@ func (w *RetentionWorker) effectiveConfig() Config {
 //  1. Aggregate-and-delete boring traces (non-error, non-slow) older than boring_trace_hours
 //  2. Fetch spans older than full_retention_hours in batches, sample errors, aggregate, delete
 //  3. Delete old error_samples and aggregates
+//
+// Each cycle is capped at maxSpansPerCycle deletions to keep write-lock hold
+// times short. If the cap is reached, backlog_remains is logged so operators
+// know the next tick will continue draining.
 func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "retention.cycle")
 	defer span.End()
@@ -162,14 +177,27 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	errorCutoff := now.Add(-time.Duration(cfg.ErrorRetentionDays) * 24 * time.Hour)
 	aggCutoff := now.Add(-time.Duration(cfg.AggregateRetentionDays) * 24 * time.Hour)
 
+	// Count spans pending deletion and warn if the backlog is unexpectedly large.
+	if pending, err := w.repo.CountSpansOlderThan(interestingCutoff); err != nil {
+		w.logger.Warn("retention: count pending spans failed", "error", err)
+	} else {
+		w.logger.Info("retention: pending spans", "count", pending)
+		if pending > largeBacklogWarn {
+			w.logger.Warn("retention: large backlog detected, drain will span multiple cycles",
+				"pending_spans", pending, "per_cycle_cap", maxSpansPerCycle)
+		}
+	}
+
 	// Phase 1: aggregate-then-delete boring traces on the shorter TTL.
 	boringDeleted, err := w.processBoring(ctx, boringCutoff, cfg.SlowThresholdUS)
 	if err != nil {
 		return err
 	}
 
-	// Phase 2: aggregate-then-delete all remaining old spans (error/slow included).
+	// Phase 2: aggregate-then-delete all remaining old spans (error/slow included),
+	// capped at maxSpansPerCycle total to bound write-lock hold time.
 	var totalAggregated, totalSampled, spansDeleted int64
+	var backlogRemains bool
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -220,8 +248,13 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 			return err
 		}
 		spansDeleted += deleted
+		w.logger.Info("retention: batch deleted", "deleted", deleted, "cycle_total", spansDeleted)
 
 		if len(batch) < defaultBatchSize {
+			break
+		}
+		if spansDeleted >= maxSpansPerCycle {
+			backlogRemains = true
 			break
 		}
 	}
@@ -247,6 +280,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		attribute.Int64("error_samples_deleted", errorSamplesDeleted),
 		attribute.Int64("aggregates_deleted", aggregatesDeleted),
 		attribute.Int64("e2e_users_deleted", e2eUsersDeleted),
+		attribute.Bool("backlog_remains", backlogRemains),
 	)
 	w.logger.Info("retention cycle complete",
 		"boring_spans_deleted", boringDeleted,
@@ -256,12 +290,14 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		"error_samples_deleted", errorSamplesDeleted,
 		"aggregates_deleted", aggregatesDeleted,
 		"e2e_users_deleted", e2eUsersDeleted,
+		"backlog_remains", backlogRemains,
 	)
 	return nil
 }
 
 // processBoring aggregates then deletes boring traces older than boringCutoff.
-// Returns the number of spans deleted.
+// Returns the number of spans deleted. Capped at maxSpansPerCycle to bound
+// write-lock hold time.
 func (w *RetentionWorker) processBoring(ctx context.Context, boringCutoff time.Time, slowThresholdUS int64) (int64, error) {
 	var total int64
 	for {
@@ -304,8 +340,9 @@ func (w *RetentionWorker) processBoring(ctx context.Context, boringCutoff time.T
 			}
 			total += n
 		}
+		w.logger.Info("retention: boring batch deleted", "deleted", int64(len(batch)), "cycle_total", total)
 
-		if len(batch) < defaultBatchSize {
+		if len(batch) < defaultBatchSize || total >= maxSpansPerCycle {
 			break
 		}
 	}

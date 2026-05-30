@@ -183,6 +183,12 @@ func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
 	return res.RowsAffected()
 }
 
+func (r *Repository) CountSpansOlderThan(cutoff time.Time) (int64, error) {
+	var n int64
+	err := r.db.QueryRow("SELECT COUNT(*) FROM spans WHERE ingested_at <= ?", cutoff).Scan(&n)
+	return n, err
+}
+
 func (r *Repository) GetSpansForAggregation(cutoff time.Time, limit int) ([]Span, error) {
 	if limit <= 0 {
 		limit = 1000
