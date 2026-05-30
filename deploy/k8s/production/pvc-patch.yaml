@@ -1,0 +1,9 @@
+# Production PVC patch — overrides base spec to match the existing volume
+# that was provisioned with local-path before spanbarn-local was introduced.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spanbarn-data
+spec:
+  storageClassName: local-path
+  volumeName: pvc-01a1a366-83ba-4b2b-a407-eaebfb0c6f71
