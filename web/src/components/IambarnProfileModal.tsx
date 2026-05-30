@@ -1,42 +1,6 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from 'react'
-import { LogOut } from 'lucide-react'
-
-let scriptPromise: Promise<void> | null = null
-
-function loadWidgetScript(src: string): Promise<void> {
-  if (!scriptPromise) {
-    scriptPromise = new Promise<void>((resolve, reject) => {
-      if (document.querySelector('script[data-iambarn-widget]')) {
-        resolve()
-        return
-      }
-      const el = document.createElement('script')
-      el.src = src
-      el.dataset['iambarnWidget'] = ''
-      el.onload = () => resolve()
-      el.onerror = () => {
-        scriptPromise = null
-        reject(new Error('Failed to load IamBarn widget'))
-      }
-      document.head.appendChild(el)
-    })
-  }
-  return scriptPromise
-}
-
-const widgetStyle: CSSProperties = {
-  ...({
-    '--iambarn-width': '100%',
-    '--iambarn-bg': 'var(--surface)',
-    '--iambarn-surface': 'var(--surface-hover)',
-    '--iambarn-border': 'var(--border)',
-    '--iambarn-text': 'var(--text)',
-    '--iambarn-muted': 'var(--text-muted)',
-  } as CSSProperties),
-  border: 'none',
-  borderRadius: 0,
-  width: '100%',
-}
+import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { LogOut, UserCog } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 
 interface Props {
   issuer: string
@@ -46,28 +10,24 @@ interface Props {
   onLogout: () => void
 }
 
-export function IambarnProfileModal({ issuer, proxyUrl, triggerRef, onClose, onLogout }: Props): ReactElement {
-  const [pos, setPos] = useState({ bottom: 64, left: 8, width: 268 })
+// issuer and proxyUrl are kept for API compatibility but the widget is now
+// on the dedicated /profile page rather than inline in this popover.
+export function IambarnProfileModal({ issuer: _issuer, proxyUrl: _proxyUrl, triggerRef, onClose, onLogout }: Props): ReactElement { // eslint-disable-line @typescript-eslint/no-unused-vars
+  const [pos, setPos] = useState({ bottom: 64, left: 8, width: 220 })
   const panelRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    void loadWidgetScript(`${issuer}/widget/iambarn-widget.iife.js`)
-  }, [issuer])
+  const navigate = useNavigate()
 
   useEffect(() => {
     const el = triggerRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
     setPos({
-      // 8px gap above the trigger button
       bottom: window.innerHeight - rect.top + 8,
       left: rect.left,
-      // match sidebar width
-      width: Math.max(rect.width, 260),
+      width: Math.max(rect.width, 200),
     })
   }, [triggerRef])
 
-  // Close on outside click
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       const target = e.target as Node
@@ -80,6 +40,21 @@ export function IambarnProfileModal({ issuer, proxyUrl, triggerRef, onClose, onL
     return () => document.removeEventListener('mousedown', handleClick)
   }, [onClose, triggerRef])
 
+  const menuItem = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.625rem',
+    width: '100%',
+    padding: '0.625rem 0.875rem',
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--text-muted)',
+    fontSize: '0.875rem',
+    cursor: 'pointer',
+    borderRadius: '0.5rem',
+    textDecoration: 'none',
+  } as const
+
   return (
     <div
       ref={panelRef}
@@ -89,36 +64,25 @@ export function IambarnProfileModal({ issuer, proxyUrl, triggerRef, onClose, onL
         bottom: pos.bottom,
         left: pos.left,
         width: pos.width,
-        maxHeight: 'calc(100vh - 80px)',
-        overflowY: 'auto',
         background: 'var(--surface)',
         border: '1px solid var(--border)',
         borderRadius: '0.75rem',
         boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+        padding: '0.375rem',
       }}
     >
-      <iambarn-profile server-url={proxyUrl} style={widgetStyle} />
-      <div
-        style={{
-          padding: '0.5rem 0.75rem',
-          borderTop: '1px solid var(--border)',
-        }}
+      <button
+        style={{ ...menuItem, color: 'var(--text)' }}
+        onClick={() => { onClose(); navigate('/profile') }}
       >
-        <button
-          className="btn"
-          onClick={onLogout}
-          style={{
-            width: '100%',
-            justifyContent: 'center',
-            background: 'transparent',
-            border: 'none',
-            color: 'var(--text-muted)',
-          }}
-        >
-          <LogOut size={16} />
-          Logout
-        </button>
-      </div>
+        <UserCog size={16} />
+        Account settings
+      </button>
+      <div style={{ height: 1, background: 'var(--border)', margin: '0.25rem 0' }} />
+      <button style={menuItem} onClick={onLogout}>
+        <LogOut size={16} />
+        Logout
+      </button>
     </div>
   )
 }
