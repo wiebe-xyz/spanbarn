@@ -5,7 +5,8 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: local-path
+  storageClassName: spanbarn-local
+  volumeName: spanbarn-data-storage
   resources:
     requests:
-      storage: 5Gi
+      storage: 500Gi

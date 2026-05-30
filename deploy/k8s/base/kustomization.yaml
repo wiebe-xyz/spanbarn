@@ -12,5 +12,7 @@ resources:
   - deployment-redis-queue.yaml
   - service-redis-queue.yaml
   - configmap.yaml
+  - sc-spanbarn-data.yaml
+  - pv-spanbarn-data.yaml
   - pvc.yaml
   - service-reads.yaml
