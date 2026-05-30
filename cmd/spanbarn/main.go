@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -471,10 +472,21 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Step 1: health endpoint up immediately so startup probes pass during migrations.
+	// Step 1: health endpoint up immediately so the startup probe can begin
+	// counting. During migrations the endpoint returns 503 so the readiness
+	// probe withholds traffic until the full API is wired — this prevents
+	// requests hitting the pod before handlers (e.g. E2E session, API routes)
+	// are registered. The startup probe's failureThreshold gives up to 10
+	// minutes for slow migrations (e.g. CREATE INDEX on a large table).
+	var apiReady atomic.Bool
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if !apiReady.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"status":"migrating","mode":"writer"}`)
+			return
+		}
 		fmt.Fprintf(w, `{"status":"ok","mode":"writer"}`)
 	})
 
@@ -585,6 +597,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr)))
 	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
 	mux.Handle("/", apiServer.Handler())
+	apiReady.Store(true)
 	logger.Info("writer API ready")
 
 	// Step 5: Redis queue connect + workers.
