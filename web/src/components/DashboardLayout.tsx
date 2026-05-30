@@ -1,8 +1,9 @@
 import { type ReactElement, useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe, UserCog } from 'lucide-react'
+import { Activity, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe } from 'lucide-react'
 import { api } from '../api/client'
-import { fetchClientConfig, isOIDCSession } from '../api/clientConfig'
+import { fetchClientConfig, isOIDCSession, fetchIambarnMe, type IambarnUser } from '../api/clientConfig'
+import { IambarnProfileModal } from './IambarnProfileModal'
 import { MobileTabBar } from './MobileTabBar'
 import { PWAInstallBanner } from './PWAInstallBanner'
 
@@ -22,7 +23,9 @@ const navItems = [
 export function DashboardLayout(): ReactElement {
   const navigate = useNavigate()
   const location = useLocation()
-  const [iambarnProfileURL, setIambarnProfileURL] = useState<string | null>(null)
+  const [iambarnIssuer, setIambarnIssuer] = useState<string | null>(null)
+  const [iambarnUser, setIambarnUser] = useState<IambarnUser | null>(null)
+  const [profileOpen, setProfileOpen] = useState(false)
 
   useEffect(() => {
     if (navigator.serviceWorker?.controller) {
@@ -34,15 +37,16 @@ export function DashboardLayout(): ReactElement {
   }, [location.pathname])
 
   useEffect(() => {
-    // Only sessions actually opened via the iambarn OIDC callback should
-    // see the profile link — local password sessions don't have a remote
-    // profile to manage.
+    // Only sessions opened via the iambarn OIDC callback have a remote
+    // profile to manage — local password sessions do not.
     if (!isOIDCSession()) return
     let cancelled = false
-    void fetchClientConfig().then((cfg) => {
-      if (!cancelled && cfg.iambarn?.profile_url) {
-        setIambarnProfileURL(cfg.iambarn.profile_url)
-      }
+    void fetchClientConfig().then(async (cfg) => {
+      const issuer = cfg.iambarn?.issuer
+      if (cancelled || !issuer) return
+      setIambarnIssuer(issuer)
+      const user = await fetchIambarnMe(issuer)
+      if (!cancelled) setIambarnUser(user)
     })
     return () => {
       cancelled = true
@@ -50,6 +54,7 @@ export function DashboardLayout(): ReactElement {
   }, [])
 
   const handleLogout = async () => {
+    setProfileOpen(false)
     try {
       await api.logout()
     } catch {
@@ -118,11 +123,67 @@ export function DashboardLayout(): ReactElement {
 
         {/* User actions */}
         <div style={{ padding: '0.75rem 0.5rem', borderTop: '1px solid var(--border)' }}>
-          {iambarnProfileURL && (
-            <a
-              href={iambarnProfileURL}
-              target="_blank"
-              rel="noopener noreferrer"
+          {iambarnIssuer ? (
+            <button
+              onClick={() => setProfileOpen(true)}
+              className="btn"
+              style={{
+                width: '100%',
+                justifyContent: 'flex-start',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                gap: '0.625rem',
+              }}
+            >
+              {iambarnUser?.picture ? (
+                <img
+                  src={iambarnUser.picture}
+                  alt=""
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '50%',
+                    objectFit: 'cover',
+                    flexShrink: 0,
+                  }}
+                  onError={(e) => {
+                    ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '50%',
+                    background: 'var(--accent)',
+                    color: '#fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    flexShrink: 0,
+                  }}
+                >
+                  {(iambarnUser?.display_name || iambarnUser?.email || '?')[0].toUpperCase()}
+                </div>
+              )}
+              <span
+                style={{
+                  fontSize: '0.875rem',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {iambarnUser?.display_name || iambarnUser?.email || 'Profile'}
+              </span>
+            </button>
+          ) : (
+            <button
+              onClick={handleLogout}
               className="btn"
               style={{
                 width: '100%',
@@ -130,29 +191,20 @@ export function DashboardLayout(): ReactElement {
                 background: 'transparent',
                 border: 'none',
                 color: 'var(--text-muted)',
-                marginBottom: '0.25rem',
-                textDecoration: 'none',
               }}
             >
-              <UserCog size={16} />
-              Edit IAMBarn profile
-            </a>
+              <LogOut size={16} />
+              Logout
+            </button>
           )}
-          <button
-            onClick={handleLogout}
-            className="btn"
-            style={{
-              width: '100%',
-              justifyContent: 'center',
-              background: 'transparent',
-              border: 'none',
-              color: 'var(--text-muted)',
-            }}
-          >
-            <LogOut size={16} />
-            Logout
-          </button>
         </div>
+        {profileOpen && iambarnIssuer && (
+          <IambarnProfileModal
+            issuer={iambarnIssuer}
+            onClose={() => setProfileOpen(false)}
+            onLogout={handleLogout}
+          />
+        )}
       </aside>
 
       {/* Main content */}

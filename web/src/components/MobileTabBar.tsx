@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut, UserCog } from 'lucide-react'
+import { Activity, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut } from 'lucide-react'
 import { api } from '../api/client'
-import { fetchClientConfig, isOIDCSession } from '../api/clientConfig'
+import { fetchClientConfig, isOIDCSession, fetchIambarnMe, type IambarnUser } from '../api/clientConfig'
+import { IambarnProfileModal } from './IambarnProfileModal'
 
 const tabs = [
   { to: '/', icon: Activity, label: 'Services' },
@@ -13,19 +14,22 @@ const tabs = [
 
 export function MobileTabBar(): ReactElement {
   const [moreOpen, setMoreOpen] = useState(false)
-  const [iambarnProfileURL, setIambarnProfileURL] = useState<string | null>(null)
+  const [iambarnIssuer, setIambarnIssuer] = useState<string | null>(null)
+  const [iambarnUser, setIambarnUser] = useState<IambarnUser | null>(null)
+  const [profileOpen, setProfileOpen] = useState(false)
   const navigate = useNavigate()
 
   useEffect(() => {
-    // Only sessions actually opened via the iambarn OIDC callback should
-    // see the profile link — local password sessions don't have a remote
-    // profile to manage.
+    // Only sessions opened via the iambarn OIDC callback have a remote
+    // profile to manage — local password sessions do not.
     if (!isOIDCSession()) return
     let cancelled = false
-    void fetchClientConfig().then((cfg) => {
-      if (!cancelled && cfg.iambarn?.profile_url) {
-        setIambarnProfileURL(cfg.iambarn.profile_url)
-      }
+    void fetchClientConfig().then(async (cfg) => {
+      const issuer = cfg.iambarn?.issuer
+      if (cancelled || !issuer) return
+      setIambarnIssuer(issuer)
+      const user = await fetchIambarnMe(issuer)
+      if (!cancelled) setIambarnUser(user)
     })
     return () => {
       cancelled = true
@@ -33,6 +37,8 @@ export function MobileTabBar(): ReactElement {
   }, [])
 
   const handleLogout = async () => {
+    setProfileOpen(false)
+    setMoreOpen(false)
     try {
       await api.logout()
     } catch {
@@ -187,12 +193,12 @@ export function MobileTabBar(): ReactElement {
             <Settings size={18} />
             Settings
           </NavLink>
-          {iambarnProfileURL && (
-            <a
-              href={iambarnProfileURL}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => setMoreOpen(false)}
+          {iambarnIssuer && (
+            <button
+              onClick={() => {
+                setMoreOpen(false)
+                setProfileOpen(true)
+              }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -203,17 +209,47 @@ export function MobileTabBar(): ReactElement {
                 fontSize: '0.875rem',
                 fontWeight: 500,
                 color: 'var(--text-muted)',
-                textDecoration: 'none',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                textAlign: 'left',
               }}
             >
-              <UserCog size={18} />
-              Edit IAMBarn profile
-            </a>
+              {iambarnUser?.picture ? (
+                <img
+                  src={iambarnUser.picture}
+                  alt=""
+                  style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                  onError={(e) => {
+                    ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: '50%',
+                    background: 'var(--accent)',
+                    color: '#fff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    flexShrink: 0,
+                  }}
+                >
+                  {(iambarnUser?.display_name || iambarnUser?.email || '?')[0].toUpperCase()}
+                </div>
+              )}
+              {iambarnUser?.display_name || iambarnUser?.email || 'Profile'}
+            </button>
           )}
           <button
             onClick={() => {
               setMoreOpen(false)
-              handleLogout()
+              void handleLogout()
             }}
             style={{
               display: 'flex',
@@ -304,6 +340,13 @@ export function MobileTabBar(): ReactElement {
           More
         </button>
       </nav>
+      {profileOpen && iambarnIssuer && (
+        <IambarnProfileModal
+          issuer={iambarnIssuer}
+          onClose={() => setProfileOpen(false)}
+          onLogout={handleLogout}
+        />
+      )}
     </>
   )
 }

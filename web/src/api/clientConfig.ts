@@ -5,7 +5,24 @@
 export interface ClientConfig {
   funnelbarn?: { endpoint?: string; api_key?: string; project?: string }
   oidc?: { enabled?: boolean; loginURL?: string }
-  iambarn?: { profile_url?: string }
+  iambarn?: { profile_url?: string; issuer?: string }
+}
+
+export interface IambarnUser {
+  display_name: string
+  email: string
+  picture: string
+}
+
+export async function fetchIambarnMe(issuer: string): Promise<IambarnUser | null> {
+  try {
+    const res = await fetch(`${issuer}/api/v1/me`, { credentials: 'include' })
+    if (!res.ok) return null
+    const data = await (res.json() as Promise<{ user: IambarnUser }>)
+    return data.user
+  } catch {
+    return null
+  }
 }
 
 let cached: Promise<ClientConfig> | null = null

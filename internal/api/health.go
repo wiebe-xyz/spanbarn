@@ -35,6 +35,7 @@ func (s *Server) handleClientConfig(w http.ResponseWriter, _ *http.Request) {
 		}
 		if issuer := strings.TrimRight(s.oidc.Config().Issuer, "/"); issuer != "" {
 			resp["iambarn"] = map[string]string{
+				"issuer":      issuer,
 				"profile_url": issuer + "/admin#profile",
 			}
 		}
