@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { Activity, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut } from 'lucide-react'
 import { api } from '../api/client'
@@ -17,6 +17,7 @@ export function MobileTabBar(): ReactElement {
   const [iambarnIssuer, setIambarnIssuer] = useState<string | null>(null)
   const [iambarnUser, setIambarnUser] = useState<IambarnUser | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
+  const profileBtnRef = useRef<HTMLButtonElement>(null)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -195,6 +196,7 @@ export function MobileTabBar(): ReactElement {
           </NavLink>
           {iambarnIssuer && (
             <button
+              ref={profileBtnRef}
               onClick={() => {
                 setMoreOpen(false)
                 setProfileOpen(true)
@@ -343,6 +345,7 @@ export function MobileTabBar(): ReactElement {
       {profileOpen && iambarnIssuer && (
         <IambarnProfileModal
           issuer={iambarnIssuer}
+          triggerRef={profileBtnRef}
           onClose={() => setProfileOpen(false)}
           onLogout={handleLogout}
         />

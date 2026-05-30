@@ -117,6 +117,52 @@ func TestClientConfigIAMBarnProfileURL(t *testing.T) {
 	}
 }
 
+func TestMeEndpoint(t *testing.T) {
+	sm := auth.NewSessionManager("test-secret", 3600)
+	token, err := sm.Create("alice")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	srv := newServerWithSession(t, sm)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: token})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var body struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.DisplayName != "alice" {
+		t.Fatalf("unexpected display_name: %q", body.DisplayName)
+	}
+}
+
+func newServerWithSession(t *testing.T, sm *auth.SessionManager) *api.Server {
+	t.Helper()
+	q := ingest.NewQueue(1024)
+	sp, err := spool.NewSpool(t.TempDir(), 0)
+	if err != nil {
+		t.Fatalf("spool: %v", err)
+	}
+	t.Cleanup(func() { sp.Close() })
+	h := ingest.NewHandler(q, sp, 0, slog.Default())
+	h.Start(t.Context())
+	t.Cleanup(func() { h.Stop() })
+	return api.NewServerWithQuery(api.ServerConfig{APIKey: testAPIKey, Version: "1.0.0"}, h, nil, sm, slog.Default())
+}
+
 func newServer(t *testing.T, version string) *api.Server {
 	t.Helper()
 	q := ingest.NewQueue(1024)

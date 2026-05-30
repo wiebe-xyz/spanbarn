@@ -15,6 +15,14 @@ func (s *Server) registerRoutes() {
 	// (e.g. funnelbarn project + ingest API key) that the SPA needs at boot.
 	s.mux.HandleFunc("/api/v1/client-config", s.handleClientConfig)
 
+	// Me endpoint — session auth required. Returns the current user's display
+	// name so the SPA can show it in the profile chip without a cross-origin
+	// request to IamBarn.
+	if s.sessionMgr != nil {
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+		s.mux.Handle("/api/v1/me", apiRL(sessionAuth(http.HandlerFunc(s.handleMe))))
+	}
+
 	// IAMBarn theme manifest — public, no auth, no redirects. Served at the
 	// well-known path so IAMBarn can adopt SpanBarn's brand on its login page
 	// when users arrive via an OAuth authorize redirect from this host.

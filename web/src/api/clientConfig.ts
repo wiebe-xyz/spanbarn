@@ -14,12 +14,17 @@ export interface IambarnUser {
   picture: string
 }
 
-export async function fetchIambarnMe(issuer: string): Promise<IambarnUser | null> {
+// Fetch user info from SpanBarn's own session endpoint — same-origin, no
+// cross-origin cookie issues. The issuer parameter is kept for API compat.
+// The issuer parameter is unused — user info now comes from SpanBarn's own
+// session endpoint to avoid cross-origin cookie issues.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function fetchIambarnMe(_issuer: string): Promise<IambarnUser | null> {
   try {
-    const res = await fetch(`${issuer}/api/v1/me`, { credentials: 'include' })
+    const res = await fetch('/api/v1/me', { credentials: 'same-origin' })
     if (!res.ok) return null
-    const data = await (res.json() as Promise<{ user: IambarnUser }>)
-    return data.user
+    const data = await (res.json() as Promise<{ display_name: string }>)
+    return { display_name: data.display_name, email: '', picture: '' }
   } catch {
     return null
   }

@@ -1,4 +1,4 @@
-import { type ReactElement, useEffect, useState } from 'react'
+import { type ReactElement, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Activity, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe } from 'lucide-react'
 import { api } from '../api/client'
@@ -26,6 +26,7 @@ export function DashboardLayout(): ReactElement {
   const [iambarnIssuer, setIambarnIssuer] = useState<string | null>(null)
   const [iambarnUser, setIambarnUser] = useState<IambarnUser | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
+  const chipRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (navigator.serviceWorker?.controller) {
@@ -125,6 +126,7 @@ export function DashboardLayout(): ReactElement {
         <div style={{ padding: '0.75rem 0.5rem', borderTop: '1px solid var(--border)' }}>
           {iambarnIssuer ? (
             <button
+              ref={chipRef}
               onClick={() => setProfileOpen(true)}
               className="btn"
               style={{
@@ -201,6 +203,7 @@ export function DashboardLayout(): ReactElement {
         {profileOpen && iambarnIssuer && (
           <IambarnProfileModal
             issuer={iambarnIssuer}
+            triggerRef={chipRef}
             onClose={() => setProfileOpen(false)}
             onLogout={handleLogout}
           />

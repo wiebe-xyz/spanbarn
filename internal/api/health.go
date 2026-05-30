@@ -19,6 +19,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // Only non-secret values that the browser is expected to send back upstream are
 // included. When an integration is not configured server-side, its block is
 // omitted so the SPA can no-op cleanly.
+// handleMe returns the display name for the currently authenticated session.
+// This is a lightweight same-origin endpoint so the frontend can show the
+// user's name without a cross-origin request to IamBarn.
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
+	username := GetUsername(r.Context())
+	writeJSON(w, http.StatusOK, map[string]string{"display_name": username})
+}
+
 func (s *Server) handleClientConfig(w http.ResponseWriter, _ *http.Request) {
 	resp := map[string]any{}
 	if s.funnelBarn.Endpoint != "" {
