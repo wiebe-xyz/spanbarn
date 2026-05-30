@@ -29,6 +29,7 @@ func setupTestWorker(t *testing.T, cfg Config) (*RetentionWorker, *repository.Re
 	repo := repository.NewRepository(db.DB)
 	logger := slog.Default()
 	agg := aggregation.NewAggregator(repo, time.Minute, logger)
+	cfg.BatchYield = time.Millisecond // no meaningful yield in tests
 	worker := NewRetentionWorker(repo, agg, cfg, logger)
 
 	return worker, repo
