@@ -1,6 +1,9 @@
 /// <reference types="vite/client" />
 
-declare global {
+import type React from 'react'
+
+declare module 'react' {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace JSX {
     interface IntrinsicElements {
       'iambarn-profile': React.DetailedHTMLProps<
