@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties, type ReactElement } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { fetchClientConfig, isOIDCSession } from '../api/clientConfig'
@@ -34,19 +34,45 @@ const widgetStyle: CSSProperties = {
   width: '100%',
 }
 
+type Status = 'loading' | 'ready' | 'needs-reauth'
+
 export function ProfilePage(): ReactElement {
   const navigate = useNavigate()
+  const [status, setStatus] = useState<Status>('loading')
 
   useEffect(() => {
-    if (!isOIDCSession()) return
-    void fetchClientConfig().then((cfg) => {
-      const issuer = cfg.iambarn?.issuer
-      if (issuer) void loadWidgetScript(`${issuer}/widget/iambarn-widget.iife.js`)
-    })
-  }, [])
+    if (!isOIDCSession()) { navigate('/', { replace: true }); return }
 
-  if (!isOIDCSession()) {
-    navigate('/', { replace: true })
+    void (async () => {
+      // Probe the proxy to check if our stored access token is still valid.
+      // A 401 means the token expired — trigger a fresh OIDC loop to reissue it.
+      try {
+        const r = await fetch('/api/iam-proxy/api/v1/me', { credentials: 'include' })
+        if (r.status === 401) {
+          setStatus('needs-reauth')
+          return
+        }
+      } catch {
+        setStatus('needs-reauth')
+        return
+      }
+
+      // Token is valid — load the widget script and show the widget.
+      void fetchClientConfig().then((cfg) => {
+        const issuer = cfg.iambarn?.issuer
+        if (issuer) void loadWidgetScript(`${issuer}/widget/iambarn-widget.iife.js`)
+      })
+      setStatus('ready')
+    })()
+  }, [navigate])
+
+  if (!isOIDCSession()) return <></>
+
+  if (status === 'needs-reauth') {
+    // Redirect through OIDC to get a fresh access token, then come back here.
+    // useEffect so the redirect is a side-effect, not a render mutation.
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    useEffect(() => { window.location.href = '/api/v1/oidc/login?next=/profile' }, [])
     return <></>
   }
 
@@ -65,16 +91,24 @@ export function ProfilePage(): ReactElement {
         <h1 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>Account</h1>
       </div>
 
-      <div
-        style={{
-          background: 'var(--surface)',
-          border: '1px solid var(--border)',
-          borderRadius: '0.75rem',
-          overflow: 'hidden',
-        }}
-      >
-        <iambarn-profile server-url={proxyUrl} style={widgetStyle} />
-      </div>
+      {status === 'loading' && (
+        <div style={{ color: 'var(--text-muted)', fontSize: '0.875rem', padding: '1rem 0' }}>
+          Loading…
+        </div>
+      )}
+
+      {status === 'ready' && (
+        <div
+          style={{
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: '0.75rem',
+            overflow: 'hidden',
+          }}
+        >
+          <iambarn-profile server-url={proxyUrl} style={widgetStyle} />
+        </div>
+      )}
     </div>
   )
 }

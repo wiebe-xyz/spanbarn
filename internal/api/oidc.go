@@ -10,6 +10,7 @@ import (
 const (
 	oidcStateCookie = "spanbarn_oidc_state"
 	oidcNonceCookie = "spanbarn_oidc_nonce"
+	oidcNextCookie  = "spanbarn_oidc_next"
 	oidcCookieTTL   = 10 * time.Minute
 )
 
@@ -32,6 +33,11 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	secure := r.TLS != nil
 	http.SetCookie(w, oidcShortLivedCookie(oidcStateCookie, state, secure))
 	http.SetCookie(w, oidcShortLivedCookie(oidcNonceCookie, nonce, secure))
+	// Stash the post-login redirect target so the callback can send the user
+	// back to the page they came from (e.g. /profile after a token refresh).
+	if next := r.URL.Query().Get("next"); next != "" {
+		http.SetCookie(w, oidcShortLivedCookie(oidcNextCookie, next, secure))
+	}
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
@@ -124,10 +130,16 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
-	// Clear the short-lived state/nonce cookies.
+	// Clear the short-lived state/nonce/next cookies.
 	http.SetCookie(w, oidcShortLivedCookie(oidcStateCookie, "", secure))
 	http.SetCookie(w, oidcShortLivedCookie(oidcNonceCookie, "", secure))
-	http.Redirect(w, r, "/", http.StatusFound)
+	// Redirect back to the original page if one was stashed, otherwise /.
+	next := "/"
+	if c, err := r.Cookie(oidcNextCookie); err == nil && c.Value != "" {
+		next = c.Value
+	}
+	http.SetCookie(w, oidcShortLivedCookie(oidcNextCookie, "", secure))
+	http.Redirect(w, r, next, http.StatusFound)
 }
 
 func oidcShortLivedCookie(name, value string, secure bool) *http.Cookie {
