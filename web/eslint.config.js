@@ -19,4 +19,11 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  // Declaration files use namespace augmentation for global JSX types — allow it.
+  {
+    files: ['**/*.d.ts'],
+    rules: {
+      '@typescript-eslint/no-namespace': 'off',
+    },
+  },
 ])

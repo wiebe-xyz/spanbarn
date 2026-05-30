@@ -1,20 +1,6 @@
 import { useEffect, type CSSProperties, type ReactElement } from 'react'
 import { LogOut } from 'lucide-react'
 
-declare global {
-  namespace JSX {
-    interface IntrinsicElements {
-      'iambarn-profile': React.DetailedHTMLProps<
-        React.HTMLAttributes<HTMLElement> & {
-          'server-url'?: string
-          sections?: string
-        },
-        HTMLElement
-      >
-    }
-  }
-}
-
 let scriptPromise: Promise<void> | null = null
 
 function loadWidgetScript(src: string): Promise<void> {
