@@ -620,6 +620,14 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		logger.Info("litestream detected: WAL checkpointing delegated to litestream")
 	}
 
+	// Retention queries (DELETE/SELECT on the full spans table) can take
+	// several minutes when the backlog is large. Give it a separate repo
+	// instance with a longer timeout so individual queries don't abort
+	// mid-cycle. Both repos share the same *sql.DB connection, so the
+	// writeMu still serialises all writes correctly.
+	retentionRepo := repository.NewRepository(db.DB)
+	retentionRepo.SetQueryTimeout(5 * time.Minute)
+
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
 		InterestingRetentionHours: cfg.RetentionInterestingHours,
@@ -627,7 +635,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 	}
-	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
+	retentionWorker := retention.NewRetentionWorker(retentionRepo, aggregator, retentionCfg, logger)
 	retentionWorker.SetWriteMutex(writeMu)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
