@@ -9,12 +9,6 @@ resources:
   - middleware-sb-redirect.yaml
 # Image tags are injected by the deploy workflow (sed-replaces __SHA__).
 # This avoids the ":latest" tag being applied — that tag isn't published.
-patches:
-  # Match the PVC that was provisioned with local-path before the
-  # spanbarn-local StorageClass was introduced. storageClassName and
-  # volumeName are immutable so kubectl apply fails if they differ.
-  - path: pvc-patch.yaml
-
 images:
   - name: ghcr.io/wiebe-xyz/spanbarn/service
     newTag: __SHA__

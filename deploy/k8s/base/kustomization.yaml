@@ -12,7 +12,8 @@ resources:
   - deployment-redis-queue.yaml
   - service-redis-queue.yaml
   - configmap.yaml
-  - sc-spanbarn-data.yaml
-  - pv-spanbarn-data.yaml
-  - pvc.yaml
   - service-reads.yaml
+  # sc-spanbarn-data.yaml, pv-spanbarn-data.yaml and pvc.yaml are one-time
+  # cluster-setup resources — apply them manually when provisioning a new
+  # cluster. Keeping them out of the rolling-deploy base prevents kubectl apply
+  # from hitting immutable-field or resize errors on existing PVCs.
