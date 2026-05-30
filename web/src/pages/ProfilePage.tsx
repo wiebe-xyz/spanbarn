@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties, type ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, RefreshCw } from 'lucide-react'
 import { fetchClientConfig, isOIDCSession } from '../api/clientConfig'
 
 let scriptPromise: Promise<void> | null = null
@@ -44,7 +44,6 @@ export function ProfilePage(): ReactElement {
     if (!isOIDCSession()) { navigate('/', { replace: true }); return }
 
     void (async () => {
-      // Probe the proxy to check if our stored access token is still valid.
       try {
         const r = await fetch('/api/iam-proxy/api/v1/me', { credentials: 'include' })
         if (r.status === 401) {
@@ -63,14 +62,6 @@ export function ProfilePage(): ReactElement {
       setStatus('ready')
     })()
   }, [navigate])
-
-  // Redirect through a fresh OIDC loop when the access token has expired.
-  // IamBarn re-issues tokens silently using the existing session.
-  useEffect(() => {
-    if (status === 'needs-reauth') {
-      window.location.href = '/api/v1/oidc/login?next=/profile'
-    }
-  }, [status])
 
   if (!isOIDCSession()) return <></>
 
@@ -92,6 +83,30 @@ export function ProfilePage(): ReactElement {
       {status === 'loading' && (
         <div style={{ color: 'var(--text-muted)', fontSize: '0.875rem', padding: '1rem 0' }}>
           Loading…
+        </div>
+      )}
+
+      {status === 'needs-reauth' && (
+        <div
+          style={{
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: '0.75rem',
+            padding: '2rem',
+            textAlign: 'center',
+          }}
+        >
+          <p style={{ color: 'var(--text-muted)', marginBottom: '1rem', fontSize: '0.875rem' }}>
+            Your session has expired. Sign in again to manage your account.
+          </p>
+          <a
+            href={'/api/v1/oidc/login?next=/profile'}
+            className="btn"
+            style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            <RefreshCw size={15} />
+            Sign in again
+          </a>
         </div>
       )}
 

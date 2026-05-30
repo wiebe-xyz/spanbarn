@@ -139,6 +139,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		next = c.Value
 	}
 	http.SetCookie(w, oidcShortLivedCookie(oidcNextCookie, "", secure))
+	// Prevent the browser from caching this redirect — a cached response
+	// would replay the already-consumed authorization code on reload.
+	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, next, http.StatusFound)
 }
 
