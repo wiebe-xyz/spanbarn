@@ -229,6 +229,7 @@ type RedisWorker struct {
 	logger        *slog.Logger
 	metrics       Metrics
 	lastInlineAgg time.Time
+	writeMu       *sync.Mutex
 }
 
 // NewRedisWorker creates a worker that drains the Redis write queue.
@@ -242,6 +243,13 @@ func NewRedisWorker(q *queue.RedisQueue, repo Repository, logger *slog.Logger) *
 // SetAggregator wires in an aggregator for inline aggregation after each batch.
 func (w *RedisWorker) SetAggregator(a Aggregator) {
 	w.aggregator = a
+}
+
+// SetWriteMutex wires in the shared write serializer. When set, the worker
+// holds the mutex for the entire write phase of each batch so that retention
+// and span inserts never compete for the SQLite write lock.
+func (w *RedisWorker) SetWriteMutex(mu *sync.Mutex) {
+	w.writeMu = mu
 }
 
 // Run loops on BRPOP until ctx is cancelled.
@@ -282,6 +290,14 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 	span.SetAttributes(attribute.Int("batch.size", len(records)))
 
 	spans := convertRecords(records)
+
+	// Acquire the shared write lock before touching the DB. This serialises
+	// all writes with the retention worker so neither starves the other out
+	// competing for the SQLite write connection.
+	if w.writeMu != nil {
+		w.writeMu.Lock()
+		defer w.writeMu.Unlock()
+	}
 
 	_, insertSpan := tracer.Start(ctx, "redis_worker.insert_spans")
 	var lastErr error

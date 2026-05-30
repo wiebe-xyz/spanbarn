@@ -601,8 +601,16 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
 	aggregator := aggregation.NewAggregator(repo, aggInterval, logger)
 
+	// writeMu serialises all SQLite writes between the span worker and the
+	// retention worker. Without this they compete for the write connection:
+	// retention times out waiting for the lock, and retries compound the
+	// contention. With the mutex each side waits at the Go level (cheap) and
+	// SQLite only ever sees one writer at a time.
+	writeMu := &sync.Mutex{}
+
 	rw := worker.NewRedisWorker(writeQueue, &workerRepoAdapter{repo: repo}, logger)
 	rw.SetAggregator(aggregator)
+	rw.SetWriteMutex(writeMu)
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
@@ -620,6 +628,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 	}
 	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
+	retentionWorker.SetWriteMutex(writeMu)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })

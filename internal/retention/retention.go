@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -86,6 +87,7 @@ type RetentionWorker struct {
 	aggregator *aggregation.Aggregator
 	cfg        Config
 	logger     *slog.Logger
+	writeMu    *sync.Mutex
 }
 
 // NewRetentionWorker creates a new retention worker.
@@ -96,6 +98,13 @@ func NewRetentionWorker(repo Repository, aggregator *aggregation.Aggregator, cfg
 		cfg:        cfg.withDefaults(),
 		logger:     logger,
 	}
+}
+
+// SetWriteMutex wires in the shared write serializer. When set, RunOnce holds
+// the mutex for its entire cycle so span inserts queue behind retention rather
+// than competing for the SQLite write lock.
+func (w *RetentionWorker) SetWriteMutex(mu *sync.Mutex) {
+	w.writeMu = mu
 }
 
 // Run starts the retention loop, ticking at cfg.Interval until ctx is cancelled.
@@ -168,6 +177,13 @@ func (w *RetentionWorker) effectiveConfig() Config {
 func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "retention.cycle")
 	defer span.End()
+
+	// Hold the write lock for the entire cycle so span-insert batches queue
+	// behind retention rather than interleaving writes on the SQLite connection.
+	if w.writeMu != nil {
+		w.writeMu.Lock()
+		defer w.writeMu.Unlock()
+	}
 
 	cfg := w.effectiveConfig()
 
