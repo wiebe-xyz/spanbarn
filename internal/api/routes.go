@@ -26,9 +26,10 @@ func (s *Server) registerRoutes() {
 	// IamBarn proxy — session auth required. Forwards iambarn-profile widget
 	// requests to IamBarn using the stored OIDC access token so the widget
 	// works same-origin without cross-site cookie issues.
+	// Must be under /api/ so Caddy routes it to the Go service.
 	if s.sessionMgr != nil && s.oidc != nil {
 		sessionAuth := SessionMiddleware(s.sessionMgr)
-		s.mux.Handle("/iam-proxy/", sessionAuth(http.HandlerFunc(s.handleIAMProxy)))
+		s.mux.Handle("/api/iam-proxy/", sessionAuth(http.HandlerFunc(s.handleIAMProxy)))
 	}
 
 	// IAMBarn theme manifest — public, no auth, no redirects. Served at the

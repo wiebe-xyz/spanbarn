@@ -22,8 +22,8 @@ func (s *Server) handleIAMProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strip the /iam-proxy prefix to get the path on IamBarn.
-	path := strings.TrimPrefix(r.URL.Path, "/iam-proxy")
+	// Strip the /api/iam-proxy prefix to get the path on IamBarn.
+	path := strings.TrimPrefix(r.URL.Path, "/api/iam-proxy")
 	if path == "" {
 		path = "/"
 	}

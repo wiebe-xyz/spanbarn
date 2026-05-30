@@ -75,7 +75,12 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "access denied: user is not a member of the required group", "")
 		return
 	}
-	username := claims.PreferredName()
+	// Prefer the display name over the email as the session username so the
+	// profile chip shows "Wiebe" rather than "wiebe@wiebe.xyz".
+	username := claims.Name
+	if username == "" {
+		username = claims.PreferredName()
+	}
 	if username == "" {
 		username = "oidc-user"
 	}

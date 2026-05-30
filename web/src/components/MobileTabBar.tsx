@@ -345,7 +345,7 @@ export function MobileTabBar(): ReactElement {
       {profileOpen && iambarnIssuer && (
         <IambarnProfileModal
           issuer={iambarnIssuer}
-          proxyUrl={window.location.origin + '/iam-proxy'}
+          proxyUrl={window.location.origin + '/api/iam-proxy'}
           triggerRef={profileBtnRef}
           onClose={() => setProfileOpen(false)}
           onLogout={handleLogout}
