@@ -213,15 +213,22 @@ func (w *Worker) aggregateInline(ctx context.Context, spans []repository.Span) {
 	}
 }
 
+// inlineAggInterval is how often the RedisWorker runs inline aggregation.
+// Running after every batch causes too many write transactions under high ingest
+// rates, which starves span inserts and backs up the Redis queue. Retention
+// catches up on any spans skipped here within its own cycle.
+const inlineAggInterval = 30 * time.Second
+
 // RedisWorker consumes span batches from a Redis write queue and persists them
 // to the repository. It reuses the same retry and inline-aggregation logic as
 // the file-spool Worker.
 type RedisWorker struct {
-	queue      *queue.RedisQueue
-	repo       Repository
-	aggregator Aggregator
-	logger     *slog.Logger
-	metrics    Metrics
+	queue         *queue.RedisQueue
+	repo          Repository
+	aggregator    Aggregator
+	logger        *slog.Logger
+	metrics       Metrics
+	lastInlineAgg time.Time
 }
 
 // NewRedisWorker creates a worker that drains the Redis write queue.
@@ -326,7 +333,7 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 		}
 	}
 
-	if w.aggregator != nil {
+	if w.aggregator != nil && time.Since(w.lastInlineAgg) >= inlineAggInterval {
 		aggs, err := w.aggregator.AggregateSpans(ctx, spans)
 		if err != nil {
 			w.logger.Warn("redis worker: inline aggregate failed", "error", err)
@@ -335,8 +342,10 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 		if len(aggs) > 0 {
 			if err := w.aggregator.Persist(ctx, aggs); err != nil {
 				w.logger.Warn("redis worker: inline aggregate persist failed", "error", err)
+				return
 			}
 		}
+		w.lastInlineAgg = time.Now()
 	}
 }
 

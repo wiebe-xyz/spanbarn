@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -154,6 +155,18 @@ func (f *RedisForwarder) Run(ctx context.Context) {
 			err = f.queue.Publish(pubCtx, records)
 			cancel()
 			if err != nil {
+				if isQueueFullError(err) {
+					// Redis is at maxmemory — drop this batch to shed load.
+					// The write contention that caused the backup will resolve
+					// faster without unbounded retries piling up.
+					f.logger.Warn("redis forwarder: queue full, dropping batch", "count", len(records))
+					cursor = newCursor
+					if saveErr := f.spool.SaveCursor(cursor); saveErr != nil {
+						f.logger.Error("redis forwarder: failed to save cursor after drop", "error", saveErr)
+					}
+					retryDelay = 0
+					continue
+				}
 				f.logger.Error("redis forwarder: publish failed, will retry", "error", err, "count", len(records))
 				retryDelay = min(retryDelay*2+time.Second, maxRetryDelay)
 				continue
@@ -206,4 +219,15 @@ func (f *Forwarder) send(ctx context.Context, records []model.SpanRecord) error 
 	}
 
 	return nil
+}
+
+// isQueueFullError reports whether err indicates Redis rejected the write due
+// to maxmemory exhaustion. In that case the caller should drop the batch rather
+// than retrying, so the backlog doesn't grow unboundedly.
+func isQueueFullError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "OOM") || strings.Contains(s, "maxmemory")
 }

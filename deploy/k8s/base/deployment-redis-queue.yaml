@@ -18,7 +18,7 @@ spec:
           image: redis:7-alpine
           # noeviction: never silently drop queued spans under memory pressure.
           # The cache Redis (spanbarn-redis) uses allkeys-lru; this one must not.
-          args: ["--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+          args: ["--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
           ports:
             - containerPort: 6379
               name: redis
@@ -28,7 +28,7 @@ spec:
               memory: 64Mi
             limits:
               cpu: 100m
-              memory: 320Mi
+              memory: 600Mi
           readinessProbe:
             exec:
               command: ["redis-cli", "ping"]
