@@ -45,7 +45,6 @@ export function ProfilePage(): ReactElement {
 
     void (async () => {
       // Probe the proxy to check if our stored access token is still valid.
-      // A 401 means the token expired — trigger a fresh OIDC loop to reissue it.
       try {
         const r = await fetch('/api/iam-proxy/api/v1/me', { credentials: 'include' })
         if (r.status === 401) {
@@ -57,7 +56,6 @@ export function ProfilePage(): ReactElement {
         return
       }
 
-      // Token is valid — load the widget script and show the widget.
       void fetchClientConfig().then((cfg) => {
         const issuer = cfg.iambarn?.issuer
         if (issuer) void loadWidgetScript(`${issuer}/widget/iambarn-widget.iife.js`)
@@ -66,15 +64,15 @@ export function ProfilePage(): ReactElement {
     })()
   }, [navigate])
 
-  if (!isOIDCSession()) return <></>
+  // Redirect through a fresh OIDC loop when the access token has expired.
+  // IamBarn re-issues tokens silently using the existing session.
+  useEffect(() => {
+    if (status === 'needs-reauth') {
+      window.location.href = '/api/v1/oidc/login?next=/profile'
+    }
+  }, [status])
 
-  if (status === 'needs-reauth') {
-    // Redirect through OIDC to get a fresh access token, then come back here.
-    // useEffect so the redirect is a side-effect, not a render mutation.
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    useEffect(() => { window.location.href = '/api/v1/oidc/login?next=/profile' }, [])
-    return <></>
-  }
+  if (!isOIDCSession()) return <></>
 
   const proxyUrl = window.location.origin + '/api/iam-proxy'
 
