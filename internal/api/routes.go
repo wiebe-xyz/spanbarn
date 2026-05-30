@@ -23,11 +23,14 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/me", apiRL(sessionAuth(http.HandlerFunc(s.handleMe))))
 	}
 
-	// IamBarn proxy — session auth required. Forwards iambarn-profile widget
-	// requests to IamBarn using the stored OIDC access token so the widget
-	// works same-origin without cross-site cookie issues.
+	// IamBarn proxy — session auth required when OIDC is configured. Forwards
+	// iambarn-profile widget requests to IamBarn with Bearer auth so the
+	// widget works same-origin (no cross-site cookie issues).
 	// Must be under /api/ so Caddy routes it to the Go service.
-	if s.sessionMgr != nil && s.oidc != nil {
+	// Registered unconditionally — handleIAMProxy returns 404 when OIDC is
+	// not configured. (SetOIDCClient runs after registerRoutes, so we cannot
+	// gate registration on s.oidc != nil here.)
+	if s.sessionMgr != nil {
 		sessionAuth := SessionMiddleware(s.sessionMgr)
 		s.mux.Handle("/api/iam-proxy/", sessionAuth(http.HandlerFunc(s.handleIAMProxy)))
 	}
