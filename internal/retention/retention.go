@@ -19,6 +19,10 @@ var tracer = otel.Tracer("spanbarn/retention")
 
 const (
 	defaultBatchSize = 5000
+	// boringBatchSize is the number of boring-trace spans deleted per boring
+	// phase run. Kept small so the write lock is held briefly and the writer
+	// can drain the Redis queue between runs.
+	boringBatchSize = 1000
 	// maxSpansPerCycle caps how many spans each RunOnce call will aggregate and
 	// delete. Keeping cycles short prevents long write-lock holds that starve
 	// the span-insert path. Any backlog beyond this cap is picked up on the
@@ -57,6 +61,10 @@ type Config struct {
 	// between deletion batches so the span-insert worker can drain the Redis
 	// queue. 0 disables yielding (old behaviour). Default 30s.
 	BatchYield time.Duration
+	// BoringInterval is the minimum time between boring-trace deletion runs.
+	// Boring spans are deleted in small batches (boringBatchSize) and only
+	// when this interval has elapsed since the last run. Default 10m.
+	BoringInterval time.Duration
 }
 
 func (c Config) withDefaults() Config {
@@ -84,17 +92,21 @@ func (c Config) withDefaults() Config {
 	if c.BatchYield == 0 {
 		c.BatchYield = 30 * time.Second
 	}
+	if c.BoringInterval == 0 {
+		c.BoringInterval = 10 * time.Minute
+	}
 	return c
 }
 
 // RetentionWorker manages span lifecycle: aggregate old spans, sample
 // errors/slow spans, and delete data past its retention window.
 type RetentionWorker struct {
-	repo       Repository
-	aggregator *aggregation.Aggregator
-	cfg        Config
-	logger     *slog.Logger
-	writeMu    *sync.Mutex
+	repo          Repository
+	aggregator    *aggregation.Aggregator
+	cfg           Config
+	logger        *slog.Logger
+	writeMu       *sync.Mutex
+	lastBoringRun time.Time
 }
 
 // NewRetentionWorker creates a new retention worker.
@@ -224,9 +236,19 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		}
 	}
 
-	// Phase 1: aggregate-then-delete boring traces on the shorter TTL.
-	boringDeleted, err := w.processBoring(ctx, boringCutoff, cfg.SlowThresholdUS, cfg.BatchYield)
-	if err != nil {
+	// Phase 1: aggregate-then-delete boring traces — throttled to BoringInterval
+	// (default 10m) so it doesn't compete with Phase 2 on every cycle.
+	var boringDeleted int64
+	if time.Since(w.lastBoringRun) >= cfg.BoringInterval {
+		var berr error
+		boringDeleted, berr = w.processBoring(ctx, boringCutoff, cfg.SlowThresholdUS, cfg.BatchYield)
+		if berr != nil {
+			return berr
+		}
+		w.lastBoringRun = time.Now()
+	}
+
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -341,65 +363,56 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	return nil
 }
 
-// processBoring aggregates then deletes boring traces older than boringCutoff.
-// Returns the number of spans deleted. Capped at maxSpansPerCycle to bound
-// write-lock hold time. The write mutex is held only per batch so the
-// span-insert worker gets regular yield windows between deletions.
+// processBoring aggregates then deletes one batch of boring traces older than
+// boringCutoff. A single run deletes at most boringBatchSize spans so the
+// write lock is held only briefly. The caller throttles how often this runs
+// via BoringInterval (default 10m).
 func (w *RetentionWorker) processBoring(ctx context.Context, boringCutoff time.Time, slowThresholdUS int64, yield time.Duration) (int64, error) {
+	if ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
+
+	batch, err := w.repo.GetBoringTraceSpans(boringCutoff, slowThresholdUS, boringBatchSize)
+	if err != nil {
+		return 0, err
+	}
+	if len(batch) == 0 {
+		return 0, nil
+	}
+
 	var total int64
-	for {
-		if ctx.Err() != nil {
-			return total, ctx.Err()
-		}
-
-		batch, err := w.repo.GetBoringTraceSpans(boringCutoff, slowThresholdUS, defaultBatchSize)
+	var batchErr error
+	w.lockBatch(ctx, yield, func() {
+		aggs, err := w.aggregator.AggregateSpans(ctx, batch)
 		if err != nil {
-			return total, err
+			batchErr = err
+			return
 		}
-		if len(batch) == 0 {
-			break
+		if len(aggs) > 0 {
+			if err := w.aggregator.Persist(ctx, aggs); err != nil {
+				batchErr = err
+				return
+			}
 		}
 
-		var batchErr error
-		w.lockBatch(ctx, yield, func() {
-			aggs, err := w.aggregator.AggregateSpans(ctx, batch)
+		ids := make([]int64, len(batch))
+		for i, s := range batch {
+			ids[i] = s.ID
+		}
+		for len(ids) > 0 {
+			chunk := ids
+			if len(chunk) > 500 {
+				chunk = ids[:500]
+			}
+			ids = ids[len(chunk):]
+			n, err := w.repo.DeleteSpansByIDs(chunk)
 			if err != nil {
 				batchErr = err
 				return
 			}
-			if len(aggs) > 0 {
-				if err := w.aggregator.Persist(ctx, aggs); err != nil {
-					batchErr = err
-					return
-				}
-			}
-
-			ids := make([]int64, len(batch))
-			for i, s := range batch {
-				ids[i] = s.ID
-			}
-			for len(ids) > 0 {
-				chunk := ids
-				if len(chunk) > 500 {
-					chunk = ids[:500]
-				}
-				ids = ids[len(chunk):]
-				n, err := w.repo.DeleteSpansByIDs(chunk)
-				if err != nil {
-					batchErr = err
-					return
-				}
-				total += n
-			}
-			w.logger.Info("retention: boring batch deleted", "deleted", int64(len(batch)), "cycle_total", total)
-		})
-		if batchErr != nil {
-			return total, batchErr
+			total += n
 		}
-
-		if len(batch) < defaultBatchSize || total >= maxSpansPerCycle {
-			break
-		}
-	}
-	return total, nil
+		w.logger.Info("retention: boring batch deleted", "deleted", total)
+	})
+	return total, batchErr
 }
