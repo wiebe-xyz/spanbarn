@@ -27,7 +27,7 @@ const (
 	// delete. Keeping cycles short prevents long write-lock holds that starve
 	// the span-insert path. Any backlog beyond this cap is picked up on the
 	// next tick.
-	maxSpansPerCycle = 20_000
+	maxSpansPerCycle = 50_000
 	// largeBacklogWarn is the span count above which we emit a warning so
 	// operators know the table has grown unexpectedly large.
 	largeBacklogWarn = 1_000_000
