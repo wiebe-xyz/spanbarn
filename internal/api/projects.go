@@ -94,7 +94,7 @@ func (h *projectHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 
 	projects, err := h.repo.ListProjects()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list projects", "")
+		writeServerError(w, r, "failed to list projects", err)
 		return
 	}
 	if projects == nil {
