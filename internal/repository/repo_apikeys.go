@@ -16,9 +16,9 @@ func (r *Repository) CreateAPIKey(projectID int64, name, keyHash, scope string) 
 func (r *Repository) GetAPIKeyByHash(keyHash string) (APIKey, error) {
 	var k APIKey
 	err := r.db.QueryRow(
-		"SELECT id, project_id, name, key_hash, scope, last_used_at, created_at FROM api_keys WHERE key_hash = ?",
+		"SELECT id, project_id, name, key_hash, scope FROM api_keys WHERE key_hash = ?",
 		keyHash,
-	).Scan(&k.ID, &k.ProjectID, &k.Name, &k.KeyHash, &k.Scope, &k.LastUsedAt, &k.CreatedAt)
+	).Scan(&k.ID, &k.ProjectID, &k.Name, &k.KeyHash, &k.Scope)
 	return k, err
 }
 

@@ -193,8 +193,13 @@ func TestTouchAPIKey(t *testing.T) {
 		t.Fatalf("TouchAPIKey: %v", err)
 	}
 
-	k2, _ := repo.GetAPIKeyByHash("h")
-	if !k2.LastUsedAt.Valid {
+	// GetAPIKeyByHash is the auth hot-path and no longer fetches timestamps.
+	// Verify touch via ListAPIKeys which does include last_used_at.
+	keys, listErr := repo.ListAPIKeys(p.ID)
+	if listErr != nil {
+		t.Fatalf("ListAPIKeys: %v", listErr)
+	}
+	if len(keys) == 0 || !keys[0].LastUsedAt.Valid {
 		t.Fatal("expected LastUsedAt to be set after touch")
 	}
 }
