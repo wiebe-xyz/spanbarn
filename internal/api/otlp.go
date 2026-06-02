@@ -66,6 +66,19 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 	projectID := GetProjectID(r.Context())
 	records := otlpToSpanRecords(&req, projectID)
 
+	// Apply ingest-time adaptive sampling: drop high-frequency non-error spans
+	// before they reach the spool. Error spans always pass and their trace is
+	// kept intact for errorTraceTTL so full context is preserved.
+	if s.sampler != nil {
+		filtered := records[:0]
+		for _, rec := range records {
+			if s.sampler.Keep(rec.ProjectID, rec.Name, rec.Status, rec.TraceID) {
+				filtered = append(filtered, rec)
+			}
+		}
+		records = filtered
+	}
+
 	if span != nil {
 		span.SetAttributes(attribute.Int("span_count", len(records)))
 	}

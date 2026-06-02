@@ -48,6 +48,7 @@ type Server struct {
 	rateLimiter    *RateLimiter
 	metrics        *Metrics
 	ingest         *ingest.Handler
+	sampler        *ingest.IngestSampler
 	querySvc       *service.QueryService
 	sessionMgr     *auth.SessionManager
 	authorizer     *auth.Authorizer
@@ -138,6 +139,7 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		rateLimiter:    NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
 		metrics:        NewMetrics(),
 		ingest:         ingestHandler,
+		sampler:        ingest.NewIngestSampler(),
 		querySvc:       querySvc,
 		sessionMgr:     sm,
 		logger:         logger,
