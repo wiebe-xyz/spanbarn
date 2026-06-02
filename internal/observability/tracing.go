@@ -90,8 +90,18 @@ func InitTracing(cfg TracingConfig) func() {
 		return func() {}
 	}
 
+	// AlwaysSample so every span is recorded in memory; the samplingProcessor
+	// drops non-error spans that fall outside the 1% trace-ID bucket at
+	// export time. This lets error traces propagate fully while keeping
+	// self-instrumentation volume near zero.
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSpanProcessor(
+			newSamplingProcessor(
+				sdktrace.NewBatchSpanProcessor(exporter),
+				DefaultSelfSamplePercent,
+			),
+		),
 		sdktrace.WithResource(res),
 	)
 
