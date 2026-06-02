@@ -48,7 +48,7 @@ type Server struct {
 	rateLimiter    *RateLimiter
 	metrics        *Metrics
 	ingest         *ingest.Handler
-	sampler        *ingest.IngestSampler
+	traceBuffer    *ingest.TraceBuffer
 	querySvc       *service.QueryService
 	sessionMgr     *auth.SessionManager
 	authorizer     *auth.Authorizer
@@ -107,6 +107,12 @@ func WithCache(c *cache.Cache) ServerOption {
 	}
 }
 
+func WithTraceBuffer(tb *ingest.TraceBuffer) ServerOption {
+	return func(s *Server) {
+		s.traceBuffer = tb
+	}
+}
+
 // NewServer creates a new HTTP server with the given configuration.
 func NewServer(cfg ServerConfig, ingestHandler *ingest.Handler, logger *slog.Logger) *Server {
 	return NewServerWithQuery(cfg, ingestHandler, nil, nil, logger)
@@ -138,9 +144,8 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		},
 		rateLimiter:    NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
 		metrics:        NewMetrics(),
-		ingest:         ingestHandler,
-		sampler:        ingest.NewIngestSampler(),
-		querySvc:       querySvc,
+		ingest:      ingestHandler,
+		querySvc:    querySvc,
 		sessionMgr:     sm,
 		logger:         logger,
 	}

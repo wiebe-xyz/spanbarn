@@ -385,7 +385,27 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
 		FunnelBarnProject:  cfg.FunnelBarnProject,
 	}
-	opts := []api.ServerOption{api.WithAuthorizer(authorizer)}
+	// Trace buffer: holds spans for up to 10 min then applies ratio-based
+	// sampling per (project, operation). Error traces always pass intact.
+	var ratioLookup ingest.SampleRatioLookup
+	if roRepo != nil {
+		ratioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
+	}
+	traceBuffer := ingest.NewTraceBuffer(ingest.DefaultTraceBufferTTL, ratioLookup)
+	safeGo("trace-buffer-drain", &wg, func() {
+		for {
+			select {
+			case <-readerCtx.Done():
+				return
+			case spans := <-traceBuffer.Out:
+				for _, rec := range spans {
+					ingestHandler.Enqueue(rec)
+				}
+			}
+		}
+	})
+
+	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer)}
 	if roRepo != nil {
 		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
 	}
