@@ -1,6 +1,7 @@
 const TELEMETRY_ENDPOINT = '/api/v1/telemetry'
 const CLIENT_ERRORS_ENDPOINT = '/api/v1/client-errors'
 const SERVICE_NAME = 'spanbarn-web'
+const SAMPLE_PERCENT = 1 // 1 in 100 traces sampled
 
 const spanQueue: SpanPayload[] = []
 let flushTimer: ReturnType<typeof setInterval> | null = null
@@ -9,6 +10,8 @@ let pageTraceId = ''
 let pageSpanId = ''
 let pageStartUs = 0
 let pendingPageSpan: SpanPayload | null = null
+let pageTraceSampled = false
+let pageTraceHasError = false
 
 type SpanPayload = {
   traceId: string
@@ -36,6 +39,19 @@ function traceparent(traceId: string, spanId: string): string {
   return `00-${traceId}-${spanId}-01`
 }
 
+/**
+ * Deterministic 1% trace sampler. Uses the first 8 bytes of the trace ID
+ * interpreted as a big-endian uint64, then checks value % 100 < SAMPLE_PERCENT.
+ *
+ * Identical algorithm to the Go backend (internal/observability/sampler.go)
+ * so a traceparent generated here produces the same sampling decision on both
+ * sides of the wire.
+ */
+function shouldSampleTrace(traceId: string): boolean {
+  const upper = BigInt('0x' + traceId.slice(0, 16))
+  return upper % 100n < BigInt(SAMPLE_PERCENT)
+}
+
 function finalizePageSpan() {
   if (pendingPageSpan) {
     pendingPageSpan.duration = nowUs() - pendingPageSpan.startTime
@@ -44,13 +60,37 @@ function finalizePageSpan() {
   }
 }
 
-function startPageTrace(path: string, fromPath?: string) {
+function sendBatch(spans: SpanPayload[]) {
+  if (spans.length === 0) return
+  fetch(TELEMETRY_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ spans }),
+    credentials: 'same-origin',
+    keepalive: true,
+  }).catch(() => {})
+}
+
+function commitTrace() {
+  // Called when the current page trace ends (navigation or shutdown).
+  // Sends the buffered spans only if the trace was sampled or had an error.
   finalizePageSpan()
-  flushSpans()
+  if (spanQueue.length === 0) return
+  if (!pageTraceSampled && !pageTraceHasError) {
+    spanQueue.length = 0 // drop — unsampled, error-free trace
+    return
+  }
+  sendBatch(spanQueue.splice(0))
+}
+
+function startPageTrace(path: string, fromPath?: string) {
+  commitTrace()
 
   pageTraceId = hex(16)
   pageSpanId = hex(8)
   pageStartUs = nowUs()
+  pageTraceSampled = shouldSampleTrace(pageTraceId)
+  pageTraceHasError = false
 
   const attrs: Record<string, string | number | boolean> = {
     'navigation.to': path,
@@ -87,21 +127,33 @@ function reportError(error: Error, attrs?: Record<string, string>) {
 }
 
 function enqueueSpan(span: SpanPayload) {
+  if (span.status === 'ERROR') {
+    pageTraceHasError = true
+  }
   spanQueue.push(span)
-  if (spanQueue.length >= 25) flushSpans()
+
+  // Flush immediately when an error is detected so the full trace context
+  // (including spans buffered before the error) is sent right away.
+  if (pageTraceHasError) {
+    finalizePageSpan()
+    sendBatch(spanQueue.splice(0))
+    return
+  }
+
+  // For sampled traces flush at 25 spans to keep batch sizes small.
+  if (pageTraceSampled && spanQueue.length >= 25) flushSpans()
+
+  // Safety valve: prevent unbounded buffer growth on very long pages.
+  if (spanQueue.length >= 100) spanQueue.length = 0
 }
 
 function flushSpans() {
   finalizePageSpan()
   if (spanQueue.length === 0) return
-  const batch = spanQueue.splice(0, 50)
-  fetch(TELEMETRY_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ spans: batch }),
-    credentials: 'same-origin',
-    keepalive: true,
-  }).catch(() => {})
+  // Periodic timer only sends sampled traces; error traces are
+  // flushed immediately in enqueueSpan when the error is detected.
+  if (!pageTraceSampled) return
+  sendBatch(spanQueue.splice(0, 50))
 }
 
 function isInstrumentationUrl(url: string): boolean {
@@ -316,7 +368,7 @@ export function initInstrumentation() {
   flushTimer = setInterval(flushSpans, 5000)
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') flushSpans()
+    if (document.visibilityState === 'hidden') commitTrace()
   })
 }
 
@@ -325,5 +377,5 @@ export function shutdownInstrumentation() {
     clearInterval(flushTimer)
     flushTimer = null
   }
-  flushSpans()
+  commitTrace()
 }
