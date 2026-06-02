@@ -65,22 +65,21 @@ func (h *settingsHandlers) handleUpdateSettings(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	allowed := map[string]bool{
-		"retention_full_hours":        true,
-		"retention_interesting_hours": true,
-		"retention_aggregated_days":   true,
-		"retention_error_days":        true,
-		"ingest_sample_rate":          true,
-	}
-
 	for k, v := range body {
-		if !allowed[k] {
+		if !isAllowedSettingKey(k) {
 			writeError(w, http.StatusBadRequest, "unknown setting: "+k, "")
 			return
 		}
-		if err := h.repo.SetSetting(k, v); err != nil {
-			writeServerError(w, r, "failed to save setting", err)
-			return
+		if v == "" {
+			if err := h.repo.DeleteSetting(k); err != nil {
+				writeServerError(w, r, "failed to delete setting", err)
+				return
+			}
+		} else {
+			if err := h.repo.SetSetting(k, v); err != nil {
+				writeServerError(w, r, "failed to save setting", err)
+				return
+			}
 		}
 	}
 
@@ -154,6 +153,19 @@ func serveSWR[T any](
 		cache.SetSWR(c, r.Context(), key, value, freshTTL, staleTTL)
 	}
 	writeJSON(w, http.StatusOK, value)
+}
+
+// isAllowedSettingKey returns true for writable settings keys.
+// Retention keys are plain identifiers; sampling keys use a dot-namespaced
+// hierarchy: ingest.sample_ratio.default, ingest.sample_ratio.project.{id},
+// ingest.sample_ratio.project.{id}.op.{operation}.
+func isAllowedSettingKey(k string) bool {
+	switch k {
+	case "retention_full_hours", "retention_interesting_hours",
+		"retention_aggregated_days", "retention_error_days":
+		return true
+	}
+	return strings.HasPrefix(k, "ingest.sample_ratio.")
 }
 
 func (h *settingsHandlers) handleStatsDBSize(w http.ResponseWriter, r *http.Request) {

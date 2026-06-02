@@ -182,6 +182,174 @@ function RetentionSettingsPanel() {
   )
 }
 
+// ─── Sampling Settings ─────────────────────────────────────────────────────
+
+type SamplingProject = {
+  id: number
+  slug: string
+  ratio: string  // '' means use global default
+}
+
+function ratioLabel(ratio: string): string {
+  const n = parseInt(ratio, 10)
+  if (!ratio || isNaN(n) || n <= 0) return 'default'
+  if (n === 1) return 'all'
+  return `1 in ${n.toLocaleString()}`
+}
+
+function SamplingSettingsPanel() {
+  const [globalRatio, setGlobalRatio] = useState('')
+  const [projects, setProjects] = useState<SamplingProject[]>([])
+  const [allSettings, setAllSettings] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState<string | null>(null)
+  const [savedKey, setSavedKey] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    Promise.all([
+      fetchJSON<{ id: number; slug: string; name: string; status: string; createdAt: string }[]>('/api/v1/projects'),
+      fetchJSON<Record<string, string>>('/api/v1/settings'),
+    ]).then(([projs, settings]) => {
+      setAllSettings(settings ?? {})
+      const def = settings?.['ingest.sample_ratio.default'] ?? ''
+      setGlobalRatio(def)
+      if (projs) {
+        setProjects(
+          projs
+            .filter(p => p.status === 'active')
+            .sort((a, b) => a.slug.localeCompare(b.slug))
+            .map(p => ({
+              id: p.id,
+              slug: p.slug,
+              ratio: settings?.[`ingest.sample_ratio.project.${p.id}`] ?? '',
+            }))
+        )
+      }
+    }).catch(() => {}).finally(() => setLoading(false))
+  }, [])
+
+  const save = async (key: string, value: string) => {
+    setSaving(key)
+    try {
+      await fetchJSON('/api/v1/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ [key]: value }),
+      })
+      setSavedKey(key)
+      setTimeout(() => setSavedKey(null), 1500)
+    } catch { /* ignore */ } finally {
+      setSaving(null)
+    }
+  }
+
+  const saveGlobal = () => save('ingest.sample_ratio.default', globalRatio)
+
+  const saveProject = (projectId: number, ratio: string) =>
+    save(`ingest.sample_ratio.project.${projectId}`, ratio)
+
+  if (loading) return <div className="skeleton" style={{ height: 120, marginBottom: '1.5rem' }} />
+
+  const inputStyle: React.CSSProperties = {
+    padding: '0.3rem 0.5rem',
+    fontSize: '0.8125rem',
+    width: 90,
+    textAlign: 'right',
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: '1.5rem' }}>
+      <div style={{ fontWeight: 700, fontSize: '0.875rem', marginBottom: '0.25rem' }}>
+        Ingest Sampling
+      </div>
+      <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+        Keep 1 in N traces. Error traces are always kept in full regardless of ratio.
+        Changes take effect within 60 seconds. Leave blank to use the global default.
+      </div>
+
+      {/* Global default */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.8125rem', minWidth: 120 }}>Global default</span>
+        <input
+          type="number"
+          min="1"
+          placeholder="1000"
+          value={globalRatio}
+          onChange={e => setGlobalRatio(e.target.value)}
+          style={inputStyle}
+        />
+        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          → {ratioLabel(globalRatio || '1000')}
+        </span>
+        <button
+          onClick={saveGlobal}
+          disabled={saving === 'ingest.sample_ratio.default'}
+          className="btn btn-sm"
+        >
+          {savedKey === 'ingest.sample_ratio.default' ? '✓' : saving === 'ingest.sample_ratio.default' ? '…' : 'Save'}
+        </button>
+      </div>
+
+      {/* Per-project table */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+              <th style={{ textAlign: 'left', padding: '0.375rem 0.5rem', fontWeight: 600, color: 'var(--text-muted)', fontSize: '0.75rem' }}>Project</th>
+              <th style={{ textAlign: 'right', padding: '0.375rem 0.5rem', fontWeight: 600, color: 'var(--text-muted)', fontSize: '0.75rem' }}>1 in N</th>
+              <th style={{ textAlign: 'left', padding: '0.375rem 0.5rem', fontWeight: 600, color: 'var(--text-muted)', fontSize: '0.75rem' }}>Effective</th>
+              <th style={{ width: 60 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {projects.map(p => {
+              const key = `ingest.sample_ratio.project.${p.id}`
+              const effective = p.ratio || globalRatio || '1000'
+              return (
+                <tr key={p.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ padding: '0.375rem 0.5rem' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>{p.slug}</span>
+                  </td>
+                  <td style={{ padding: '0.375rem 0.5rem', textAlign: 'right' }}>
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder={`${globalRatio || '1000'}`}
+                      value={p.ratio}
+                      onChange={e => setProjects(ps => ps.map(x => x.id === p.id ? { ...x, ratio: e.target.value } : x))}
+                      style={inputStyle}
+                    />
+                  </td>
+                  <td style={{ padding: '0.375rem 0.5rem', color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                    {ratioLabel(effective)}
+                  </td>
+                  <td style={{ padding: '0.375rem 0.5rem' }}>
+                    <button
+                      onClick={() => saveProject(p.id, p.ratio)}
+                      disabled={saving === key}
+                      className="btn btn-sm"
+                    >
+                      {savedKey === key ? '✓' : saving === key ? '…' : 'Save'}
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
+        Per-operation overrides can be set via the settings API:
+        <code style={{ marginLeft: 6, fontSize: '0.6875rem', opacity: 0.8 }}>
+          ingest.sample_ratio.project.{'{id}'}.op.{'{operation}'}
+        </code>
+      </div>
+    </div>
+  )
+}
+
+// ─── Projects ────────────────────────────────────────────────────────────────
+
 type Project = {
   id: number
   slug: string
@@ -398,9 +566,10 @@ export function SettingsPage(): ReactElement {
         </div>
       )}
 
-      {/* System health + retention */}
+      {/* System health + retention + sampling */}
       <SystemHealthPanel />
       <RetentionSettingsPanel />
+      <SamplingSettingsPanel />
 
       {/* LLM Setup reference */}
       <div

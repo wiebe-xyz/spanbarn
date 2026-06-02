@@ -26,6 +26,12 @@ func (r *Repository) SetSetting(key, value string) error {
 	return err
 }
 
+// DeleteSetting removes a setting key. No-op if the key does not exist.
+func (r *Repository) DeleteSetting(key string) error {
+	_, err := r.db.Exec("DELETE FROM settings WHERE key = ?", key)
+	return err
+}
+
 // GetAllSettings returns all settings as a map.
 func (r *Repository) GetAllSettings() (map[string]string, error) {
 	rows, err := r.db.Query("SELECT key, value FROM settings")
