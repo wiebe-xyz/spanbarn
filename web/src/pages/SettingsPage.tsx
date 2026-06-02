@@ -200,7 +200,7 @@ function ratioLabel(ratio: string): string {
 function SamplingSettingsPanel() {
   const [globalRatio, setGlobalRatio] = useState('')
   const [projects, setProjects] = useState<SamplingProject[]>([])
-  const [allSettings, setAllSettings] = useState<Record<string, string>>({})
+  const [, setAllSettings] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState<string | null>(null)
   const [savedKey, setSavedKey] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
