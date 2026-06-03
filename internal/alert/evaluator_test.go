@@ -102,7 +102,7 @@ func (m *mockAlertRepo) UpdateAlertLastTriggered(alertID int64, at time.Time) er
 func TestEvaluateNoAlerts(t *testing.T) {
 	repo := newMockRepo()
 	notifier := &mockNotifier{}
-	eval := NewEvaluator(repo, notifier, slog.Default())
+	eval := NewEvaluator(repo, notifier, slog.Default(), 1.0)
 
 	err := eval.Evaluate(context.Background(), 1)
 	if err != nil {
@@ -148,7 +148,7 @@ func TestEvaluateLatencyAlert(t *testing.T) {
 	}
 
 	notifier := &mockNotifier{}
-	eval := NewEvaluator(repo, notifier, slog.Default())
+	eval := NewEvaluator(repo, notifier, slog.Default(), 1.0)
 	eval.now = func() time.Time { return now }
 
 	err := eval.Evaluate(context.Background(), 1)
@@ -211,7 +211,7 @@ func TestEvaluateErrorRateAlert(t *testing.T) {
 	}
 
 	notifier := &mockNotifier{}
-	eval := NewEvaluator(repo, notifier, slog.Default())
+	eval := NewEvaluator(repo, notifier, slog.Default(), 1.0)
 	eval.now = func() time.Time { return now }
 
 	err := eval.Evaluate(context.Background(), 1)
@@ -260,7 +260,7 @@ func TestEvaluateCooldown(t *testing.T) {
 	}
 
 	notifier := &mockNotifier{}
-	eval := NewEvaluator(repo, notifier, slog.Default())
+	eval := NewEvaluator(repo, notifier, slog.Default(), 1.0)
 	eval.now = func() time.Time { return now }
 
 	err := eval.Evaluate(context.Background(), 1)
@@ -307,7 +307,7 @@ func TestEvaluateNoRegression(t *testing.T) {
 	}
 
 	notifier := &mockNotifier{}
-	eval := NewEvaluator(repo, notifier, slog.Default())
+	eval := NewEvaluator(repo, notifier, slog.Default(), 1.0)
 	eval.now = func() time.Time { return now }
 
 	err := eval.Evaluate(context.Background(), 1)
@@ -346,7 +346,7 @@ func TestEvaluateBelowThreshold(t *testing.T) {
 	})
 
 	notifier := &mockNotifier{}
-	eval := NewEvaluator(repo, notifier, slog.Default())
+	eval := NewEvaluator(repo, notifier, slog.Default(), 1.0)
 	eval.now = func() time.Time { return now }
 
 	err := eval.Evaluate(context.Background(), 1)

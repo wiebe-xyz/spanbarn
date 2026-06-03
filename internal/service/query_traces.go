@@ -128,14 +128,15 @@ func (s *QueryService) ListTraceGroups(ctx context.Context, filter TraceSearchFi
 	out := make([]TraceGroupSummary, 0, len(groups))
 	for _, g := range groups {
 		p50, p95, p99 := computePercentiles(g.Durations)
+		effective := inflateCount(g.Count, g.ErrorCount, s.sampleRate)
 		errorRate := 0.0
-		if g.Count > 0 {
-			errorRate = float64(g.ErrorCount) / float64(g.Count)
+		if effective > 0 {
+			errorRate = float64(g.ErrorCount) / float64(effective)
 		}
 		out = append(out, TraceGroupSummary{
 			Operation:  g.Operation,
 			Service:    g.Service,
-			Count:      g.Count,
+			Count:      effective,
 			ErrorCount: g.ErrorCount,
 			ErrorRate:  errorRate,
 			P50Us:      p50,

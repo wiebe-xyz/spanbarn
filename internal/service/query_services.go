@@ -148,9 +148,10 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 
 	result := make([]ServiceSummary, 0, len(merged))
 	for svc, ms := range merged {
+		effective := inflateCount(ms.count, ms.errorCount, s.sampleRate)
 		var errorRate float64
-		if ms.count > 0 {
-			errorRate = float64(ms.errorCount) / float64(ms.count)
+		if effective > 0 {
+			errorRate = float64(ms.errorCount) / float64(effective)
 		}
 
 		var p50, p95, p99 int64
@@ -166,7 +167,7 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 
 		result = append(result, ServiceSummary{
 			Service:    svc,
-			SpanCount:  ms.count,
+			SpanCount:  effective,
 			ErrorCount: ms.errorCount,
 			ErrorRate:  errorRate,
 			P50Us:      p50,
@@ -259,9 +260,10 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 
 	result := make([]OperationSummary, 0, len(byOp))
 	for k, st := range byOp {
+		effective := inflateCount(st.count, st.errorCount, s.sampleRate)
 		var errorRate float64
-		if st.count > 0 {
-			errorRate = float64(st.errorCount) / float64(st.count)
+		if effective > 0 {
+			errorRate = float64(st.errorCount) / float64(effective)
 		}
 		var p50, p95, p99 int64
 		if st.aggCount > 0 {
@@ -277,7 +279,7 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 			Operation:  k.operation,
 			Resource:   k.resource,
 			Kind:       k.kind,
-			SpanCount:  st.count,
+			SpanCount:  effective,
 			ErrorCount: st.errorCount,
 			ErrorRate:  errorRate,
 			P50Us:      p50,

@@ -43,23 +43,42 @@ type AlertPayload struct {
 
 // Evaluator checks alert conditions against aggregate data and sends notifications.
 type Evaluator struct {
-	repo   AlertRepository
-	notify Notifier
-	logger *slog.Logger
-	now    func() time.Time // injectable clock for testing
+	repo       AlertRepository
+	notify     Notifier
+	logger     *slog.Logger
+	now        func() time.Time // injectable clock for testing
+	sampleRate float64
 }
 
-// NewEvaluator creates an Evaluator with the given dependencies.
-func NewEvaluator(repo AlertRepository, notifier Notifier, logger *slog.Logger) *Evaluator {
+// NewEvaluator creates an Evaluator with the given dependencies. sampleRate is
+// the fraction of non-error spans ingested; passed through to error-rate
+// calculations so alert thresholds reflect the true population.
+func NewEvaluator(repo AlertRepository, notifier Notifier, logger *slog.Logger, sampleRate float64) *Evaluator {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Evaluator{
-		repo:   repo,
-		notify: notifier,
-		logger: logger,
-		now:    time.Now,
+	if sampleRate <= 0 || sampleRate > 1 {
+		sampleRate = 1.0
 	}
+	return &Evaluator{
+		repo:       repo,
+		notify:     notifier,
+		logger:     logger,
+		now:        time.Now,
+		sampleRate: sampleRate,
+	}
+}
+
+// inflateCount mirrors service.inflateCount: scales ok-span counts by 1/sampleRate.
+func inflateCount(count, errorCount int64, sampleRate float64) int64 {
+	if sampleRate >= 1.0 {
+		return count
+	}
+	okCount := count - errorCount
+	if okCount < 0 {
+		okCount = 0
+	}
+	return errorCount + int64(float64(okCount)/sampleRate)
 }
 
 // Evaluate checks all enabled alerts for a project and sends notifications for triggered ones.
@@ -157,14 +176,14 @@ func (e *Evaluator) evaluateAlert(ctx context.Context, a repository.Alert, now t
 			avgVal = float64(sum) / float64(len(historyAggs)) / 1000.0 // us to ms
 		}
 	case "error_rate":
-		if current.Count > 0 {
-			currentVal = float64(current.ErrorCount) / float64(current.Count) * 100.0
+		if eff := inflateCount(current.Count, current.ErrorCount, e.sampleRate); eff > 0 {
+			currentVal = float64(current.ErrorCount) / float64(eff) * 100.0
 		}
 		if len(historyAggs) > 0 {
 			var totalErrors, totalCount int64
 			for _, h := range historyAggs {
 				totalErrors += h.ErrorCount
-				totalCount += h.Count
+				totalCount += inflateCount(h.Count, h.ErrorCount, e.sampleRate)
 			}
 			if totalCount > 0 {
 				avgVal = float64(totalErrors) / float64(totalCount) * 100.0

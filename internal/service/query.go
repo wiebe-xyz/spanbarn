@@ -40,17 +40,37 @@ type QueryRepository interface {
 //   - query_traces.go        — SearchTraces, GetTrace
 //   - query_dependencies.go  — ListDependencies
 type QueryService struct {
-	repo   QueryRepository
-	cache  *cache.Cache
-	logger *slog.Logger
+	repo       QueryRepository
+	cache      *cache.Cache
+	logger     *slog.Logger
+	sampleRate float64
 }
 
-// NewQueryService creates a new QueryService.
-func NewQueryService(repo QueryRepository, logger *slog.Logger) *QueryService {
+// NewQueryService creates a new QueryService. sampleRate is the fraction of
+// non-error spans that are ingested (e.g. 0.01 for 1%). When < 1.0, ok-span
+// counts are inflated by 1/sampleRate so that error rates reflect the true
+// population rather than only the sampled spans.
+func NewQueryService(repo QueryRepository, logger *slog.Logger, sampleRate float64) *QueryService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &QueryService{repo: repo, logger: logger}
+	if sampleRate <= 0 || sampleRate > 1 {
+		sampleRate = 1.0
+	}
+	return &QueryService{repo: repo, logger: logger, sampleRate: sampleRate}
+}
+
+// inflateCount returns the estimated true span population given sampled counts.
+// errorCount is assumed to be always-sampled; only ok spans are scaled.
+func inflateCount(count, errorCount int64, sampleRate float64) int64 {
+	if sampleRate >= 1.0 {
+		return count
+	}
+	okCount := count - errorCount
+	if okCount < 0 {
+		okCount = 0
+	}
+	return errorCount + int64(float64(okCount)/sampleRate)
 }
 
 func (s *QueryService) SetCache(c *cache.Cache) {

@@ -98,9 +98,10 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 
 	result := make([]DatabaseQuerySummary, 0, len(byPattern))
 	for pattern, st := range byPattern {
+		effective := inflateCount(st.count, st.errorCount, s.sampleRate)
 		var errorRate float64
-		if st.count > 0 {
-			errorRate = float64(st.errorCount) / float64(st.count)
+		if effective > 0 {
+			errorRate = float64(st.errorCount) / float64(effective)
 		}
 		p50, p95, p99 := computePercentiles(st.durations)
 		result = append(result, DatabaseQuerySummary{
@@ -108,7 +109,7 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 			Operation:   st.operation,
 			DBSystem:    st.dbSystem,
 			DBName:      st.dbName,
-			CallCount:   st.count,
+			CallCount:   effective,
 			ErrorCount:  st.errorCount,
 			ErrorRate:   errorRate,
 			P50Us:       p50,

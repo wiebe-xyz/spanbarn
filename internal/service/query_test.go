@@ -26,7 +26,7 @@ func setupTestRepo(t *testing.T) *repository.Repository {
 
 func TestListServices(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil)
+	svc := NewQueryService(repo, nil, 1.0)
 
 	bucket := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
 
@@ -79,7 +79,7 @@ func TestListServices(t *testing.T) {
 
 func TestListOperations(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil)
+	svc := NewQueryService(repo, nil, 1.0)
 
 	bucket := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
 
@@ -121,7 +121,7 @@ func TestListOperations(t *testing.T) {
 
 func TestGetTimeseries(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil)
+	svc := NewQueryService(repo, nil, 1.0)
 
 	base := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
 
@@ -161,7 +161,7 @@ func TestGetTimeseries(t *testing.T) {
 
 func TestSearchTraces(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil)
+	svc := NewQueryService(repo, nil, 1.0)
 
 	now := time.Now()
 
@@ -231,7 +231,7 @@ func TestSearchTraces(t *testing.T) {
 
 func TestGetTrace(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil)
+	svc := NewQueryService(repo, nil, 1.0)
 
 	now := time.Now()
 
@@ -292,7 +292,7 @@ func TestGetTrace(t *testing.T) {
 
 func TestGetWebVitals(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil)
+	svc := NewQueryService(repo, nil, 1.0)
 
 	now := time.Now()
 
@@ -345,7 +345,7 @@ func TestGetWebVitals(t *testing.T) {
 
 func TestGetWebVitalsTimeseries(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil)
+	svc := NewQueryService(repo, nil, 1.0)
 
 	base := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
 
@@ -384,7 +384,7 @@ func TestGetWebVitalsTimeseries(t *testing.T) {
 
 func TestListServicesFromSpansPercentiles(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil)
+	svc := NewQueryService(repo, nil, 1.0)
 
 	now := time.Now()
 
@@ -419,7 +419,7 @@ func TestListServicesFromSpansPercentiles(t *testing.T) {
 
 func TestListDependencies(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil)
+	svc := NewQueryService(repo, nil, 1.0)
 
 	now := time.Now()
 
@@ -499,7 +499,7 @@ func TestListDependencies(t *testing.T) {
 
 func TestGetDependencyTraces(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil)
+	svc := NewQueryService(repo, nil, 1.0)
 
 	now := time.Now()
 
@@ -570,7 +570,7 @@ func TestGetDependencyTraces(t *testing.T) {
 
 func TestListTraceGroups(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil)
+	svc := NewQueryService(repo, nil, 1.0)
 
 	// Insert root spans across two operations, one with errors.
 	makeSpan := func(projectID int64, traceID, spanID, service, name, status string, parentSpanID string) repository.Span {

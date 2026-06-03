@@ -167,7 +167,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
-	alertEval := alert.NewEvaluator(repo, alertNotifier, logger)
+	alertEval := alert.NewEvaluator(repo, alertNotifier, logger, cfg.IngestSampleRate)
 	alertRunner := alert.NewRunner(alertEval, repo, time.Minute, logger)
 	alertCtx, alertCancel := context.WithCancel(ctx)
 	defer alertCancel()
@@ -183,7 +183,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	sessionMgr := auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
 
 	// Query service reads from the read-only DB, never contesting the write connection.
-	querySvc := service.NewQueryService(queryRepo, logger)
+	querySvc := service.NewQueryService(queryRepo, logger, cfg.IngestSampleRate)
 
 	{
 		ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
@@ -342,7 +342,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 			sessionMgr = auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
 			userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
-			querySvc = service.NewQueryService(roRepo, logger)
+			querySvc = service.NewQueryService(roRepo, logger, cfg.IngestSampleRate)
 
 			ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
 			var store cache.Store
@@ -555,7 +555,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	userAuth := auth.NewUserAuthenticator(&userLookupAdapter{repo: repo}, logger)
 	sessionMgr := auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
 
-	querySvc := service.NewQueryService(queryRepo, logger)
+	querySvc := service.NewQueryService(queryRepo, logger, cfg.IngestSampleRate)
 	{
 		ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
 		var store cache.Store
@@ -662,7 +662,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
-	alertEval := alert.NewEvaluator(repo, alertNotifier, logger)
+	alertEval := alert.NewEvaluator(repo, alertNotifier, logger, cfg.IngestSampleRate)
 	alertRunner := alert.NewRunner(alertEval, repo, time.Minute, logger)
 	alertCtx, alertCancel := context.WithCancel(ctx)
 	defer alertCancel()
@@ -904,7 +904,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	if roRepo != nil {
 		sessionMgr = auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
 		userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
-		querySvc = service.NewQueryService(roRepo, logger)
+		querySvc = service.NewQueryService(roRepo, logger, cfg.IngestSampleRate)
 		ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
 		var store cache.Store
 		if cfg.RedisURL != "" {

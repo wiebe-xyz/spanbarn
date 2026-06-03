@@ -87,15 +87,16 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 
 	result := make([]DependencySummary, 0, len(byDep))
 	for k, st := range byDep {
+		effective := inflateCount(st.count, st.errorCount, s.sampleRate)
 		var errorRate float64
-		if st.count > 0 {
-			errorRate = float64(st.errorCount) / float64(st.count)
+		if effective > 0 {
+			errorRate = float64(st.errorCount) / float64(effective)
 		}
 		p50, p95, p99 := computePercentiles(st.durations)
 		result = append(result, DependencySummary{
 			Target:     k.target,
 			TargetType: k.targetType,
-			CallCount:  st.count,
+			CallCount:  effective,
 			ErrorCount: st.errorCount,
 			ErrorRate:  errorRate,
 			P50Us:      p50,

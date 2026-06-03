@@ -72,9 +72,10 @@ func (s *QueryService) ListPrompts(ctx context.Context, projectID int64, from, t
 	result := make([]PromptSummary, 0, len(byKey))
 	for key, st := range byKey {
 		name := key[:len(key)-len("|"+st.model+"|"+st.service)]
+		effective := inflateCount(st.count, st.errorCount, s.sampleRate)
 		var errorRate float64
-		if st.count > 0 {
-			errorRate = float64(st.errorCount) / float64(st.count)
+		if effective > 0 {
+			errorRate = float64(st.errorCount) / float64(effective)
 		}
 		p50, p95, p99 := computePercentiles(st.durations)
 		result = append(result, PromptSummary{
@@ -82,7 +83,7 @@ func (s *QueryService) ListPrompts(ctx context.Context, projectID int64, from, t
 			GenAISystem:  st.genAISystem,
 			Model:        st.model,
 			Service:      st.service,
-			CallCount:    st.count,
+			CallCount:    effective,
 			ErrorCount:   st.errorCount,
 			ErrorRate:    errorRate,
 			P50Us:        p50,
