@@ -41,32 +41,46 @@ type AlertPayload struct {
 	TriggeredAt time.Time `json:"triggeredAt"`
 }
 
-// Evaluator checks alert conditions against aggregate data and sends notifications.
-type Evaluator struct {
-	repo       AlertRepository
-	notify     Notifier
-	logger     *slog.Logger
-	now        func() time.Time // injectable clock for testing
-	sampleRate float64
+// SampleRatioLookup returns the 1-in-N sampling ratio for a project.
+// Satisfied by *ingest.CachedRatioLookup and *ingest.StaticRatioLookup.
+type SampleRatioLookup interface {
+	Ratio(ctx context.Context, projectID int64, operation string) int
 }
 
-// NewEvaluator creates an Evaluator with the given dependencies. sampleRate is
-// the fraction of non-error spans ingested; passed through to error-rate
-// calculations so alert thresholds reflect the true population.
-func NewEvaluator(repo AlertRepository, notifier Notifier, logger *slog.Logger, sampleRate float64) *Evaluator {
+// Evaluator checks alert conditions against aggregate data and sends notifications.
+type Evaluator struct {
+	repo        AlertRepository
+	notify      Notifier
+	logger      *slog.Logger
+	now         func() time.Time // injectable clock for testing
+	ratioLookup SampleRatioLookup
+}
+
+// NewEvaluator creates an Evaluator with the given dependencies. ratioLookup
+// is used to correct error rates for projects using error-biased sampling.
+// Pass nil for no correction.
+func NewEvaluator(repo AlertRepository, notifier Notifier, logger *slog.Logger, ratioLookup SampleRatioLookup) *Evaluator {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if sampleRate <= 0 || sampleRate > 1 {
-		sampleRate = 1.0
-	}
 	return &Evaluator{
-		repo:       repo,
-		notify:     notifier,
-		logger:     logger,
-		now:        time.Now,
-		sampleRate: sampleRate,
+		repo:        repo,
+		notify:      notifier,
+		logger:      logger,
+		now:         time.Now,
+		ratioLookup: ratioLookup,
 	}
+}
+
+func (e *Evaluator) projectSampleRate(ctx context.Context, projectID int64) float64 {
+	if e.ratioLookup == nil {
+		return 1.0
+	}
+	ratio := e.ratioLookup.Ratio(ctx, projectID, "")
+	if ratio <= 1 {
+		return 1.0
+	}
+	return 1.0 / float64(ratio)
 }
 
 // inflateCount mirrors service.inflateCount: scales ok-span counts by 1/sampleRate.
@@ -176,14 +190,15 @@ func (e *Evaluator) evaluateAlert(ctx context.Context, a repository.Alert, now t
 			avgVal = float64(sum) / float64(len(historyAggs)) / 1000.0 // us to ms
 		}
 	case "error_rate":
-		if eff := inflateCount(current.Count, current.ErrorCount, e.sampleRate); eff > 0 {
+		sr := e.projectSampleRate(ctx, a.ProjectID)
+		if eff := inflateCount(current.Count, current.ErrorCount, sr); eff > 0 {
 			currentVal = float64(current.ErrorCount) / float64(eff) * 100.0
 		}
 		if len(historyAggs) > 0 {
 			var totalErrors, totalCount int64
 			for _, h := range historyAggs {
 				totalErrors += h.ErrorCount
-				totalCount += inflateCount(h.Count, h.ErrorCount, e.sampleRate)
+				totalCount += inflateCount(h.Count, h.ErrorCount, sr)
 			}
 			if totalCount > 0 {
 				avgVal = float64(totalErrors) / float64(totalCount) * 100.0

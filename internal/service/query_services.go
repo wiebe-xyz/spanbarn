@@ -146,9 +146,10 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 		}
 	}
 
+	sr := s.projectSampleRate(ctx, projectID)
 	result := make([]ServiceSummary, 0, len(merged))
 	for svc, ms := range merged {
-		effective := inflateCount(ms.count, ms.errorCount, s.sampleRate)
+		effective := inflateCount(ms.count, ms.errorCount, sr)
 		var errorRate float64
 		if effective > 0 {
 			errorRate = float64(ms.errorCount) / float64(effective)
@@ -258,9 +259,10 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 		}
 	}
 
+	sr := s.projectSampleRate(ctx, projectID)
 	result := make([]OperationSummary, 0, len(byOp))
 	for k, st := range byOp {
-		effective := inflateCount(st.count, st.errorCount, s.sampleRate)
+		effective := inflateCount(st.count, st.errorCount, sr)
 		var errorRate float64
 		if effective > 0 {
 			errorRate = float64(st.errorCount) / float64(effective)

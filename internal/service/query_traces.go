@@ -125,10 +125,11 @@ func (s *QueryService) ListTraceGroups(ctx context.Context, filter TraceSearchFi
 		return nil, err
 	}
 
+	sr := s.projectSampleRate(ctx, filter.ProjectID)
 	out := make([]TraceGroupSummary, 0, len(groups))
 	for _, g := range groups {
 		p50, p95, p99 := computePercentiles(g.Durations)
-		effective := inflateCount(g.Count, g.ErrorCount, s.sampleRate)
+		effective := inflateCount(g.Count, g.ErrorCount, sr)
 		errorRate := 0.0
 		if effective > 0 {
 			errorRate = float64(g.ErrorCount) / float64(effective)

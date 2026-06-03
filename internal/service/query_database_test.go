@@ -53,7 +53,7 @@ func TestExtractSQLOperation(t *testing.T) {
 
 func TestQueryServiceCacheAccessors(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil, 1.0)
+	svc := NewQueryService(repo, nil, nil)
 
 	if svc.Cache() != nil {
 		t.Fatalf("Cache() should start nil, got %v", svc.Cache())

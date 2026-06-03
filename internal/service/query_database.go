@@ -96,9 +96,10 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 		st.durations = append(st.durations, sp.DurationUs)
 	}
 
+	sr := s.projectSampleRate(ctx, projectID)
 	result := make([]DatabaseQuerySummary, 0, len(byPattern))
 	for pattern, st := range byPattern {
-		effective := inflateCount(st.count, st.errorCount, s.sampleRate)
+		effective := inflateCount(st.count, st.errorCount, sr)
 		var errorRate float64
 		if effective > 0 {
 			errorRate = float64(st.errorCount) / float64(effective)

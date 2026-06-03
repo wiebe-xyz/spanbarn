@@ -85,9 +85,10 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 		}
 	}
 
+	sr := s.projectSampleRate(ctx, projectID)
 	result := make([]DependencySummary, 0, len(byDep))
 	for k, st := range byDep {
-		effective := inflateCount(st.count, st.errorCount, s.sampleRate)
+		effective := inflateCount(st.count, st.errorCount, sr)
 		var errorRate float64
 		if effective > 0 {
 			errorRate = float64(st.errorCount) / float64(effective)

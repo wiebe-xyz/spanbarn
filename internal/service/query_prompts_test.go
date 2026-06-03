@@ -12,7 +12,7 @@ import (
 
 func TestListPrompts(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil, 1.0)
+	svc := NewQueryService(repo, nil, nil)
 
 	records := []repository.PromptRecord{
 		{
@@ -70,7 +70,7 @@ func TestListPrompts(t *testing.T) {
 
 func TestListPromptsServiceFilter(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil, 1.0)
+	svc := NewQueryService(repo, nil, nil)
 
 	records := []repository.PromptRecord{
 		{
@@ -105,7 +105,7 @@ func TestListPromptsServiceFilter(t *testing.T) {
 
 func TestGetPromptDetail(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil, 1.0)
+	svc := NewQueryService(repo, nil, nil)
 
 	records := []repository.PromptRecord{
 		{

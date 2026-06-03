@@ -34,30 +34,45 @@ type QueryRepository interface {
 	QueryWebVitalsTimeseries(service, page, metric string, from, to time.Time, intervalSec int64) ([]repository.WebVitalBucket, error)
 }
 
+// SampleRatioLookup returns the configured 1-in-N sampling ratio for a project.
+// A ratio of 1 means keep every span; 1000 means keep 1 in 1000.
+// Satisfied by *ingest.CachedRatioLookup and *ingest.StaticRatioLookup.
+type SampleRatioLookup interface {
+	Ratio(ctx context.Context, projectID int64, operation string) int
+}
+
 // QueryService implements query logic for the dashboard API.
 // Methods are organized into focused files:
 //   - query_services.go      — ListServices, ListOperations, GetTimeseries
 //   - query_traces.go        — SearchTraces, GetTrace
 //   - query_dependencies.go  — ListDependencies
 type QueryService struct {
-	repo       QueryRepository
-	cache      *cache.Cache
-	logger     *slog.Logger
-	sampleRate float64
+	repo        QueryRepository
+	cache       *cache.Cache
+	logger      *slog.Logger
+	ratioLookup SampleRatioLookup
 }
 
-// NewQueryService creates a new QueryService. sampleRate is the fraction of
-// non-error spans that are ingested (e.g. 0.01 for 1%). When < 1.0, ok-span
-// counts are inflated by 1/sampleRate so that error rates reflect the true
-// population rather than only the sampled spans.
-func NewQueryService(repo QueryRepository, logger *slog.Logger, sampleRate float64) *QueryService {
+// NewQueryService creates a new QueryService. ratioLookup is used to read the
+// per-project 1-in-N sampling ratio so that error rates and counts are
+// corrected for projects using error-biased sampling. Pass nil for no correction.
+func NewQueryService(repo QueryRepository, logger *slog.Logger, ratioLookup SampleRatioLookup) *QueryService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if sampleRate <= 0 || sampleRate > 1 {
-		sampleRate = 1.0
+	return &QueryService{repo: repo, logger: logger, ratioLookup: ratioLookup}
+}
+
+// projectSampleRate returns the effective sample rate (0–1] for a project.
+func (s *QueryService) projectSampleRate(ctx context.Context, projectID int64) float64 {
+	if s.ratioLookup == nil {
+		return 1.0
 	}
-	return &QueryService{repo: repo, logger: logger, sampleRate: sampleRate}
+	ratio := s.ratioLookup.Ratio(ctx, projectID, "")
+	if ratio <= 1 {
+		return 1.0
+	}
+	return 1.0 / float64(ratio)
 }
 
 // inflateCount returns the estimated true span population given sampled counts.

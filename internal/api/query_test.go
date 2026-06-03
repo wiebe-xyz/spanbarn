@@ -28,7 +28,7 @@ func setupQueryTestServer(t *testing.T) (*Server, *auth.SessionManager, *reposit
 	}
 
 	repo := repository.NewRepository(db.DB)
-	querySvc := service.NewQueryService(repo, nil, 1.0)
+	querySvc := service.NewQueryService(repo, nil, nil)
 	sm := auth.NewSessionManager("test-secret", 3600)
 
 	srv := NewServerWithQuery(ServerConfig{
