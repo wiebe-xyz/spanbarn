@@ -79,6 +79,8 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 			SpanCount:    r.SpanCount,
 			Status:       status,
 			StartTime:    time.UnixMicro(r.StartTimeUs),
+			RootModel:    r.RootModel,
+			PromptCount:  r.PromptCount,
 		})
 	}
 	return result, nil

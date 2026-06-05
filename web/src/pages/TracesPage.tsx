@@ -624,6 +624,7 @@ export function TracesPage(): ReactElement {
                   <th style={thStyle}>Trace ID</th>
                   <th style={thStyle}>Root Span</th>
                   <th style={thStyle}>Service</th>
+                  <th style={thStyle}>Model</th>
                   <th style={thStyle}>Duration</th>
                   <th style={thStyle}>Spans</th>
                   <th style={thStyle}>Status</th>
@@ -633,14 +634,14 @@ export function TracesPage(): ReactElement {
               <tbody>
                 {loading && (
                   <tr>
-                    <td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#9ca3af' }}>
+                    <td colSpan={8} style={{ ...tdStyle, textAlign: 'center', color: '#9ca3af' }}>
                       Loading...
                     </td>
                   </tr>
                 )}
                 {!loading && traces.length === 0 && (
                   <tr>
-                    <td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280' }}>
+                    <td colSpan={8} style={{ ...tdStyle, textAlign: 'center', color: '#6b7280' }}>
                       No traces found
                     </td>
                   </tr>
@@ -675,6 +676,16 @@ export function TracesPage(): ReactElement {
                       </span>
                     </td>
                     <td style={tdStyle}>{trace.rootService}</td>
+                    <td style={{ ...tdStyle, color: '#d1d5db', fontSize: 12 }}>
+                      {trace.rootModel ? (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <code style={{ fontSize: 11 }}>{trace.rootModel}</code>
+                          {trace.promptCount != null && trace.promptCount > 1 && (
+                            <span style={{ color: '#6b7280', fontSize: 11 }}>×{trace.promptCount}</span>
+                          )}
+                        </span>
+                      ) : '—'}
+                    </td>
                     <td style={{ ...tdStyle, color: durationColor(trace.durationUs) }}>
                       {formatDuration(trace.durationUs)}
                     </td>
