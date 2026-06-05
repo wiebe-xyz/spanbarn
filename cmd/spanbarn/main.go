@@ -148,10 +148,16 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("worker", &wg, func() { w.Run(workerCtx) })
-	if !litestreamActive() {
-		safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
-	} else {
-		logger.Info("litestream detected: WAL checkpointing delegated to litestream")
+	// Always run the app-side checkpoint even when Litestream is active.
+	// Litestream's own PASSIVE checkpoint has no busy_timeout on its connection
+	// and returns SQLITE_BUSY immediately when a write transaction is in flight
+	// (~20 span writes/s means it almost never succeeds). The app's TRUNCATE
+	// checkpoint has busy_timeout(30000) and will wait for a clear window.
+	// WAL-level reader locks ensure Litestream's unstreamed frames are never
+	// truncated before S3 confirms them, so dual checkpointing is safe.
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	if litestreamActive() {
+		logger.Info("litestream active: WAL checkpoint also running in-process with busy_timeout")
 	}
 
 	retentionCfg := retention.Config{
@@ -637,10 +643,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
-	if !litestreamActive() {
-		safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
-	} else {
-		logger.Info("litestream detected: WAL checkpointing delegated to litestream")
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	if litestreamActive() {
+		logger.Info("litestream active: WAL checkpoint also running in-process with busy_timeout")
 	}
 
 	// Retention queries (DELETE/SELECT on the full spans table) can take

@@ -244,6 +244,8 @@ type TraceSummaryRow struct {
 	RootName     string
 	RootService  string
 	RootDuration int64
+	RootModel    string
+	PromptCount  int
 }
 
 // SearchTraceSummaries returns at most filter.Limit trace summaries matching
@@ -431,10 +433,40 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 		return nil, err
 	}
 
+	// Step 3: fetch model and prompt count from prompt_records for each trace.
+	type promptInfo struct {
+		model string
+		count int
+	}
+	promptsByTrace := make(map[string]promptInfo, len(order))
+	if len(order) > 0 {
+		prPlaceholders := strings.Repeat("?,", len(order))
+		prPlaceholders = prPlaceholders[:len(prPlaceholders)-1]
+		prArgs := make([]any, len(order))
+		for i, t := range order {
+			prArgs[i] = t
+		}
+		prQ := fmt.Sprintf(`SELECT trace_id, MIN(model), COUNT(*) FROM prompt_records WHERE trace_id IN (%s) GROUP BY trace_id`, prPlaceholders)
+		prCtx, prCancel := r.queryContext()
+		defer prCancel()
+		prRows, err := r.db.QueryContext(prCtx, prQ, prArgs...)
+		if err == nil {
+			for prRows.Next() {
+				var tid, model string
+				var cnt int
+				if err := prRows.Scan(&tid, &model, &cnt); err == nil {
+					promptsByTrace[tid] = promptInfo{model: model, count: cnt}
+				}
+			}
+			prRows.Close()
+		}
+	}
+
 	out := make([]TraceSummaryRow, 0, len(order))
 	for _, traceID := range order {
 		a := accs[traceID]
 		ri := roots[traceID]
+		pi := promptsByTrace[traceID]
 		out = append(out, TraceSummaryRow{
 			TraceID:      traceID,
 			StartTimeUs:  a.startUs,
@@ -443,6 +475,8 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 			RootName:     ri.name,
 			RootService:  ri.service,
 			RootDuration: ri.duration,
+			RootModel:    pi.model,
+			PromptCount:  pi.count,
 		})
 	}
 	return out, nil

@@ -49,6 +49,8 @@ type TraceSummary struct {
 	SpanCount    int       `json:"spanCount"`
 	Status       string    `json:"status"`
 	StartTime    time.Time `json:"startTime"`
+	RootModel    string    `json:"rootModel,omitempty"`
+	PromptCount  int       `json:"promptCount,omitempty"`
 }
 
 // TraceDetail holds a full trace with all its spans.

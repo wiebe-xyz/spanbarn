@@ -41,6 +41,8 @@ export type TraceSummary = {
   spanCount: number
   status: string
   startTime: string
+  rootModel?: string
+  promptCount?: number
 }
 
 /** Aggregated metrics for a group of traces sharing the same root operation. */
