@@ -82,15 +82,23 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
-		// Ingest endpoints always allow wildcard CORS for browser SDKs.
+		// Ingest endpoints allow any origin for browser SDKs.
+		// Echo the request origin instead of '*' so credentialed requests
+		// (credentials: 'include') are also accepted by the browser.
 		if strings.HasPrefix(path, "/api/v1/spans") ||
 			strings.HasPrefix(path, "/v1/traces") ||
 			path == "/api/v1/telemetry" ||
 			path == "/api/v1/client-errors" {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				origin = "*"
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-SpanBarn-Api-Key, Authorization, traceparent, tracestate")
 			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.Header().Set("Vary", "Origin")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
