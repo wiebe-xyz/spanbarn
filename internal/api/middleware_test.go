@@ -47,8 +47,8 @@ func TestCORSIngestEndpoint(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("expected 204 for OPTIONS, got %d", resp.StatusCode)
 	}
-	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "*" {
-		t.Fatalf("expected CORS allow-origin '*', got %q", acao)
+	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "https://example.com" {
+		t.Fatalf("expected CORS allow-origin 'https://example.com', got %q", acao)
 	}
 	acah := resp.Header.Get("Access-Control-Allow-Headers")
 	if !strings.Contains(acah, "X-SpanBarn-Api-Key") {
@@ -74,8 +74,8 @@ func TestCORSOTLPEndpoint(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("expected 204 for OPTIONS preflight, got %d", resp.StatusCode)
 	}
-	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "*" {
-		t.Fatalf("expected CORS allow-origin '*', got %q", acao)
+	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "https://geobarn.test.wiebe.xyz" {
+		t.Fatalf("expected CORS allow-origin 'https://geobarn.test.wiebe.xyz', got %q", acao)
 	}
 	acah := resp.Header.Get("Access-Control-Allow-Headers")
 	for _, h := range []string{"Authorization", "traceparent", "Content-Type"} {
