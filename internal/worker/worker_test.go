@@ -271,3 +271,99 @@ func TestWorkerGracefulShutdown(t *testing.T) {
 		t.Fatalf("after shutdown, got %d spans, want 3", len(got))
 	}
 }
+
+func TestClassifyInteresting(t *testing.T) {
+	spans := []repository.Span{
+		{TraceID: "t1", SpanID: "s1", Status: "ok", DurationUs: 100},       // boring
+		{TraceID: "t2", SpanID: "s2", Status: "error", DurationUs: 100},    // error → interesting
+		{TraceID: "t2", SpanID: "s3", Status: "ok", DurationUs: 100},       // boring but co-trace with error → promoted
+		{TraceID: "t3", SpanID: "s4", Status: "ok", DurationUs: 2_000_000}, // slow → interesting
+		{TraceID: "t3", SpanID: "s5", Status: "ok", DurationUs: 50},        // boring but co-trace with slow → promoted
+	}
+
+	result := classifyInteresting(spans, 1_000_000)
+
+	if len(result) != 4 {
+		t.Fatalf("expected 4 interesting spans, got %d", len(result))
+	}
+	// t1 (boring, no interesting co-trace) must be absent.
+	for _, s := range result {
+		if s.SpanID == "s1" {
+			t.Error("boring span s1 should not appear in interesting set")
+		}
+	}
+}
+
+func TestClassifyInterestingAllBoring(t *testing.T) {
+	spans := []repository.Span{
+		{TraceID: "t1", SpanID: "s1", Status: "ok", DurationUs: 50},
+		{TraceID: "t2", SpanID: "s2", Status: "ok", DurationUs: 100},
+	}
+	result := classifyInteresting(spans, 1_000_000)
+	if result != nil {
+		t.Fatalf("expected nil for all-boring batch, got %v", result)
+	}
+}
+
+func TestClassifyInterestingNoThreshold(t *testing.T) {
+	spans := []repository.Span{
+		{TraceID: "t1", SpanID: "s1", Status: "ok", DurationUs: 50},
+	}
+	// threshold=0 means no filter — all spans are interesting.
+	result := classifyInteresting(spans, 0)
+	if len(result) != 1 {
+		t.Fatalf("threshold=0 should pass all spans, got %d", len(result))
+	}
+}
+
+// mockAccumulator records Add calls for testing.
+type mockAccumulator struct {
+	mu    sync.Mutex
+	added []repository.Span
+}
+
+func (m *mockAccumulator) Add(s repository.Span) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.added = append(m.added, s)
+}
+
+func (m *mockAccumulator) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.added)
+}
+
+func TestRedisWorkerBoringBypass(t *testing.T) {
+	repo := &mockRepo{}
+	acc := &mockAccumulator{}
+
+	records := []model.SpanRecord{
+		{ProjectID: 1, TraceID: "t1", SpanID: "s1", Name: "op", Service: "svc", Status: "OK", DurationUs: 50},        // boring
+		{ProjectID: 1, TraceID: "t2", SpanID: "s2", Name: "op", Service: "svc", Status: "error", DurationUs: 50},     // error
+		{ProjectID: 1, TraceID: "t2", SpanID: "s3", Name: "op", Service: "svc", Status: "OK", DurationUs: 50},        // boring, co-trace with error → promoted
+		{ProjectID: 1, TraceID: "t3", SpanID: "s4", Name: "op", Service: "svc", Status: "OK", DurationUs: 2_000_000}, // slow
+	}
+
+	rw := &RedisWorker{repo: repo, logger: slog.Default()}
+	rw.SetAccumulator(acc)
+	rw.SetConfig(WorkerConfig{SlowThresholdUs: 1_000_000})
+
+	rw.processBatch(context.Background(), records)
+
+	// All 4 spans fed to accumulator.
+	if acc.count() != 4 {
+		t.Errorf("accumulator received %d spans, want 4", acc.count())
+	}
+
+	// Only 3 interesting spans written to SQLite (s1 is boring with no interesting co-trace).
+	inserted := repo.getSpans()
+	if len(inserted) != 3 {
+		t.Errorf("inserted %d spans to SQLite, want 3", len(inserted))
+	}
+	for _, s := range inserted {
+		if s.SpanID == "s1" {
+			t.Error("boring span s1 should not be in SQLite")
+		}
+	}
+}

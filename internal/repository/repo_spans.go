@@ -184,8 +184,10 @@ func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
 }
 
 func (r *Repository) CountSpansOlderThan(cutoff time.Time) (int64, error) {
+	ctx, cancel := r.queryContext()
+	defer cancel()
 	var n int64
-	err := r.db.QueryRow("SELECT COUNT(*) FROM spans WHERE ingested_at <= ?", cutoff).Scan(&n)
+	err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM spans WHERE ingested_at <= ?", cutoff).Scan(&n)
 	return n, err
 }
 
@@ -196,40 +198,6 @@ func (r *Repository) GetSpansForAggregation(cutoff time.Time, limit int) ([]Span
 	return r.scanSpans(
 		"SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at FROM spans WHERE ingested_at <= ? ORDER BY ingested_at LIMIT ?",
 		cutoff, limit,
-	)
-}
-
-// GetBoringTraceSpans returns spans from traces that are entirely boring
-// (no error spans, no slow spans) with ingested_at older than cutoff.
-// Used to aggregate-then-delete boring traces on a shorter TTL than error traces.
-//
-// The query uses two NOT EXISTS clauses instead of GROUP BY so SQLite can stop
-// scanning as soon as it finds enough rows via idx_spans_ingested, and each
-// trace-membership check is a keyed lookup on idx_spans_trace / the partial
-// idx_spans_error_trace index rather than a full-table aggregate.
-func (r *Repository) GetBoringTraceSpans(cutoff time.Time, slowThresholdUS int64, limit int) ([]Span, error) {
-	if limit <= 0 {
-		limit = 1000
-	}
-	return r.scanSpans(`
-		SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at
-		FROM spans s
-		WHERE s.ingested_at < ?
-		  AND s.status NOT IN ('error','ERROR','Error')
-		  AND s.duration_us <= ?
-		  AND NOT EXISTS (
-		    SELECT 1 FROM spans e
-		    WHERE e.trace_id = s.trace_id
-		      AND e.status IN ('error','ERROR','Error')
-		  )
-		  AND NOT EXISTS (
-		    SELECT 1 FROM spans e2
-		    WHERE e2.trace_id = s.trace_id
-		      AND e2.duration_us > ?
-		  )
-		ORDER BY s.ingested_at
-		LIMIT ?`,
-		cutoff, slowThresholdUS, slowThresholdUS, limit,
 	)
 }
 

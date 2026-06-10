@@ -55,11 +55,11 @@ func (m *Metrics) Snapshot() (processed, errors int64, duration time.Duration) {
 
 // Worker reads from the spool and persists records to the repository.
 type Worker struct {
-	spool      *spool.Spool
-	repo       Repository
-	aggregator Aggregator
-	logger     *slog.Logger
-	metrics    Metrics
+	spool          *spool.Spool
+	repo           Repository
+	aggregator     Aggregator
+	logger         *slog.Logger
+	metrics        Metrics
 	retryBaseDelay time.Duration
 }
 
@@ -213,23 +213,33 @@ func (w *Worker) aggregateInline(ctx context.Context, spans []repository.Span) {
 	}
 }
 
-// inlineAggInterval is how often the RedisWorker runs inline aggregation.
-// Running after every batch causes too many write transactions under high ingest
-// rates, which starves span inserts and backs up the Redis queue. Retention
-// catches up on any spans skipped here within its own cycle.
-const inlineAggInterval = 30 * time.Second
+// SpanAccumulator receives every span for in-memory aggregation.
+// Satisfied by *aggregation.Accumulator.
+type SpanAccumulator interface {
+	Add(s repository.Span)
+}
 
-// RedisWorker consumes span batches from a Redis write queue and persists them
-// to the repository. It reuses the same retry and inline-aggregation logic as
-// the file-spool Worker.
+// WorkerConfig holds tunable parameters for RedisWorker.
+type WorkerConfig struct {
+	// SlowThresholdUs is the duration above which a span is considered "slow"
+	// and therefore interesting (must be stored in SQLite). Spans below this
+	// threshold with no errors are boring and skipped. 0 disables the filter
+	// (all spans are written).
+	SlowThresholdUs int64
+}
+
+// RedisWorker consumes span batches from a Redis write queue and persists
+// interesting spans to the repository. Boring spans (no error, below the slow
+// threshold) are fed only to the in-memory accumulator and never written to
+// SQLite, keeping the spans table small and fast.
 type RedisWorker struct {
-	queue         *queue.RedisQueue
-	repo          Repository
-	aggregator    Aggregator
-	logger        *slog.Logger
-	metrics       Metrics
-	lastInlineAgg time.Time
-	writeMu       *sync.Mutex
+	queue       *queue.RedisQueue
+	repo        Repository
+	accumulator SpanAccumulator
+	logger      *slog.Logger
+	metrics     Metrics
+	writeMu     *sync.Mutex
+	cfg         WorkerConfig
 }
 
 // NewRedisWorker creates a worker that drains the Redis write queue.
@@ -240,9 +250,15 @@ func NewRedisWorker(q *queue.RedisQueue, repo Repository, logger *slog.Logger) *
 	return &RedisWorker{queue: q, repo: repo, logger: logger}
 }
 
-// SetAggregator wires in an aggregator for inline aggregation after each batch.
-func (w *RedisWorker) SetAggregator(a Aggregator) {
-	w.aggregator = a
+// SetAccumulator wires in the in-memory accumulator. Every span in each batch
+// (boring and interesting alike) is fed to Add before SQLite classification.
+func (w *RedisWorker) SetAccumulator(a SpanAccumulator) {
+	w.accumulator = a
+}
+
+// SetConfig applies worker tuning parameters.
+func (w *RedisWorker) SetConfig(cfg WorkerConfig) {
+	w.cfg = cfg
 }
 
 // SetWriteMutex wires in the shared write serializer. When set, the worker
@@ -291,9 +307,31 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 
 	spans := convertRecords(records)
 
-	// Acquire the shared write lock before touching the DB. This serialises
-	// all writes with the retention worker so neither starves the other out
-	// competing for the SQLite write connection.
+	// Feed every span to the accumulator for in-memory aggregation, including
+	// boring spans that will not reach SQLite.
+	if w.accumulator != nil {
+		for i := range spans {
+			w.accumulator.Add(spans[i])
+		}
+	}
+
+	// Classify: only interesting spans (error or slow, plus boring spans that
+	// share a trace with an interesting span) are written to SQLite.
+	interesting := spans
+	if w.cfg.SlowThresholdUs > 0 {
+		interesting = classifyInteresting(spans, w.cfg.SlowThresholdUs)
+	}
+
+	boringCount := len(spans) - len(interesting)
+	if boringCount > 0 {
+		span.SetAttributes(attribute.Int("boring_skipped", boringCount))
+	}
+
+	if len(interesting) == 0 {
+		return
+	}
+
+	// Acquire the shared write lock before touching the DB.
 	if w.writeMu != nil {
 		w.writeMu.Lock()
 		defer w.writeMu.Unlock()
@@ -302,11 +340,11 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 	_, insertSpan := tracer.Start(ctx, "redis_worker.insert_spans")
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if err := w.repo.InsertSpans(ctx, spans); err != nil {
+		if err := w.repo.InsertSpans(ctx, interesting); err != nil {
 			lastErr = err
 			w.logger.Info("redis worker: insert attempt failed",
 				"attempt", attempt,
-				"count", len(spans),
+				"count", len(interesting),
 				"error", err,
 			)
 			backoff := time.Duration(attempt*attempt) * 500 * time.Millisecond
@@ -328,41 +366,48 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 	insertSpan.End()
 
 	if lastErr != nil {
-		span.SetAttributes(attribute.Int("dead_lettered", len(spans)))
+		span.SetAttributes(attribute.Int("dead_lettered", len(interesting)))
 		w.logger.Error("redis worker: dead-lettering batch after retries",
-			"count", len(spans),
+			"count", len(interesting),
 			"error", lastErr,
 		)
 		w.metrics.mu.Lock()
-		w.metrics.ErrorCount += int64(len(spans))
+		w.metrics.ErrorCount += int64(len(interesting))
 		w.metrics.mu.Unlock()
 		return
 	}
 
 	w.metrics.mu.Lock()
-	w.metrics.ProcessedCount += int64(len(spans))
+	w.metrics.ProcessedCount += int64(len(interesting))
 	w.metrics.mu.Unlock()
 
-	if promptRecs := extractPromptRecords(spans); len(promptRecs) > 0 {
+	if promptRecs := extractPromptRecords(interesting); len(promptRecs) > 0 {
 		if err := w.repo.InsertPromptRecords(ctx, promptRecs); err != nil {
 			w.logger.Warn("redis worker: insert prompt records", "count", len(promptRecs), "error", err)
 		}
 	}
+}
 
-	if w.aggregator != nil && time.Since(w.lastInlineAgg) >= inlineAggInterval {
-		aggs, err := w.aggregator.AggregateSpans(ctx, spans)
-		if err != nil {
-			w.logger.Warn("redis worker: inline aggregate failed", "error", err)
-			return
+// classifyInteresting returns only the spans that should be written to SQLite:
+// those that are errors or slow, plus any boring span that shares a trace_id
+// with an interesting span (preserves waterfall completeness within a batch).
+func classifyInteresting(spans []repository.Span, slowThresholdUs int64) []repository.Span {
+	interestingTraces := make(map[string]struct{}, len(spans))
+	for _, s := range spans {
+		if s.Status == "error" || s.DurationUs > slowThresholdUs {
+			interestingTraces[s.TraceID] = struct{}{}
 		}
-		if len(aggs) > 0 {
-			if err := w.aggregator.Persist(ctx, aggs); err != nil {
-				w.logger.Warn("redis worker: inline aggregate persist failed", "error", err)
-				return
-			}
-		}
-		w.lastInlineAgg = time.Now()
 	}
+	if len(interestingTraces) == 0 {
+		return nil
+	}
+	result := make([]repository.Span, 0, len(spans))
+	for _, s := range spans {
+		if _, ok := interestingTraces[s.TraceID]; ok {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 func convertRecords(records []model.SpanRecord) []repository.Span {

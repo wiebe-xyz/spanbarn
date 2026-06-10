@@ -628,7 +628,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	var wg sync.WaitGroup
 
 	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
-	aggregator := aggregation.NewAggregator(repo, aggInterval, logger)
+	accumulator := aggregation.NewAccumulator(repo, aggInterval, 30*time.Second, logger)
 
 	// writeMu serialises all SQLite writes between the span worker and the
 	// retention worker. Without this they compete for the write connection:
@@ -638,11 +638,13 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	writeMu := &sync.Mutex{}
 
 	rw := worker.NewRedisWorker(writeQueue, &workerRepoAdapter{repo: repo}, logger)
-	rw.SetAggregator(aggregator)
+	rw.SetAccumulator(accumulator)
+	rw.SetConfig(worker.WorkerConfig{SlowThresholdUs: int64(cfg.SlowThresholdMS) * 1000})
 	rw.SetWriteMutex(writeMu)
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
+	safeGo("accumulator", &wg, func() { accumulator.Run(workerCtx) })
 	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
 	if litestreamActive() {
 		logger.Info("litestream active: WAL checkpoint also running in-process with busy_timeout")
@@ -663,7 +665,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 	}
-	retentionWorker := retention.NewRetentionWorker(retentionRepo, aggregator, retentionCfg, logger)
+	retentionWorker := retention.NewRetentionWorker(retentionRepo, accumulator, retentionCfg, logger)
 	retentionWorker.SetWriteMutex(writeMu)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
@@ -676,6 +678,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	defer alertCancel()
 	safeGo("alert-runner", &wg, func() { alertRunner.Run(alertCtx) })
 
+	querySvc.SetAccumulator(accumulator)
 	api.WarmCaches(ctx, queryRepo, querySvc.Cache(), logger)
 
 	select {
