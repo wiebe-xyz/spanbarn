@@ -247,7 +247,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	mux := http.NewServeMux()
 	loginRL := api.RateLimitMiddleware(api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), "login")
 	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
-		api.WarmLoginCaches(context.Background(), queryRepo, querySvc, logger)
+		api.WarmLoginCaches(context.Background(), querySvc, logger)
 	})))
 	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
 	mux.Handle("/", apiServer.Handler())
@@ -436,7 +436,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 			"login",
 		)
 		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
-			api.WarmLoginCaches(context.Background(), roRepo, querySvc, logger)
+			api.WarmLoginCaches(context.Background(), querySvc, logger)
 		})))
 		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
 	}
@@ -617,7 +617,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	}
 	loginRL := api.RateLimitMiddleware(api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), "login")
 	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
-		api.WarmLoginCaches(context.Background(), queryRepo, querySvc, logger)
+		api.WarmLoginCaches(context.Background(), querySvc, logger)
 	})))
 	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
 	mux.Handle("/", apiServer.Handler())
@@ -979,7 +979,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 			"login",
 		)
 		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
-			api.WarmLoginCaches(context.Background(), roRepo, querySvc, logger)
+			api.WarmLoginCaches(context.Background(), querySvc, logger)
 		})))
 		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
 	}

@@ -44,51 +44,59 @@ func WarmCaches(ctx context.Context, repo *repository.Repository, c *cache.Cache
 		})
 }
 
-// WarmLoginCaches pre-populates the per-project Services cache for all
+// WarmLoginCaches pre-populates the Services and Prompts caches for all
 // dashboard time ranges so the first page load after login hits Redis rather
 // than SQLite. Runs entirely in the background; login latency is unaffected.
-func WarmLoginCaches(ctx context.Context, repo *repository.Repository, qs *service.QueryService, logger *slog.Logger) {
-	if repo == nil || qs == nil {
+//
+// The services endpoint is queried with project_id=0 (all-projects view) and
+// both serverOnly variants to match the two states of the entry-points toggle.
+func WarmLoginCaches(ctx context.Context, qs *service.QueryService, logger *slog.Logger) {
+	if qs == nil {
 		return
 	}
 	go func() {
-		bctx, rootSpan := apiTracer.Start(context.Background(), "api.warm.login")
+		_, rootSpan := apiTracer.Start(context.Background(), "api.warm.login")
 		defer rootSpan.End()
-
-		projects, err := repo.ListProjects()
-		if err != nil {
-			rootSpan.RecordError(err)
-			rootSpan.SetStatus(codes.Error, "list projects failed")
-			logger.Warn("warm login: list projects failed", "err", err)
-			return
-		}
-		rootSpan.SetAttributes(attribute.Int("projects", len(projects)))
 
 		ranges := []time.Duration{time.Hour, 4 * time.Hour, 24 * time.Hour, 7 * 24 * time.Hour, 30 * 24 * time.Hour}
 		now := time.Now()
 		errors := 0
-		for _, p := range projects {
-			_, pSpan := apiTracer.Start(bctx, "api.warm.login.project")
-			pSpan.SetAttributes(attribute.Int64("project.id", p.ID))
+
+		// Services: both serverOnly variants (default=true, toggled=false).
+		for _, serverOnly := range []bool{true, false} {
+			_, sSpan := apiTracer.Start(context.Background(), "api.warm.login.services")
+			sSpan.SetAttributes(attribute.Bool("server_only", serverOnly))
 			for _, d := range ranges {
-				_, err := qs.ListServices(bctx, p.ID, now.Add(-d), now, false)
+				_, err := qs.ListServices(context.Background(), 0, now.Add(-d), now, serverOnly)
 				if err != nil {
-					pSpan.RecordError(fmt.Errorf("range %s: %w", d, err))
-					logger.Warn("warm login: list services failed", "project", p.ID, "range", d, "err", err)
+					sSpan.RecordError(fmt.Errorf("range %s: %w", d, err))
+					logger.Warn("warm login: list services failed", "server_only", serverOnly, "range", d, "err", err)
 					errors++
 				}
 			}
-			pSpan.End()
+			sSpan.End()
 		}
+
+		// Prompts: no service/model filter (the default landing state).
+		_, pSpan := apiTracer.Start(context.Background(), "api.warm.login.prompts")
+		for _, d := range ranges {
+			_, err := qs.ListPrompts(context.Background(), 0, now.Add(-d), now, "", "")
+			if err != nil {
+				pSpan.RecordError(fmt.Errorf("range %s: %w", d, err))
+				logger.Warn("warm login: list prompts failed", "range", d, "err", err)
+				errors++
+			}
+		}
+		pSpan.End()
 
 		rootSpan.SetAttributes(
 			attribute.Int("ranges", len(ranges)),
 			attribute.Int("errors", errors),
 		)
 		if errors > 0 {
-			rootSpan.SetStatus(codes.Error, "some ranges failed")
+			rootSpan.SetStatus(codes.Error, "some queries failed")
 		}
-		logger.Info("warm login: complete", "projects", len(projects), "errors", errors)
+		logger.Info("warm login: complete", "ranges", len(ranges), "errors", errors)
 	}()
 }
 
