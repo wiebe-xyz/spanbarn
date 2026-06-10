@@ -5,6 +5,11 @@ resources:
   - namespace.yaml
   - ../base
   - ingress.yaml
+patches:
+  - path: patch-resources.yaml
+    target:
+      kind: Deployment
+      name: spanbarn
 images:
   - name: ghcr.io/wiebe-xyz/spanbarn/service
     newTag: __SHA__
