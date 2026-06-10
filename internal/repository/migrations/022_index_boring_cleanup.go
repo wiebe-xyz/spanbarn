@@ -11,19 +11,14 @@ func init() {
 	goose.AddMigrationContext(up022, down022)
 }
 
-// up022 adds a covering index for the fast boring-span deletion query.
-// The retention worker periodically runs:
-//
-//	DELETE FROM spans WHERE ingested_at < ? AND status NOT IN ('error') AND duration_us < ?
-//
-// (ingested_at, status, duration_us) lets SQLite resolve the range + predicate
-// entirely from the index without touching the main table rows.
+// up022 is a no-op: the boring-span cleanup DELETE
+// (ingested_at < ? AND status NOT IN (...) AND duration_us < ?)
+// is already served efficiently by idx_spans_ingested on (ingested_at),
+// which lets SQLite skip over old spans without a full table scan.
+// The dedicated 3-column covering index was removed to avoid blocking
+// pod startup for 30+ minutes on large databases (12M+ rows).
 func up022(ctx context.Context, tx *sql.Tx) error {
-	_, err := tx.ExecContext(ctx, `
-		CREATE INDEX IF NOT EXISTS idx_spans_boring_cleanup
-		ON spans(ingested_at, status, duration_us)
-	`)
-	return err
+	return nil
 }
 
 func down022(ctx context.Context, tx *sql.Tx) error {

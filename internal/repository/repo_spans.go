@@ -184,8 +184,7 @@ func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
 }
 
 // DeleteBoringSpansOlderThan removes non-error, fast spans ingested before cutoff.
-// This is the fast boring-span cleanup: a simple range DELETE using the
-// idx_spans_boring_cleanup index rather than a correlated subquery.
+// Uses idx_spans_ingested (ingested_at) for the range scan.
 func (r *Repository) DeleteBoringSpansOlderThan(cutoff time.Time, slowThresholdUs int64) (int64, error) {
 	res, err := r.db.Exec(
 		`DELETE FROM spans WHERE ingested_at < ? AND status NOT IN ('error','ERROR','Error') AND duration_us < ?`,

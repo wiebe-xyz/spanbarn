@@ -222,7 +222,7 @@ jobs:
   deploy-staging:
     needs: deploy
     runs-on: [self-hosted, build]
-    timeout-minutes: 15
+    timeout-minutes: 45
     env:
       HOME: /Users/wiebe
       PATH: /Users/wiebe/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
@@ -297,6 +297,25 @@ jobs:
               \"url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}\",
               \"notes\": \"Deployed by GitHub Actions run #${GITHUB_RUN_NUMBER}\"
             }" || echo "BugBarn release marker skipped"
+
+      - name: Wait for staging writer API to initialize
+        run: |
+          set -euo pipefail
+          STAGING_URL=https://spanbarn.staging.wiebe.xyz
+          echo "Waiting for staging writer API to finish initializing (migrations may take a while)..."
+          for i in $(seq 1 180); do
+            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -X POST \
+              "${STAGING_URL}/api/v1/e2e/session" \
+              -H "Authorization: Bearer probe" 2>/dev/null || echo "000")
+            if [ "$STATUS" != "404" ] && [ "$STATUS" != "000" ]; then
+              echo "Writer API ready (HTTP ${STATUS})"
+              exit 0
+            fi
+            echo "Not ready yet, attempt ${i}/180 (HTTP ${STATUS})"
+            sleep 10
+          done
+          echo "Timed out waiting for writer API to initialize"
+          exit 1
 
       - name: Run E2E tests against staging
         env:
