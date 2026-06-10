@@ -2,8 +2,12 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
@@ -40,28 +44,51 @@ func WarmCaches(ctx context.Context, repo *repository.Repository, c *cache.Cache
 		})
 }
 
-// WarmLoginCaches pre-populates the per-project Services cache for the 1h and
-// 24h ranges so the first dashboard page load after login hits Redis rather than
-// SQLite. Runs entirely in the background; login latency is unaffected.
+// WarmLoginCaches pre-populates the per-project Services cache for all
+// dashboard time ranges so the first page load after login hits Redis rather
+// than SQLite. Runs entirely in the background; login latency is unaffected.
 func WarmLoginCaches(ctx context.Context, repo *repository.Repository, qs *service.QueryService, logger *slog.Logger) {
 	if repo == nil || qs == nil {
 		return
 	}
 	go func() {
+		bctx, rootSpan := apiTracer.Start(context.Background(), "api.warm.login")
+		defer rootSpan.End()
+
 		projects, err := repo.ListProjects()
 		if err != nil {
+			rootSpan.RecordError(err)
+			rootSpan.SetStatus(codes.Error, "list projects failed")
 			logger.Warn("warm login: list projects failed", "err", err)
 			return
 		}
+		rootSpan.SetAttributes(attribute.Int("projects", len(projects)))
+
+		ranges := []time.Duration{time.Hour, 4 * time.Hour, 24 * time.Hour, 7 * 24 * time.Hour, 30 * 24 * time.Hour}
 		now := time.Now()
+		errors := 0
 		for _, p := range projects {
-			for _, d := range []time.Duration{time.Hour, 4 * time.Hour, 24 * time.Hour, 7 * 24 * time.Hour, 30 * 24 * time.Hour} {
-				if _, err := qs.ListServices(ctx, p.ID, now.Add(-d), now, false); err != nil {
-					logger.Warn("warm login: list services failed", "project", p.ID, "err", err)
+			_, pSpan := apiTracer.Start(bctx, "api.warm.login.project")
+			pSpan.SetAttributes(attribute.Int64("project.id", p.ID))
+			for _, d := range ranges {
+				_, err := qs.ListServices(bctx, p.ID, now.Add(-d), now, false)
+				if err != nil {
+					pSpan.RecordError(fmt.Errorf("range %s: %w", d, err))
+					logger.Warn("warm login: list services failed", "project", p.ID, "range", d, "err", err)
+					errors++
 				}
 			}
+			pSpan.End()
 		}
-		logger.Info("warm login: complete", "projects", len(projects))
+
+		rootSpan.SetAttributes(
+			attribute.Int("ranges", len(ranges)),
+			attribute.Int("errors", errors),
+		)
+		if errors > 0 {
+			rootSpan.SetStatus(codes.Error, "some ranges failed")
+		}
+		logger.Info("warm login: complete", "projects", len(projects), "errors", errors)
 	}()
 }
 
