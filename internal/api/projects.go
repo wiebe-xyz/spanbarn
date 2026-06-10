@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -79,6 +80,16 @@ func (h *projectHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.handleEnableE2E(w, r, id)
 		case http.MethodDelete:
 			h.handleDisableE2E(w, r, id)
+		default:
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		}
+		return
+	case "verbose":
+		switch r.Method {
+		case http.MethodPost:
+			h.handleEnableVerbose(w, r, id)
+		case http.MethodDelete:
+			h.handleDisableVerbose(w, r, id)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		}
@@ -183,6 +194,62 @@ func (h *projectHandlers) handleListAPIKeys(w http.ResponseWriter, r *http.Reque
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+type verboseRequest struct {
+	DurationMinutes int `json:"durationMinutes"`
+}
+
+type verboseResponse struct {
+	ProjectID    int64  `json:"projectId"`
+	VerboseUntil string `json:"verboseUntil"`
+}
+
+// handleEnableVerbose sets verbose (record-in-detail) mode for a project.
+// POST /api/v1/projects/{id}/verbose with body {"durationMinutes": 60}
+// Stores boring.verbose_until.project.{id} = Unix timestamp of expiry.
+func (h *projectHandlers) handleEnableVerbose(w http.ResponseWriter, r *http.Request, id int64) {
+	_, span := apiTracer.Start(r.Context(), "api.projects.enable_verbose")
+	defer span.End()
+	span.SetAttributes(attribute.Int64("project.id", id))
+
+	var req verboseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON", err.Error())
+		return
+	}
+	if req.DurationMinutes <= 0 {
+		req.DurationMinutes = 60
+	}
+	if req.DurationMinutes > 1440 { // cap at 24h
+		req.DurationMinutes = 1440
+	}
+
+	until := time.Now().Add(time.Duration(req.DurationMinutes) * time.Minute)
+	key := fmt.Sprintf("boring.verbose_until.project.%d", id)
+	if err := h.repo.SetSetting(key, strconv.FormatInt(until.Unix(), 10)); err != nil {
+		writeServerError(w, r, "failed to set verbose mode", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, verboseResponse{
+		ProjectID:    id,
+		VerboseUntil: until.UTC().Format(time.RFC3339),
+	})
+}
+
+// handleDisableVerbose clears verbose mode for a project.
+// DELETE /api/v1/projects/{id}/verbose
+func (h *projectHandlers) handleDisableVerbose(w http.ResponseWriter, r *http.Request, id int64) {
+	_, span := apiTracer.Start(r.Context(), "api.projects.disable_verbose")
+	defer span.End()
+	span.SetAttributes(attribute.Int64("project.id", id))
+
+	key := fmt.Sprintf("boring.verbose_until.project.%d", id)
+	if err := h.repo.DeleteSetting(key); err != nil {
+		writeServerError(w, r, "failed to clear verbose mode", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *projectHandlers) handleEnableE2E(w http.ResponseWriter, r *http.Request, id int64) {

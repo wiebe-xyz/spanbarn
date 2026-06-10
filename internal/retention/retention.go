@@ -41,6 +41,7 @@ type Repository interface {
 	GetSpansForAggregation(cutoff time.Time, limit int) ([]repository.Span, error)
 	DeleteSpansByMaxID(maxID int64) (int64, error)
 	DeleteSpansOlderThan(cutoff time.Time) (int64, error)
+	DeleteBoringSpansOlderThan(cutoff time.Time, slowThresholdUs int64) (int64, error)
 	InsertErrorSamples(spans []repository.Span) error
 	DeleteErrorSamplesOlderThan(cutoff time.Time) (int64, error)
 	DeleteAggregatesOlderThan(cutoff time.Time) (int64, error)
@@ -52,6 +53,7 @@ type Repository interface {
 type Config struct {
 	FullRetentionHours        int           // hours to keep ALL spans (default 4)
 	InterestingRetentionHours int           // hours to keep error/slow spans after full retention expires (default 168 = 7d)
+	BoringRetentionMinutes    int           // minutes to keep sampled boring spans (default 30); 0 disables boring cleanup
 	ErrorRetentionDays        int           // days to keep error samples (default 30)
 	AggregateRetentionDays    int           // days to keep aggregates (default 365)
 	SlowThresholdUS           int64         // microseconds above which a span is "slow"
@@ -68,6 +70,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.InterestingRetentionHours <= 0 {
 		c.InterestingRetentionHours = 168
+	}
+	if c.BoringRetentionMinutes <= 0 {
+		c.BoringRetentionMinutes = 30
 	}
 	if c.ErrorRetentionDays <= 0 {
 		c.ErrorRetentionDays = 30
@@ -166,6 +171,9 @@ func (w *RetentionWorker) effectiveConfig() Config {
 	}
 	if n, ok := readInt("retention_error_days"); ok {
 		cfg.ErrorRetentionDays = n
+	}
+	if n, ok := readInt("boring_retention_minutes"); ok {
+		cfg.BoringRetentionMinutes = n
 	}
 	return cfg
 }
@@ -298,6 +306,18 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		}
 	}
 
+	// Fast boring-span cleanup: delete sampled boring spans past their short retention window.
+	// This is a simple indexed range DELETE — no correlated subquery, runs in milliseconds.
+	var boringDeleted int64
+	if cfg.BoringRetentionMinutes > 0 && cfg.SlowThresholdUS > 0 {
+		boringCutoff := now.Add(-time.Duration(cfg.BoringRetentionMinutes) * time.Minute)
+		var boringErr error
+		boringDeleted, boringErr = w.repo.DeleteBoringSpansOlderThan(boringCutoff, cfg.SlowThresholdUS)
+		if boringErr != nil {
+			return boringErr
+		}
+	}
+
 	errorSamplesDeleted, err := w.repo.DeleteErrorSamplesOlderThan(errorCutoff)
 	if err != nil {
 		return err
@@ -315,6 +335,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		attribute.Int64("spans_aggregated", totalAggregated),
 		attribute.Int64("errors_sampled", totalSampled),
 		attribute.Int64("spans_deleted", spansDeleted),
+		attribute.Int64("boring_deleted", boringDeleted),
 		attribute.Int64("error_samples_deleted", errorSamplesDeleted),
 		attribute.Int64("aggregates_deleted", aggregatesDeleted),
 		attribute.Int64("e2e_users_deleted", e2eUsersDeleted),
@@ -324,6 +345,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		"spans_aggregated", totalAggregated,
 		"errors_sampled", totalSampled,
 		"spans_deleted", spansDeleted,
+		"boring_deleted", boringDeleted,
 		"error_samples_deleted", errorSamplesDeleted,
 		"aggregates_deleted", aggregatesDeleted,
 		"e2e_users_deleted", e2eUsersDeleted,

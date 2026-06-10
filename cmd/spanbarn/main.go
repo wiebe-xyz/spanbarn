@@ -163,6 +163,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
 		InterestingRetentionHours: cfg.RetentionInterestingHours,
+		BoringRetentionMinutes:    cfg.BoringRetentionMinutes,
 		ErrorRetentionDays:        cfg.RetentionErrorDays,
 		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
@@ -637,9 +638,12 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// SQLite only ever sees one writer at a time.
 	writeMu := &sync.Mutex{}
 
+	boringPolicy := worker.NewCachedBoringPolicy(repo, 30*time.Second)
+
 	rw := worker.NewRedisWorker(writeQueue, &workerRepoAdapter{repo: repo}, logger)
 	rw.SetAccumulator(accumulator)
 	rw.SetConfig(worker.WorkerConfig{SlowThresholdUs: int64(cfg.SlowThresholdMS) * 1000})
+	rw.SetBoringPolicy(boringPolicy)
 	rw.SetWriteMutex(writeMu)
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
@@ -661,6 +665,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
 		InterestingRetentionHours: cfg.RetentionInterestingHours,
+		BoringRetentionMinutes:    cfg.BoringRetentionMinutes,
 		ErrorRetentionDays:        cfg.RetentionErrorDays,
 		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,

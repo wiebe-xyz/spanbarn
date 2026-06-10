@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -233,13 +234,14 @@ type WorkerConfig struct {
 // threshold) are fed only to the in-memory accumulator and never written to
 // SQLite, keeping the spans table small and fast.
 type RedisWorker struct {
-	queue       *queue.RedisQueue
-	repo        Repository
-	accumulator SpanAccumulator
-	logger      *slog.Logger
-	metrics     Metrics
-	writeMu     *sync.Mutex
-	cfg         WorkerConfig
+	queue        *queue.RedisQueue
+	repo         Repository
+	accumulator  SpanAccumulator
+	boringPolicy BoringPolicyReader
+	logger       *slog.Logger
+	metrics      Metrics
+	writeMu      *sync.Mutex
+	cfg          WorkerConfig
 }
 
 // NewRedisWorker creates a worker that drains the Redis write queue.
@@ -259,6 +261,11 @@ func (w *RedisWorker) SetAccumulator(a SpanAccumulator) {
 // SetConfig applies worker tuning parameters.
 func (w *RedisWorker) SetConfig(cfg WorkerConfig) {
 	w.cfg = cfg
+}
+
+// SetBoringPolicy wires in the per-project boring span policy (sampling + verbose mode).
+func (w *RedisWorker) SetBoringPolicy(p BoringPolicyReader) {
+	w.boringPolicy = p
 }
 
 // SetWriteMutex wires in the shared write serializer. When set, the worker
@@ -315,12 +322,9 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 		}
 	}
 
-	// Classify: only interesting spans (error or slow, plus boring spans that
-	// share a trace with an interesting span) are written to SQLite.
-	interesting := spans
-	if w.cfg.SlowThresholdUs > 0 {
-		interesting = classifyInteresting(spans, w.cfg.SlowThresholdUs)
-	}
+	// Classify: interesting spans (error, slow, or verbose-project) are written to
+	// SQLite unconditionally; boring spans may be sampled based on per-project policy.
+	interesting := w.classifyForStorage(spans)
 
 	boringCount := len(spans) - len(interesting)
 	if boringCount > 0 {
@@ -388,9 +392,76 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 	}
 }
 
+// classifyForStorage builds the set of spans to write to SQLite.
+// All spans in error/slow traces are included unconditionally. Spans in
+// verbose-mode projects bypass boring classification. Remaining boring spans
+// are sampled at the per-project ratio from boringPolicy (if wired).
+func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.Span {
+	if w.cfg.SlowThresholdUs <= 0 {
+		return spans
+	}
+
+	now := time.Now()
+
+	// Determine which projects are in verbose mode (record all spans).
+	verboseProject := make(map[int64]bool, 2)
+	if w.boringPolicy != nil {
+		for _, s := range spans {
+			if _, seen := verboseProject[s.ProjectID]; !seen {
+				until := w.boringPolicy.VerboseUntil(s.ProjectID)
+				verboseProject[s.ProjectID] = !until.IsZero() && now.Before(until)
+			}
+		}
+	}
+
+	// First pass: find trace IDs that are definitely interesting.
+	interestingTraces := make(map[string]struct{}, len(spans))
+	for _, s := range spans {
+		if verboseProject[s.ProjectID] || s.Status == "error" || s.DurationUs > w.cfg.SlowThresholdUs {
+			interestingTraces[s.TraceID] = struct{}{}
+		}
+	}
+
+	// Second pass: separate interesting from boring.
+	result := make([]repository.Span, 0, len(spans))
+	boring := make([]repository.Span, 0, 8)
+	for _, s := range spans {
+		if _, ok := interestingTraces[s.TraceID]; ok {
+			result = append(result, s)
+		} else {
+			boring = append(boring, s)
+		}
+	}
+
+	// Sample boring spans per project policy.
+	if w.boringPolicy == nil || len(boring) == 0 {
+		return result
+	}
+	byProject := make(map[int64][]repository.Span, 2)
+	for _, s := range boring {
+		byProject[s.ProjectID] = append(byProject[s.ProjectID], s)
+	}
+	for projID, projectBoring := range byProject {
+		ratio := w.boringPolicy.SampleRatio(projID)
+		switch {
+		case ratio == 1:
+			result = append(result, projectBoring...)
+		case ratio > 1:
+			for _, s := range projectBoring {
+				if rand.IntN(ratio) == 0 {
+					result = append(result, s)
+				}
+			}
+			// ratio == 0: skip all boring spans for this project
+		}
+	}
+	return result
+}
+
 // classifyInteresting returns only the spans that should be written to SQLite:
 // those that are errors or slow, plus any boring span that shares a trace_id
 // with an interesting span (preserves waterfall completeness within a batch).
+// Used by tests directly; production code uses classifyForStorage.
 func classifyInteresting(spans []repository.Span, slowThresholdUs int64) []repository.Span {
 	interestingTraces := make(map[string]struct{}, len(spans))
 	for _, s := range spans {

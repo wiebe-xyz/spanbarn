@@ -183,6 +183,20 @@ func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
 	return res.RowsAffected()
 }
 
+// DeleteBoringSpansOlderThan removes non-error, fast spans ingested before cutoff.
+// This is the fast boring-span cleanup: a simple range DELETE using the
+// idx_spans_boring_cleanup index rather than a correlated subquery.
+func (r *Repository) DeleteBoringSpansOlderThan(cutoff time.Time, slowThresholdUs int64) (int64, error) {
+	res, err := r.db.Exec(
+		`DELETE FROM spans WHERE ingested_at < ? AND status NOT IN ('error','ERROR','Error') AND duration_us < ?`,
+		cutoff, slowThresholdUs,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (r *Repository) CountSpansOlderThan(cutoff time.Time) (int64, error) {
 	ctx, cancel := r.queryContext()
 	defer cancel()
