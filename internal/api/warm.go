@@ -7,6 +7,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 // WarmCaches populates the Redis SWR entries for the expensive read endpoints
@@ -37,6 +38,31 @@ func WarmCaches(ctx context.Context, repo *repository.Repository, c *cache.Cache
 		func(ctx context.Context) (any, error) {
 			return repo.GetDBCounts()
 		})
+}
+
+// WarmLoginCaches pre-populates the per-project Services cache for the 1h and
+// 24h ranges so the first dashboard page load after login hits Redis rather than
+// SQLite. Runs entirely in the background; login latency is unaffected.
+func WarmLoginCaches(ctx context.Context, repo *repository.Repository, qs *service.QueryService, logger *slog.Logger) {
+	if repo == nil || qs == nil {
+		return
+	}
+	go func() {
+		projects, err := repo.ListProjects()
+		if err != nil {
+			logger.Warn("warm login: list projects failed", "err", err)
+			return
+		}
+		now := time.Now()
+		for _, p := range projects {
+			for _, d := range []time.Duration{time.Hour, 24 * time.Hour} {
+				if _, err := qs.ListServices(ctx, p.ID, now.Add(-d), now, false); err != nil {
+					logger.Warn("warm login: list services failed", "project", p.ID, "err", err)
+				}
+			}
+		}
+		logger.Info("warm login: complete", "projects", len(projects))
+	}()
 }
 
 func warmEntry(

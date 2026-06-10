@@ -43,7 +43,7 @@ func setupLoginTest(t *testing.T) (*auth.UserAuthenticator, *auth.SessionManager
 
 func TestLoginSuccess(t *testing.T) {
 	userAuth, sm := setupLoginTest(t)
-	handler := HandleLogin(userAuth, sm)
+	handler := HandleLogin(userAuth, sm, nil)
 
 	body, _ := json.Marshal(loginRequest{Username: "admin", Password: "correct-pass"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/login", bytes.NewReader(body))
@@ -84,7 +84,7 @@ func TestLoginSuccess(t *testing.T) {
 
 func TestLoginWrongPassword(t *testing.T) {
 	userAuth, sm := setupLoginTest(t)
-	handler := HandleLogin(userAuth, sm)
+	handler := HandleLogin(userAuth, sm, nil)
 
 	body, _ := json.Marshal(loginRequest{Username: "admin", Password: "wrong-pass"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/login", bytes.NewReader(body))
@@ -100,7 +100,7 @@ func TestLoginWrongPassword(t *testing.T) {
 
 func TestLoginMethodNotAllowed(t *testing.T) {
 	userAuth, sm := setupLoginTest(t)
-	handler := HandleLogin(userAuth, sm)
+	handler := HandleLogin(userAuth, sm, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/login", nil)
 	rec := httptest.NewRecorder()
