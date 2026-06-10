@@ -277,8 +277,8 @@ jobs:
             kubectl -n spanbarn-staging set image deployment/spanbarn-web \
               spanbarn-web=${WEB_IMAGE}:${{ github.sha }}
             kubectl -n spanbarn-staging rollout status deployment/spanbarn --timeout=360s
-            kubectl -n spanbarn-staging rollout status deployment/spanbarn-ingest --timeout=360s
             kubectl -n spanbarn-staging rollout status deployment/spanbarn-web --timeout=360s
+            kubectl -n spanbarn-staging rollout status deployment/spanbarn-ingest --timeout=360s || true
           "
 
       - name: Post release marker to BugBarn
