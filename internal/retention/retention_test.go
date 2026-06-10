@@ -423,3 +423,53 @@ func TestRunOnceMultipleBatches(t *testing.T) {
 		t.Fatalf("expected aggregate count %d, got %d", total, totalCount)
 	}
 }
+
+func TestRunOnceDeletesBoringSpans(t *testing.T) {
+	cfg := Config{
+		FullRetentionHours:        24,
+		InterestingRetentionHours: 168,
+		BoringRetentionMinutes:    30,
+		ErrorRetentionDays:        30,
+		AggregateRetentionDays:    365,
+		SlowThresholdUS:           1_000_000,
+	}
+	worker, repo := setupTestWorker(t, cfg)
+
+	if _, err := repo.CreateProject("test", "Test"); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	// Insert in chronological order so insertTestSpans' UPDATE doesn't backdate later spans.
+	// insertTestSpans does "UPDATE SET ingested_at=? WHERE ingested_at > ?" which would
+	// backdate a newer span if an older insertion comes after it.
+	oldBoring := time.Now().UTC().Add(-45 * time.Minute)
+	insertTestSpans(t, repo, 2, "ok", 100_000, oldBoring) // 100ms, not slow
+
+	// Insert old error span before the recent boring span.
+	oldErr := time.Now().UTC().Add(-45 * time.Minute)
+	insertTestSpans(t, repo, 1, "error", 100_000, oldErr)
+
+	// Insert a recent boring span (within 30 minutes) — must survive boring cleanup.
+	recentBoring := time.Now().UTC().Add(-5 * time.Minute)
+	insertTestSpans(t, repo, 1, "ok", 100_000, recentBoring)
+
+	if err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	spans, err := repo.QuerySpans(repository.SpanFilter{ProjectID: 1, Limit: 100})
+	if err != nil {
+		t.Fatalf("QuerySpans: %v", err)
+	}
+
+	// Only 2 spans should remain: 1 recent boring + 1 old error.
+	if len(spans) != 2 {
+		t.Fatalf("expected 2 remaining spans (1 recent boring + 1 old error), got %d", len(spans))
+	}
+	for _, s := range spans {
+		if s.Status == "ok" && s.DurationUs == 100_000 {
+			// This is a boring span — it should only be the recent one.
+			// We can't easily check the exact time but since only 1 recent boring was inserted, that's fine.
+		}
+	}
+}

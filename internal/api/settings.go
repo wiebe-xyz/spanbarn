@@ -159,13 +159,18 @@ func serveSWR[T any](
 // Retention keys are plain identifiers; sampling keys use a dot-namespaced
 // hierarchy: ingest.sample_ratio.default, ingest.sample_ratio.project.{id},
 // ingest.sample_ratio.project.{id}.op.{operation}.
+// Boring span keys: boring.sample_ratio, boring.sample_ratio.project.{id},
+// boring_retention_minutes, boring.verbose_until.project.{id}.
 func isAllowedSettingKey(k string) bool {
 	switch k {
 	case "retention_full_hours", "retention_interesting_hours",
-		"retention_aggregated_days", "retention_error_days":
+		"retention_aggregated_days", "retention_error_days",
+		"boring_retention_minutes", "boring.sample_ratio":
 		return true
 	}
-	return strings.HasPrefix(k, "ingest.sample_ratio.")
+	return strings.HasPrefix(k, "ingest.sample_ratio.") ||
+		strings.HasPrefix(k, "boring.sample_ratio.") ||
+		strings.HasPrefix(k, "boring.verbose_until.")
 }
 
 func (h *settingsHandlers) handleStatsDBSize(w http.ResponseWriter, r *http.Request) {
