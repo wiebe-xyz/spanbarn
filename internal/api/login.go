@@ -18,7 +18,10 @@ type loginResponse struct {
 }
 
 // HandleLogin returns an http.HandlerFunc for POST /api/v1/login.
-func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager) http.HandlerFunc {
+// onLoginSuccess is called (in the request goroutine) after a session is
+// created; pass nil to skip. The function should return quickly or launch its
+// own goroutine — the HTTP response is written immediately after the call.
+func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager, onLoginSuccess func()) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_, span := apiTracer.Start(r.Context(), "api.login")
 		defer span.End()
@@ -43,6 +46,10 @@ func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager) http
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create session", "")
 			return
+		}
+
+		if onLoginSuccess != nil {
+			onLoginSuccess()
 		}
 
 		http.SetCookie(w, &http.Cookie{

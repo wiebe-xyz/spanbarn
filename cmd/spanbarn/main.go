@@ -246,7 +246,9 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 
 	mux := http.NewServeMux()
 	loginRL := api.RateLimitMiddleware(api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), "login")
-	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr)))
+	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
+		api.WarmLoginCaches(context.Background(), querySvc, logger)
+	})))
 	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
 	mux.Handle("/", apiServer.Handler())
 
@@ -433,7 +435,9 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 			api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute),
 			"login",
 		)
-		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr)))
+		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
+			api.WarmLoginCaches(context.Background(), querySvc, logger)
+		})))
 		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
 	}
 	mux.Handle("/", apiServer.Handler())
@@ -612,7 +616,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		apiServer.SetOIDCClient(oidcClient)
 	}
 	loginRL := api.RateLimitMiddleware(api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), "login")
-	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr)))
+	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
+		api.WarmLoginCaches(context.Background(), querySvc, logger)
+	})))
 	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
 	mux.Handle("/", apiServer.Handler())
 	logger.Info("writer API ready")
@@ -972,7 +978,9 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 			api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute),
 			"login",
 		)
-		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr)))
+		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
+			api.WarmLoginCaches(context.Background(), querySvc, logger)
+		})))
 		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
 	}
 	mux.Handle("/", apiServer.Handler())
