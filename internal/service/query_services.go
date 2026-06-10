@@ -101,21 +101,10 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 		st.buckets += a.Count
 	}
 
-	var spanStats []repository.ServiceStats
-	if fbFrom, ok := narrowFallback(from, to); ok {
-		var err error
-		spanStats, err = s.repo.QueryServiceStatsFromSpans(projectID, fbFrom, to, kind)
-		if err != nil {
-			s.logger.Warn("failed to query service stats from spans", "error", err)
-		}
-	}
-
 	type mergedStats struct {
-		count, errorCount              int64
+		count, errorCount               int64
 		aggP50Sum, aggP95Sum, aggP99Sum int64
-		aggCount                       int64
-		spanP50, spanP95, spanP99      int64
-		hasSpanPercentiles             bool
+		aggCount                        int64
 	}
 	merged := make(map[string]*mergedStats)
 
@@ -130,19 +119,45 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 		}
 	}
 
-	for _, ss := range spanStats {
-		ms, ok := merged[ss.Service]
-		if !ok {
-			ms = &mergedStats{}
-			merged[ss.Service] = ms
-		}
-		ms.count += ss.Count
-		ms.errorCount += ss.ErrorCount
-		if ss.P50Us > 0 || ss.P95Us > 0 || ss.P99Us > 0 {
-			ms.spanP50 = ss.P50Us
-			ms.spanP95 = ss.P95Us
-			ms.spanP99 = ss.P99Us
-			ms.hasSpanPercentiles = true
+	// Merge recent in-memory aggregates (or fall back to raw spans when no
+	// accumulator is wired — reader pods and standalone mode).
+	if fbFrom, ok := narrowFallback(from, to); ok {
+		if s.accumulator != nil {
+			for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
+				ProjectID: projectID, Kind: kind, From: fbFrom, To: to,
+			}) {
+				ms := merged[a.Service]
+				if ms == nil {
+					ms = &mergedStats{}
+					merged[a.Service] = ms
+				}
+				ms.count += a.Count
+				ms.errorCount += a.ErrorCount
+				ms.aggP50Sum += a.P50Us * a.Count
+				ms.aggP95Sum += a.P95Us * a.Count
+				ms.aggP99Sum += a.P99Us * a.Count
+				ms.aggCount += a.Count
+			}
+		} else {
+			spanStats, err := s.repo.QueryServiceStatsFromSpans(projectID, fbFrom, to, kind)
+			if err != nil {
+				s.logger.Warn("failed to query service stats from spans", "error", err)
+			}
+			for _, ss := range spanStats {
+				ms := merged[ss.Service]
+				if ms == nil {
+					ms = &mergedStats{}
+					merged[ss.Service] = ms
+				}
+				ms.count += ss.Count
+				ms.errorCount += ss.ErrorCount
+				if ss.P50Us > 0 || ss.P95Us > 0 || ss.P99Us > 0 {
+					ms.aggP50Sum += ss.P50Us * ss.Count
+					ms.aggP95Sum += ss.P95Us * ss.Count
+					ms.aggP99Sum += ss.P99Us * ss.Count
+					ms.aggCount += ss.Count
+				}
+			}
 		}
 	}
 
@@ -160,10 +175,6 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 			p50 = ms.aggP50Sum / ms.aggCount
 			p95 = ms.aggP95Sum / ms.aggCount
 			p99 = ms.aggP99Sum / ms.aggCount
-		} else if ms.hasSpanPercentiles {
-			p50 = ms.spanP50
-			p95 = ms.spanP95
-			p99 = ms.spanP99
 		}
 
 		result = append(result, ServiceSummary{
@@ -212,11 +223,9 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 		operation, resource, kind string
 	}
 	type opStats struct {
-		count, errorCount              int64
+		count, errorCount               int64
 		aggP50Sum, aggP95Sum, aggP99Sum int64
-		aggCount                       int64
-		spanP50, spanP95, spanP99      int64
-		hasSpanPercentiles             bool
+		aggCount                        int64
 	}
 	byOp := make(map[opKey]*opStats)
 	for _, a := range aggs {
@@ -234,28 +243,45 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 		st.aggCount += a.Count
 	}
 
-	var spanStats []repository.OperationStats
 	if fbFrom, ok := narrowFallback(from, to); ok {
-		var err error
-		spanStats, err = s.repo.QueryOperationStatsFromSpans(projectID, service, fbFrom, to, kind)
-		if err != nil {
-			s.logger.Warn("failed to query operation stats from spans", "error", err)
-		}
-	}
-	for _, ss := range spanStats {
-		k := opKey{ss.Operation, ss.Resource, ss.Kind}
-		st, ok := byOp[k]
-		if !ok {
-			st = &opStats{}
-			byOp[k] = st
-		}
-		st.count += ss.Count
-		st.errorCount += ss.ErrorCount
-		if ss.P50Us > 0 || ss.P95Us > 0 || ss.P99Us > 0 {
-			st.spanP50 = ss.P50Us
-			st.spanP95 = ss.P95Us
-			st.spanP99 = ss.P99Us
-			st.hasSpanPercentiles = true
+		if s.accumulator != nil {
+			for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
+				ProjectID: projectID, Service: service, Kind: kind, From: fbFrom, To: to,
+			}) {
+				k := opKey{a.Operation, a.Resource, a.Kind}
+				st := byOp[k]
+				if st == nil {
+					st = &opStats{}
+					byOp[k] = st
+				}
+				st.count += a.Count
+				st.errorCount += a.ErrorCount
+				st.aggP50Sum += a.P50Us * a.Count
+				st.aggP95Sum += a.P95Us * a.Count
+				st.aggP99Sum += a.P99Us * a.Count
+				st.aggCount += a.Count
+			}
+		} else {
+			spanStats, err := s.repo.QueryOperationStatsFromSpans(projectID, service, fbFrom, to, kind)
+			if err != nil {
+				s.logger.Warn("failed to query operation stats from spans", "error", err)
+			}
+			for _, ss := range spanStats {
+				k := opKey{ss.Operation, ss.Resource, ss.Kind}
+				st := byOp[k]
+				if st == nil {
+					st = &opStats{}
+					byOp[k] = st
+				}
+				st.count += ss.Count
+				st.errorCount += ss.ErrorCount
+				if ss.P50Us > 0 || ss.P95Us > 0 || ss.P99Us > 0 {
+					st.aggP50Sum += ss.P50Us * ss.Count
+					st.aggP95Sum += ss.P95Us * ss.Count
+					st.aggP99Sum += ss.P99Us * ss.Count
+					st.aggCount += ss.Count
+				}
+			}
 		}
 	}
 
@@ -272,10 +298,6 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 			p50 = st.aggP50Sum / st.aggCount
 			p95 = st.aggP95Sum / st.aggCount
 			p99 = st.aggP99Sum / st.aggCount
-		} else if st.hasSpanPercentiles {
-			p50 = st.spanP50
-			p95 = st.spanP95
-			p99 = st.spanP99
 		}
 		result = append(result, OperationSummary{
 			Operation:  k.operation,
@@ -325,11 +347,9 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 	}
 
 	type bucketStats struct {
-		count, errorCount              int64
+		count, errorCount               int64
 		aggP50Sum, aggP95Sum, aggP99Sum int64
-		aggCount                       int64
-		spanP50, spanP95, spanP99      int64
-		hasSpanPercentiles             bool
+		aggCount                        int64
 	}
 	byBucket := make(map[time.Time]*bucketStats)
 	for _, a := range aggs {
@@ -347,28 +367,45 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 		st.aggCount += a.Count
 	}
 
-	var spanBuckets []repository.SpanBucket
 	if fbFrom, ok := narrowFallback(from, to); ok {
-		var err error
-		spanBuckets, err = s.repo.QuerySpanTimeseries(projectID, svcName, operation, fbFrom, to, int64(interval.Seconds()))
-		if err != nil {
-			s.logger.Warn("failed to query span timeseries", "error", err)
-		}
-	}
-	for _, sb := range spanBuckets {
-		b := sb.Bucket.Truncate(interval)
-		st, ok := byBucket[b]
-		if !ok {
-			st = &bucketStats{}
-			byBucket[b] = st
-		}
-		st.count += sb.Count
-		st.errorCount += sb.ErrorCount
-		if sb.P50Us > 0 || sb.P95Us > 0 || sb.P99Us > 0 {
-			st.spanP50 = sb.P50Us
-			st.spanP95 = sb.P95Us
-			st.spanP99 = sb.P99Us
-			st.hasSpanPercentiles = true
+		if s.accumulator != nil {
+			for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
+				ProjectID: projectID, Service: svcName, Operation: operation, From: fbFrom, To: to,
+			}) {
+				b := a.Bucket.Truncate(interval)
+				st := byBucket[b]
+				if st == nil {
+					st = &bucketStats{}
+					byBucket[b] = st
+				}
+				st.count += a.Count
+				st.errorCount += a.ErrorCount
+				st.aggP50Sum += a.P50Us * a.Count
+				st.aggP95Sum += a.P95Us * a.Count
+				st.aggP99Sum += a.P99Us * a.Count
+				st.aggCount += a.Count
+			}
+		} else {
+			spanBuckets, err := s.repo.QuerySpanTimeseries(projectID, svcName, operation, fbFrom, to, int64(interval.Seconds()))
+			if err != nil {
+				s.logger.Warn("failed to query span timeseries", "error", err)
+			}
+			for _, sb := range spanBuckets {
+				b := sb.Bucket.Truncate(interval)
+				st := byBucket[b]
+				if st == nil {
+					st = &bucketStats{}
+					byBucket[b] = st
+				}
+				st.count += sb.Count
+				st.errorCount += sb.ErrorCount
+				if sb.P50Us > 0 || sb.P95Us > 0 || sb.P99Us > 0 {
+					st.aggP50Sum += sb.P50Us * sb.Count
+					st.aggP95Sum += sb.P95Us * sb.Count
+					st.aggP99Sum += sb.P99Us * sb.Count
+					st.aggCount += sb.Count
+				}
+			}
 		}
 	}
 
@@ -379,10 +416,6 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 			p50 = st.aggP50Sum / st.aggCount
 			p95 = st.aggP95Sum / st.aggCount
 			p99 = st.aggP99Sum / st.aggCount
-		} else if st.hasSpanPercentiles {
-			p50 = st.spanP50
-			p95 = st.spanP95
-			p99 = st.spanP99
 		}
 		result = append(result, TimeseriesBucket{
 			Bucket:     b,

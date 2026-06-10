@@ -41,6 +41,12 @@ type SampleRatioLookup interface {
 	Ratio(ctx context.Context, projectID int64, operation string) int
 }
 
+// RecentAggregateQuerier returns synthetic aggregate rows from an in-memory
+// accumulator for the recent tail window. Satisfied by *aggregation.Accumulator.
+type RecentAggregateQuerier interface {
+	QueryRecent(f repository.AggregateFilter) []repository.Aggregate
+}
+
 // QueryService implements query logic for the dashboard API.
 // Methods are organized into focused files:
 //   - query_services.go      — ListServices, ListOperations, GetTimeseries
@@ -51,6 +57,7 @@ type QueryService struct {
 	cache       *cache.Cache
 	logger      *slog.Logger
 	ratioLookup SampleRatioLookup
+	accumulator RecentAggregateQuerier // may be nil on reader/standalone pods
 }
 
 // NewQueryService creates a new QueryService. ratioLookup is used to read the
@@ -90,6 +97,11 @@ func inflateCount(count, errorCount int64, sampleRate float64) int64 {
 
 func (s *QueryService) SetCache(c *cache.Cache) {
 	s.cache = c
+}
+
+// SetAccumulator wires in the in-memory accumulator for recent tail queries.
+func (s *QueryService) SetAccumulator(a RecentAggregateQuerier) {
+	s.accumulator = a
 }
 
 // Cache exposes the underlying cache instance for handlers outside the service.
