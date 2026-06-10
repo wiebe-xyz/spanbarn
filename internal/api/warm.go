@@ -55,7 +55,7 @@ func WarmLoginCaches(ctx context.Context, repo *repository.Repository, qs *servi
 		}
 		now := time.Now()
 		for _, p := range projects {
-			for _, d := range []time.Duration{time.Hour, 24 * time.Hour} {
+			for _, d := range []time.Duration{time.Hour, 4 * time.Hour, 24 * time.Hour, 7 * 24 * time.Hour, 30 * 24 * time.Hour} {
 				if _, err := qs.ListServices(ctx, p.ID, now.Add(-d), now, false); err != nil {
 					logger.Warn("warm login: list services failed", "project", p.ID, "err", err)
 				}
