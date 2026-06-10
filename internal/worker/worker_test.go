@@ -386,17 +386,45 @@ func TestClassifyForStorageBoringPolicy(t *testing.T) {
 
 	rw := &RedisWorker{cfg: WorkerConfig{SlowThresholdUs: 1_000_000}}
 
-	// No policy: boring spans are dropped.
+	// No policy: boring traces are dropped.
 	result := rw.classifyForStorage(spans)
 	if len(result) != 1 {
 		t.Fatalf("no policy: want 1 interesting span, got %d", len(result))
 	}
 
-	// Policy ratio=1: keep all boring spans.
+	// Policy ratio=1: keep all boring traces (all spans).
 	rw.boringPolicy = &mockBoringPolicy{ratio: 1}
 	result = rw.classifyForStorage(spans)
 	if len(result) != 3 {
 		t.Fatalf("ratio=1: want all 3 spans, got %d", len(result))
+	}
+}
+
+func TestClassifyForStorageSamplesWholeTrace(t *testing.T) {
+	// A boring trace with 3 spans — when sampled, all 3 must be included.
+	spans := []repository.Span{
+		{ProjectID: 1, TraceID: "boring-trace", SpanID: "root", Status: "ok", DurationUs: 100},
+		{ProjectID: 1, TraceID: "boring-trace", SpanID: "child1", Status: "ok", DurationUs: 50},
+		{ProjectID: 1, TraceID: "boring-trace", SpanID: "child2", Status: "ok", DurationUs: 30},
+	}
+
+	rw := &RedisWorker{
+		cfg:          WorkerConfig{SlowThresholdUs: 1_000_000},
+		boringPolicy: &mockBoringPolicy{ratio: 1}, // keep all boring traces
+	}
+
+	result := rw.classifyForStorage(spans)
+	if len(result) != 3 {
+		t.Fatalf("all spans of a sampled boring trace must be kept, got %d", len(result))
+	}
+	ids := make(map[string]bool)
+	for _, s := range result {
+		ids[s.SpanID] = true
+	}
+	for _, want := range []string{"root", "child1", "child2"} {
+		if !ids[want] {
+			t.Errorf("span %q missing from sampled boring trace", want)
+		}
 	}
 }
 

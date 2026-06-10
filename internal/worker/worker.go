@@ -394,8 +394,9 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 
 // classifyForStorage builds the set of spans to write to SQLite.
 // All spans in error/slow traces are included unconditionally. Spans in
-// verbose-mode projects bypass boring classification. Remaining boring spans
-// are sampled at the per-project ratio from boringPolicy (if wired).
+// verbose-mode projects bypass boring classification. Remaining boring traces
+// are sampled whole at the per-project ratio — the die is rolled once per
+// trace_id, and either all spans in that trace are kept or none are.
 func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.Span {
 	if w.cfg.SlowThresholdUs <= 0 {
 		return spans
@@ -422,37 +423,49 @@ func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.S
 		}
 	}
 
-	// Second pass: separate interesting from boring.
+	// Second pass: separate interesting from boring, grouping boring by trace.
 	result := make([]repository.Span, 0, len(spans))
-	boring := make([]repository.Span, 0, 8)
+	// boringTraces maps trace_id → (projectID, spans) for all-or-nothing sampling.
+	type boringTrace struct {
+		projectID int64
+		spans     []repository.Span
+	}
+	var boringTraceOrder []string
+	boringTraceMap := make(map[string]*boringTrace, 8)
 	for _, s := range spans {
 		if _, ok := interestingTraces[s.TraceID]; ok {
 			result = append(result, s)
 		} else {
-			boring = append(boring, s)
+			bt := boringTraceMap[s.TraceID]
+			if bt == nil {
+				bt = &boringTrace{projectID: s.ProjectID}
+				boringTraceMap[s.TraceID] = bt
+				boringTraceOrder = append(boringTraceOrder, s.TraceID)
+			}
+			bt.spans = append(bt.spans, s)
 		}
 	}
 
-	// Sample boring spans per project policy.
-	if w.boringPolicy == nil || len(boring) == 0 {
+	// Sample whole boring traces per project policy.
+	if w.boringPolicy == nil || len(boringTraceOrder) == 0 {
 		return result
 	}
-	byProject := make(map[int64][]repository.Span, 2)
-	for _, s := range boring {
-		byProject[s.ProjectID] = append(byProject[s.ProjectID], s)
-	}
-	for projID, projectBoring := range byProject {
-		ratio := w.boringPolicy.SampleRatio(projID)
+	ratioCache := make(map[int64]int, 2)
+	for _, traceID := range boringTraceOrder {
+		bt := boringTraceMap[traceID]
+		ratio, ok := ratioCache[bt.projectID]
+		if !ok {
+			ratio = w.boringPolicy.SampleRatio(bt.projectID)
+			ratioCache[bt.projectID] = ratio
+		}
 		switch {
 		case ratio == 1:
-			result = append(result, projectBoring...)
+			result = append(result, bt.spans...)
 		case ratio > 1:
-			for _, s := range projectBoring {
-				if rand.IntN(ratio) == 0 {
-					result = append(result, s)
-				}
+			if rand.IntN(ratio) == 0 {
+				result = append(result, bt.spans...)
 			}
-			// ratio == 0: skip all boring spans for this project
+			// ratio == 0: skip all boring traces for this project
 		}
 	}
 	return result
