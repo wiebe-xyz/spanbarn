@@ -5,6 +5,7 @@ resources:
   - namespace.yaml
   - ../base
   - ingress.yaml
+  - priority-class.yaml
 patches:
   - path: patch-resources.yaml
     target:

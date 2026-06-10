@@ -5,6 +5,7 @@ metadata:
 spec:
   template:
     spec:
+      priorityClassName: spanbarn-staging
       containers:
         - name: spanbarn
           resources:
