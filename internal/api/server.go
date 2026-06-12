@@ -49,6 +49,7 @@ type Server struct {
 	metrics        *Metrics
 	ingest         *ingest.Handler
 	metricsIngest  *ingest.MetricsHandler
+	logsIngest     *ingest.LogsHandler
 	traceBuffer    *ingest.TraceBuffer
 	querySvc       *service.QueryService
 	sessionMgr     *auth.SessionManager
@@ -118,6 +119,13 @@ func WithTraceBuffer(tb *ingest.TraceBuffer) ServerOption {
 func WithMetricsHandler(h *ingest.MetricsHandler) ServerOption {
 	return func(s *Server) {
 		s.metricsIngest = h
+	}
+}
+
+// WithLogsHandler attaches a LogsHandler for OTLP logs ingest.
+func WithLogsHandler(h *ingest.LogsHandler) ServerOption {
+	return func(s *Server) {
+		s.logsIngest = h
 	}
 }
 

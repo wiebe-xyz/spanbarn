@@ -23,6 +23,7 @@ const PagesPage = lazy(() => import('./pages/PagesPage').then(m => ({ default: m
 const PageDetailPage = lazy(() => import('./pages/PageDetailPage').then(m => ({ default: m.PageDetailPage })))
 const AlertsPage = lazy(() => import('./pages/AlertsPage').then(m => ({ default: m.AlertsPage })))
 const MetricsPage = lazy(() => import('./pages/MetricsPage').then(m => ({ default: m.MetricsPage })))
+const LogsPage = lazy(() => import('./pages/LogsPage').then(m => ({ default: m.LogsPage })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })))
 const ProfilePage = lazy(() => import('./pages/ProfilePage').then(m => ({ default: m.ProfilePage })))
 
@@ -41,6 +42,7 @@ function App() {
               <Route path="traces/:traceId" element={<TraceDetailPage />} />
               <Route path="dependencies" element={<DependenciesPage />} />
               <Route path="service-map" element={<ServiceMapPage />} />
+              <Route path="logs" element={<LogsPage />} />
               <Route path="live" element={<LiveTailPage />} />
               <Route path="database" element={<DatabasePage />} />
               <Route path="database/detail" element={<DatabaseQueryDetailPage />} />

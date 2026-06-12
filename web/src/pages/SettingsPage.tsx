@@ -22,6 +22,8 @@ type RetentionSettings = {
   retention_aggregated_days: string
   retention_error_days: string
   metrics_retention_days: string
+  log_retention_hours: string
+  error_log_retention_days: string
 }
 
 function formatBytes(bytes: number): string {
@@ -92,6 +94,8 @@ function RetentionSettingsPanel() {
     retention_aggregated_days: '30',
     retention_error_days: '90',
     metrics_retention_days: '90',
+    log_retention_hours: '24',
+    error_log_retention_days: '30',
   })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -175,6 +179,26 @@ function RetentionSettingsPanel() {
             min="1"
             value={settings.metrics_retention_days}
             onChange={(e) => setSettings((s) => ({ ...s, metrics_retention_days: e.target.value }))}
+            style={fieldStyle}
+          />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Log retention (hours)</span>
+          <input
+            type="number"
+            min="1"
+            value={settings.log_retention_hours}
+            onChange={(e) => setSettings((s) => ({ ...s, log_retention_hours: e.target.value }))}
+            style={fieldStyle}
+          />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Error log retention (days)</span>
+          <input
+            type="number"
+            min="1"
+            value={settings.error_log_retention_days}
+            onChange={(e) => setSettings((s) => ({ ...s, error_log_retention_days: e.target.value }))}
             style={fieldStyle}
           />
         </label>

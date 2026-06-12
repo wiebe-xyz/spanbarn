@@ -299,3 +299,48 @@ export type MetricSeriesResponse = {
   unit: string
   points: MetricPoint[]
 }
+
+/** A single log entry returned by the logs query API. */
+export type LogEntry = {
+  id: number
+  traceId: string
+  spanId: string
+  severityNumber: number
+  severityText: string
+  timeUnixNano: number
+  body: string
+  attributes: Record<string, unknown>
+  ingestedAt: string
+}
+
+/** Response from GET /api/v1/logs */
+export type LogsResponse = {
+  logs: LogEntry[]
+  total: number
+}
+
+/** A user-pinned trace. */
+export type PinnedTrace = {
+  traceId: string
+  label: string
+  pinnedAt: string
+}
+
+/** Response from GET /api/v1/pinned-traces */
+export type PinnedTracesResponse = {
+  pinned: PinnedTrace[]
+}
+
+/** Params for querying logs. */
+export type LogsParams = {
+  projectId?: number
+  traceId?: string
+  spanId?: string
+  severity?: number
+  service?: string
+  search?: string
+  from: string
+  to: string
+  limit?: number
+  offset?: number
+}

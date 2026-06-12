@@ -166,7 +166,7 @@ func isAllowedSettingKey(k string) bool {
 	case "retention_full_hours", "retention_interesting_hours",
 		"retention_aggregated_days", "retention_error_days",
 		"boring_retention_minutes", "boring.sample_ratio",
-		"metrics_retention_days":
+		"metrics_retention_days", "log_retention_hours", "error_log_retention_days":
 		return true
 	}
 	return strings.HasPrefix(k, "ingest.sample_ratio.") ||

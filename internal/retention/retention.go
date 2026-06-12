@@ -47,6 +47,7 @@ type Repository interface {
 	DeleteAggregatesOlderThan(cutoff time.Time) (int64, error)
 	DeleteExpiredE2EUsers(now time.Time) (int64, error)
 	DeleteMetricsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
+	DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error)
 	GetSetting(key string) (string, error)
 }
 
@@ -58,6 +59,8 @@ type Config struct {
 	ErrorRetentionDays        int           // days to keep error samples (default 30)
 	AggregateRetentionDays    int           // days to keep aggregates (default 365)
 	MetricsRetentionDays      int           // days to keep raw metric data points (default 90)
+	LogRetentionHours         int           // hours to keep log records (default 24)
+	ErrorLogRetentionDays     int           // days to keep logs for error-sampled traces (default 30)
 	SlowThresholdUS           int64         // microseconds above which a span is "slow"
 	Interval                  time.Duration // how often to run (default 5m)
 	// BatchYield is how long the worker voluntarily releases the write lock
@@ -84,6 +87,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MetricsRetentionDays <= 0 {
 		c.MetricsRetentionDays = 90
+	}
+	if c.LogRetentionHours <= 0 {
+		c.LogRetentionHours = 24
+	}
+	if c.ErrorLogRetentionDays <= 0 {
+		c.ErrorLogRetentionDays = 30
 	}
 	if c.SlowThresholdUS <= 0 {
 		c.SlowThresholdUS = 1_000_000 // 1 second
@@ -183,6 +192,12 @@ func (w *RetentionWorker) effectiveConfig() Config {
 	if n, ok := readInt("metrics_retention_days"); ok {
 		cfg.MetricsRetentionDays = n
 	}
+	if n, ok := readInt("log_retention_hours"); ok {
+		cfg.LogRetentionHours = n
+	}
+	if n, ok := readInt("error_log_retention_days"); ok {
+		cfg.ErrorLogRetentionDays = n
+	}
 	return cfg
 }
 
@@ -224,6 +239,8 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	errorCutoff := now.Add(-time.Duration(cfg.ErrorRetentionDays) * 24 * time.Hour)
 	aggCutoff := now.Add(-time.Duration(cfg.AggregateRetentionDays) * 24 * time.Hour)
 	metricsCutoff := now.Add(-time.Duration(cfg.MetricsRetentionDays) * 24 * time.Hour)
+	logCutoff := now.Add(-time.Duration(cfg.LogRetentionHours) * time.Hour)
+	errorLogCutoff := now.Add(-time.Duration(cfg.ErrorLogRetentionDays) * 24 * time.Hour)
 
 	// Count spans pending deletion and warn if the backlog is unexpectedly large.
 	if pending, err := w.repo.CountSpansOlderThan(interestingCutoff); err != nil {
@@ -339,6 +356,10 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logsDeleted, err := w.repo.DeleteLogsOlderThan(ctx, logCutoff, errorLogCutoff)
+	if err != nil {
+		return err
+	}
 	e2eUsersDeleted, err := w.repo.DeleteExpiredE2EUsers(now)
 	if err != nil {
 		return err
@@ -352,6 +373,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		attribute.Int64("error_samples_deleted", errorSamplesDeleted),
 		attribute.Int64("aggregates_deleted", aggregatesDeleted),
 		attribute.Int64("metrics_deleted", metricsDeleted),
+		attribute.Int64("logs_deleted", logsDeleted),
 		attribute.Int64("e2e_users_deleted", e2eUsersDeleted),
 		attribute.Bool("backlog_remains", backlogRemains),
 	)
@@ -363,6 +385,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		"error_samples_deleted", errorSamplesDeleted,
 		"aggregates_deleted", aggregatesDeleted,
 		"metrics_deleted", metricsDeleted,
+		"logs_deleted", logsDeleted,
 		"e2e_users_deleted", e2eUsersDeleted,
 		"backlog_remains", backlogRemains,
 	)
