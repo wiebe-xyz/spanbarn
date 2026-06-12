@@ -46,6 +46,7 @@ type Repository interface {
 	DeleteErrorSamplesOlderThan(cutoff time.Time) (int64, error)
 	DeleteAggregatesOlderThan(cutoff time.Time) (int64, error)
 	DeleteExpiredE2EUsers(now time.Time) (int64, error)
+	DeleteMetricsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	GetSetting(key string) (string, error)
 }
 
@@ -56,6 +57,7 @@ type Config struct {
 	BoringRetentionMinutes    int           // minutes to keep sampled boring spans (default 30); 0 disables boring cleanup
 	ErrorRetentionDays        int           // days to keep error samples (default 30)
 	AggregateRetentionDays    int           // days to keep aggregates (default 365)
+	MetricsRetentionDays      int           // days to keep raw metric data points (default 90)
 	SlowThresholdUS           int64         // microseconds above which a span is "slow"
 	Interval                  time.Duration // how often to run (default 5m)
 	// BatchYield is how long the worker voluntarily releases the write lock
@@ -79,6 +81,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.AggregateRetentionDays <= 0 {
 		c.AggregateRetentionDays = 365
+	}
+	if c.MetricsRetentionDays <= 0 {
+		c.MetricsRetentionDays = 90
 	}
 	if c.SlowThresholdUS <= 0 {
 		c.SlowThresholdUS = 1_000_000 // 1 second
@@ -175,6 +180,9 @@ func (w *RetentionWorker) effectiveConfig() Config {
 	if n, ok := readInt("boring_retention_minutes"); ok {
 		cfg.BoringRetentionMinutes = n
 	}
+	if n, ok := readInt("metrics_retention_days"); ok {
+		cfg.MetricsRetentionDays = n
+	}
 	return cfg
 }
 
@@ -215,6 +223,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	interestingCutoff := now.Add(-time.Duration(cfg.InterestingRetentionHours) * time.Hour)
 	errorCutoff := now.Add(-time.Duration(cfg.ErrorRetentionDays) * 24 * time.Hour)
 	aggCutoff := now.Add(-time.Duration(cfg.AggregateRetentionDays) * 24 * time.Hour)
+	metricsCutoff := now.Add(-time.Duration(cfg.MetricsRetentionDays) * 24 * time.Hour)
 
 	// Count spans pending deletion and warn if the backlog is unexpectedly large.
 	if pending, err := w.repo.CountSpansOlderThan(interestingCutoff); err != nil {
@@ -326,6 +335,10 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	metricsDeleted, err := w.repo.DeleteMetricsOlderThan(ctx, metricsCutoff)
+	if err != nil {
+		return err
+	}
 	e2eUsersDeleted, err := w.repo.DeleteExpiredE2EUsers(now)
 	if err != nil {
 		return err
@@ -338,6 +351,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		attribute.Int64("boring_deleted", boringDeleted),
 		attribute.Int64("error_samples_deleted", errorSamplesDeleted),
 		attribute.Int64("aggregates_deleted", aggregatesDeleted),
+		attribute.Int64("metrics_deleted", metricsDeleted),
 		attribute.Int64("e2e_users_deleted", e2eUsersDeleted),
 		attribute.Bool("backlog_remains", backlogRemains),
 	)
@@ -348,6 +362,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		"boring_deleted", boringDeleted,
 		"error_samples_deleted", errorSamplesDeleted,
 		"aggregates_deleted", aggregatesDeleted,
+		"metrics_deleted", metricsDeleted,
 		"e2e_users_deleted", e2eUsersDeleted,
 		"backlog_remains", backlogRemains,
 	)

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut } from 'lucide-react'
+import { Activity, BarChart2, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut } from 'lucide-react'
 import { api } from '../api/client'
 import { fetchClientConfig, isOIDCSession, fetchIambarnMe, type IambarnUser } from '../api/clientConfig'
 import { IambarnProfileModal } from './IambarnProfileModal'
@@ -155,6 +155,25 @@ export function MobileTabBar(): ReactElement {
           >
             <Globe size={18} />
             Pages
+          </NavLink>
+          <NavLink
+            to="/metrics"
+            onClick={() => setMoreOpen(false)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.625rem',
+              width: '100%',
+              padding: '0.625rem 0.75rem',
+              borderRadius: '0.5rem',
+              fontSize: '0.875rem',
+              fontWeight: 500,
+              color: 'var(--text-muted)',
+              textDecoration: 'none',
+            }}
+          >
+            <BarChart2 size={18} />
+            Metrics
           </NavLink>
           <NavLink
             to="/alerts"

@@ -26,6 +26,7 @@ type Config struct {
 	RetentionErrorDays        int
 	RetentionInterestingHours int
 	BoringRetentionMinutes    int // SPANBARN_BORING_RETENTION_MINUTES — short retention for sampled boring spans
+	MetricsRetentionDays      int // SPANBARN_METRICS_RETENTION_DAYS — how long to keep raw metric data points
 	IngestSampleRate          float64
 	SlowThresholdMS           int
 	AggregationInterval       string
@@ -77,6 +78,7 @@ func Load() Config {
 		RetentionErrorDays:      getenvInt("SPANBARN_RETENTION_ERROR_DAYS", 90),
 		RetentionInterestingHours: getenvInt("SPANBARN_RETENTION_INTERESTING_HOURS", 168),
 		BoringRetentionMinutes:    getenvInt("SPANBARN_BORING_RETENTION_MINUTES", 30),
+		MetricsRetentionDays:      getenvInt("SPANBARN_METRICS_RETENTION_DAYS", 90),
 		IngestSampleRate:          getenvFloat("SPANBARN_INGEST_SAMPLE_RATE", 1.0),
 		SlowThresholdMS:           getenvInt("SPANBARN_SLOW_THRESHOLD_MS", 500),
 		AggregationInterval:     getenv("SPANBARN_AGGREGATION_INTERVAL", "1m"),

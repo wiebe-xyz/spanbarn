@@ -172,6 +172,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		BoringRetentionMinutes:    cfg.BoringRetentionMinutes,
 		ErrorRetentionDays:        cfg.RetentionErrorDays,
 		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
+		MetricsRetentionDays:      cfg.MetricsRetentionDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 	}
 	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
@@ -342,10 +343,13 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 	ingestHandler.Start(readerCtx)
 
+	metricsPublisher := queue.NewMetricsPublisher(writeQueue)
+	readerMetricsHandler := ingest.NewMetricsHandler(metricsPublisher, logger)
+
 	var wg sync.WaitGroup
 	fwd := forward.NewRedisForwarder(eventSpool, writeQueue, logger)
 	safeGo("redis-forwarder", &wg, func() { fwd.Run(readerCtx) })
-
+	safeGo("metrics-ingest", &wg, func() { readerMetricsHandler.Run(readerCtx) })
 
 	var (
 		roRepo     *repository.Repository
@@ -432,13 +436,22 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		}
 	})
 
-	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer)}
+	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer), api.WithMetricsHandler(readerMetricsHandler)}
 	if roRepo != nil {
 		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
 	}
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, opts...)
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
+	}
+
+	if cfg.GRPCAddr != "" {
+		grpcSrv := api.NewGRPCServer(apiServer, logger)
+		safeGo("grpc", &wg, func() {
+			if err := grpcSrv.ListenAndServe(readerCtx, cfg.GRPCAddr); err != nil {
+				logger.Error("grpc error", "error", err)
+			}
+		})
 	}
 
 	if roRepo != nil && queryCache != nil {
@@ -671,6 +684,26 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
 	safeGo("accumulator", &wg, func() { accumulator.Run(workerCtx) })
+	safeGo("metrics-consumer", &wg, func() {
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			default:
+			}
+			recs, err := writeQueue.ConsumeMetrics(workerCtx)
+			if err != nil {
+				logger.Error("metrics consumer error", "error", err)
+				continue
+			}
+			if len(recs) == 0 {
+				continue
+			}
+			if err := repo.InsertMetrics(workerCtx, recs); err != nil {
+				logger.Error("metrics insert error", "error", err)
+			}
+		}
+	})
 	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
 	if litestreamActive() {
 		logger.Info("litestream active: WAL checkpoint also running in-process with busy_timeout")
@@ -690,6 +723,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		BoringRetentionMinutes:    cfg.BoringRetentionMinutes,
 		ErrorRetentionDays:        cfg.RetentionErrorDays,
 		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
+		MetricsRetentionDays:      cfg.MetricsRetentionDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 	}
 	retentionWorker := retention.NewRetentionWorker(retentionRepo, accumulator, retentionCfg, logger)
