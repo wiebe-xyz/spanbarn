@@ -64,7 +64,7 @@ export function MetricsPage(): ReactElement {
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
         <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 600 }}>Metrics</h1>
         <div style={{ flex: 1 }} />
-        <AutoRefresh value={refreshInterval} onChange={setRefreshInterval} onTick={fetchNames} />
+        <AutoRefresh value={refreshInterval} onChange={setRefreshInterval} onRefresh={fetchNames} />
         <TimeRangeSelector value={range} onChange={setRange} />
       </div>
 
