@@ -21,6 +21,7 @@ type RetentionSettings = {
   retention_full_hours: string
   retention_aggregated_days: string
   retention_error_days: string
+  metrics_retention_days: string
 }
 
 function formatBytes(bytes: number): string {
@@ -90,6 +91,7 @@ function RetentionSettingsPanel() {
     retention_full_hours: '72',
     retention_aggregated_days: '30',
     retention_error_days: '90',
+    metrics_retention_days: '90',
   })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -163,6 +165,16 @@ function RetentionSettingsPanel() {
             min="1"
             value={settings.retention_error_days}
             onChange={(e) => setSettings((s) => ({ ...s, retention_error_days: e.target.value }))}
+            style={fieldStyle}
+          />
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Metrics retention (days)</span>
+          <input
+            type="number"
+            min="1"
+            value={settings.metrics_retention_days}
+            onChange={(e) => setSettings((s) => ({ ...s, metrics_retention_days: e.target.value }))}
             style={fieldStyle}
           />
         </label>
