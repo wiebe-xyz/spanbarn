@@ -20,7 +20,6 @@ export function MetricsPage(): ReactElement {
 
   const fetchNames = useCallback(async () => {
     const id = ++namesIdRef.current
-    setLoadingNames(true)
     const { from, to } = getTimeRange(range)
     try {
       const resp = await api.getMetricNames(from, to)
@@ -36,7 +35,6 @@ export function MetricsPage(): ReactElement {
 
   const fetchSeries = useCallback(async (name: string) => {
     const id = ++seriesIdRef.current
-    setLoadingSeries(true)
     const { from, to } = getTimeRange(range)
     try {
       const resp = await api.getMetricSeries(name, from, to)
@@ -48,11 +46,21 @@ export function MetricsPage(): ReactElement {
     }
   }, [range])
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset loading when range changes
+    setLoadingNames(true)
+  }, [range])
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   useEffect(() => { void fetchNames() }, [fetchNames])
 
   useEffect(() => {
-    if (selectedName) void fetchSeries(selectedName)
-    else setSeries(null)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset series on selection change
+    setSeries(null)
+    if (selectedName) {
+      setLoadingSeries(true)
+      void fetchSeries(selectedName)
+    }
   }, [selectedName, fetchSeries])
 
   const filteredNames = nameFilter
