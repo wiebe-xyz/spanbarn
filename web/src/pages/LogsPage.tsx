@@ -66,6 +66,7 @@ export function LogsPage(): ReactElement {
     }
   }, [range, minSeverity, search])
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   useEffect(() => { void fetchLogs() }, [fetchLogs])
 
   const toggleExpand = (id: number) => {
