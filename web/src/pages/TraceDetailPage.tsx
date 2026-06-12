@@ -32,7 +32,7 @@ export function TraceDetailPage(): ReactElement {
   // Logs panel state
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [logsTotal, setLogsTotal] = useState(0)
-  const [logsLoading, setLogsLoading] = useState(false)
+  const [logsLoading, setLogsLoading] = useState(true)
   const [expandedLogIds, setExpandedLogIds] = useState<Set<number>>(new Set())
 
   // Pin state
@@ -64,7 +64,6 @@ export function TraceDetailPage(): ReactElement {
   // Fetch logs for this trace
   useEffect(() => {
     if (!traceId) return
-    setLogsLoading(true)
     const now = new Date()
     const from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
     const to = now.toISOString()

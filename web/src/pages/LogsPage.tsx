@@ -46,7 +46,6 @@ export function LogsPage(): ReactElement {
 
   const fetchLogs = useCallback(async () => {
     const id = ++fetchIdRef.current
-    setLoading(true)
     const { from, to } = getTimeRange(range)
     try {
       const resp = await api.getLogs({
