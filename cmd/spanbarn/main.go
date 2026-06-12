@@ -134,6 +134,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	ingestHandler := ingest.NewHandler(ingestQueue, eventSpool, 5*time.Millisecond, logger)
 
 	metricsHandler := ingest.NewMetricsHandler(repo, logger)
+	logsHandler := ingest.NewLogsHandler(repo, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -145,6 +146,10 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	metricsCtx, metricsCancel := context.WithCancel(ctx)
 	defer metricsCancel()
 	safeGo("metrics-ingest", &wg, func() { metricsHandler.Run(metricsCtx) })
+
+	logsCtx, logsCancel := context.WithCancel(ctx)
+	defer logsCancel()
+	safeGo("logs-ingest", &wg, func() { logsHandler.Run(logsCtx) })
 
 	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
 	aggregator := aggregation.NewAggregator(repo, aggInterval, logger)
@@ -173,6 +178,8 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		ErrorRetentionDays:        cfg.RetentionErrorDays,
 		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
 		MetricsRetentionDays:      cfg.MetricsRetentionDays,
+		LogRetentionHours:         cfg.LogRetentionHours,
+		ErrorLogRetentionDays:     cfg.ErrorLogRetentionDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 	}
 	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
@@ -245,6 +252,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		api.WithPaths(cfg.DBPath, cfg.SpoolDir),
 		api.WithCache(querySvc.Cache()),
 		api.WithMetricsHandler(metricsHandler),
+		api.WithLogsHandler(logsHandler),
 	)
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
@@ -346,10 +354,14 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	metricsPublisher := queue.NewMetricsPublisher(writeQueue)
 	readerMetricsHandler := ingest.NewMetricsHandler(metricsPublisher, logger)
 
+	logsPublisher := queue.NewLogsPublisher(writeQueue)
+	readerLogsHandler := ingest.NewLogsHandler(logsPublisher, logger)
+
 	var wg sync.WaitGroup
 	fwd := forward.NewRedisForwarder(eventSpool, writeQueue, logger)
 	safeGo("redis-forwarder", &wg, func() { fwd.Run(readerCtx) })
 	safeGo("metrics-ingest", &wg, func() { readerMetricsHandler.Run(readerCtx) })
+	safeGo("logs-ingest", &wg, func() { readerLogsHandler.Run(readerCtx) })
 
 	var (
 		roRepo     *repository.Repository
@@ -436,7 +448,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		}
 	})
 
-	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer), api.WithMetricsHandler(readerMetricsHandler)}
+	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer), api.WithMetricsHandler(readerMetricsHandler), api.WithLogsHandler(readerLogsHandler)}
 	if roRepo != nil {
 		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
 	}
@@ -704,6 +716,26 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 			}
 		}
 	})
+	safeGo("logs-consumer", &wg, func() {
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			default:
+			}
+			recs, err := writeQueue.ConsumeLogs(workerCtx)
+			if err != nil {
+				logger.Error("logs consumer error", "error", err)
+				continue
+			}
+			if len(recs) == 0 {
+				continue
+			}
+			if err := repo.InsertLogs(workerCtx, recs); err != nil {
+				logger.Error("logs insert error", "error", err)
+			}
+		}
+	})
 	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
 	if litestreamActive() {
 		logger.Info("litestream active: WAL checkpoint also running in-process with busy_timeout")
@@ -724,6 +756,8 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		ErrorRetentionDays:        cfg.RetentionErrorDays,
 		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
 		MetricsRetentionDays:      cfg.MetricsRetentionDays,
+		LogRetentionHours:         cfg.LogRetentionHours,
+		ErrorLogRetentionDays:     cfg.ErrorLogRetentionDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 	}
 	retentionWorker := retention.NewRetentionWorker(retentionRepo, accumulator, retentionCfg, logger)

@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 )
@@ -33,6 +34,7 @@ func NewGRPCServer(s *Server, logger *slog.Logger) *GRPCServer {
 	)
 	collectortracepb.RegisterTraceServiceServer(srv, &grpcTraceServer{s: s})
 	collectormetricspb.RegisterMetricsServiceServer(srv, &grpcMetricsServer{s: s})
+	collectorlogspb.RegisterLogsServiceServer(srv, &grpcLogsServer{s: s})
 	return &GRPCServer{server: srv, logger: logger}
 }
 
@@ -101,6 +103,21 @@ func (m *grpcMetricsServer) Export(ctx context.Context, req *collectormetricspb.
 		m.s.metricsIngest.Enqueue(recs)
 	}
 	return &collectormetricspb.ExportMetricsServiceResponse{}, nil
+}
+
+// grpcLogsServer implements the OTLP LogsService, delegating to s.logsIngest.
+type grpcLogsServer struct {
+	collectorlogspb.UnimplementedLogsServiceServer
+	s *Server
+}
+
+func (l *grpcLogsServer) Export(ctx context.Context, req *collectorlogspb.ExportLogsServiceRequest) (*collectorlogspb.ExportLogsServiceResponse, error) {
+	projectID := GetProjectID(ctx)
+	recs := otlpToLogRecords(req, projectID)
+	if l.s.logsIngest != nil {
+		l.s.logsIngest.Enqueue(recs)
+	}
+	return &collectorlogspb.ExportLogsServiceResponse{}, nil
 }
 
 // grpcAuthInterceptor returns a gRPC unary server interceptor that mirrors the

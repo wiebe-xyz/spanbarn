@@ -19,6 +19,9 @@ import type {
   WebVitalTimeseriesBucket,
   MetricNamesResponse,
   MetricSeriesResponse,
+  LogsResponse,
+  PinnedTracesResponse,
+  LogsParams,
 } from './types'
 
 export class ApiError extends Error {
@@ -242,4 +245,34 @@ export const api = {
     }
     return fetchJSON<MetricSeriesResponse>(`/api/v1/metrics/series${query}`)
   },
+
+  getLogs: (params: LogsParams) =>
+    fetchJSON<LogsResponse>(
+      `/api/v1/logs${qs({
+        project_id: params.projectId || undefined,
+        trace_id: params.traceId,
+        span_id: params.spanId,
+        severity: params.severity,
+        service: params.service,
+        search: params.search,
+        from: params.from,
+        to: params.to,
+        limit: params.limit,
+        offset: params.offset,
+      })}`,
+    ),
+
+  getPinnedTraces: (projectId = 0) =>
+    fetchJSON<PinnedTracesResponse>(`/api/v1/pinned-traces${qs({ project_id: projectId || undefined })}`),
+
+  pinTrace: (traceId: string, label: string, projectId = 0) =>
+    fetchJSON<void>('/api/v1/pinned-traces', {
+      method: 'POST',
+      body: JSON.stringify({ project_id: projectId, trace_id: traceId, label }),
+    }),
+
+  unpinTrace: (traceId: string, projectId = 0) =>
+    fetchJSON<void>(`/api/v1/pinned-traces/${encodeURIComponent(traceId)}${qs({ project_id: projectId || undefined })}`, {
+      method: 'DELETE',
+    }),
 }

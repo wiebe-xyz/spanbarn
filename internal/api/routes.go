@@ -75,6 +75,10 @@ func (s *Server) registerRoutes() {
 		// OTLP/HTTP metrics endpoint.
 		s.mux.Handle("/v1/metrics", ingestRL(otlpAuth(http.HandlerFunc(s.handleOTLPMetrics))))
 	}
+	if s.logsIngest != nil {
+		// OTLP/HTTP logs endpoint.
+		s.mux.Handle("/v1/logs", ingestRL(otlpAuth(http.HandlerFunc(s.handleOTLPLogs))))
+	}
 
 	// Query endpoints — rate limited + session auth required.
 	// List/aggregate endpoints get a short cache (30s); detail endpoints are not cached.
@@ -112,6 +116,16 @@ func (s *Server) registerRoutes() {
 
 		s.mux.Handle("/api/v1/metrics/names", apiRL(sessionAuth(http.HandlerFunc(mqh.handleMetricNames))))
 		s.mux.Handle("/api/v1/metrics/series", apiRL(sessionAuth(http.HandlerFunc(mqh.handleMetricSeries))))
+	}
+
+	// Logs query + pinned-traces endpoints — rate limited + session auth required.
+	if s.repo != nil && s.sessionMgr != nil {
+		lqh := &logsQueryHandlers{repo: s.repo}
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+
+		s.mux.Handle("/api/v1/logs", apiRL(sessionAuth(http.HandlerFunc(lqh.handleLogs))))
+		s.mux.Handle("/api/v1/pinned-traces", apiRL(sessionAuth(http.HandlerFunc(lqh.handlePinnedTraces))))
+		s.mux.Handle("/api/v1/pinned-traces/", apiRL(sessionAuth(http.HandlerFunc(lqh.handlePinnedTraces))))
 	}
 
 	// Alert endpoints — rate limited + session auth required.
