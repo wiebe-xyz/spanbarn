@@ -277,3 +277,25 @@ export type WebVitalTimeseriesBucket = {
   needsImprovement: number
   poor: number
 }
+
+/** A single metric data point returned by the series query API. */
+export type MetricPoint = {
+  t: number
+  value: number
+  count: number
+  attributes: Record<string, unknown>
+  extra?: Record<string, unknown> | null
+}
+
+/** Response from GET /api/v1/metrics/names */
+export type MetricNamesResponse = {
+  names: string[]
+}
+
+/** Response from GET /api/v1/metrics/series */
+export type MetricSeriesResponse = {
+  name: string
+  type: string
+  unit: string
+  points: MetricPoint[]
+}

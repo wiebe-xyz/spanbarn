@@ -17,6 +17,8 @@ import type {
   TraceSearchParams,
   WebVitalSummary,
   WebVitalTimeseriesBucket,
+  MetricNamesResponse,
+  MetricSeriesResponse,
 } from './types'
 
 export class ApiError extends Error {
@@ -212,4 +214,32 @@ export const api = {
 
   deleteAlert: (id: number) =>
     fetchJSON<{ status: string }>(`/api/v1/alerts/${id}`, { method: 'DELETE' }),
+
+  getMetricNames: (from: string, to: string, projectId = 0) =>
+    fetchJSON<MetricNamesResponse>(`/api/v1/metrics/names${qs({ from, to, project_id: projectId || undefined })}`),
+
+  getMetricSeries: (
+    name: string,
+    from: string,
+    to: string,
+    labels?: Record<string, string>,
+    limit?: number,
+    projectId = 0,
+  ) => {
+    const params: Record<string, string | number | undefined> = {
+      name,
+      from,
+      to,
+      limit,
+      project_id: projectId || undefined,
+    }
+    let query = qs(params)
+    if (labels && Object.keys(labels).length > 0) {
+      const labelParts = Object.entries(labels)
+        .map(([k, v]) => `label[${encodeURIComponent(k)}]=${encodeURIComponent(v)}`)
+        .join('&')
+      query = query ? `${query}&${labelParts}` : `?${labelParts}`
+    }
+    return fetchJSON<MetricSeriesResponse>(`/api/v1/metrics/series${query}`)
+  },
 }

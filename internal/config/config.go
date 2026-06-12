@@ -53,6 +53,7 @@ type Config struct {
 	OIDCClientSecret       string // SPANBARN_OIDC_CLIENT_SECRET
 	OIDCRedirectURL        string // SPANBARN_OIDC_REDIRECT_URL
 	OIDCRequiredGroup      string // SPANBARN_OIDC_REQUIRED_GROUP — defaults to "spanbarn-users"
+	GRPCAddr               string // SPANBARN_GRPC_ADDR — gRPC listener for OTLP; empty = disabled
 }
 
 // Load reads configuration from SPANBARN_* environment variables with defaults.
@@ -102,6 +103,7 @@ func Load() Config {
 		OIDCClientSecret:        os.Getenv("SPANBARN_OIDC_CLIENT_SECRET"),
 		OIDCRedirectURL:         os.Getenv("SPANBARN_OIDC_REDIRECT_URL"),
 		OIDCRequiredGroup:       getenv("SPANBARN_OIDC_REQUIRED_GROUP", "spanbarn-users"),
+		GRPCAddr:                getenv("SPANBARN_GRPC_ADDR", ":4317"),
 	}
 
 	if raw := os.Getenv("SPANBARN_ALLOWED_ORIGINS"); raw != "" {

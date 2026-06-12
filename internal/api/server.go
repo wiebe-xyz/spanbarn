@@ -48,6 +48,7 @@ type Server struct {
 	rateLimiter    *RateLimiter
 	metrics        *Metrics
 	ingest         *ingest.Handler
+	metricsIngest  *ingest.MetricsHandler
 	traceBuffer    *ingest.TraceBuffer
 	querySvc       *service.QueryService
 	sessionMgr     *auth.SessionManager
@@ -110,6 +111,13 @@ func WithCache(c *cache.Cache) ServerOption {
 func WithTraceBuffer(tb *ingest.TraceBuffer) ServerOption {
 	return func(s *Server) {
 		s.traceBuffer = tb
+	}
+}
+
+// WithMetricsHandler attaches a MetricsHandler for OTLP metrics ingest.
+func WithMetricsHandler(h *ingest.MetricsHandler) ServerOption {
+	return func(s *Server) {
+		s.metricsIngest = h
 	}
 }
 

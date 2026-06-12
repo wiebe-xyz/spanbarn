@@ -133,12 +133,18 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	ingestQueue := ingest.NewQueue(32768)
 	ingestHandler := ingest.NewHandler(ingestQueue, eventSpool, 5*time.Millisecond, logger)
 
+	metricsHandler := ingest.NewMetricsHandler(repo, logger)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	ingestHandler.Start(ctx)
 
 	var wg sync.WaitGroup
+
+	metricsCtx, metricsCancel := context.WithCancel(ctx)
+	defer metricsCancel()
+	safeGo("metrics-ingest", &wg, func() { metricsHandler.Run(metricsCtx) })
 
 	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
 	aggregator := aggregation.NewAggregator(repo, aggInterval, logger)
@@ -237,6 +243,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		api.WithAuthorizer(authorizer),
 		api.WithPaths(cfg.DBPath, cfg.SpoolDir),
 		api.WithCache(querySvc.Cache()),
+		api.WithMetricsHandler(metricsHandler),
 	)
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
@@ -265,6 +272,15 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		logger.Info("listening", "addr", cfg.Addr)
 		errCh <- httpServer.ListenAndServe()
 	}()
+
+	if cfg.GRPCAddr != "" {
+		grpcSrv := api.NewGRPCServer(apiServer, logger)
+		safeGo("grpc", &wg, func() {
+			if err := grpcSrv.ListenAndServe(ctx, cfg.GRPCAddr); err != nil {
+				logger.Error("grpc error", "error", err)
+			}
+		})
+	}
 
 	select {
 	case <-ctx.Done():

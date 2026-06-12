@@ -68,8 +68,12 @@ func (s *Server) registerRoutes() {
 	}
 	if s.ingest != nil {
 		s.mux.Handle("/api/v1/spans", ingestRL(ingestAuth(http.HandlerFunc(s.handleIngest))))
-		// OTLP/HTTP endpoint — only registered when there is an ingest handler.
+		// OTLP/HTTP trace endpoint — only registered when there is an ingest handler.
 		s.mux.Handle("/v1/traces", ingestRL(otlpAuth(http.HandlerFunc(s.handleOTLP))))
+	}
+	if s.metricsIngest != nil {
+		// OTLP/HTTP metrics endpoint.
+		s.mux.Handle("/v1/metrics", ingestRL(otlpAuth(http.HandlerFunc(s.handleOTLPMetrics))))
 	}
 
 	// Query endpoints — rate limited + session auth required.
@@ -99,6 +103,15 @@ func (s *Server) registerRoutes() {
 		lth := &liveTailHandler{broadcaster: s.ingest.Broadcaster()}
 		sessionAuth := SessionMiddleware(s.sessionMgr)
 		s.mux.Handle("/api/v1/spans/live", sessionAuth(lth))
+	}
+
+	// Metrics query endpoints — rate limited + session auth required.
+	if s.repo != nil && s.sessionMgr != nil {
+		mqh := &metricsQueryHandlers{repo: s.repo}
+		sessionAuth := SessionMiddleware(s.sessionMgr)
+
+		s.mux.Handle("/api/v1/metrics/names", apiRL(sessionAuth(http.HandlerFunc(mqh.handleMetricNames))))
+		s.mux.Handle("/api/v1/metrics/series", apiRL(sessionAuth(http.HandlerFunc(mqh.handleMetricSeries))))
 	}
 
 	// Alert endpoints — rate limited + session auth required.
