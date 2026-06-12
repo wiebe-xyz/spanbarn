@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -135,20 +134,3 @@ func logBodyToString(body *commonpb.AnyValue) string {
 	}
 }
 
-// traceIDFromBytes decodes a 16-byte OTLP trace ID to hex; returns "" for all-zeros or empty.
-func traceIDFromBytes(b []byte) string {
-	if len(b) == 0 {
-		return ""
-	}
-	allZero := true
-	for _, byt := range b {
-		if byt != 0 {
-			allZero = false
-			break
-		}
-	}
-	if allZero {
-		return ""
-	}
-	return hex.EncodeToString(b)
-}

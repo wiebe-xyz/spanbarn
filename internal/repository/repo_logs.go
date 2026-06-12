@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -237,13 +236,3 @@ func (r *Repository) IsTracePinned(ctx context.Context, projectID int64, traceID
 	return n > 0, err
 }
 
-func scanLog(rows *sql.Rows) (LogRow, error) {
-	var row LogRow
-	err := rows.Scan(
-		&row.ID, &row.ProjectID, &row.TraceID, &row.SpanID,
-		&row.SeverityNumber, &row.SeverityText,
-		&row.TimeUnixNano, &row.ObservedTimeUnixNano,
-		&row.Body, &row.Attributes, &row.IngestedAt,
-	)
-	return row, err
-}
