@@ -171,6 +171,7 @@ func SetupWithConfig(cfg SetupConfig) (*slog.Logger, func()) {
 
 	var handler slog.Handler = jsonHandler
 	var bugbarnClient *BugBarnClient
+	var selfLogsH *SelfLogsHandler
 
 	if cfg.BugBarnEndpoint != "" && cfg.BugBarnAPIKey != "" {
 		bugbarnClient = NewBugBarnClient(BugBarnConfig{
@@ -181,6 +182,11 @@ func SetupWithConfig(cfg SetupConfig) (*slog.Logger, func()) {
 			Version:     cfg.Version,
 		})
 		handler = NewBugBarnHandler(jsonHandler, bugbarnClient)
+	}
+
+	if cfg.SelfEndpoint != "" && cfg.SelfAPIKey != "" {
+		selfLogsH = NewSelfLogsHandler(handler, cfg.SelfEndpoint, cfg.SelfAPIKey, "spanbarn", cfg.Version, cfg.Environment)
+		handler = selfLogsH
 	}
 
 	logger := slog.New(handler)
@@ -195,6 +201,9 @@ func SetupWithConfig(cfg SetupConfig) (*slog.Logger, func()) {
 
 	shutdown := func() {
 		shutdownTracing()
+		if selfLogsH != nil {
+			selfLogsH.Shutdown()
+		}
 		if bugbarnClient != nil {
 			bugbarnClient.Shutdown()
 		}
