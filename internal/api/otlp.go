@@ -70,22 +70,25 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 		span.SetAttributes(attribute.Int("span_count", len(records)))
 	}
 
-	if s.traceBuffer != nil {
+	if selfExport {
+		// Self-instrument spans bypass the TraceBuffer so they are never
+		// dropped by project-level sampling — the pod's own traces must
+		// always reach the writer.
+		for _, rec := range records {
+			s.ingest.Enqueue(rec)
+		}
+	} else if s.traceBuffer != nil {
 		// Tail-based sampling: add to the trace buffer and let it decide
 		// per-trace after the configured TTL. Error traces always pass.
 		for _, rec := range records {
 			s.traceBuffer.Add(rec)
 		}
-	} else if !selfExport {
+	} else {
 		_, enqueueSpan := apiTracer.Start(ctx, "api.otlp.enqueue")
 		for _, rec := range records {
 			s.ingest.Enqueue(rec)
 		}
 		enqueueSpan.End()
-	} else {
-		for _, rec := range records {
-			s.ingest.Enqueue(rec)
-		}
 	}
 
 	// Return ExportTraceServiceResponse.
