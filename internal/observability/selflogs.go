@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // SelfLogsHandler is a slog.Handler that tees records to SpanBarn's own /v1/logs endpoint.
@@ -51,13 +53,19 @@ func (h *SelfLogsHandler) Handle(ctx context.Context, r slog.Record) error {
 		ts = time.Now().UnixNano()
 	}
 
-	h.exporter.enqueue(selfLogRec{
+	rec := selfLogRec{
 		timeNano: ts,
 		sevNum:   slogToOTLPSeverity(r.Level),
 		sevText:  r.Level.String(),
 		body:     r.Message,
 		attrs:    attrs,
-	})
+	}
+	if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
+		sc := span.SpanContext()
+		rec.traceID = sc.TraceID().String()
+		rec.spanID = sc.SpanID().String()
+	}
+	h.exporter.enqueue(rec)
 
 	return innerErr
 }
@@ -94,6 +102,8 @@ type selfLogRec struct {
 	sevText  string
 	body     string
 	attrs    map[string]string
+	traceID  string
+	spanID   string
 }
 
 type selfLogsExporter struct {
@@ -182,6 +192,8 @@ func (e *selfLogsExporter) send(batch []selfLogRec) {
 			SeverityNumber:       r.sevNum,
 			SeverityText:         r.sevText,
 			Body:                 otlpSelfAV{StringValue: r.body},
+			TraceId:              r.traceID,
+			SpanId:               r.spanID,
 		}
 		for k, v := range r.attrs {
 			rec.Attributes = append(rec.Attributes, otlpSelfKV{Key: k, Value: otlpSelfAV{StringValue: v}})
@@ -250,6 +262,8 @@ type otlpSelfLogRec struct {
 	SeverityText         string       `json:"severityText"`
 	Body                 otlpSelfAV   `json:"body"`
 	Attributes           []otlpSelfKV `json:"attributes,omitempty"`
+	TraceId              string       `json:"traceId,omitempty"`
+	SpanId               string       `json:"spanId,omitempty"`
 }
 
 type otlpSelfKV struct {
