@@ -306,41 +306,40 @@ export function LogsPage(): ReactElement {
       {/* Histogram */}
       <LogHistogram buckets={histogram} />
 
-      {/* Filters */}
-      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', gap: '0.25rem' }}>
-          {SEVERITY_LEVELS.map((l) => (
-            <button
-              key={l.value}
-              className={`btn btn-sm ${minSeverity === l.value ? 'btn-active' : ''}`}
-              onClick={() => setMinSeverity(l.value)}
-            >
-              {l.label}
-            </button>
-          ))}
-        </div>
-
-        <form onSubmit={handleSearchSubmit} style={{ display: 'flex', gap: '0.25rem', flex: 1, minWidth: 0 }}>
-          <input
-            type="text"
-            className="input input-sm"
-            placeholder="Filter by message…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            style={{ flex: 1, minWidth: '140px' }}
-          />
-          <button type="submit" className="btn btn-sm btn-primary">Search</button>
-          {search && (
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => { setSearch(''); setSearchInput('') }}
-            >
-              Clear
-            </button>
-          )}
-        </form>
+      {/* Level filters */}
+      <div style={{ display: 'flex', gap: '0.25rem' }}>
+        {SEVERITY_LEVELS.map((l) => (
+          <button
+            key={l.value}
+            className={`btn btn-sm ${minSeverity === l.value ? 'btn-active' : ''}`}
+            onClick={() => setMinSeverity(l.value)}
+          >
+            {l.label}
+          </button>
+        ))}
       </div>
+
+      {/* Search */}
+      <form onSubmit={handleSearchSubmit} style={{ display: 'flex', gap: '0.25rem' }}>
+        <input
+          type="text"
+          className="input input-sm"
+          placeholder="Filter by message…"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          style={{ flex: 1, minWidth: '140px' }}
+        />
+        <button type="submit" className="btn btn-sm btn-primary">Search</button>
+        {search && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => { setSearch(''); setSearchInput('') }}
+          >
+            Clear
+          </button>
+        )}
+      </form>
 
       {/* Log list */}
       <div
