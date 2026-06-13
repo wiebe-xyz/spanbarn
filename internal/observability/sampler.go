@@ -10,8 +10,9 @@ import (
 )
 
 // DefaultSelfSamplePercent is the percentage of non-error traces that
-// Spanbarn exports when self-instrumenting. 1 means 1 in every 100 traces.
-const DefaultSelfSamplePercent = 1
+// SpanBarn exports when self-instrumenting. 100 means all traces; project-level
+// sampling controls retention after ingest.
+const DefaultSelfSamplePercent = 100
 
 // ShouldSampleTrace reports whether a trace ID should be sampled given a
 // percentage (1–100). The decision is deterministic: the same trace ID always
