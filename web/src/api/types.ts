@@ -331,6 +331,17 @@ export type PinnedTracesResponse = {
   pinned: PinnedTrace[]
 }
 
+/** One time bucket in a log volume histogram. */
+export type LogHistogramBucket = {
+  ts: string
+  count: number
+}
+
+/** Response from GET /api/v1/logs/histogram */
+export type LogsHistogramResponse = {
+  buckets: LogHistogramBucket[]
+}
+
 /** Params for querying logs. */
 export type LogsParams = {
   projectId?: number

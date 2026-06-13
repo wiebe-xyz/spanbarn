@@ -162,6 +162,66 @@ func (r *Repository) QueryLogs(ctx context.Context, f LogFilter) ([]LogRow, int,
 	return result, total, rows.Err()
 }
 
+// LogHistogramBucket is one time-bucket in a log volume histogram.
+type LogHistogramBucket struct {
+	Ts    time.Time `json:"ts"`
+	Count int       `json:"count"`
+}
+
+// LogHistogram returns per-bucket log counts for the given filter.
+// bucketSecs controls the width of each bucket in seconds.
+func (r *Repository) LogHistogram(ctx context.Context, f LogFilter, bucketSecs int) ([]LogHistogramBucket, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
+	where := []string{"project_id = ?", "ingested_at >= ?", "ingested_at <= ?"}
+	args := []any{f.ProjectID, f.From, f.To}
+
+	if f.TraceID != "" {
+		where = append(where, "trace_id = ?")
+		args = append(args, f.TraceID)
+	}
+	if f.MinSeverity > 0 {
+		where = append(where, "severity_number >= ?")
+		args = append(args, f.MinSeverity)
+	}
+	if f.Service != "" {
+		where = append(where, `JSON_EXTRACT(attributes, '$."service.name"') = ?`)
+		args = append(args, f.Service)
+	}
+	if f.Search != "" {
+		where = append(where, "body LIKE ?")
+		args = append(args, "%"+f.Search+"%")
+	}
+
+	cond := strings.Join(where, " AND ")
+	// Prepend bucketSecs twice: once for the division, once for the multiply.
+	qargs := append([]any{bucketSecs, bucketSecs}, args...)
+
+	rows, err := r.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT CAST(strftime('%%s', ingested_at) / ? AS INTEGER) * ? AS bucket_ts, COUNT(*)
+		FROM logs WHERE %s
+		GROUP BY bucket_ts ORDER BY bucket_ts`, cond), qargs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []LogHistogramBucket
+	for rows.Next() {
+		var epochSecs int64
+		var cnt int
+		if err := rows.Scan(&epochSecs, &cnt); err != nil {
+			return nil, err
+		}
+		result = append(result, LogHistogramBucket{
+			Ts:    time.Unix(epochSecs, 0).UTC(),
+			Count: cnt,
+		})
+	}
+	return result, rows.Err()
+}
+
 // DeleteLogsOlderThan removes log records ingested before cutoff, skipping logs
 // whose trace_id is pinned or appears in recently-sampled error_samples.
 func (r *Repository) DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error) {
