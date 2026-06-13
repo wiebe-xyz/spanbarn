@@ -20,6 +20,7 @@ import type {
   MetricNamesResponse,
   MetricSeriesResponse,
   LogsResponse,
+  LogsHistogramResponse,
   PinnedTracesResponse,
   LogsParams,
 } from './types'
@@ -259,6 +260,18 @@ export const api = {
         to: params.to,
         limit: params.limit,
         offset: params.offset,
+      })}`,
+    ),
+
+  getLogsHistogram: (params: Pick<LogsParams, 'from' | 'to' | 'severity' | 'service' | 'search' | 'projectId'>) =>
+    fetchJSON<LogsHistogramResponse>(
+      `/api/v1/logs/histogram${qs({
+        project_id: params.projectId || undefined,
+        severity: params.severity,
+        service: params.service,
+        search: params.search,
+        from: params.from,
+        to: params.to,
       })}`,
     ),
 

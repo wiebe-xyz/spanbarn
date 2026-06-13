@@ -101,6 +101,75 @@ func (h *logsQueryHandlers) handleLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, logsResponse{Logs: entries, Total: total})
 }
 
+type logHistogramBucketJSON struct {
+	Ts    string `json:"ts"`
+	Count int    `json:"count"`
+}
+
+type logsHistogramResponse struct {
+	Buckets []logHistogramBucketJSON `json:"buckets"`
+}
+
+// handleLogsHistogram handles GET /api/v1/logs/histogram
+func (h *logsQueryHandlers) handleLogsHistogram(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	projectID := parseInt64Param(r, "project_id", 0)
+	from, to, err := parseTimeRange(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+		return
+	}
+	if from.IsZero() {
+		from = time.Now().Add(-24 * time.Hour)
+	}
+	if to.IsZero() {
+		to = time.Now()
+	}
+
+	span := to.Sub(from)
+	var bucketSecs int
+	switch {
+	case span <= time.Hour:
+		bucketSecs = 60
+	case span <= 4*time.Hour:
+		bucketSecs = 300
+	case span <= 24*time.Hour:
+		bucketSecs = 1800
+	case span <= 7*24*time.Hour:
+		bucketSecs = 10800
+	default:
+		bucketSecs = 86400
+	}
+
+	f := repository.LogFilter{
+		ProjectID:   projectID,
+		MinSeverity: int32(parseIntParam(r, "severity", 0)),
+		Service:     r.URL.Query().Get("service"),
+		Search:      r.URL.Query().Get("search"),
+		From:        from,
+		To:          to,
+	}
+
+	buckets, err := h.repo.LogHistogram(r.Context(), f, bucketSecs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "histogram query failed", err.Error())
+		return
+	}
+
+	out := make([]logHistogramBucketJSON, 0, len(buckets))
+	for _, b := range buckets {
+		out = append(out, logHistogramBucketJSON{
+			Ts:    b.Ts.Format(time.RFC3339),
+			Count: b.Count,
+		})
+	}
+	writeJSON(w, http.StatusOK, logsHistogramResponse{Buckets: out})
+}
+
 // handlePinnedTraces handles GET/POST/DELETE on /api/v1/pinned-traces
 func (h *logsQueryHandlers) handlePinnedTraces(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

@@ -124,6 +124,7 @@ func (s *Server) registerRoutes() {
 		sessionAuth := SessionMiddleware(s.sessionMgr)
 
 		s.mux.Handle("/api/v1/logs", apiRL(sessionAuth(http.HandlerFunc(lqh.handleLogs))))
+		s.mux.Handle("/api/v1/logs/histogram", apiRL(sessionAuth(http.HandlerFunc(lqh.handleLogsHistogram))))
 		s.mux.Handle("/api/v1/pinned-traces", apiRL(sessionAuth(http.HandlerFunc(lqh.handlePinnedTraces))))
 		s.mux.Handle("/api/v1/pinned-traces/", apiRL(sessionAuth(http.HandlerFunc(lqh.handlePinnedTraces))))
 	}
