@@ -126,8 +126,9 @@ jobs:
           LDFLAGS="-X main.Version=v${VERSION} -X main.BuildTime=${BUILD_TIME}"
           mkdir -p dist
           go build -ldflags "${LDFLAGS}" -o dist/spanbarn-linux-${GOARCH} ./cmd/spanbarn
+          go build -ldflags "${LDFLAGS}" -o dist/sb-linux-${GOARCH} ./cmd/sb
 
-      - name: Build .deb package
+      - name: Build .deb packages
         env:
           VERSION: ${{ needs.tag.outputs.version_num }}
           GOARCH: ${{ matrix.arch }}
@@ -136,6 +137,11 @@ jobs:
           envsubst < nfpm-spanbarn.yaml > nfpm-spanbarn-processed.yaml
           nfpm package \
             --config nfpm-spanbarn-processed.yaml \
+            --packager deb \
+            --target debs/
+          envsubst < nfpm-sb.yaml > nfpm-sb-processed.yaml
+          nfpm package \
+            --config nfpm-sb-processed.yaml \
             --packager deb \
             --target debs/
 
@@ -172,9 +178,12 @@ jobs:
           LDFLAGS="-X main.Version=v${VERSION} -X main.BuildTime=${BUILD_TIME}"
           mkdir -p dist
           go build -ldflags "${LDFLAGS}" -o dist/spanbarn ./cmd/spanbarn
+          go build -ldflags "${LDFLAGS}" -o dist/sb ./cmd/sb
           TARBALL="spanbarn-darwin-${{ matrix.arch }}-${VERSION}.tar.gz"
           tar -czvf dist/${TARBALL} -C dist spanbarn
-          rm dist/spanbarn
+          SB_TARBALL="sb-darwin-${{ matrix.arch }}-${VERSION}.tar.gz"
+          tar -czvf dist/${SB_TARBALL} -C dist sb
+          rm dist/spanbarn dist/sb
 
       - name: Generate checksums
         run: |
@@ -224,3 +233,162 @@ jobs:
             --field 'client_payload[repo]=wiebe-xyz/spanbarn' \
             --field 'client_payload[tag]=${{ needs.tag.outputs.version }}' \
             --field 'client_payload[asset_pattern]=*.deb'
+
+  # ---------------------------------------------------------------------------
+  # Homebrew: publish the `sb` CLI tarball + formula.
+  #
+  # The server is deployed via k8s, so only the CLI is brewed. Credentials are
+  # decrypted on disk from deploy/ci-secrets.yaml (SOPS + age) using the
+  # SOPS_AGE_KEY_PRODUCTION repo secret — the same mechanism as the deploy
+  # workflows. No MinIO/tap GitHub Actions secrets are required.
+  #   ci-secrets.yaml provides: minio.{access_key,secret_key,endpoint,bucket}
+  #                             github.release_tag_pat (push to the tap)
+  # Tap repo: webwiebe/homebrew-spanbarn. Tarballs served from
+  # https://webwiebe.nl/brew/ (MinIO brew/ prefix).
+  # ---------------------------------------------------------------------------
+  update-brew-repo:
+    name: Update Homebrew Tarballs (MinIO)
+    runs-on: ubuntu-latest
+    needs: [tag, build-darwin-tarballs]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download darwin artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: darwin-*
+          path: darwin-download
+
+      - name: Install sops
+        run: |
+          curl -fsSL -o /tmp/sops https://github.com/getsops/sops/releases/download/v3.12.2/sops-v3.12.2.linux.amd64
+          sudo install -m 0755 /tmp/sops /usr/local/bin/sops
+
+      - name: Prepare brew repository
+        env:
+          VERSION: ${{ needs.tag.outputs.version_num }}
+        run: |
+          mkdir -p brew-repo/Formula
+          find darwin-download -name "sb-darwin-*.tar.gz" -exec cp {} brew-repo/ \;
+          find darwin-download -name "sb-darwin-*.tar.gz.sha256" -exec cp {} brew-repo/ \;
+
+          AMD64_SHA=$(awk '{print $1}' brew-repo/sb-darwin-amd64-${VERSION}.tar.gz.sha256)
+          ARM64_SHA=$(awk '{print $1}' brew-repo/sb-darwin-arm64-${VERSION}.tar.gz.sha256)
+
+          cat > brew-repo/Formula/sb.rb << EOF
+          class Sb < Formula
+            desc "SpanBarn CLI — query traces, logs, metrics and prompt samples"
+            homepage "https://github.com/wiebe-xyz/spanbarn"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.intel?
+                url "https://webwiebe.nl/brew/sb-darwin-amd64-${VERSION}.tar.gz"
+                sha256 "${AMD64_SHA}"
+              elsif Hardware::CPU.arm?
+                url "https://webwiebe.nl/brew/sb-darwin-arm64-${VERSION}.tar.gz"
+                sha256 "${ARM64_SHA}"
+              end
+            end
+
+            def install
+              bin.install "sb"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/sb version")
+            end
+          end
+          EOF
+
+      - name: Deploy to MinIO (brew/ prefix — only adds sb files)
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY_PRODUCTION }}
+        run: |
+          pip install awscli
+          # Decrypt MinIO credentials on disk (never echoed).
+          export AWS_ACCESS_KEY_ID=$(sops -d --extract '["minio"]["access_key"]' deploy/ci-secrets.yaml)
+          export AWS_SECRET_ACCESS_KEY=$(sops -d --extract '["minio"]["secret_key"]' deploy/ci-secrets.yaml)
+          AWS_ENDPOINT_URL=$(sops -d --extract '["minio"]["endpoint"]' deploy/ci-secrets.yaml)
+          MINIO_BUCKET=$(sops -d --extract '["minio"]["bucket"]' deploy/ci-secrets.yaml)
+          # cp per-file (not sync) to avoid the LIST timeout against MinIO; we
+          # only ever upload, never delete other apps' files in the bucket.
+          find brew-repo -type f | while read -r f; do
+            key="${f#brew-repo/}"
+            aws --endpoint-url "$AWS_ENDPOINT_URL" s3 cp \
+              "$f" \
+              "s3://${MINIO_BUCKET}/brew/${key}" \
+              --cache-control "public, max-age=3600, must-revalidate"
+          done
+
+  update-homebrew-tap:
+    name: Update Homebrew Tap (GitHub)
+    runs-on: ubuntu-latest
+    needs: [tag, update-brew-repo]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download darwin artifacts for checksums
+        uses: actions/download-artifact@v8
+        with:
+          pattern: darwin-*
+          path: darwin-download
+
+      - name: Install sops
+        run: |
+          curl -fsSL -o /tmp/sops https://github.com/getsops/sops/releases/download/v3.12.2/sops-v3.12.2.linux.amd64
+          sudo install -m 0755 /tmp/sops /usr/local/bin/sops
+
+      - name: Generate formula and push to tap
+        env:
+          VERSION: ${{ needs.tag.outputs.version_num }}
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY_PRODUCTION }}
+        run: |
+          TAP_GITHUB_TOKEN=$(sops -d --extract '["github"]["release_tag_pat"]' deploy/ci-secrets.yaml)
+
+          AMD64_SHA=$(awk '{print $1}' darwin-download/darwin-amd64/sb-darwin-amd64-${VERSION}.tar.gz.sha256)
+          ARM64_SHA=$(awk '{print $1}' darwin-download/darwin-arm64/sb-darwin-arm64-${VERSION}.tar.gz.sha256)
+
+          git clone https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/webwiebe/homebrew-spanbarn.git tap-repo
+          cd tap-repo
+          mkdir -p Formula
+
+          cat > Formula/sb.rb << EOF
+          class Sb < Formula
+            desc "SpanBarn CLI — query traces, logs, metrics and prompt samples"
+            homepage "https://github.com/wiebe-xyz/spanbarn"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.intel?
+                url "https://webwiebe.nl/brew/sb-darwin-amd64-${VERSION}.tar.gz"
+                sha256 "${AMD64_SHA}"
+              elsif Hardware::CPU.arm?
+                url "https://webwiebe.nl/brew/sb-darwin-arm64-${VERSION}.tar.gz"
+                sha256 "${ARM64_SHA}"
+              end
+            end
+
+            def install
+              bin.install "sb"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/sb version")
+            end
+          end
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/sb.rb
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update sb formula to ${VERSION}"
+            git push
+          fi

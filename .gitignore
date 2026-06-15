@@ -18,6 +18,9 @@ bin/
 *.out
 *.cover
 *.coverprofile
+# Locally built binaries (build into dist/ for releases)
+/sb
+/spanbarn
 
 # Node
 node_modules/

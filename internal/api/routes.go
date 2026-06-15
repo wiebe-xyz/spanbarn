@@ -84,20 +84,23 @@ func (s *Server) registerRoutes() {
 	// List/aggregate endpoints get a short cache (30s); detail endpoints are not cached.
 	if s.querySvc != nil && s.sessionMgr != nil {
 		qh := &queryHandlers{svc: s.querySvc}
+		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer)
 		sessionAuth := SessionMiddleware(s.sessionMgr)
 		cache60 := func(h http.Handler) http.Handler { return cacheMiddleware(60, h) }
 
-		s.mux.Handle("/api/v1/services", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleServices)))))
-		s.mux.Handle("/api/v1/services/", apiRL(sessionAuth(cache60(qh))))
-		s.mux.Handle("/api/v1/traces", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleTraces)))))
-		s.mux.Handle("/api/v1/traces/groups", apiRL(sessionAuth(http.HandlerFunc(qh.handleTraceGroups))))
-		s.mux.Handle("/api/v1/traces/", apiRL(sessionAuth(http.HandlerFunc(qh.handleTraceDetail))))
-		s.mux.Handle("/api/v1/dependencies", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleDependencies)))))
-		s.mux.Handle("/api/v1/database", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleDatabaseQueries)))))
-		s.mux.Handle("/api/v1/database/detail", apiRL(sessionAuth(http.HandlerFunc(qh.handleDatabaseQueryDetail))))
-		s.mux.Handle("/api/v1/prompts", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handlePrompts)))))
-		s.mux.Handle("/api/v1/prompts/detail", apiRL(sessionAuth(http.HandlerFunc(qh.handlePromptDetail))))
-		s.mux.Handle("/api/v1/service-map", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleServiceMap)))))
+		s.mux.Handle("/api/v1/services", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleServices)))))
+		s.mux.Handle("/api/v1/services/", apiRL(readAuth(cache60(qh))))
+		s.mux.Handle("/api/v1/traces", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleTraces)))))
+		s.mux.Handle("/api/v1/traces/groups", apiRL(readAuth(http.HandlerFunc(qh.handleTraceGroups))))
+		s.mux.Handle("/api/v1/traces/", apiRL(readAuth(http.HandlerFunc(qh.handleTraceDetail))))
+		s.mux.Handle("/api/v1/dependencies", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDependencies)))))
+		s.mux.Handle("/api/v1/database", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDatabaseQueries)))))
+		s.mux.Handle("/api/v1/database/detail", apiRL(readAuth(http.HandlerFunc(qh.handleDatabaseQueryDetail))))
+		s.mux.Handle("/api/v1/prompts", apiRL(readAuth(cache60(http.HandlerFunc(qh.handlePrompts)))))
+		s.mux.Handle("/api/v1/prompts/detail", apiRL(readAuth(http.HandlerFunc(qh.handlePromptDetail))))
+		s.mux.Handle("/api/v1/service-map", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleServiceMap)))))
+		// Web vitals are RUM aggregates that the query service does not scope by
+		// project, so they stay session-only (not exposed by the read-key CLI).
 		s.mux.Handle("/api/v1/web-vitals", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleWebVitals)))))
 		s.mux.Handle("/api/v1/web-vitals/timeseries", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleWebVitalsTimeseries)))))
 	}
@@ -112,19 +115,21 @@ func (s *Server) registerRoutes() {
 	// Metrics query endpoints — rate limited + session auth required.
 	if s.repo != nil && s.sessionMgr != nil {
 		mqh := &metricsQueryHandlers{repo: s.repo}
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer)
 
-		s.mux.Handle("/api/v1/metrics/names", apiRL(sessionAuth(http.HandlerFunc(mqh.handleMetricNames))))
-		s.mux.Handle("/api/v1/metrics/series", apiRL(sessionAuth(http.HandlerFunc(mqh.handleMetricSeries))))
+		s.mux.Handle("/api/v1/metrics/names", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricNames))))
+		s.mux.Handle("/api/v1/metrics/series", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricSeries))))
 	}
 
-	// Logs query + pinned-traces endpoints — rate limited + session auth required.
+	// Logs query endpoints — read auth (session or read key). Pinned-traces are
+	// per-user state, so they stay session-only.
 	if s.repo != nil && s.sessionMgr != nil {
 		lqh := &logsQueryHandlers{repo: s.repo}
+		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer)
 		sessionAuth := SessionMiddleware(s.sessionMgr)
 
-		s.mux.Handle("/api/v1/logs", apiRL(sessionAuth(http.HandlerFunc(lqh.handleLogs))))
-		s.mux.Handle("/api/v1/logs/histogram", apiRL(sessionAuth(http.HandlerFunc(lqh.handleLogsHistogram))))
+		s.mux.Handle("/api/v1/logs", apiRL(readAuth(http.HandlerFunc(lqh.handleLogs))))
+		s.mux.Handle("/api/v1/logs/histogram", apiRL(readAuth(http.HandlerFunc(lqh.handleLogsHistogram))))
 		s.mux.Handle("/api/v1/pinned-traces", apiRL(sessionAuth(http.HandlerFunc(lqh.handlePinnedTraces))))
 		s.mux.Handle("/api/v1/pinned-traces/", apiRL(sessionAuth(http.HandlerFunc(lqh.handlePinnedTraces))))
 	}
@@ -192,13 +197,14 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/e2e/session", ingestRL(ingestAuth(http.HandlerFunc(s.handleE2ESession))))
 	}
 
-	// Project endpoints — rate limited + session auth required.
+	// Project endpoints — read auth (session or read key) for listing; the
+	// middleware blocks mutating methods for API keys.
 	if s.repo != nil && s.sessionMgr != nil {
 		ph := &projectHandlers{repo: s.repo, cache: s.cache}
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer)
 
-		s.mux.Handle("/api/v1/projects", apiRL(sessionAuth(ph)))
-		s.mux.Handle("/api/v1/projects/", apiRL(sessionAuth(ph)))
+		s.mux.Handle("/api/v1/projects", apiRL(readAuth(ph)))
+		s.mux.Handle("/api/v1/projects/", apiRL(readAuth(ph)))
 	}
 
 }

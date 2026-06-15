@@ -33,6 +33,10 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Stamp every span with the authenticated project (matches the OTLP path
+	// in otlp.go). Zero for the static/admin key or session ingest.
+	projectID := GetProjectID(r.Context())
+
 	// Validate and convert each span.
 	var errs []string
 	records := make([]model.SpanRecord, 0, len(batch.Spans))
@@ -43,6 +47,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		}
 
 		rec := model.SpanRecord{
+			ProjectID:    projectID,
 			TraceID:      sp.TraceID,
 			SpanID:       sp.SpanID,
 			ParentSpanID: sp.ParentSpanID,

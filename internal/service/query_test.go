@@ -257,7 +257,7 @@ func TestGetTrace(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	detail, err := svc.GetTrace(context.Background(),"trace-abc")
+	detail, err := svc.GetTrace(context.Background(), "trace-abc", 0)
 	if err != nil {
 		t.Fatalf("GetTrace: %v", err)
 	}
@@ -280,8 +280,25 @@ func TestGetTrace(t *testing.T) {
 		t.Errorf("expected durationUs 5000, got %d", detail.DurationUs)
 	}
 
+	// Project scoping: the spans belong to project 1, so querying as a
+	// different project must return no spans (nil detail).
+	scoped, err := svc.GetTrace(context.Background(), "trace-abc", 1)
+	if err != nil {
+		t.Fatalf("GetTrace scoped: %v", err)
+	}
+	if scoped == nil || len(scoped.Spans) != 3 {
+		t.Errorf("expected 3 spans for project 1, got %+v", scoped)
+	}
+	other, err := svc.GetTrace(context.Background(), "trace-abc", 999)
+	if err != nil {
+		t.Fatalf("GetTrace other project: %v", err)
+	}
+	if other != nil {
+		t.Errorf("expected nil for wrong project, got %+v", other)
+	}
+
 	// Non-existent trace.
-	notFound, err := svc.GetTrace(context.Background(),"non-existent")
+	notFound, err := svc.GetTrace(context.Background(), "non-existent", 0)
 	if err != nil {
 		t.Fatalf("GetTrace non-existent: %v", err)
 	}

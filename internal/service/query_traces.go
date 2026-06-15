@@ -160,7 +160,10 @@ func (s *QueryService) ListTraceGroups(ctx context.Context, filter TraceSearchFi
 }
 
 // GetTrace returns full trace detail for a given trace ID.
-func (s *QueryService) GetTrace(ctx context.Context, traceID string) (*TraceDetail, error) {
+// GetTrace returns a trace's spans. When projectID is non-zero, spans are
+// scoped to that project (used by project-scoped read API keys); a zero
+// projectID returns the trace across all projects (session/dashboard view).
+func (s *QueryService) GetTrace(ctx context.Context, traceID string, projectID int64) (*TraceDetail, error) {
 	_, span := tracer.Start(ctx, "query.get_trace")
 	span.SetAttributes(attribute.String("trace_id", traceID))
 	defer span.End()
@@ -178,6 +181,16 @@ func (s *QueryService) GetTrace(ctx context.Context, traceID string) (*TraceDeta
 		s.logger.Warn("failed to query error samples for trace", "error", err)
 	} else {
 		spans = append(spans, errorSpans...)
+	}
+
+	if projectID != 0 {
+		filtered := make([]repository.Span, 0, len(spans))
+		for _, sp := range spans {
+			if sp.ProjectID == projectID {
+				filtered = append(filtered, sp)
+			}
+		}
+		spans = filtered
 	}
 
 	seen := make(map[string]bool)
