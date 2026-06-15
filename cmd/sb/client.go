@@ -36,12 +36,19 @@ func newClient() (*Client, error) {
 
 // get performs a raw GET and returns the response body as JSON.
 func (c *Client) get(path string) (json.RawMessage, error) {
+	return c.getRetry(path, false)
+}
+
+func (c *Client) getRetry(path string, retried bool) (json.RawMessage, error) {
 	req, err := http.NewRequest(http.MethodGet, c.base+path, nil)
 	if err != nil {
 		return nil, err
 	}
+	// API key takes precedence; otherwise use the session token as a bearer.
 	if c.cfg.APIKey != "" {
 		req.Header.Set("X-SpanBarn-Api-Key", c.cfg.APIKey)
+	} else if c.cfg.SessionToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.SessionToken)
 	}
 
 	resp, err := c.http.Do(req)
@@ -53,6 +60,17 @@ func (c *Client) get(path string) (json.RawMessage, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	// Session expired? Re-authenticate once with stored credentials.
+	if resp.StatusCode == http.StatusUnauthorized && !retried &&
+		c.cfg.APIKey == "" && c.cfg.Username != "" && c.cfg.Password != "" {
+		token, lerr := loginWithPassword(c.base, c.cfg.Username, c.cfg.Password)
+		if lerr == nil {
+			c.cfg.SessionToken = token
+			_ = saveConfig(c.cfg)
+			return c.getRetry(path, true)
+		}
 	}
 
 	if resp.StatusCode >= 400 {

@@ -74,7 +74,7 @@ func printUsage() {
 Usage: sb <command> [flags]
 
 Setup:
-  login         Authenticate with a SpanBarn instance (--url, --api-key)
+  login         Authenticate (--url with --api-key, or --username/--password)
   init          Set the project for this directory (writes .spanbarn.json)
   projects      List projects
 
@@ -97,6 +97,7 @@ Common flags: --project SLUG, --from, --to, --output json|table
 
 Examples:
   sb login --url https://spanbarn.example.com --api-key KEY
+  sb login --url https://spanbarn.example.com --username admin   # prompts for password
   sb init --project my-app
   sb flows --errors
   sb traces --errors --service api --limit 20
