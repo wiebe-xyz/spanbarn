@@ -2,15 +2,19 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // commonFlags registers the flags shared by every data command: --output and
@@ -57,6 +61,8 @@ func cmdLogin(args []string) error {
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
 	urlFlag := fs.String("url", os.Getenv("SPANBARN_URL"), "SpanBarn instance URL")
 	apiKey := fs.String("api-key", os.Getenv("SPANBARN_API_KEY"), "read-scoped API key")
+	username := fs.String("username", os.Getenv("SPANBARN_USERNAME"), "dashboard username (session login)")
+	password := fs.String("password", "", "dashboard password (omit to be prompted)")
 	project := fs.String("project", "", "default project slug")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -64,17 +70,35 @@ func cmdLogin(args []string) error {
 	if *urlFlag == "" {
 		return fmt.Errorf("--url is required (or set SPANBARN_URL)")
 	}
-	if *apiKey == "" {
-		return fmt.Errorf("--api-key is required (or set SPANBARN_API_KEY); create one with: spanbarn apikey create --project SLUG --name cli --scope read")
-	}
 
 	cfg := Config{
 		URL:     strings.TrimRight(*urlFlag, "/"),
-		APIKey:  *apiKey,
 		Project: *project,
 	}
 
-	// Verify the key works against a read endpoint.
+	switch {
+	case *apiKey != "":
+		cfg.APIKey = *apiKey
+	case *username != "":
+		if *password == "" {
+			pw, err := promptPassword()
+			if err != nil {
+				return err
+			}
+			*password = pw
+		}
+		token, err := loginWithPassword(cfg.URL, *username, *password)
+		if err != nil {
+			return err
+		}
+		cfg.Username = *username
+		cfg.Password = *password
+		cfg.SessionToken = token
+	default:
+		return fmt.Errorf("provide --api-key (scope read/full) or --username to authenticate")
+	}
+
+	// Verify auth works against a read endpoint.
 	client := &Client{base: cfg.URL, http: &http.Client{Timeout: 10 * time.Second}, cfg: cfg}
 	if _, err := client.get("/api/v1/projects"); err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
@@ -83,9 +107,46 @@ func cmdLogin(args []string) error {
 	if err := saveConfig(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
-	fmt.Fprintf(os.Stderr, "Logged in to %s\n", cfg.URL)
-	writeOut(map[string]any{"ok": true, "url": cfg.URL})
+	method := "api-key"
+	if cfg.APIKey == "" {
+		method = "session"
+	}
+	fmt.Fprintf(os.Stderr, "Logged in to %s (%s)\n", cfg.URL, method)
+	writeOut(map[string]any{"ok": true, "url": cfg.URL, "auth": method})
 	return nil
+}
+
+// loginWithPassword posts credentials to /api/v1/login and returns the session
+// token from the Set-Cookie response.
+func loginWithPassword(baseURL, username, password string) (string, error) {
+	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	resp, err := http.Post(baseURL+"/api/v1/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("login request: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("login failed: HTTP %d", resp.StatusCode)
+	}
+	for _, ck := range resp.Cookies() {
+		if ck.Name == "session" {
+			return ck.Value, nil
+		}
+	}
+	return "", fmt.Errorf("no session cookie in login response")
+}
+
+// promptPassword reads a password from the terminal without echoing.
+func promptPassword() (string, error) {
+	fmt.Fprint(os.Stderr, "Password: ")
+	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", fmt.Errorf("read password: %w", err)
+	}
+	return string(pw), nil
 }
 
 func cmdInit(args []string) error {

@@ -8,12 +8,20 @@ import (
 )
 
 // Config is the global CLI config stored at ~/.config/spanbarn/cli.json
-// (override with SB_CONFIG). Auth is a read-scoped API key — query endpoints
-// accept it via the X-SpanBarn-Api-Key header.
+// (override with SB_CONFIG). Two auth methods are supported:
+//   - a read-scoped API key sent via the X-SpanBarn-Api-Key header, or
+//   - username/password login (POST /api/v1/login) which yields a session
+//     token sent as Authorization: Bearer. The password is stored so the CLI
+//     can transparently re-authenticate when the session expires.
+//
+// When an API key is set it takes precedence over session credentials.
 type Config struct {
-	URL     string `json:"url"`
-	APIKey  string `json:"api_key,omitempty"`
-	Project string `json:"project,omitempty"` // default project slug
+	URL          string `json:"url"`
+	APIKey       string `json:"api_key,omitempty"`
+	Username     string `json:"username,omitempty"`
+	Password     string `json:"password,omitempty"`
+	SessionToken string `json:"session_token,omitempty"`
+	Project      string `json:"project,omitempty"` // default project slug
 }
 
 func configPath() string {
@@ -31,7 +39,7 @@ func loadConfig() (Config, error) {
 	data, err := os.ReadFile(configPath())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Config{}, fmt.Errorf("not logged in — run: sb login --url URL --api-key KEY")
+			return Config{}, fmt.Errorf("not logged in — run: sb login --url URL (--api-key KEY | --username USER)")
 		}
 		return Config{}, err
 	}
@@ -40,7 +48,7 @@ func loadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("corrupt config: %w", err)
 	}
 	if cfg.URL == "" {
-		return Config{}, fmt.Errorf("no URL configured — run: sb login --url URL --api-key KEY")
+		return Config{}, fmt.Errorf("no URL configured — run: sb login --url URL (--api-key KEY | --username USER)")
 	}
 	return cfg, nil
 }
