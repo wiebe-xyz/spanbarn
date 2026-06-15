@@ -24,7 +24,7 @@ func (h *queryHandlers) handlePrompts(w http.ResponseWriter, r *http.Request) {
 	svcFilter := r.URL.Query().Get("service")
 	modelFilter := r.URL.Query().Get("model")
 
-	prompts, err := h.svc.ListPrompts(ctx, 0, from, to, svcFilter, modelFilter)
+	prompts, err := h.svc.ListPrompts(ctx, GetProjectID(ctx), from, to, svcFilter, modelFilter)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -60,7 +60,7 @@ func (h *queryHandlers) handlePromptDetail(w http.ResponseWriter, r *http.Reques
 	}
 	span.SetAttributes(attribute.String("prompt.name", name))
 
-	records, err := h.svc.GetPromptDetail(ctx, 0, from, to, name, model, svcFilter, statusFilter, finishReason)
+	records, err := h.svc.GetPromptDetail(ctx, GetProjectID(ctx), from, to, name, model, svcFilter, statusFilter, finishReason)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return

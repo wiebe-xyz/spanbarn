@@ -1,0 +1,22 @@
+name: spanbarn-cli
+arch: "${GOARCH}"
+platform: linux
+version: "${VERSION}"
+maintainer: "Wiebe Zweers <wiebe@webwiebe.nl>"
+description: |
+  SpanBarn CLI client (sb).
+  Query traces, errors, logs, metrics and prompt samples from the command
+  line — JSON by default, with an interactive trace/error explorer (sb tui).
+  Installs /usr/bin/sb.
+vendor: "wiebe.xyz"
+homepage: "https://github.com/wiebe-xyz/spanbarn"
+license: "MIT"
+
+contents:
+  - src: ./dist/sb-linux-${GOARCH}
+    dst: /usr/bin/sb
+    file_info:
+      mode: 0755
+
+deb:
+  compression: gzip

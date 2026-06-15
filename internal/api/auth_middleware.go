@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
@@ -13,7 +14,7 @@ type contextKey string
 const (
 	ctxProjectID contextKey = "projectID"
 	ctxScope     contextKey = "scope"
-	ctxUsername   contextKey = "username"
+	ctxUsername  contextKey = "username"
 )
 
 // SetProjectID stores a project ID in the request context.
@@ -74,6 +75,58 @@ func APIKeyMiddleware(authorizer *auth.Authorizer) func(http.Handler) http.Handl
 
 			ctx := SetProjectID(r.Context(), projectID)
 			ctx = SetScope(ctx, scope)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// SessionOrReadKey authorizes read/query endpoints with EITHER a session
+// (cookie or Authorization: Bearer) OR an API key with the "read" or "full"
+// scope. When an API key is presented, the request is scoped to that key's
+// project by overwriting the project_id query parameter, so downstream handlers
+// need no changes. Ingest-scoped keys are rejected with 403.
+//
+// When authorizer is nil (no API key auth configured), behaviour is identical
+// to SessionMiddleware.
+func SessionOrReadKey(sm *auth.SessionManager, authorizer *auth.Authorizer) func(http.Handler) http.Handler {
+	sessionMW := SessionMiddleware(sm)
+	return func(next http.Handler) http.Handler {
+		session := sessionMW(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := r.Header.Get("X-SpanBarn-Api-Key")
+			if key == "" || authorizer == nil {
+				session.ServeHTTP(w, r)
+				return
+			}
+
+			projectID, scope, err := authorizer.Authorize(key)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "invalid API key", "")
+				return
+			}
+			if scope != "read" && scope != "full" {
+				writeError(w, http.StatusForbidden, "API key lacks read scope", "")
+				return
+			}
+			// API keys are read-only: never allow mutating requests, even on
+			// handlers that also serve writes for session users.
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				writeError(w, http.StatusForbidden, "API key is read-only", "")
+				return
+			}
+
+			// Scope the request to the key's project. A non-zero project ID
+			// (a per-project key) overrides any client-supplied project_id so a
+			// key cannot read another project's data. The static/full key has
+			// project ID 0 (all projects); leave the query param untouched so
+			// it can target a specific project via project_id.
+			ctx := SetScope(r.Context(), scope)
+			if projectID != 0 {
+				ctx = SetProjectID(ctx, projectID)
+				q := r.URL.Query()
+				q.Set("project_id", strconv.FormatInt(projectID, 10))
+				r.URL.RawQuery = q.Encode()
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

@@ -164,9 +164,60 @@ spanbarn user create --username=admin --password=secret
 # Manage projects
 spanbarn project create --name=my-app
 
-# Manage API keys
+# Manage API keys (scope: ingest | read | full)
 spanbarn apikey create --project=my-app --scope=ingest
+spanbarn apikey create --project=my-app --name=cli --scope=read
 ```
+
+## sb — query CLI
+
+`sb` is a standalone client for reading telemetry programmatically. Output is
+JSON by default (pipe it to `jq`, or to an agent); add `--output table` for a
+human view, or run `sb tui` for an interactive trace/error explorer.
+
+### Install
+
+```bash
+# Debian/Ubuntu (APT)
+apt install spanbarn-cli        # installs /usr/bin/sb
+
+# macOS (Homebrew)
+brew install webwiebe/spanbarn/sb
+
+# From source
+go install github.com/wiebe-xyz/spanbarn/cmd/sb@latest
+```
+
+### Usage
+
+```bash
+# Authenticate with a read-scoped API key (see apikey create above)
+sb login --url https://spanbarn.example.com --api-key KEY
+
+# Pin a project for the current directory (writes .spanbarn.json)
+sb init --project my-app
+
+# Find problematic flows and error traces, then drill in
+sb flows --errors                       # flows grouped by root op, with error/latency stats
+sb traces --errors --service api        # error traces for a service
+sb trace <traceId>                      # full span tree
+sb logs --trace-id <traceId>            # correlated logs
+
+# Performance and samples
+sb services                             # per-service error rate + p50/p95/p99
+sb deps                                 # service dependency graph
+sb database                             # aggregated DB query patterns
+sb prompts                              # LLM/prompt samples (and `sb prompts detail --name N`)
+sb metrics names                        # OTLP metric names (and `sb metrics series --name N`)
+
+# Interactive explorer (errors first; press 'a' to toggle all, enter to drill in)
+sb tui
+```
+
+Config lives at `~/.config/spanbarn/cli.json` (override with `SB_CONFIG`). The
+per-directory `.spanbarn.json` (`{"project":"slug"}`) is discovered by walking
+up from the current directory, so a checked-in file points the CLI at the right
+project automatically.
 
 ## Configuration
 

@@ -293,15 +293,15 @@ func runAPIKeyCreate(cfg config.Config, args []string) error {
 	fs := flag.NewFlagSet("apikey create", flag.ContinueOnError)
 	project := fs.String("project", "", "Project slug")
 	name := fs.String("name", "", "Key name")
-	scope := fs.String("scope", "ingest", "Key scope (ingest|full)")
+	scope := fs.String("scope", "ingest", "Key scope (ingest|read|full)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *project == "" || *name == "" {
-		return fmt.Errorf("usage: spanbarn apikey create --project=X --name=Y [--scope=ingest|full]")
+		return fmt.Errorf("usage: spanbarn apikey create --project=X --name=Y [--scope=ingest|read|full]")
 	}
-	if *scope != "ingest" && *scope != "full" {
-		return fmt.Errorf("scope must be 'ingest' or 'full'")
+	if *scope != "ingest" && *scope != "read" && *scope != "full" {
+		return fmt.Errorf("scope must be 'ingest', 'read', or 'full'")
 	}
 
 	repo, db, err := openDB(cfg.DBPath)
