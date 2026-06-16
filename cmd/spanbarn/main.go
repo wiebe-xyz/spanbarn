@@ -27,6 +27,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
+	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 	"github.com/wiebe-xyz/spanbarn/internal/worker"
@@ -698,6 +699,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	rw.SetAccumulator(accumulator)
 	rw.SetConfig(worker.WorkerConfig{SlowThresholdUs: int64(cfg.SlowThresholdMS) * 1000})
 	rw.SetBoringPolicy(boringPolicy)
+	// The writer is the single SQLite writer, so an in-memory per-minute floor
+	// counts boring-trace survivals accurately across batches.
+	rw.SetMinuteFloor(sampling.NewMinuteFloor())
 	rw.SetWriteMutex(writeMu)
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
@@ -996,7 +1000,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	// pod is restarting. Mutation handlers will hit SQLite "readonly database"
 	// errors and return 5xx, which is the same as if the writer were down.
 	var (
-		roRepo   *repository.Repository
+		roRepo    *repository.Repository
 		keyLookup auth.KeyLookup
 	)
 	if cfg.DBPath != "" {

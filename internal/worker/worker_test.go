@@ -10,6 +10,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
 
@@ -372,10 +373,12 @@ func TestRedisWorkerBoringBypass(t *testing.T) {
 type mockBoringPolicy struct {
 	ratio        int
 	verboseUntil time.Time
+	minPerMinute int
 }
 
 func (m *mockBoringPolicy) SampleRatio(_ int64) int        { return m.ratio }
 func (m *mockBoringPolicy) VerboseUntil(_ int64) time.Time { return m.verboseUntil }
+func (m *mockBoringPolicy) MinTracesPerMinute(_ int64) int { return m.minPerMinute }
 
 func TestClassifyForStorageBoringPolicy(t *testing.T) {
 	spans := []repository.Span{
@@ -458,5 +461,79 @@ func TestClassifyForStorageVerboseExpired(t *testing.T) {
 	result := rw.classifyForStorage(spans)
 	if len(result) != 0 {
 		t.Fatalf("expired verbose: want 0 spans, got %d", len(result))
+	}
+}
+
+func TestClassifyForStorageFloorRescuesBoringTraces(t *testing.T) {
+	// ratio=0 → the ratio sampler drops ALL boring traces. The minute floor
+	// must still rescue exactly min per (project, operation, minute).
+	spans := []repository.Span{
+		{ProjectID: 1, TraceID: "t1", SpanID: "s1", Name: "GET /health", Status: "ok", DurationUs: 100, StartTimeUs: 0},
+		{ProjectID: 1, TraceID: "t2", SpanID: "s2", Name: "GET /health", Status: "ok", DurationUs: 100, StartTimeUs: 1_000}, // same minute + op
+		{ProjectID: 1, TraceID: "t3", SpanID: "s3", Name: "GET /health", Status: "error", DurationUs: 100, StartTimeUs: 0},  // interesting
+	}
+
+	rw := &RedisWorker{
+		cfg:          WorkerConfig{SlowThresholdUs: 1_000_000},
+		boringPolicy: &mockBoringPolicy{ratio: 0, minPerMinute: 1},
+		floor:        sampling.NewMinuteFloor(),
+	}
+
+	result := rw.classifyForStorage(spans)
+	// 1 error (always kept) + 1 boring rescued by the floor = 2.
+	if len(result) != 2 {
+		t.Fatalf("want 2 spans (1 error + 1 floor-rescued boring), got %d", len(result))
+	}
+}
+
+func TestClassifyForStorageFloorPerOperation(t *testing.T) {
+	// Same project and minute, different operations → each operation keeps its
+	// own floor trace even though ratio=0 would drop everything.
+	spans := []repository.Span{
+		{ProjectID: 1, TraceID: "t1", SpanID: "s1", Name: "op-a", Status: "ok", DurationUs: 100, StartTimeUs: 0},
+		{ProjectID: 1, TraceID: "t2", SpanID: "s2", Name: "op-b", Status: "ok", DurationUs: 100, StartTimeUs: 0},
+	}
+	rw := &RedisWorker{
+		cfg:          WorkerConfig{SlowThresholdUs: 1_000_000},
+		boringPolicy: &mockBoringPolicy{ratio: 0, minPerMinute: 1},
+		floor:        sampling.NewMinuteFloor(),
+	}
+	if got := len(rw.classifyForStorage(spans)); got != 2 {
+		t.Fatalf("per-operation floor: want 2 spans, got %d", got)
+	}
+}
+
+func TestClassifyForStorageFloorProjectIsolation(t *testing.T) {
+	// Same operation and minute but different projects → each project keeps its
+	// own floor trace.
+	spans := []repository.Span{
+		{ProjectID: 1, TraceID: "t1", SpanID: "s1", Name: "op", Status: "ok", DurationUs: 100, StartTimeUs: 0},
+		{ProjectID: 2, TraceID: "t2", SpanID: "s2", Name: "op", Status: "ok", DurationUs: 100, StartTimeUs: 0},
+	}
+	rw := &RedisWorker{
+		cfg:          WorkerConfig{SlowThresholdUs: 1_000_000},
+		boringPolicy: &mockBoringPolicy{ratio: 0, minPerMinute: 1},
+		floor:        sampling.NewMinuteFloor(),
+	}
+	if got := len(rw.classifyForStorage(spans)); got != 2 {
+		t.Fatalf("project isolation: want 2 spans, got %d", got)
+	}
+}
+
+func TestClassifyForStorageFloorAcrossMinutes(t *testing.T) {
+	// Two boring traces for the same (project, op) but in different wall-clock
+	// minutes → both survive (one per minute).
+	const usPerMinute = 60_000_000
+	spans := []repository.Span{
+		{ProjectID: 1, TraceID: "t1", SpanID: "s1", Name: "op", Status: "ok", DurationUs: 100, StartTimeUs: 0},
+		{ProjectID: 1, TraceID: "t2", SpanID: "s2", Name: "op", Status: "ok", DurationUs: 100, StartTimeUs: usPerMinute},
+	}
+	rw := &RedisWorker{
+		cfg:          WorkerConfig{SlowThresholdUs: 1_000_000},
+		boringPolicy: &mockBoringPolicy{ratio: 0, minPerMinute: 1},
+		floor:        sampling.NewMinuteFloor(),
+	}
+	if got := len(rw.classifyForStorage(spans)); got != 2 {
+		t.Fatalf("per-minute floor: want 2 spans, got %d", got)
 	}
 }
