@@ -4,8 +4,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -64,6 +67,17 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectID := GetProjectID(r.Context())
+
+	// Guardrail: external OTLP arriving on the global/admin key authenticates as
+	// projectID 0, so its spans are stamped project 0 and stay invisible in every
+	// per-project view. In single-tenant deployments project 0 is the legitimate
+	// default, and self-instrument spans ride the internal path with projectID 0
+	// by design — so we warn (throttled) rather than reject, surfacing a likely
+	// misconfigured client without dropping data or breaking single-tenant setups.
+	if !selfExport && projectID == 0 {
+		warnOrphanedIngest(s.logger, extractRequestService(&req))
+	}
+
 	records := otlpToSpanRecords(&req, projectID)
 
 	if span != nil {
@@ -169,6 +183,36 @@ func otlpToSpanRecords(req *collectorpb.ExportTraceServiceRequest, projectID int
 		}
 	}
 	return records
+}
+
+// lastOrphanWarnMinute throttles the orphaned-ingest warning to at most once per
+// wall-clock minute per process, since OTLP ingest is a hot path.
+var lastOrphanWarnMinute atomic.Int64
+
+// warnOrphanedIngest logs (throttled) that external OTLP spans are being stamped
+// project 0 because the client authenticated with the global/admin key.
+func warnOrphanedIngest(logger *slog.Logger, service string) {
+	if logger == nil {
+		return
+	}
+	minute := time.Now().Unix() / 60
+	prev := lastOrphanWarnMinute.Load()
+	if prev >= minute || !lastOrphanWarnMinute.CompareAndSwap(prev, minute) {
+		return
+	}
+	logger.Warn("OTLP ingest on global/admin key is stamped project 0 and hidden from project views; configure a project-scoped API key",
+		"service", service)
+}
+
+// extractRequestService returns the service.name of the first resource in an
+// OTLP request, for diagnostics. Empty when none is present.
+func extractRequestService(req *collectorpb.ExportTraceServiceRequest) string {
+	for _, rs := range req.GetResourceSpans() {
+		if name := extractServiceName(rs.GetResource().GetAttributes()); name != "" && name != "unknown" {
+			return name
+		}
+	}
+	return ""
 }
 
 // extractServiceName finds service.name in OTLP resource attributes.

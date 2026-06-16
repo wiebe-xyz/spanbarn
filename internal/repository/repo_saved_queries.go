@@ -3,14 +3,14 @@ package repository
 import "time"
 
 type SavedQuery struct {
-	ID           int64     `json:"id"`
-	ProjectID    int64     `json:"projectId"`
-	Name         string    `json:"name"`
-	Service      string    `json:"service"`
-	Operation    string    `json:"operation"`
-	Status       string    `json:"status"`
-	MinDurationUs int64    `json:"minDurationUs"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID            int64     `json:"id"`
+	ProjectID     int64     `json:"projectId"`
+	Name          string    `json:"name"`
+	Service       string    `json:"service"`
+	Operation     string    `json:"operation"`
+	Status        string    `json:"status"`
+	MinDurationUs int64     `json:"minDurationUs"`
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 func (r *Repository) CreateSavedQuery(q SavedQuery) (int64, error) {

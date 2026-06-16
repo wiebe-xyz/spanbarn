@@ -206,18 +206,18 @@ func TestTouchAPIKey(t *testing.T) {
 
 func makeSpan(projectID int64, traceID, spanID, service, name, status string, durationUs int64) Span {
 	return Span{
-		ProjectID:  projectID,
-		TraceID:    traceID,
-		SpanID:     spanID,
-		Name:       name,
-		Service:    service,
-		Resource:   "/api/test",
-		Kind:       "server",
-		Status:     status,
+		ProjectID:   projectID,
+		TraceID:     traceID,
+		SpanID:      spanID,
+		Name:        name,
+		Service:     service,
+		Resource:    "/api/test",
+		Kind:        "server",
+		Status:      status,
 		StartTimeUs: time.Now().UnixMicro(),
-		DurationUs: durationUs,
-		Attributes: `{"key":"value"}`,
-		Events:     `[]`,
+		DurationUs:  durationUs,
+		Attributes:  `{"key":"value"}`,
+		Events:      `[]`,
 	}
 }
 

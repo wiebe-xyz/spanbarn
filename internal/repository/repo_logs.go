@@ -26,16 +26,16 @@ type LogRow struct {
 
 // LogFilter scopes log queries.
 type LogFilter struct {
-	ProjectID      int64
-	TraceID        string
-	SpanID         string
-	MinSeverity    int32  // inclusive lower bound on severity_number; 0 = no filter
-	Service        string // matches JSON_EXTRACT(attributes,'$.service.name')
-	Search         string // body LIKE %search%
-	From           time.Time
-	To             time.Time
-	Limit          int
-	Offset         int
+	ProjectID   int64
+	TraceID     string
+	SpanID      string
+	MinSeverity int32  // inclusive lower bound on severity_number; 0 = no filter
+	Service     string // matches JSON_EXTRACT(attributes,'$.service.name')
+	Search      string // body LIKE %search%
+	From        time.Time
+	To          time.Time
+	Limit       int
+	Offset      int
 }
 
 // PinnedTrace is a user-saved trace reference that exempts its logs from normal deletion.
@@ -295,4 +295,3 @@ func (r *Repository) IsTracePinned(ctx context.Context, projectID int64, traceID
 	).Scan(&n)
 	return n > 0, err
 }
-

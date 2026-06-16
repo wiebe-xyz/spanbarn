@@ -63,8 +63,8 @@ func InitTracing(cfg TracingConfig) func() {
 	opts = append(opts,
 		otlptracehttp.WithEndpoint(endpoint),
 		otlptracehttp.WithHeaders(map[string]string{
-			"X-SpanBarn-Api-Key":  cfg.APIKey,
-			"User-Agent":          selfInstrumentUA,
+			"X-SpanBarn-Api-Key": cfg.APIKey,
+			"User-Agent":         selfInstrumentUA,
 		}),
 	)
 

@@ -104,38 +104,38 @@ type AggregateFilter struct {
 }
 
 type PromptRecord struct {
-	ID                 int64        `json:"id"`
-	ProjectID          int64        `json:"projectId"`
-	TraceID            string       `json:"traceId"`
-	SpanID             string       `json:"spanId"`
-	ParentSpanID       string       `json:"parentSpanId"`
-	Service            string       `json:"service"`
-	Name               string       `json:"name"`
-	GenAISystem        string       `json:"genAiSystem"`
-	Model              string       `json:"model"`
-	Temperature        *float64     `json:"temperature"`
-	MaxTokens          *int64       `json:"maxTokens"`
-	PromptBody         string       `json:"promptBody"`
-	ResponseBody       string       `json:"responseBody"`
-	InputTokens           int64    `json:"inputTokens"`
-	OutputTokens          int64    `json:"outputTokens"`
-	TotalTokens           int64    `json:"totalTokens"`
-	CachedInputTokens     int64    `json:"cachedInputTokens"`
-	ReasoningOutputTokens int64    `json:"reasoningOutputTokens"`
-	CostUSD               float64  `json:"costUsd"`
-	InputCostUSD          float64  `json:"inputCostUsd"`
-	OutputCostUSD         float64  `json:"outputCostUsd"`
-	DurationUs         int64        `json:"durationUs"`
-	Status             string       `json:"status"`
-	FinishReason       string       `json:"finishReason"`
-	PromptTemplate     string       `json:"promptTemplate"`
-	PromptHash         string       `json:"promptHash"`
-	Outcome            string       `json:"outcome"`
-	QualityScore       *float64     `json:"qualityScore"`
-	FeatureFlagKey     string       `json:"featureFlagKey"`
-	FeatureFlagVariant string       `json:"featureFlagVariant"`
-	StartTimeUs        int64        `json:"startTimeUs"`
-	IngestedAt         time.Time    `json:"ingestedAt"`
+	ID                    int64     `json:"id"`
+	ProjectID             int64     `json:"projectId"`
+	TraceID               string    `json:"traceId"`
+	SpanID                string    `json:"spanId"`
+	ParentSpanID          string    `json:"parentSpanId"`
+	Service               string    `json:"service"`
+	Name                  string    `json:"name"`
+	GenAISystem           string    `json:"genAiSystem"`
+	Model                 string    `json:"model"`
+	Temperature           *float64  `json:"temperature"`
+	MaxTokens             *int64    `json:"maxTokens"`
+	PromptBody            string    `json:"promptBody"`
+	ResponseBody          string    `json:"responseBody"`
+	InputTokens           int64     `json:"inputTokens"`
+	OutputTokens          int64     `json:"outputTokens"`
+	TotalTokens           int64     `json:"totalTokens"`
+	CachedInputTokens     int64     `json:"cachedInputTokens"`
+	ReasoningOutputTokens int64     `json:"reasoningOutputTokens"`
+	CostUSD               float64   `json:"costUsd"`
+	InputCostUSD          float64   `json:"inputCostUsd"`
+	OutputCostUSD         float64   `json:"outputCostUsd"`
+	DurationUs            int64     `json:"durationUs"`
+	Status                string    `json:"status"`
+	FinishReason          string    `json:"finishReason"`
+	PromptTemplate        string    `json:"promptTemplate"`
+	PromptHash            string    `json:"promptHash"`
+	Outcome               string    `json:"outcome"`
+	QualityScore          *float64  `json:"qualityScore"`
+	FeatureFlagKey        string    `json:"featureFlagKey"`
+	FeatureFlagVariant    string    `json:"featureFlagVariant"`
+	StartTimeUs           int64     `json:"startTimeUs"`
+	IngestedAt            time.Time `json:"ingestedAt"`
 }
 
 type PromptFilter struct {
@@ -161,23 +161,23 @@ type TraceExclusion struct {
 }
 
 type Alert struct {
-	ID               int64        `json:"id"`
-	ProjectID        int64        `json:"projectId"`
-	Service          string       `json:"service"`
-	Operation        string       `json:"operation"`
-	Type             string       `json:"type"`
-	Threshold        float64      `json:"threshold"`
-	ComparisonWindow int          `json:"comparisonWindow"`
-	CooldownMinutes  int          `json:"cooldownMinutes"`
-	WebhookURL       string       `json:"webhookUrl"`
-	Email            string       `json:"email"`
-	Enabled          bool         `json:"enabled"`
+	ID               int64   `json:"id"`
+	ProjectID        int64   `json:"projectId"`
+	Service          string  `json:"service"`
+	Operation        string  `json:"operation"`
+	Type             string  `json:"type"`
+	Threshold        float64 `json:"threshold"`
+	ComparisonWindow int     `json:"comparisonWindow"`
+	CooldownMinutes  int     `json:"cooldownMinutes"`
+	WebhookURL       string  `json:"webhookUrl"`
+	Email            string  `json:"email"`
+	Enabled          bool    `json:"enabled"`
 	// Metric-threshold fields (type == "metric_threshold"). MetricName is the
 	// OTLP metric, MetricAgg one of rate/avg/p95/last, LabelFilters a JSON object
 	// of attribute equality filters scoping which series the alert watches.
-	MetricName      string `json:"metricName"`
-	MetricAgg       string `json:"metricAgg"`
-	LabelFilters    string `json:"labelFilters"`
+	MetricName      string       `json:"metricName"`
+	MetricAgg       string       `json:"metricAgg"`
+	LabelFilters    string       `json:"labelFilters"`
 	LastTriggeredAt sql.NullTime `json:"lastTriggeredAt"`
 	CreatedAt       time.Time    `json:"createdAt"`
 }

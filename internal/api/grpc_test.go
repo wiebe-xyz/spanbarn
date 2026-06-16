@@ -12,8 +12,8 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 
-	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"

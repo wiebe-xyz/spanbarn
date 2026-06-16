@@ -166,4 +166,3 @@ func randomOIDCToken() string {
 	_, _ = rand.Read(buf)
 	return base64.RawURLEncoding.EncodeToString(buf)
 }
-

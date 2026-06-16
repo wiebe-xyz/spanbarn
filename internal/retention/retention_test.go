@@ -337,7 +337,6 @@ func TestRunOnceEmptyDatabase(t *testing.T) {
 	}
 }
 
-
 func TestRunOnceMultipleBatches(t *testing.T) {
 	cfg := Config{
 		FullRetentionHours:        1,

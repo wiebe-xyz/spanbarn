@@ -243,7 +243,7 @@ type otlpSelfLogsPayload struct {
 }
 
 type otlpSelfResourceLog struct {
-	Resource  otlpSelfResource  `json:"resource"`
+	Resource  otlpSelfResource   `json:"resource"`
 	ScopeLogs []otlpSelfScopeLog `json:"scopeLogs"`
 }
 

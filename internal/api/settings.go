@@ -160,17 +160,20 @@ func serveSWR[T any](
 // hierarchy: ingest.sample_ratio.default, ingest.sample_ratio.project.{id},
 // ingest.sample_ratio.project.{id}.op.{operation}.
 // Boring span keys: boring.sample_ratio, boring.sample_ratio.project.{id},
-// boring_retention_minutes, boring.verbose_until.project.{id}.
+// boring_retention_minutes, boring.verbose_until.project.{id},
+// boring.min_traces_per_minute, boring.min_traces_per_minute.project.{id}.
 func isAllowedSettingKey(k string) bool {
 	switch k {
 	case "retention_full_hours", "retention_interesting_hours",
 		"retention_aggregated_days", "retention_error_days",
 		"boring_retention_minutes", "boring.sample_ratio",
+		"boring.min_traces_per_minute",
 		"metrics_retention_days", "log_retention_hours", "error_log_retention_days":
 		return true
 	}
 	return strings.HasPrefix(k, "ingest.sample_ratio.") ||
 		strings.HasPrefix(k, "boring.sample_ratio.") ||
+		strings.HasPrefix(k, "boring.min_traces_per_minute.") ||
 		strings.HasPrefix(k, "boring.verbose_until.")
 }
 

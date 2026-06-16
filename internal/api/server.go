@@ -163,12 +163,12 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 			APIKey:   cfg.FunnelBarnAPIKey,
 			Project:  cfg.FunnelBarnProject,
 		},
-		rateLimiter:    NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
-		metrics:        NewMetrics(),
+		rateLimiter: NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
+		metrics:     NewMetrics(),
 		ingest:      ingestHandler,
 		querySvc:    querySvc,
-		sessionMgr:     sm,
-		logger:         logger,
+		sessionMgr:  sm,
+		logger:      logger,
 	}
 
 	for _, opt := range opts {

@@ -729,7 +729,7 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 	return result, nil
 }
 
-// QueryRootSpanGroups aggregates root spans (parent_span_id = '') by operation name,
+// QueryRootSpanGroups aggregates root spans (parent_span_id = ”) by operation name,
 // returning count, error count, and raw durations for percentile computation.
 // Uses the idx_spans_root_ingested partial index for efficient scanning.
 func (r *Repository) QueryRootSpanGroups(ctx context.Context, f SpanFilter) ([]RootSpanGroup, error) {
@@ -1050,8 +1050,8 @@ func (r *Repository) QueryWebVitalsTimeseries(service, page, metric string, from
 	defer rows.Close()
 
 	type rawBucket struct {
-		values             []int64
-		good, ni, poor     int64
+		values         []int64
+		good, ni, poor int64
 	}
 	byBucket := make(map[string]*rawBucket)
 	var bucketOrder []string
