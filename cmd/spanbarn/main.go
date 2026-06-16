@@ -809,16 +809,23 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 // not crash the process.
 func buildOIDCClient(cfg config.Config, logger *slog.Logger) *auth.OIDCClient {
 	oc := auth.OIDCConfig{
-		Issuer:        cfg.OIDCIssuer,
-		ClientID:      cfg.OIDCClientID,
-		ClientSecret:  cfg.OIDCClientSecret,
-		RedirectURL:   cfg.OIDCRedirectURL,
-		RequiredGroup: cfg.OIDCRequiredGroup,
+		Issuer:            cfg.OIDCIssuer,
+		ClientID:          cfg.OIDCClientID,
+		ClientSecret:      cfg.OIDCClientSecret,
+		RedirectURL:       cfg.OIDCRedirectURL,
+		RequiredGroup:     cfg.OIDCRequiredGroup,
+		ResourceAudiences: cfg.OIDCResourceAudiences,
+		CLIClientID:       cfg.OIDCCLIClientID,
+	}
+	// The sb CLI's device-code tokens carry the CLI client id as their
+	// audience, so accept it as a resource audience automatically.
+	if cfg.OIDCCLIClientID != "" {
+		oc.ResourceAudiences = append(oc.ResourceAudiences, cfg.OIDCCLIClientID)
 	}
 	if !oc.Enabled() {
 		return nil
 	}
-	logger.Info("oidc: enabled", "issuer", oc.Issuer, "client_id", oc.ClientID, "required_group", oc.RequiredGroup)
+	logger.Info("oidc: enabled", "issuer", oc.Issuer, "client_id", oc.ClientID, "required_group", oc.RequiredGroup, "resource_audiences", oc.ResourceAudiences)
 	return auth.NewOIDCClient(oc)
 }
 

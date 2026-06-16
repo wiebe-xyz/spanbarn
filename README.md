@@ -191,10 +191,12 @@ go install github.com/wiebe-xyz/spanbarn/cmd/sb@latest
 ### Usage
 
 ```bash
-# Authenticate — either a read-scoped API key (see apikey create above)
-sb login --url https://spanbarn.example.com --api-key KEY
-# ...or your dashboard username/password (prompts for the password):
-sb login --url https://spanbarn.example.com --username admin
+# Authenticate — pick one:
+sb login --url https://spanbarn.example.com --api-key KEY        # read-scoped API key
+sb login --url https://spanbarn.example.com --oidc               # IamBarn SSO (approve in browser)
+sb login --url https://spanbarn.example.com \
+  --client-id IMC_ID --client-secret SECRET                      # IamBarn M2M (agents/CI)
+sb login --url https://spanbarn.example.com --username admin     # local password (prompts)
 
 # Pin a project for the current directory (writes .spanbarn.json)
 sb init --project my-app

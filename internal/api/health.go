@@ -37,11 +37,19 @@ func (s *Server) handleClientConfig(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	if s.oidc != nil {
-		resp["oidc"] = map[string]any{
+		oc := s.oidc.Config()
+		issuer := strings.TrimRight(oc.Issuer, "/")
+		oidcCfg := map[string]any{
 			"enabled":  true,
 			"loginURL": "/api/v1/oidc/login",
+			"issuer":   issuer,
 		}
-		if issuer := strings.TrimRight(s.oidc.Config().Issuer, "/"); issuer != "" {
+		// The sb CLI uses this public client for the device-code login flow.
+		if oc.CLIClientID != "" {
+			oidcCfg["cli_client_id"] = oc.CLIClientID
+		}
+		resp["oidc"] = oidcCfg
+		if issuer != "" {
 			resp["iambarn"] = map[string]string{
 				"issuer":      issuer,
 				"profile_url": issuer + "/admin#profile",
