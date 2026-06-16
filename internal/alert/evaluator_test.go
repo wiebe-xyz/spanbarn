@@ -41,6 +41,7 @@ func (m *mockNotifier) SendEmail(_ context.Context, to, subject, body string) er
 type mockAlertRepo struct {
 	alerts     []repository.Alert
 	aggregates []repository.Aggregate
+	rollups    []repository.MetricRollup
 	triggered  map[int64]time.Time
 }
 
@@ -94,9 +95,90 @@ func (m *mockAlertRepo) QueryAggregates(f repository.AggregateFilter) ([]reposit
 	return out, nil
 }
 
+func (m *mockAlertRepo) QueryMetricRollups(_ context.Context, f repository.MetricRollupFilter) ([]repository.MetricRollup, error) {
+	var out []repository.MetricRollup
+	for _, r := range m.rollups {
+		if f.ProjectID != 0 && r.ProjectID != f.ProjectID {
+			continue
+		}
+		if f.Name != "" && r.Name != f.Name {
+			continue
+		}
+		if !f.From.IsZero() && r.Bucket.Before(f.From) {
+			continue
+		}
+		if !f.To.IsZero() && r.Bucket.After(f.To) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
 func (m *mockAlertRepo) UpdateAlertLastTriggered(alertID int64, at time.Time) error {
 	m.triggered[alertID] = at
 	return nil
+}
+
+func TestEvaluateMetricThreshold(t *testing.T) {
+	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	repo := newMockRepo()
+	repo.alerts = []repository.Alert{{
+		ID: 1, ProjectID: 1, Type: "metric_threshold",
+		MetricName: "queue.depth", MetricAgg: "last", Threshold: 100,
+		ComparisonWindow: 10, CooldownMinutes: 30, Enabled: true,
+		WebhookURL: "https://hook", LabelFilters: "{}",
+	}}
+	// Flat baseline ~20, then a jump to 250 in the latest bucket.
+	vals := []float64{20, 20, 20, 250}
+	for i, v := range vals {
+		repo.rollups = append(repo.rollups, repository.MetricRollup{
+			ProjectID: 1, Name: "queue.depth", Type: "gauge", AttrFingerprint: "fp",
+			Bucket: now.Add(time.Duration(i-4) * time.Minute), Count: 1, Sum: v, Min: v, Max: v, Last: v,
+		})
+	}
+
+	notifier := &mockNotifier{}
+	eval := NewEvaluator(repo, notifier, slog.Default(), nil)
+	eval.now = func() time.Time { return now }
+
+	if err := eval.Evaluate(context.Background(), 1); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if len(notifier.webhooks) != 1 {
+		t.Fatalf("expected 1 webhook for breaching metric alert, got %d", len(notifier.webhooks))
+	}
+	if _, ok := repo.triggered[1]; !ok {
+		t.Error("expected alert 1 to be marked triggered")
+	}
+}
+
+func TestEvaluateMetricThresholdBelow(t *testing.T) {
+	now := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	repo := newMockRepo()
+	repo.alerts = []repository.Alert{{
+		ID: 2, ProjectID: 1, Type: "metric_threshold",
+		MetricName: "queue.depth", MetricAgg: "last", Threshold: 100,
+		ComparisonWindow: 10, CooldownMinutes: 30, Enabled: true,
+		WebhookURL: "https://hook", LabelFilters: "{}",
+	}}
+	for i, v := range []float64{20, 22, 19, 21} {
+		repo.rollups = append(repo.rollups, repository.MetricRollup{
+			ProjectID: 1, Name: "queue.depth", Type: "gauge", AttrFingerprint: "fp",
+			Bucket: now.Add(time.Duration(i-4) * time.Minute), Count: 1, Sum: v, Last: v,
+		})
+	}
+
+	notifier := &mockNotifier{}
+	eval := NewEvaluator(repo, notifier, slog.Default(), nil)
+	eval.now = func() time.Time { return now }
+
+	if err := eval.Evaluate(context.Background(), 1); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if len(notifier.webhooks) != 0 {
+		t.Errorf("expected no webhook below threshold, got %d", len(notifier.webhooks))
+	}
 }
 
 func TestEvaluateNoAlerts(t *testing.T) {

@@ -172,6 +172,12 @@ type Alert struct {
 	WebhookURL       string       `json:"webhookUrl"`
 	Email            string       `json:"email"`
 	Enabled          bool         `json:"enabled"`
-	LastTriggeredAt  sql.NullTime `json:"lastTriggeredAt"`
-	CreatedAt        time.Time    `json:"createdAt"`
+	// Metric-threshold fields (type == "metric_threshold"). MetricName is the
+	// OTLP metric, MetricAgg one of rate/avg/p95/last, LabelFilters a JSON object
+	// of attribute equality filters scoping which series the alert watches.
+	MetricName      string `json:"metricName"`
+	MetricAgg       string `json:"metricAgg"`
+	LabelFilters    string `json:"labelFilters"`
+	LastTriggeredAt sql.NullTime `json:"lastTriggeredAt"`
+	CreatedAt       time.Time    `json:"createdAt"`
 }

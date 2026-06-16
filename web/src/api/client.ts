@@ -18,6 +18,8 @@ import type {
   WebVitalSummary,
   WebVitalTimeseriesBucket,
   MetricNamesResponse,
+  MetricCatalogResponse,
+  MetricInsightsResponse,
   MetricSeriesResponse,
   LogsResponse,
   LogsHistogramResponse,
@@ -222,6 +224,12 @@ export const api = {
   getMetricNames: (from: string, to: string, projectId = 0) =>
     fetchJSON<MetricNamesResponse>(`/api/v1/metrics/names${qs({ from, to, project_id: projectId || undefined })}`),
 
+  getMetricCatalog: (from: string, to: string, projectId = 0) =>
+    fetchJSON<MetricCatalogResponse>(`/api/v1/metrics/catalog${qs({ from, to, project_id: projectId || undefined })}`),
+
+  getMetricInsights: (from: string, to: string, projectId = 0) =>
+    fetchJSON<MetricInsightsResponse>(`/api/v1/metrics/insights${qs({ from, to, project_id: projectId || undefined })}`),
+
   getMetricSeries: (
     name: string,
     from: string,
@@ -229,6 +237,7 @@ export const api = {
     labels?: Record<string, string>,
     limit?: number,
     projectId = 0,
+    groupBy?: string[],
   ) => {
     const params: Record<string, string | number | undefined> = {
       name,
@@ -236,6 +245,7 @@ export const api = {
       to,
       limit,
       project_id: projectId || undefined,
+      group_by: groupBy && groupBy.length > 0 ? groupBy.join(',') : undefined,
     }
     let query = qs(params)
     if (labels && Object.keys(labels).length > 0) {

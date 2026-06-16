@@ -20,12 +20,19 @@ type MetricsRepository interface {
 	InsertMetrics(ctx context.Context, recs []model.MetricRecord) error
 }
 
+// MetricRollupSink receives every ingested metric data point so it can fold it
+// into downsampled rollups. Optional; nil disables rollups.
+type MetricRollupSink interface {
+	AddMetric(rec model.MetricRecord)
+}
+
 // MetricsHandler buffers incoming OTLP metric data points and writes them to
 // SQLite in batches. It does not use the spool — losing a flush on crash is
 // acceptable for metrics.
 type MetricsHandler struct {
 	ch     chan []model.MetricRecord
 	repo   MetricsRepository
+	sink   MetricRollupSink
 	logger *slog.Logger
 }
 
@@ -38,6 +45,21 @@ func NewMetricsHandler(repo MetricsRepository, logger *slog.Logger) *MetricsHand
 		ch:     make(chan []model.MetricRecord, metricsChannelSize),
 		repo:   repo,
 		logger: logger,
+	}
+}
+
+// SetRollupSink registers a sink fed every ingested data point. Call before Run.
+func (h *MetricsHandler) SetRollupSink(sink MetricRollupSink) {
+	h.sink = sink
+}
+
+// feed forwards a batch to the rollup sink, if one is registered.
+func (h *MetricsHandler) feed(recs []model.MetricRecord) {
+	if h.sink == nil {
+		return
+	}
+	for _, rec := range recs {
+		h.sink.AddMetric(rec)
 	}
 }
 
@@ -76,6 +98,7 @@ func (h *MetricsHandler) Run(ctx context.Context) {
 	for {
 		select {
 		case recs := <-h.ch:
+			h.feed(recs)
 			pending = append(pending, recs...)
 			if len(pending) >= metricsFlushSize {
 				flush()
@@ -87,6 +110,7 @@ func (h *MetricsHandler) Run(ctx context.Context) {
 			for {
 				select {
 				case recs := <-h.ch:
+					h.feed(recs)
 					pending = append(pending, recs...)
 				default:
 					flush()

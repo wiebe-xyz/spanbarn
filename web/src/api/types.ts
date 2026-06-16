@@ -225,13 +225,16 @@ export type Alert = {
   projectId: number
   service: string
   operation: string
-  type: 'latency' | 'error_rate'
+  type: 'latency' | 'error_rate' | 'metric_threshold'
   threshold: number
   comparisonWindow: number
   cooldownMinutes: number
   webhookUrl: string
   email: string
   enabled: boolean
+  metricName?: string
+  metricAgg?: string
+  labelFilters?: Record<string, string>
   lastTriggeredAt?: string
   createdAt: string
 }
@@ -278,13 +281,24 @@ export type WebVitalTimeseriesBucket = {
   poor: number
 }
 
-/** A single metric data point returned by the series query API. */
+/** How a metric series should be rendered (mirrors metrics.RenderKind). */
+export type MetricRender = 'line' | 'rate' | 'percentile'
+
+/** A render-ready point. Which fields are set depends on the render kind:
+ * value for line/rate, p50/p95/p99 for percentile. */
 export type MetricPoint = {
   t: number
   value: number
   count: number
-  attributes: Record<string, unknown>
-  extra?: Record<string, unknown> | null
+  p50?: number
+  p95?: number
+  p99?: number
+}
+
+/** One line in a chart: a label set plus its derived points. */
+export type MetricSeries = {
+  labels: Record<string, string>
+  points: MetricPoint[]
 }
 
 /** Response from GET /api/v1/metrics/names */
@@ -292,12 +306,48 @@ export type MetricNamesResponse = {
   names: string[]
 }
 
+/** One metric in the catalog, with its type, unit and distinct-series count. */
+export type MetricCatalogEntry = {
+  name: string
+  type: string
+  unit: string
+  series: number
+}
+
+/** Metrics grouped by semantic prefix (http, db, system, …). */
+export type MetricCatalogGroup = {
+  name: string
+  metrics: MetricCatalogEntry[]
+}
+
+/** Response from GET /api/v1/metrics/catalog */
+export type MetricCatalogResponse = {
+  groups: MetricCatalogGroup[]
+}
+
+/** A notable change in a metric series. */
+export type MetricInsight = {
+  metric: string
+  labels: Record<string, string>
+  kind: 'spike' | 'drop' | 'regression' | 'new_series'
+  render: MetricRender
+  baseline: number
+  recent: number
+  changePct: number
+}
+
+/** Response from GET /api/v1/metrics/insights */
+export type MetricInsightsResponse = {
+  insights: MetricInsight[]
+}
+
 /** Response from GET /api/v1/metrics/series */
 export type MetricSeriesResponse = {
   name: string
   type: string
   unit: string
-  points: MetricPoint[]
+  render: MetricRender
+  series: MetricSeries[]
 }
 
 /** A single log entry returned by the logs query API. */

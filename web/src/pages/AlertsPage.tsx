@@ -5,16 +5,21 @@ import type { Alert } from '../api/types'
 import { ServiceSelect } from '../components/ServiceSelect'
 import { useTimeRange } from '../contexts/useTimeRange'
 
+type AlertType = 'latency' | 'error_rate' | 'metric_threshold'
+
 type AlertFormState = {
   service: string
   operation: string
-  type: 'latency' | 'error_rate'
+  type: AlertType
   threshold: string
   comparisonWindow: string
   cooldownMinutes: string
   webhookUrl: string
   email: string
   enabled: boolean
+  metricName: string
+  metricAgg: string
+  labelFilters: string // "key=value, key2=value2"
 }
 
 const emptyForm = (): AlertFormState => ({
@@ -27,7 +32,27 @@ const emptyForm = (): AlertFormState => ({
   webhookUrl: '',
   email: '',
   enabled: true,
+  metricName: '',
+  metricAgg: 'last',
+  labelFilters: '',
 })
+
+// formatLabelFilters renders a label map as "k=v, k2=v2" for the text input.
+function formatLabelFilters(m?: Record<string, string>): string {
+  if (!m) return ''
+  return Object.entries(m).map(([k, v]) => `${k}=${v}`).join(', ')
+}
+
+// parseLabelFilters parses "k=v, k2=v2" back into a label map.
+function parseLabelFilters(s: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const part of s.split(',')) {
+    const [k, ...rest] = part.split('=')
+    const key = k.trim()
+    if (key && rest.length > 0) out[key] = rest.join('=').trim()
+  }
+  return out
+}
 
 function alertToForm(a: Alert): AlertFormState {
   return {
@@ -40,16 +65,22 @@ function alertToForm(a: Alert): AlertFormState {
     webhookUrl: a.webhookUrl,
     email: a.email,
     enabled: a.enabled,
+    metricName: a.metricName ?? '',
+    metricAgg: a.metricAgg || 'last',
+    labelFilters: formatLabelFilters(a.labelFilters),
   }
 }
 
-function thresholdLabel(type: 'latency' | 'error_rate') {
-  return type === 'latency' ? 'Threshold (ms)' : 'Threshold (%)'
+function thresholdLabel(type: AlertType) {
+  if (type === 'latency') return 'Threshold (ms)'
+  if (type === 'error_rate') return 'Threshold (%)'
+  return 'Threshold'
 }
 
 function thresholdDisplay(a: Alert) {
   if (a.type === 'latency') return `> ${a.threshold} ms`
-  return `> ${a.threshold}%`
+  if (a.type === 'error_rate') return `> ${a.threshold}%`
+  return `${a.metricAgg ?? ''} > ${a.threshold}`
 }
 
 function relativeTime(iso: string) {
@@ -117,7 +148,12 @@ export function AlertsPage(): ReactElement {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
-    if (!form.service) { setError('Service is required'); return }
+    const isMetric = form.type === 'metric_threshold'
+    if (isMetric) {
+      if (!form.metricName) { setError('Metric name is required'); return }
+    } else if (!form.service) {
+      setError('Service is required'); return
+    }
     if (!form.threshold) { setError('Threshold is required'); return }
     if (!defaultProjectId) { setError('Projects still loading — please wait a moment and try again'); return }
 
@@ -132,6 +168,9 @@ export function AlertsPage(): ReactElement {
       webhookUrl: form.webhookUrl,
       email: form.email,
       enabled: form.enabled,
+      metricName: isMetric ? form.metricName : '',
+      metricAgg: isMetric ? form.metricAgg : '',
+      labelFilters: isMetric ? parseLabelFilters(form.labelFilters) : {},
     }
 
     setSaving(true)
@@ -169,10 +208,11 @@ export function AlertsPage(): ReactElement {
     }
   }
 
-  const typeBadge = (type: 'latency' | 'error_rate') =>
-    type === 'latency'
-      ? { bg: 'rgba(99,102,241,0.15)', color: '#818cf8', label: 'Latency' }
-      : { bg: 'rgba(239,68,68,0.15)', color: '#f87171', label: 'Error rate' }
+  const typeBadge = (type: AlertType) => {
+    if (type === 'latency') return { bg: 'rgba(99,102,241,0.15)', color: '#818cf8', label: 'Latency' }
+    if (type === 'error_rate') return { bg: 'rgba(239,68,68,0.15)', color: '#f87171', label: 'Error rate' }
+    return { bg: 'rgba(34,197,94,0.15)', color: '#4ade80', label: 'Metric' }
+  }
 
   const inputStyle: React.CSSProperties = {
     width: '100%',
@@ -256,11 +296,17 @@ export function AlertsPage(): ReactElement {
                   return (
                     <tr key={a.id}>
                       <td>
-                        <span style={{ fontWeight: 600 }}>{a.service}</span>
-                        {a.operation && (
-                          <span style={{ color: 'var(--text-muted)', fontSize: '0.8125rem' }}>
-                            {' '}/ {a.operation}
-                          </span>
+                        {a.type === 'metric_threshold' ? (
+                          <span style={{ fontWeight: 600, fontFamily: 'monospace', fontSize: '0.8125rem' }}>{a.metricName}</span>
+                        ) : (
+                          <>
+                            <span style={{ fontWeight: 600 }}>{a.service}</span>
+                            {a.operation && (
+                              <span style={{ color: 'var(--text-muted)', fontSize: '0.8125rem' }}>
+                                {' '}/ {a.operation}
+                              </span>
+                            )}
+                          </>
                         )}
                       </td>
                       <td>
@@ -379,53 +425,96 @@ export function AlertsPage(): ReactElement {
 
             <form onSubmit={(e) => { void handleSubmit(e) }}>
               <div style={{ display: 'grid', gap: '1rem' }}>
-                {/* Service */}
+                {/* Alert type selector first — it switches the rest of the form. */}
                 <div>
-                  <label style={labelStyle}>Service *</label>
-                  <ServiceSelect
-                    value={form.service}
-                    onChange={(v) => setForm((f) => ({ ...f, service: v }))}
-                    range={range}
-                  />
+                  <label style={labelStyle}>Alert type *</label>
+                  <select
+                    style={{ ...inputStyle, appearance: 'auto' }}
+                    value={form.type}
+                    onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as AlertType }))}
+                  >
+                    <option value="latency">Latency (p99)</option>
+                    <option value="error_rate">Error rate</option>
+                    <option value="metric_threshold">Metric threshold</option>
+                  </select>
                 </div>
 
-                {/* Operation */}
+                {form.type === 'metric_threshold' ? (
+                  <>
+                    {/* Metric name + aggregation */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.75rem' }}>
+                      <div>
+                        <label style={labelStyle}>Metric name *</label>
+                        <input
+                          style={inputStyle}
+                          placeholder="e.g. http.server.active_requests"
+                          value={form.metricName}
+                          onChange={(e) => setForm((f) => ({ ...f, metricName: e.target.value }))}
+                        />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Aggregation</label>
+                        <select
+                          style={{ ...inputStyle, appearance: 'auto' }}
+                          value={form.metricAgg}
+                          onChange={(e) => setForm((f) => ({ ...f, metricAgg: e.target.value }))}
+                        >
+                          <option value="last">Last value</option>
+                          <option value="avg">Average</option>
+                          <option value="rate">Rate /s (counters)</option>
+                          <option value="p95">p95 (histograms)</option>
+                        </select>
+                      </div>
+                    </div>
+                    {/* Label filters */}
+                    <div>
+                      <label style={labelStyle}>Label filters (optional)</label>
+                      <input
+                        style={inputStyle}
+                        placeholder="e.g. service.name=api, route=/checkout"
+                        value={form.labelFilters}
+                        onChange={(e) => setForm((f) => ({ ...f, labelFilters: e.target.value }))}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* Service */}
+                    <div>
+                      <label style={labelStyle}>Service *</label>
+                      <ServiceSelect
+                        value={form.service}
+                        onChange={(v) => setForm((f) => ({ ...f, service: v }))}
+                        range={range}
+                      />
+                    </div>
+
+                    {/* Operation */}
+                    <div>
+                      <label style={labelStyle}>Operation (optional)</label>
+                      <input
+                        style={inputStyle}
+                        placeholder="e.g. GET /api/users — leave blank for all operations"
+                        value={form.operation}
+                        onChange={(e) => setForm((f) => ({ ...f, operation: e.target.value }))}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Threshold */}
                 <div>
-                  <label style={labelStyle}>Operation (optional)</label>
+                  <label style={labelStyle}>{thresholdLabel(form.type)} *</label>
                   <input
                     style={inputStyle}
-                    placeholder="e.g. GET /api/users — leave blank for all operations"
-                    value={form.operation}
-                    onChange={(e) => setForm((f) => ({ ...f, operation: e.target.value }))}
+                    type="number"
+                    min="0"
+                    step={form.type === 'error_rate' ? '0.1' : '1'}
+                    placeholder={form.type === 'latency' ? '500' : form.type === 'error_rate' ? '5' : '100'}
+                    value={form.threshold}
+                    onChange={(e) => setForm((f) => ({ ...f, threshold: e.target.value }))}
+                    required
                   />
-                </div>
-
-                {/* Type + threshold side by side */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                  <div>
-                    <label style={labelStyle}>Alert type *</label>
-                    <select
-                      style={{ ...inputStyle, appearance: 'auto' }}
-                      value={form.type}
-                      onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as 'latency' | 'error_rate' }))}
-                    >
-                      <option value="latency">Latency (p99)</option>
-                      <option value="error_rate">Error rate</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>{thresholdLabel(form.type)} *</label>
-                    <input
-                      style={inputStyle}
-                      type="number"
-                      min="0"
-                      step={form.type === 'latency' ? '1' : '0.1'}
-                      placeholder={form.type === 'latency' ? '500' : '5'}
-                      value={form.threshold}
-                      onChange={(e) => setForm((f) => ({ ...f, threshold: e.target.value }))}
-                      required
-                    />
-                  </div>
                 </div>
 
                 {/* Windows */}

@@ -20,6 +20,7 @@ var alertTracer = otel.Tracer("spanbarn/alert")
 type AlertRepository interface {
 	ListAlerts(projectID int64) ([]repository.Alert, error)
 	QueryAggregates(filter repository.AggregateFilter) ([]repository.Aggregate, error)
+	QueryMetricRollups(ctx context.Context, f repository.MetricRollupFilter) ([]repository.MetricRollup, error)
 	UpdateAlertLastTriggered(alertID int64, at time.Time) error
 }
 
@@ -148,6 +149,10 @@ func (e *Evaluator) evaluateAlert(ctx context.Context, a repository.Alert, now t
 	)
 	defer span.End()
 
+	if a.Type == "metric_threshold" {
+		return e.evaluateMetricAlert(ctx, a, now)
+	}
+
 	// Query the current (most recent) bucket aggregate.
 	currentAggs, err := e.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: a.ProjectID,
@@ -208,6 +213,13 @@ func (e *Evaluator) evaluateAlert(ctx context.Context, a repository.Alert, now t
 		return fmt.Errorf("unknown alert type: %s", a.Type)
 	}
 
+	return e.maybeTrigger(ctx, span, a, currentVal, avgVal, len(historyAggs) > 0, now)
+}
+
+// maybeTrigger applies the shared threshold + significant-increase gate and, if
+// crossed, sends notifications and records the trigger time. hasHistory tells it
+// whether a rolling baseline was available for the >20% increase check.
+func (e *Evaluator) maybeTrigger(ctx context.Context, span trace.Span, a repository.Alert, currentVal, avgVal float64, hasHistory bool, now time.Time) error {
 	// Check if current exceeds threshold.
 	if currentVal < a.Threshold {
 		return nil
@@ -215,11 +227,16 @@ func (e *Evaluator) evaluateAlert(ctx context.Context, a repository.Alert, now t
 
 	// Check if current is significantly higher than average (>20% increase).
 	// If there's no history, we still alert if threshold is exceeded.
-	if len(historyAggs) > 0 && avgVal > 0 {
+	if hasHistory && avgVal > 0 {
 		increase := (currentVal - avgVal) / avgVal
 		if increase <= 0.20 {
 			return nil
 		}
+	}
+
+	target := a.Service
+	if a.Type == "metric_threshold" {
+		target = a.MetricName
 	}
 
 	span.AddEvent("alert.triggered", trace.WithAttributes(
@@ -246,10 +263,10 @@ func (e *Evaluator) evaluateAlert(ctx context.Context, a repository.Alert, now t
 	}
 
 	if a.Email != "" {
-		subject := fmt.Sprintf("[SpanBarn Alert] %s %s regression on %s", a.Type, a.Service, a.Operation)
+		subject := fmt.Sprintf("[SpanBarn Alert] %s regression on %s", a.Type, target)
 		body := fmt.Sprintf(
-			"Alert triggered for %s/%s\n\nType: %s\nCurrent: %.2f\nAverage: %.2f\nThreshold: %.2f\nTriggered at: %s",
-			a.Service, a.Operation, a.Type, currentVal, avgVal, a.Threshold, now.Format(time.RFC3339),
+			"Alert triggered for %s\n\nType: %s\nCurrent: %.2f\nAverage: %.2f\nThreshold: %.2f\nTriggered at: %s",
+			target, a.Type, currentVal, avgVal, a.Threshold, now.Format(time.RFC3339),
 		)
 		if err := e.notify.SendEmail(ctx, a.Email, subject, body); err != nil {
 			e.logger.Error("send email", "alertID", a.ID, "error", err)
@@ -264,8 +281,7 @@ func (e *Evaluator) evaluateAlert(ctx context.Context, a repository.Alert, now t
 	e.logger.Info("alert triggered",
 		"alertID", a.ID,
 		"type", a.Type,
-		"service", a.Service,
-		"operation", a.Operation,
+		"target", target,
 		"current", currentVal,
 		"average", avgVal,
 		"threshold", a.Threshold,
