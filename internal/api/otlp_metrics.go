@@ -76,10 +76,10 @@ func otlpToMetricRecords(req *collectormetricspb.ExportMetricsServiceRequest, pr
 
 			for _, metric := range sm.GetMetrics() {
 				base := metricBase{
-					projectID:   projectID,
-					name:        metric.GetName(),
-					description: metric.GetDescription(),
-					unit:        metric.GetUnit(),
+					projectID:     projectID,
+					name:          metric.GetName(),
+					description:   metric.GetDescription(),
+					unit:          metric.GetUnit(),
 					resourceAttrs: resourceAttrs,
 					scopeAttrs:    scopeAttrs,
 				}

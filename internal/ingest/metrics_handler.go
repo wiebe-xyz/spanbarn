@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	metricsChannelSize  = 256
-	metricsFlushSize    = 500
+	metricsChannelSize   = 256
+	metricsFlushSize     = 500
 	metricsFlushInterval = 100 * time.Millisecond
 )
 

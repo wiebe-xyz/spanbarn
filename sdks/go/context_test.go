@@ -57,7 +57,7 @@ func TestParseTraceparentInvalid(t *testing.T) {
 		"garbage",
 		"01-abc-def-01",                // wrong version length for parts
 		"00-short-1234abcd1234abcd-01", // traceID too short
-		"00-abcd1234abcd1234abcd1234abcd1234-short-01", // spanID too short
+		"00-abcd1234abcd1234abcd1234abcd1234-short-01",            // spanID too short
 		"01-abcd1234abcd1234abcd1234abcd1234-1234abcd1234abcd-01", // wrong version
 	}
 	for _, c := range cases {

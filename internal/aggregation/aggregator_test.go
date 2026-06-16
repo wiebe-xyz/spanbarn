@@ -30,16 +30,16 @@ func newTestAggregator(w AggregateWriter) *Aggregator {
 
 func baseSpan(service, name string, startUs, durationUs int64, status string) repository.Span {
 	return repository.Span{
-		ProjectID:  1,
-		TraceID:    "trace-1",
-		SpanID:     "span-1",
-		Name:       name,
-		Service:    service,
-		Resource:   "/api",
-		Kind:       "server",
-		Status:     status,
+		ProjectID:   1,
+		TraceID:     "trace-1",
+		SpanID:      "span-1",
+		Name:        name,
+		Service:     service,
+		Resource:    "/api",
+		Kind:        "server",
+		Status:      status,
 		StartTimeUs: startUs,
-		DurationUs: durationUs,
+		DurationUs:  durationUs,
 	}
 }
 

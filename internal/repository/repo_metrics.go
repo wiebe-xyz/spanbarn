@@ -13,19 +13,19 @@ import (
 
 // MetricRow is the repository-layer representation of a stored metric data point.
 type MetricRow struct {
-	ID                  int64
-	ProjectID           int64
-	Name                string
-	Description         string
-	Unit                string
-	Type                string
-	TimeUnixNano        int64
-	StartTimeUnixNano   int64
-	Value               float64
-	Count               int64
-	Attributes          string
-	Extra               string
-	IngestedAt          time.Time
+	ID                int64
+	ProjectID         int64
+	Name              string
+	Description       string
+	Unit              string
+	Type              string
+	TimeUnixNano      int64
+	StartTimeUnixNano int64
+	Value             float64
+	Count             int64
+	Attributes        string
+	Extra             string
+	IngestedAt        time.Time
 }
 
 // MetricFilter scopes metric queries.

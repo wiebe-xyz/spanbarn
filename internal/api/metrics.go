@@ -12,12 +12,12 @@ import (
 
 // Metrics holds Prometheus metrics for SpanBarn.
 type Metrics struct {
-	SpansIngested   prometheus.Counter
-	SpansProcessed  prometheus.Counter
-	HTTPRequests    *prometheus.CounterVec
-	HTTPDuration    *prometheus.HistogramVec
-	registry        *prometheus.Registry
-	metricsHandler  http.Handler
+	SpansIngested  prometheus.Counter
+	SpansProcessed prometheus.Counter
+	HTTPRequests   *prometheus.CounterVec
+	HTTPDuration   *prometheus.HistogramVec
+	registry       *prometheus.Registry
+	metricsHandler http.Handler
 }
 
 // NewMetrics creates and registers Prometheus metrics.

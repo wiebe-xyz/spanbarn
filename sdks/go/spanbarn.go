@@ -12,12 +12,12 @@ type Config struct {
 	APIKey        string
 	Service       string
 	Environment   string
-	FlushInterval time.Duration               // default 5s
-	MaxBatchSize  int                         // default 100
-	MaxQueueSize  int                         // default 1000
+	FlushInterval time.Duration // default 5s
+	MaxBatchSize  int           // default 100
+	MaxQueueSize  int           // default 1000
 	Debug         bool
 	Disabled      bool
-	BeforeSend    func(*SpanData) *SpanData   // filter/modify spans before sending
+	BeforeSend    func(*SpanData) *SpanData // filter/modify spans before sending
 }
 
 var (

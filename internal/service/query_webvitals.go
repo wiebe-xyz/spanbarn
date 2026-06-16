@@ -11,15 +11,15 @@ import (
 )
 
 type WebVitalSummary struct {
-	Service string `json:"service"`
-	Page    string `json:"page"`
-	Metric  string `json:"metric"`
-	P50Ms   float64 `json:"p50Ms"`
-	P95Ms   float64 `json:"p95Ms"`
-	Samples int     `json:"samples"`
-	Good    int     `json:"good"`
-	NeedsImprovement int `json:"needsImprovement"`
-	Poor    int     `json:"poor"`
+	Service          string  `json:"service"`
+	Page             string  `json:"page"`
+	Metric           string  `json:"metric"`
+	P50Ms            float64 `json:"p50Ms"`
+	P95Ms            float64 `json:"p95Ms"`
+	Samples          int     `json:"samples"`
+	Good             int     `json:"good"`
+	NeedsImprovement int     `json:"needsImprovement"`
+	Poor             int     `json:"poor"`
 }
 
 var revalidating sync.Map
@@ -62,7 +62,7 @@ func (s *QueryService) fetchWebVitals(ctx context.Context, service string, from,
 
 	type key struct{ service, page, metric string }
 	type bucket struct {
-		values []float64
+		values         []float64
 		good, ni, poor int
 	}
 
@@ -98,15 +98,15 @@ func (s *QueryService) fetchWebVitals(ctx context.Context, service string, from,
 		p95 := b.values[p95Idx]
 
 		result = append(result, WebVitalSummary{
-			Service: k.service,
-			Page:    k.page,
-			Metric:  k.metric,
-			P50Ms:   p50,
-			P95Ms:   p95,
-			Samples: n,
-			Good:    b.good,
+			Service:          k.service,
+			Page:             k.page,
+			Metric:           k.metric,
+			P50Ms:            p50,
+			P95Ms:            p95,
+			Samples:          n,
+			Good:             b.good,
 			NeedsImprovement: b.ni,
-			Poor:    b.poor,
+			Poor:             b.poor,
 		})
 	}
 
