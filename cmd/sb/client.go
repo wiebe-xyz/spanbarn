@@ -40,14 +40,25 @@ func (c *Client) get(path string) (json.RawMessage, error) {
 }
 
 func (c *Client) getRetry(path string, retried bool) (json.RawMessage, error) {
+	// Proactively refresh an OIDC access token that is known to be expired.
+	if !retried && c.cfg.APIKey == "" && c.cfg.AccessToken != "" &&
+		c.cfg.TokenExpiry > 0 && time.Now().Unix() >= c.cfg.TokenExpiry {
+		if err := refreshOIDCToken(&c.cfg); err == nil {
+			_ = saveConfig(c.cfg)
+		}
+	}
+
 	req, err := http.NewRequest(http.MethodGet, c.base+path, nil)
 	if err != nil {
 		return nil, err
 	}
-	// API key takes precedence; otherwise use the session token as a bearer.
-	if c.cfg.APIKey != "" {
+	// Precedence: API key, then OIDC access token, then session token.
+	switch {
+	case c.cfg.APIKey != "":
 		req.Header.Set("X-SpanBarn-Api-Key", c.cfg.APIKey)
-	} else if c.cfg.SessionToken != "" {
+	case c.cfg.AccessToken != "":
+		req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
+	case c.cfg.SessionToken != "":
 		req.Header.Set("Authorization", "Bearer "+c.cfg.SessionToken)
 	}
 
@@ -62,14 +73,20 @@ func (c *Client) getRetry(path string, retried bool) (json.RawMessage, error) {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
-	// Session expired? Re-authenticate once with stored credentials.
-	if resp.StatusCode == http.StatusUnauthorized && !retried &&
-		c.cfg.APIKey == "" && c.cfg.Username != "" && c.cfg.Password != "" {
-		token, lerr := loginWithPassword(c.base, c.cfg.Username, c.cfg.Password)
-		if lerr == nil {
-			c.cfg.SessionToken = token
-			_ = saveConfig(c.cfg)
-			return c.getRetry(path, true)
+	// Expired credentials? Re-authenticate once and retry.
+	if resp.StatusCode == http.StatusUnauthorized && !retried && c.cfg.APIKey == "" {
+		switch {
+		case c.cfg.AuthType == "oidc-device" || c.cfg.AuthType == "oidc-m2m":
+			if err := refreshOIDCToken(&c.cfg); err == nil {
+				_ = saveConfig(c.cfg)
+				return c.getRetry(path, true)
+			}
+		case c.cfg.Username != "" && c.cfg.Password != "":
+			if token, lerr := loginWithPassword(c.base, c.cfg.Username, c.cfg.Password); lerr == nil {
+				c.cfg.SessionToken = token
+				_ = saveConfig(c.cfg)
+				return c.getRetry(path, true)
+			}
 		}
 	}
 

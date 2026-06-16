@@ -22,6 +22,17 @@ type OIDCConfig struct {
 	ClientSecret  string
 	RedirectURL   string // e.g. https://spanbarn.wiebe.xyz/api/v1/oidc/callback
 	RequiredGroup string // group slug that grants access; bypass roles always win
+
+	// ResourceAudiences lists the audiences accepted on IamBarn access-token
+	// JWTs when SpanBarn acts as an OAuth2 resource server (the `sb` CLI's
+	// device-code and client-credentials logins). An access token is accepted
+	// only if one of its `aud` values is in this list. ClientID is always
+	// included implicitly.
+	ResourceAudiences []string
+
+	// CLIClientID is the public IamBarn client the `sb` CLI uses for the
+	// device-code flow. Advertised to the CLI via /api/v1/client-config.
+	CLIClientID string
 }
 
 // Enabled reports whether all four required fields are present.
@@ -36,10 +47,11 @@ type OIDCClient struct {
 	cfg     OIDCConfig
 	timeout time.Duration
 
-	mu       sync.Mutex
-	provider *oidcv3.Provider
-	verifier *oidcv3.IDTokenVerifier
-	oauth    *oauth2.Config
+	mu             sync.Mutex
+	provider       *oidcv3.Provider
+	verifier       *oidcv3.IDTokenVerifier // ID tokens: aud must equal ClientID
+	accessVerifier *oidcv3.IDTokenVerifier // access tokens: aud checked manually
+	oauth          *oauth2.Config
 }
 
 // NewOIDCClient returns a client. Discovery is deferred to the first call so
@@ -109,6 +121,55 @@ func (c *OIDCClient) Exchange(ctx context.Context, code, nonce string) (OIDCClai
 	return r.Claims, err
 }
 
+// VerifyAccessToken validates an IamBarn access-token JWT (presented by the
+// `sb` CLI as a Bearer token) and returns its claims. It checks the signature
+// and issuer/expiry via the issuer's JWKS, requires token_use=="access_token",
+// and requires one of the token's audiences to be in ResourceAudiences (or to
+// equal the configured ClientID). Authorization (role/group) is left to the
+// caller via Allowed.
+func (c *OIDCClient) VerifyAccessToken(ctx context.Context, raw string) (OIDCClaims, error) {
+	if err := c.ensureReady(ctx); err != nil {
+		return OIDCClaims{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	tok, err := c.accessVerifier.Verify(ctx, raw)
+	if err != nil {
+		return OIDCClaims{}, fmt.Errorf("oidc: verify access token: %w", err)
+	}
+
+	allowed := append([]string{c.cfg.ClientID}, c.cfg.ResourceAudiences...)
+	if !audienceAllowed(tok.Audience, allowed) {
+		return OIDCClaims{}, fmt.Errorf("oidc: token audience %v not accepted", tok.Audience)
+	}
+
+	var claims OIDCClaims
+	if err := tok.Claims(&claims); err != nil {
+		return OIDCClaims{}, fmt.Errorf("oidc: decode access-token claims: %w", err)
+	}
+	if claims.TokenUse != "access_token" {
+		return OIDCClaims{}, errors.New("oidc: not an access token")
+	}
+	return claims, nil
+}
+
+// audienceAllowed reports whether any token audience appears in the allowlist
+// (ignoring empty entries).
+func audienceAllowed(tokenAud, allowed []string) bool {
+	for _, a := range allowed {
+		if a == "" {
+			continue
+		}
+		for _, t := range tokenAud {
+			if t == a {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Allowed returns true if the claims grant access to this barn.
 // Owner/organization_admin/operator roles bypass the group check.
 func (c *OIDCClient) Allowed(claims OIDCClaims) bool {
@@ -142,6 +203,10 @@ func (c *OIDCClient) ensureReady(ctx context.Context) error {
 	}
 	c.provider = prov
 	c.verifier = prov.Verifier(&oidcv3.Config{ClientID: c.cfg.ClientID})
+	// Access tokens carry the requesting client's id as aud (not SpanBarn's
+	// OIDC client id), so skip the built-in aud check and enforce our own
+	// ResourceAudiences allowlist in VerifyAccessToken.
+	c.accessVerifier = prov.Verifier(&oidcv3.Config{SkipClientIDCheck: true})
 	c.oauth = &oauth2.Config{
 		ClientID:     c.cfg.ClientID,
 		ClientSecret: c.cfg.ClientSecret,
@@ -152,7 +217,8 @@ func (c *OIDCClient) ensureReady(ctx context.Context) error {
 	return nil
 }
 
-// OIDCClaims is the subset of ID-token claims this barn cares about.
+// OIDCClaims is the subset of ID-token / access-token claims this barn cares
+// about.
 type OIDCClaims struct {
 	Subject           string   `json:"sub"`
 	Email             string   `json:"email"`
@@ -160,11 +226,13 @@ type OIDCClaims struct {
 	Name              string   `json:"name"`
 	Groups            []string `json:"groups"`
 	Roles             []string `json:"roles"`
+	TokenUse          string   `json:"token_use"` // "access_token" for resource-server validation
+	ClientName        string   `json:"client_name"`
 }
 
 // PreferredName returns the best human-readable identifier from the claims.
 func (c OIDCClaims) PreferredName() string {
-	for _, v := range []string{c.PreferredUsername, c.Email, c.Name, c.Subject} {
+	for _, v := range []string{c.PreferredUsername, c.Email, c.Name, c.ClientName, c.Subject} {
 		if v = strings.TrimSpace(v); v != "" {
 			return v
 		}

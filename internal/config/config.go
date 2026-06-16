@@ -56,6 +56,8 @@ type Config struct {
 	OIDCClientSecret       string // SPANBARN_OIDC_CLIENT_SECRET
 	OIDCRedirectURL        string // SPANBARN_OIDC_REDIRECT_URL
 	OIDCRequiredGroup      string // SPANBARN_OIDC_REQUIRED_GROUP — defaults to "spanbarn-users"
+	OIDCResourceAudiences  []string // SPANBARN_OIDC_RESOURCE_AUDIENCES — CSV of audiences accepted on IamBarn access tokens (sb CLI)
+	OIDCCLIClientID        string // SPANBARN_OIDC_CLI_CLIENT_ID — public IamBarn client the sb device-code flow uses
 	GRPCAddr               string // SPANBARN_GRPC_ADDR — gRPC listener for OTLP; empty = disabled
 }
 
@@ -109,6 +111,7 @@ func Load() Config {
 		OIDCClientSecret:        os.Getenv("SPANBARN_OIDC_CLIENT_SECRET"),
 		OIDCRedirectURL:         os.Getenv("SPANBARN_OIDC_REDIRECT_URL"),
 		OIDCRequiredGroup:       getenv("SPANBARN_OIDC_REQUIRED_GROUP", "spanbarn-users"),
+		OIDCCLIClientID:         os.Getenv("SPANBARN_OIDC_CLI_CLIENT_ID"),
 		GRPCAddr:                getenv("SPANBARN_GRPC_ADDR", ":4317"),
 	}
 
@@ -116,6 +119,14 @@ func Load() Config {
 		for _, o := range strings.Split(raw, ",") {
 			if trimmed := strings.TrimSpace(o); trimmed != "" {
 				cfg.AllowedOrigins = append(cfg.AllowedOrigins, trimmed)
+			}
+		}
+	}
+
+	if raw := os.Getenv("SPANBARN_OIDC_RESOURCE_AUDIENCES"); raw != "" {
+		for _, a := range strings.Split(raw, ",") {
+			if trimmed := strings.TrimSpace(a); trimmed != "" {
+				cfg.OIDCResourceAudiences = append(cfg.OIDCResourceAudiences, trimmed)
 			}
 		}
 	}

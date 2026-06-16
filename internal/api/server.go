@@ -69,6 +69,11 @@ func (s *Server) SetOIDCClient(c *auth.OIDCClient) {
 	s.oidc = c
 }
 
+// oidcClient returns the wired OIDC adapter (may be nil). Used as the
+// request-time getter for SessionOrReadKey, since the adapter is set after
+// routes are registered.
+func (s *Server) oidcClient() *auth.OIDCClient { return s.oidc }
+
 // funnelBarnConfig captures the public bits of the FunnelBarn integration
 // that the SPA needs at boot. Empty Endpoint disables analytics.
 type funnelBarnConfig struct {
