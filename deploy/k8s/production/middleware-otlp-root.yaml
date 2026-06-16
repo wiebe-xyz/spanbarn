@@ -1,0 +1,9 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: otlp-root-to-traces
+spec:
+  # Forward-domain browser exporters configured with the bare host POST OTLP to
+  # "/". Rewrite to the canonical OTLP/HTTP trace path so it reaches handleOTLP.
+  replacePath:
+    path: /v1/traces
