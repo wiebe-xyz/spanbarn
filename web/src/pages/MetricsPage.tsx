@@ -463,7 +463,7 @@ function MetricChart({
                 borderRadius: 8,
                 color: 'var(--text)',
               }}
-              formatter={(value: number | string) => [`${Number(value).toLocaleString()}${unit ? ` ${unit}` : ''}`]}
+              formatter={(value) => [`${Number(value).toLocaleString()}${unit ? ` ${unit}` : ''}`]}
             />
             <Legend verticalAlign="top" align="right" iconType="line" wrapperStyle={{ fontSize: 11, paddingBottom: 4 }} />
             {lines.map((l) => (
