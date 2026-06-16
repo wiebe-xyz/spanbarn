@@ -47,6 +47,7 @@ type Repository interface {
 	DeleteAggregatesOlderThan(cutoff time.Time) (int64, error)
 	DeleteExpiredE2EUsers(now time.Time) (int64, error)
 	DeleteMetricsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
+	DeleteMetricRollupsOlderThan(cutoff time.Time) (int64, error)
 	DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error)
 	GetSetting(key string) (string, error)
 }
@@ -59,6 +60,7 @@ type Config struct {
 	ErrorRetentionDays        int           // days to keep error samples (default 30)
 	AggregateRetentionDays    int           // days to keep aggregates (default 365)
 	MetricsRetentionDays      int           // days to keep raw metric data points (default 90)
+	MetricRollupRetentionDays int           // days to keep downsampled metric rollups (default 365)
 	LogRetentionHours         int           // hours to keep log records (default 24)
 	ErrorLogRetentionDays     int           // days to keep logs for error-sampled traces (default 30)
 	SlowThresholdUS           int64         // microseconds above which a span is "slow"
@@ -87,6 +89,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.MetricsRetentionDays <= 0 {
 		c.MetricsRetentionDays = 90
+	}
+	if c.MetricRollupRetentionDays <= 0 {
+		c.MetricRollupRetentionDays = 365
 	}
 	if c.LogRetentionHours <= 0 {
 		c.LogRetentionHours = 24
@@ -239,6 +244,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	errorCutoff := now.Add(-time.Duration(cfg.ErrorRetentionDays) * 24 * time.Hour)
 	aggCutoff := now.Add(-time.Duration(cfg.AggregateRetentionDays) * 24 * time.Hour)
 	metricsCutoff := now.Add(-time.Duration(cfg.MetricsRetentionDays) * 24 * time.Hour)
+	metricRollupCutoff := now.Add(-time.Duration(cfg.MetricRollupRetentionDays) * 24 * time.Hour)
 	logCutoff := now.Add(-time.Duration(cfg.LogRetentionHours) * time.Hour)
 	errorLogCutoff := now.Add(-time.Duration(cfg.ErrorLogRetentionDays) * 24 * time.Hour)
 
@@ -356,6 +362,10 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	metricRollupsDeleted, err := w.repo.DeleteMetricRollupsOlderThan(metricRollupCutoff)
+	if err != nil {
+		return err
+	}
 	logsDeleted, err := w.repo.DeleteLogsOlderThan(ctx, logCutoff, errorLogCutoff)
 	if err != nil {
 		return err
@@ -373,6 +383,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		attribute.Int64("error_samples_deleted", errorSamplesDeleted),
 		attribute.Int64("aggregates_deleted", aggregatesDeleted),
 		attribute.Int64("metrics_deleted", metricsDeleted),
+		attribute.Int64("metric_rollups_deleted", metricRollupsDeleted),
 		attribute.Int64("logs_deleted", logsDeleted),
 		attribute.Int64("e2e_users_deleted", e2eUsersDeleted),
 		attribute.Bool("backlog_remains", backlogRemains),
@@ -385,6 +396,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		"error_samples_deleted", errorSamplesDeleted,
 		"aggregates_deleted", aggregatesDeleted,
 		"metrics_deleted", metricsDeleted,
+		"metric_rollups_deleted", metricRollupsDeleted,
 		"logs_deleted", logsDeleted,
 		"e2e_users_deleted", e2eUsersDeleted,
 		"backlog_remains", backlogRemains,

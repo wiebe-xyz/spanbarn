@@ -107,6 +107,45 @@ func (r *Repository) ListMetricNames(ctx context.Context, projectID int64, from,
 	return names, rows.Err()
 }
 
+// MetricCatalogEntry summarises one metric name within a time range: its OTLP
+// type, unit, and the number of distinct label sets (series) seen.
+type MetricCatalogEntry struct {
+	Name   string
+	Type   string
+	Unit   string
+	Series int64
+}
+
+// ListMetricCatalog returns one entry per metric name for a project within a
+// time range, with its type, unit, and distinct-series count.
+func (r *Repository) ListMetricCatalog(ctx context.Context, projectID int64, from, to time.Time) ([]MetricCatalogEntry, error) {
+	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT name, type, unit, COUNT(DISTINCT attributes) AS series
+		 FROM metrics
+		 WHERE project_id = ? AND ingested_at >= ? AND ingested_at <= ?
+		 GROUP BY name, type, unit
+		 ORDER BY name LIMIT 2000`,
+		projectID, from, to,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []MetricCatalogEntry
+	for rows.Next() {
+		var e MetricCatalogEntry
+		if err := rows.Scan(&e.Name, &e.Type, &e.Unit, &e.Series); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // QueryMetricSeries returns data points for a specific metric name.
 func (r *Repository) QueryMetricSeries(ctx context.Context, f MetricFilter) ([]MetricRow, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
@@ -157,14 +196,25 @@ func (r *Repository) QueryMetricSeries(ctx context.Context, f MetricFilter) ([]M
 	return result, rows.Err()
 }
 
-// DeleteMetricsOlderThan removes metric data points ingested before the cutoff.
+// DeleteMetricsOlderThan removes metric data points ingested before the cutoff,
+// in bounded chunks so a large backlog never holds the write lock long enough to
+// block ingest (an unbatched DELETE here previously stalled writes for minutes).
 func (r *Repository) DeleteMetricsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := r.db.ExecContext(ctx,
-		`DELETE FROM metrics WHERE ingested_at < ?`, cutoff)
-	if err != nil {
-		return 0, err
+	var total int64
+	for {
+		res, err := r.db.ExecContext(ctx,
+			`DELETE FROM metrics WHERE rowid IN (SELECT rowid FROM metrics WHERE ingested_at < ? LIMIT 1000)`,
+			cutoff)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n == 0 {
+			break
+		}
 	}
-	return res.RowsAffected()
+	return total, nil
 }
 
 // MarshalMetricExtra serialises the Extra field of a MetricRow for JSON responses.

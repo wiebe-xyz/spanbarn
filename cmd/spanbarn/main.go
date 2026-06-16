@@ -136,6 +136,11 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	metricsHandler := ingest.NewMetricsHandler(repo, logger)
 	logsHandler := ingest.NewLogsHandler(repo, logger)
 
+	// Fold every ingested metric data point into downsampled rollups so
+	// long-range queries don't scan the raw metrics table.
+	metricAccumulator := aggregation.NewMetricAccumulator(repo, parseAggregationInterval(cfg.AggregationInterval), 30*time.Second, logger)
+	metricsHandler.SetRollupSink(metricAccumulator)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -146,6 +151,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	metricsCtx, metricsCancel := context.WithCancel(ctx)
 	defer metricsCancel()
 	safeGo("metrics-ingest", &wg, func() { metricsHandler.Run(metricsCtx) })
+	safeGo("metric-accumulator", &wg, func() { metricAccumulator.Run(metricsCtx) })
 
 	logsCtx, logsCancel := context.WithCancel(ctx)
 	defer logsCancel()
@@ -677,6 +683,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 
 	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
 	accumulator := aggregation.NewAccumulator(repo, aggInterval, 30*time.Second, logger)
+	metricAccumulator := aggregation.NewMetricAccumulator(repo, aggInterval, 30*time.Second, logger)
 
 	// writeMu serialises all SQLite writes between the span worker and the
 	// retention worker. Without this they compete for the write connection:
@@ -696,6 +703,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
 	safeGo("accumulator", &wg, func() { accumulator.Run(workerCtx) })
+	safeGo("metric-accumulator", &wg, func() { metricAccumulator.Run(workerCtx) })
 	safeGo("metrics-consumer", &wg, func() {
 		for {
 			select {
@@ -710,6 +718,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 			}
 			if len(recs) == 0 {
 				continue
+			}
+			for i := range recs {
+				metricAccumulator.AddMetric(recs[i])
 			}
 			if err := repo.InsertMetrics(workerCtx, recs); err != nil {
 				logger.Error("metrics insert error", "error", err)

@@ -118,6 +118,8 @@ func (s *Server) registerRoutes() {
 		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer, s.oidcClient)
 
 		s.mux.Handle("/api/v1/metrics/names", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricNames))))
+		s.mux.Handle("/api/v1/metrics/catalog", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricCatalog))))
+		s.mux.Handle("/api/v1/metrics/insights", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricInsights))))
 		s.mux.Handle("/api/v1/metrics/series", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricSeries))))
 	}
 

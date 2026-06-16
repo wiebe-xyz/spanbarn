@@ -16,14 +16,14 @@ func (r *Repository) ListAlerts(projectID int64) ([]Alert, error) {
 		rows, err = r.db.Query(
 			`SELECT id, project_id, service, operation, type, threshold,
 				comparison_window, cooldown_minutes, COALESCE(webhook_url,''), COALESCE(email,''),
-				enabled, last_triggered_at, created_at
+				enabled, metric_name, metric_agg, label_filters, last_triggered_at, created_at
 			FROM alerts ORDER BY id`,
 		)
 	} else {
 		rows, err = r.db.Query(
 			`SELECT id, project_id, service, operation, type, threshold,
 				comparison_window, cooldown_minutes, COALESCE(webhook_url,''), COALESCE(email,''),
-				enabled, last_triggered_at, created_at
+				enabled, metric_name, metric_agg, label_filters, last_triggered_at, created_at
 			FROM alerts WHERE project_id = ? ORDER BY id`,
 			projectID,
 		)
@@ -39,7 +39,7 @@ func (r *Repository) ListAlerts(projectID int64) ([]Alert, error) {
 		if err := rows.Scan(
 			&a.ID, &a.ProjectID, &a.Service, &a.Operation, &a.Type, &a.Threshold,
 			&a.ComparisonWindow, &a.CooldownMinutes, &a.WebhookURL, &a.Email,
-			&enabled, &a.LastTriggeredAt, &a.CreatedAt,
+			&enabled, &a.MetricName, &a.MetricAgg, &a.LabelFilters, &a.LastTriggeredAt, &a.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -49,6 +49,15 @@ func (r *Repository) ListAlerts(projectID int64) ([]Alert, error) {
 	return out, rows.Err()
 }
 
+// normalizeLabelFilters defaults empty/blank label filters to an empty object so
+// the NOT NULL column always holds valid JSON.
+func normalizeLabelFilters(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "{}"
+	}
+	return s
+}
+
 func (r *Repository) CreateAlert(a Alert) (int64, error) {
 	enabled := 0
 	if a.Enabled {
@@ -56,10 +65,12 @@ func (r *Repository) CreateAlert(a Alert) (int64, error) {
 	}
 	res, err := r.db.Exec(
 		`INSERT INTO alerts (project_id, service, operation, type, threshold,
-			comparison_window, cooldown_minutes, webhook_url, email, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			comparison_window, cooldown_minutes, webhook_url, email, enabled,
+			metric_name, metric_agg, label_filters)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ProjectID, a.Service, a.Operation, a.Type, a.Threshold,
 		a.ComparisonWindow, a.CooldownMinutes, a.WebhookURL, a.Email, enabled,
+		a.MetricName, a.MetricAgg, normalizeLabelFilters(a.LabelFilters),
 	)
 	if err != nil {
 		return 0, err
@@ -74,10 +85,12 @@ func (r *Repository) UpdateAlert(a Alert) error {
 	}
 	res, err := r.db.Exec(
 		`UPDATE alerts SET service = ?, operation = ?, type = ?, threshold = ?,
-			comparison_window = ?, cooldown_minutes = ?, webhook_url = ?, email = ?, enabled = ?
+			comparison_window = ?, cooldown_minutes = ?, webhook_url = ?, email = ?, enabled = ?,
+			metric_name = ?, metric_agg = ?, label_filters = ?
 		WHERE id = ?`,
 		a.Service, a.Operation, a.Type, a.Threshold,
 		a.ComparisonWindow, a.CooldownMinutes, a.WebhookURL, a.Email, enabled,
+		a.MetricName, a.MetricAgg, normalizeLabelFilters(a.LabelFilters),
 		a.ID,
 	)
 	if err != nil {

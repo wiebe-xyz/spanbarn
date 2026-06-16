@@ -8,8 +8,29 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/wiebe-xyz/spanbarn/internal/metrics"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
+
+// validMetricAggs are the supported metric-threshold aggregations.
+var validMetricAggs = map[string]bool{"rate": true, "avg": true, "p95": true, "last": true}
+
+// marshalLabelFilters serialises request label filters to the stored JSON string.
+func marshalLabelFilters(m map[string]string) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
+// validateAlertType reports whether t is a known alert type.
+func validateAlertType(t string) bool {
+	return t == "latency" || t == "error_rate" || t == "metric_threshold"
+}
 
 // alertHandlers holds session-authenticated alert endpoint handlers.
 type alertHandlers struct {
@@ -17,32 +38,38 @@ type alertHandlers struct {
 }
 
 type alertRequest struct {
-	ProjectID        int64   `json:"projectId"`
-	Service          string  `json:"service"`
-	Operation        string  `json:"operation"`
-	Type             string  `json:"type"`
-	Threshold        float64 `json:"threshold"`
-	ComparisonWindow int     `json:"comparisonWindow"`
-	CooldownMinutes  int     `json:"cooldownMinutes"`
-	WebhookURL       string  `json:"webhookUrl"`
-	Email            string  `json:"email"`
-	Enabled          bool    `json:"enabled"`
+	ProjectID        int64             `json:"projectId"`
+	Service          string            `json:"service"`
+	Operation        string            `json:"operation"`
+	Type             string            `json:"type"`
+	Threshold        float64           `json:"threshold"`
+	ComparisonWindow int               `json:"comparisonWindow"`
+	CooldownMinutes  int               `json:"cooldownMinutes"`
+	WebhookURL       string            `json:"webhookUrl"`
+	Email            string            `json:"email"`
+	Enabled          bool              `json:"enabled"`
+	MetricName       string            `json:"metricName"`
+	MetricAgg        string            `json:"metricAgg"`
+	LabelFilters     map[string]string `json:"labelFilters"`
 }
 
 type alertResponse struct {
-	ID               int64   `json:"id"`
-	ProjectID        int64   `json:"projectId"`
-	Service          string  `json:"service"`
-	Operation        string  `json:"operation"`
-	Type             string  `json:"type"`
-	Threshold        float64 `json:"threshold"`
-	ComparisonWindow int     `json:"comparisonWindow"`
-	CooldownMinutes  int     `json:"cooldownMinutes"`
-	WebhookURL       string  `json:"webhookUrl"`
-	Email            string  `json:"email"`
-	Enabled          bool    `json:"enabled"`
-	LastTriggeredAt  *string `json:"lastTriggeredAt,omitempty"`
-	CreatedAt        string  `json:"createdAt"`
+	ID               int64             `json:"id"`
+	ProjectID        int64             `json:"projectId"`
+	Service          string            `json:"service"`
+	Operation        string            `json:"operation"`
+	Type             string            `json:"type"`
+	Threshold        float64           `json:"threshold"`
+	ComparisonWindow int               `json:"comparisonWindow"`
+	CooldownMinutes  int               `json:"cooldownMinutes"`
+	WebhookURL       string            `json:"webhookUrl"`
+	Email            string            `json:"email"`
+	Enabled          bool              `json:"enabled"`
+	MetricName       string            `json:"metricName,omitempty"`
+	MetricAgg        string            `json:"metricAgg,omitempty"`
+	LabelFilters     map[string]string `json:"labelFilters,omitempty"`
+	LastTriggeredAt  *string           `json:"lastTriggeredAt,omitempty"`
+	CreatedAt        string            `json:"createdAt"`
 }
 
 func toAlertResponse(a repository.Alert) alertResponse {
@@ -58,6 +85,9 @@ func toAlertResponse(a repository.Alert) alertResponse {
 		WebhookURL:       a.WebhookURL,
 		Email:            a.Email,
 		Enabled:          a.Enabled,
+		MetricName:       a.MetricName,
+		MetricAgg:        a.MetricAgg,
+		LabelFilters:     metrics.ParseAttributes([]byte(a.LabelFilters)),
 		CreatedAt:        a.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 	if a.LastTriggeredAt.Valid {
@@ -136,12 +166,28 @@ func (h *alertHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.ProjectID == 0 || req.Service == "" || req.Type == "" {
-		writeError(w, http.StatusBadRequest, "projectId, service, and type are required", "")
+	if req.ProjectID == 0 || req.Type == "" {
+		writeError(w, http.StatusBadRequest, "projectId and type are required", "")
 		return
 	}
-	if req.Type != "latency" && req.Type != "error_rate" {
-		writeError(w, http.StatusBadRequest, "type must be 'latency' or 'error_rate'", "")
+	if !validateAlertType(req.Type) {
+		writeError(w, http.StatusBadRequest, "type must be 'latency', 'error_rate', or 'metric_threshold'", "")
+		return
+	}
+	if req.Type == "metric_threshold" {
+		if req.MetricName == "" {
+			writeError(w, http.StatusBadRequest, "metricName is required for metric_threshold alerts", "")
+			return
+		}
+		if req.MetricAgg == "" {
+			req.MetricAgg = "last"
+		}
+		if !validMetricAggs[req.MetricAgg] {
+			writeError(w, http.StatusBadRequest, "metricAgg must be one of rate, avg, p95, last", "")
+			return
+		}
+	} else if req.Service == "" {
+		writeError(w, http.StatusBadRequest, "service is required for this alert type", "")
 		return
 	}
 	if req.ComparisonWindow <= 0 {
@@ -162,6 +208,9 @@ func (h *alertHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		WebhookURL:       req.WebhookURL,
 		Email:            req.Email,
 		Enabled:          req.Enabled,
+		MetricName:       req.MetricName,
+		MetricAgg:        req.MetricAgg,
+		LabelFilters:     marshalLabelFilters(req.LabelFilters),
 	}
 
 	id, err := h.repo.CreateAlert(alert)
@@ -197,9 +246,18 @@ func (h *alertHandlers) handleUpdate(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 
-	if req.Type != "" && req.Type != "latency" && req.Type != "error_rate" {
-		writeError(w, http.StatusBadRequest, "type must be 'latency' or 'error_rate'", "")
+	if req.Type != "" && !validateAlertType(req.Type) {
+		writeError(w, http.StatusBadRequest, "type must be 'latency', 'error_rate', or 'metric_threshold'", "")
 		return
+	}
+	if req.Type == "metric_threshold" {
+		if req.MetricAgg == "" {
+			req.MetricAgg = "last"
+		}
+		if !validMetricAggs[req.MetricAgg] {
+			writeError(w, http.StatusBadRequest, "metricAgg must be one of rate, avg, p95, last", "")
+			return
+		}
 	}
 
 	alert := repository.Alert{
@@ -213,6 +271,9 @@ func (h *alertHandlers) handleUpdate(w http.ResponseWriter, r *http.Request, id 
 		WebhookURL:       req.WebhookURL,
 		Email:            req.Email,
 		Enabled:          req.Enabled,
+		MetricName:       req.MetricName,
+		MetricAgg:        req.MetricAgg,
+		LabelFilters:     marshalLabelFilters(req.LabelFilters),
 	}
 
 	if err := h.repo.UpdateAlert(alert); err != nil {
