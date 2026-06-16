@@ -6,29 +6,57 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: (Host(`sb.pensioenfeest.nl`) || Host(`sb.scanoo.nl`) || Host(`sb.scanbarelinks.nl`)) && PathPrefix(`/v1/traces`)
+    # Ingest paths for ANY "sb." CNAME alias — a new customer only has to point
+    # sb.<their-domain> at the cluster (proxied via Cloudflare) and OTLP/RUM
+    # ingest works with no ingress change. HostRegexp is Traefik v3 Go-regexp
+    # syntax. "spanbarn." does not match "^sb\." so the apex host is unaffected.
+    # priority: 101 ensures these beat the catch-all redirect (priority 1).
+    - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/v1/traces`)
       kind: Rule
+      priority: 101
       services:
         - name: spanbarn-ingest
           port: 8080
-    - match: (Host(`sb.pensioenfeest.nl`) || Host(`sb.scanoo.nl`) || Host(`sb.scanbarelinks.nl`)) && PathPrefix(`/api/v1/spans`)
+    - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/api/v1/spans`)
       kind: Rule
+      priority: 101
       services:
         - name: spanbarn-ingest
           port: 8080
-    - match: (Host(`sb.pensioenfeest.nl`) || Host(`sb.scanoo.nl`) || Host(`sb.scanbarelinks.nl`)) && PathPrefix(`/api/v1/telemetry`)
+    - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/api/v1/telemetry`)
       kind: Rule
+      priority: 101
       services:
         - name: spanbarn-ingest
           port: 8080
-    - match: (Host(`sb.pensioenfeest.nl`) || Host(`sb.scanoo.nl`) || Host(`sb.scanbarelinks.nl`)) && PathPrefix(`/api/v1/client-errors`)
+    - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/api/v1/client-errors`)
       kind: Rule
+      priority: 101
       services:
         - name: spanbarn-ingest
           port: 8080
-    # Any other request (including GET /) gets a 301 to the root domain
-    - match: Host(`sb.pensioenfeest.nl`) || Host(`sb.scanoo.nl`) || Host(`sb.scanbarelinks.nl`)
+
+    # Browser OTLP exporters configured with the bare host (e.g. brandtrace-web)
+    # POST spans — and the CORS preflight — to "/" instead of "/v1/traces".
+    # Rewrite those to the OTLP trace path and send them to the ingest pod, where
+    # the Go CORS middleware answers the preflight and handleOTLP accepts the
+    # batch. Method-scoped so GET / still falls through to the redirect below.
+    - match: HostRegexp(`^sb\..+$`) && Path(`/`) && (Method(`POST`) || Method(`OPTIONS`))
       kind: Rule
+      priority: 101
+      middlewares:
+        - name: otlp-root-to-traces
+      services:
+        - name: spanbarn-ingest
+          port: 8080
+
+    # Any other request (including GET /) gets a 301 to the root domain. Kept
+    # enumerated to the ingest-only aliases so the wildcard above never hijacks
+    # full-alias domains such as sb.bananasketch.nl, whose own Ingress serves the
+    # dashboard at "/".
+    - match: Host(`sb.pensioenfeest.nl`) || Host(`sb.scanoo.nl`) || Host(`sb.scanbarelinks.nl`) || Host(`sb.brandtrace.net`)
+      kind: Rule
+      priority: 1
       middlewares:
         - name: strip-sb-redirect
       services:
