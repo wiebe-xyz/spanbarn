@@ -1,5 +1,15 @@
 dbs:
   - path: /var/lib/spanbarn/spanbarn.db
+    # The writer process owns WAL truncation via explicit wal_checkpoint(TRUNCATE)
+    # on a connection with busy_timeout (see internal/repository/db.go). Litestream's
+    # own PASSIVE checkpoint uses a connection without busy_timeout, so it loses the
+    # race against the writer and logs "checkpoint: mode=PASSIVE err=database is
+    # locked" ~190x/hour — cosmetic noise that floods error tracking. Raising the
+    # PASSIVE trigger far above normal WAL size stops those attempts; the default
+    # max-checkpoint-page-count (10000 ≈ 40 MiB) remains as a safety backstop, and
+    # replication is unaffected (WAL frames are copied each sync regardless of
+    # checkpointing, and Litestream's read lock protects un-replicated frames).
+    min-checkpoint-page-count: 1000000
     replicas:
       - type: s3
         bucket: spanbarn-sqlite
