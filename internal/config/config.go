@@ -35,6 +35,8 @@ type Config struct {
 	AllowedOrigins            []string
 	SelfEndpoint              string
 	SelfAPIKey                string
+	SelfMetricsIntervalSec    int  // SPANBARN_SELF_METRICS_INTERVAL_SECONDS — self-metrics export cadence (default 30)
+	SelfMetricsDisabled       bool // SPANBARN_SELF_METRICS_DISABLED — disable self-metrics export
 	BugBarnEndpoint           string
 	BugBarnAPIKey             string
 	FunnelBarnEndpoint        string
@@ -90,6 +92,8 @@ func Load() Config {
 		AggregationInterval:       getenv("SPANBARN_AGGREGATION_INTERVAL", "1m"),
 		SelfEndpoint:              os.Getenv("SPANBARN_SELF_ENDPOINT"),
 		SelfAPIKey:                os.Getenv("SPANBARN_SELF_API_KEY"),
+		SelfMetricsIntervalSec:    getenvInt("SPANBARN_SELF_METRICS_INTERVAL_SECONDS", 30),
+		SelfMetricsDisabled:       getenvInt("SPANBARN_SELF_METRICS_DISABLED", 0) != 0,
 		BugBarnEndpoint:           os.Getenv("SPANBARN_BUGBARN_ENDPOINT"),
 		BugBarnAPIKey:             os.Getenv("SPANBARN_BUGBARN_API_KEY"),
 		FunnelBarnEndpoint:        os.Getenv("SPANBARN_FUNNELBARN_ENDPOINT"),

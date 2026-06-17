@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
+	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 )
 
 const requestIDKey contextKey = "request_id"
@@ -37,23 +38,44 @@ func getRequestID(r *http.Request) string {
 	return ""
 }
 
-// loggingMiddleware logs every request with method, path, status, duration, and request ID.
-func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
+// loggingMiddleware logs every request with method, path, status, duration, and
+// request ID, and (when a recorder is set) feeds request rate + latency to
+// self-metrics.
+func loggingMiddleware(logger *slog.Logger, rec *selfmetrics.Recorder, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
+		elapsed := time.Since(start)
+		rec.RecordRequest(statusClass(sw.status), float64(elapsed.Microseconds())/1000.0)
 		attrs := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", sw.status,
-			"duration_ms", time.Since(start).Milliseconds(),
+			"duration_ms", elapsed.Milliseconds(),
 		}
 		if id := getRequestID(r); id != "" {
 			attrs = append(attrs, "request_id", id)
 		}
 		logger.Info("http", attrs...)
 	})
+}
+
+// statusClass buckets an HTTP status into "2xx".."5xx" to keep metric
+// cardinality low.
+func statusClass(code int) string {
+	switch {
+	case code >= 500:
+		return "5xx"
+	case code >= 400:
+		return "4xx"
+	case code >= 300:
+		return "3xx"
+	case code >= 200:
+		return "2xx"
+	default:
+		return "1xx"
+	}
 }
 
 // recoveryMiddleware catches panics and returns a 500 response.
