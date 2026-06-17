@@ -59,6 +59,13 @@ func NewSpool(dir string, maxBytes int64) (*Spool, error) {
 	}, nil
 }
 
+// Size returns the current spool file size in bytes.
+func (s *Spool) Size() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.size
+}
+
 // Write appends span records as NDJSON lines. It rotates the file if needed.
 func (s *Spool) Write(records []model.SpanRecord) error {
 	s.mu.Lock()

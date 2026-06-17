@@ -150,6 +150,27 @@ func (q *RedisQueue) Len(ctx context.Context) (int64, error) {
 	return recent + backlog, nil
 }
 
+// Depths returns the per-queue backlog (spans recent+backlog, metrics, logs),
+// used for self-metrics. A failed LLEN leaves that label absent.
+func (q *RedisQueue) Depths(ctx context.Context) map[string]int64 {
+	out := map[string]int64{}
+	add := func(label string, keys ...string) {
+		var total int64
+		for _, k := range keys {
+			n, err := q.client.LLen(ctx, k).Result()
+			if err != nil {
+				return
+			}
+			total += n
+		}
+		out[label] = total
+	}
+	add("spans", WriteQueueRecentKey, WriteQueueBacklogKey)
+	add("metrics", MetricsQueueKey)
+	add("logs", LogsQueueKey)
+	return out
+}
+
 // Close releases the underlying Redis connection.
 func (q *RedisQueue) Close() error {
 	return q.client.Close()

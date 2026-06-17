@@ -34,6 +34,13 @@ type MetricAccumulator struct {
 	repo          MetricRollupWriter
 	logger        *slog.Logger
 	now           func() time.Time
+	onPersist     func(int64) // optional: notified of rollups persisted (self-metrics)
+}
+
+// SetOnPersist registers a callback invoked with the number of rollups written
+// on each successful flush. Used to feed self-metrics. Call before Run.
+func (a *MetricAccumulator) SetOnPersist(fn func(int64)) {
+	a.onPersist = fn
 }
 
 type metricKey struct {
@@ -182,6 +189,9 @@ func (a *MetricAccumulator) Flush(ctx context.Context) error {
 		return fmt.Errorf("metric accumulator flush: %w", err)
 	}
 	a.logger.Info("persisted metric rollups", "count", len(rollups))
+	if a.onPersist != nil {
+		a.onPersist(int64(len(rollups)))
+	}
 	return nil
 }
 
@@ -249,5 +259,9 @@ func (a *MetricAccumulator) flushAll(ctx context.Context) {
 	}
 	if err := a.repo.UpsertMetricRollups(rollups); err != nil {
 		a.logger.Warn("metric accumulator final flush failed", "error", err)
+		return
+	}
+	if a.onPersist != nil {
+		a.onPersist(int64(len(rollups)))
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
@@ -60,6 +61,13 @@ type Server struct {
 	cache          *cache.Cache
 	logger         *slog.Logger
 	oidc           *auth.OIDCClient
+	selfMetrics    *selfmetrics.Recorder
+}
+
+// SetSelfMetricsRecorder wires the self-metrics recorder so the request
+// middleware records request rate and latency. Optional; nil disables it.
+func (s *Server) SetSelfMetricsRecorder(rec *selfmetrics.Recorder) {
+	s.selfMetrics = rec
 }
 
 // SetOIDCClient wires the optional iambarn OIDC login adapter. When set, the
@@ -176,7 +184,7 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 	var h http.Handler = s.mux
 	h = maxBodyBytesMiddleware(s.maxBodyBytes, h)
 	h = corsMiddleware(s.allowedOrigins, h)
-	h = loggingMiddleware(logger, h)
+	h = loggingMiddleware(logger, s.selfMetrics, h)
 	h = MetricsMiddleware(s.metrics)(h)
 	h = observability.TracingMiddleware(h)
 	h = SecurityHeaders(h)

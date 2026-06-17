@@ -27,6 +27,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
+	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 	"github.com/wiebe-xyz/spanbarn/internal/worker"
@@ -264,6 +265,15 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		apiServer.SetOIDCClient(oidcClient)
 	}
 
+	// Self-metrics: SpanBarn reports its own OTLP metrics for dogfooding.
+	selfRec := selfmetrics.NewRecorder()
+	selfRec.RegisterGauge("spanbarn.spool.bytes", map[string]string{"dir": cfg.SpoolDir}, func() float64 {
+		return float64(eventSpool.Size())
+	})
+	metricAccumulator.SetOnPersist(selfRec.AddRollups)
+	apiServer.SetSelfMetricsRecorder(selfRec)
+	startSelfMetrics(ctx, cfg, &wg, selfRec, logger)
+
 	api.WarmCaches(ctx, queryRepo, querySvc.Cache(), logger)
 
 	mux := http.NewServeMux()
@@ -462,6 +472,21 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
 	}
+
+	// Self-metrics for reader/ingest pod: request rates, latency, spool depth, queue depth.
+	readerSelfRec := selfmetrics.NewRecorder()
+	readerSelfRec.RegisterGauge("spanbarn.spool.bytes", map[string]string{"dir": cfg.SpoolDir}, func() float64 {
+		return float64(eventSpool.Size())
+	})
+	for _, lbl := range []string{"spans", "metrics", "logs"} {
+		lbl := lbl
+		readerSelfRec.RegisterGauge("spanbarn.queue.depth", map[string]string{"queue": lbl}, func() float64 {
+			depths := writeQueue.Depths(readerCtx)
+			return float64(depths[lbl])
+		})
+	}
+	apiServer.SetSelfMetricsRecorder(readerSelfRec)
+	startSelfMetrics(readerCtx, cfg, &wg, readerSelfRec, logger)
 
 	if cfg.GRPCAddr != "" {
 		grpcSrv := api.NewGRPCServer(apiServer, logger)
@@ -670,6 +695,11 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	mux.Handle("/", apiServer.Handler())
 	logger.Info("writer API ready")
 
+	// Self-metrics recorder wired to the API server now; gauges and reporter are
+	// started after the write queue and metric accumulator are available (step 5).
+	writerSelfRec := selfmetrics.NewRecorder()
+	apiServer.SetSelfMetricsRecorder(writerSelfRec)
+
 	// Step 5: Redis queue connect + workers.
 	logger.Info("connecting to write queue (retrying until ready)", "url", cfg.RedisQueueURL)
 	writeQueue, err := queue.NewRedisQueueWithRetry(ctx, cfg.RedisQueueURL)
@@ -684,6 +714,17 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
 	accumulator := aggregation.NewAccumulator(repo, aggInterval, 30*time.Second, logger)
 	metricAccumulator := aggregation.NewMetricAccumulator(repo, aggInterval, 30*time.Second, logger)
+
+	// Complete self-metrics wiring: rollup callback + queue depth gauges + reporter.
+	metricAccumulator.SetOnPersist(writerSelfRec.AddRollups)
+	for _, lbl := range []string{"spans", "metrics", "logs"} {
+		lbl := lbl
+		writerSelfRec.RegisterGauge("spanbarn.queue.depth", map[string]string{"queue": lbl}, func() float64 {
+			depths := writeQueue.Depths(ctx)
+			return float64(depths[lbl])
+		})
+	}
+	startSelfMetrics(ctx, cfg, &wg, writerSelfRec, logger)
 
 	// writeMu serialises all SQLite writes between the span worker and the
 	// retention worker. Without this they compete for the write connection:
@@ -875,6 +916,48 @@ func safeGo(name string, wg *sync.WaitGroup, fn func()) {
 // replication cycle; spanbarn must not run a competing checkpoint goroutine.
 func litestreamActive() bool {
 	return os.Getenv("LITESTREAM_ACCESS_KEY_ID") != ""
+}
+
+// startSelfMetrics wires and launches the periodic self-metrics reporter, which
+// POSTs SpanBarn's own OTLP metrics to its ingest endpoint so the Metrics page
+// always has live data (dogfooding). A nil rec or disabled config is a no-op.
+func startSelfMetrics(ctx context.Context, cfg config.Config, wg *sync.WaitGroup, rec *selfmetrics.Recorder, logger *slog.Logger) {
+	if rec == nil || cfg.SelfMetricsDisabled {
+		return
+	}
+	endpoint := cfg.SelfEndpoint
+	apiKey := cfg.SelfAPIKey
+	if endpoint == "" {
+		// In standalone mode (no explicit endpoint) post to ourselves so the
+		// feature works out of the box without extra env vars.
+		addr := cfg.Addr
+		if len(addr) > 0 && addr[0] == ':' {
+			addr = "127.0.0.1" + addr
+		}
+		endpoint = "http://" + addr
+	}
+	if apiKey == "" {
+		apiKey = cfg.APIKey
+	}
+	if endpoint == "" || apiKey == "" {
+		logger.Info("self-metrics disabled (no endpoint or API key configured)")
+		return
+	}
+	startNano := uint64(time.Now().UnixNano())
+	reporter := selfmetrics.NewReporter(
+		rec,
+		endpoint, apiKey,
+		time.Duration(cfg.SelfMetricsIntervalSec)*time.Second,
+		map[string]string{
+			"service.name":     "spanbarn",
+			"spanbarn.mode":    cfg.Mode,
+			"spanbarn.version": Version,
+		},
+		startNano,
+		logger,
+	)
+	logger.Info("self-metrics enabled", "endpoint", endpoint, "interval_s", cfg.SelfMetricsIntervalSec)
+	safeGo("self-metrics", wg, func() { reporter.Run(ctx) })
 }
 
 func parseAggregationInterval(s string) time.Duration {
