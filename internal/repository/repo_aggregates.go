@@ -7,62 +7,66 @@ import (
 )
 
 func (r *Repository) UpsertAggregate(agg Aggregate) error {
-	_, err := r.db.Exec(`INSERT INTO aggregates
-		(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(project_id, service, operation, resource, kind, bucket)
-		DO UPDATE SET
-			count = count + excluded.count,
-			error_count = error_count + excluded.error_count,
-			p50_us = excluded.p50_us,
-			p95_us = excluded.p95_us,
-			p99_us = excluded.p99_us,
-			max_us = MAX(max_us, excluded.max_us),
-			sum_duration_us = sum_duration_us + excluded.sum_duration_us`,
-		agg.ProjectID, agg.Service, agg.Operation, agg.Resource, agg.Kind,
-		agg.Bucket, agg.Count, agg.ErrorCount,
-		agg.P50Us, agg.P95Us, agg.P99Us, agg.MaxUs, agg.SumDurationUs,
-	)
-	return err
+	return r.execLow(func() error {
+		_, err := r.db.Exec(`INSERT INTO aggregates
+			(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(project_id, service, operation, resource, kind, bucket)
+			DO UPDATE SET
+				count = count + excluded.count,
+				error_count = error_count + excluded.error_count,
+				p50_us = excluded.p50_us,
+				p95_us = excluded.p95_us,
+				p99_us = excluded.p99_us,
+				max_us = MAX(max_us, excluded.max_us),
+				sum_duration_us = sum_duration_us + excluded.sum_duration_us`,
+			agg.ProjectID, agg.Service, agg.Operation, agg.Resource, agg.Kind,
+			agg.Bucket, agg.Count, agg.ErrorCount,
+			agg.P50Us, agg.P95Us, agg.P99Us, agg.MaxUs, agg.SumDurationUs,
+		)
+		return err
+	})
 }
 
 func (r *Repository) UpsertAggregates(aggs []Aggregate) error {
 	if len(aggs) == 0 {
 		return nil
 	}
-	tx, err := r.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`INSERT INTO aggregates
-		(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(project_id, service, operation, resource, kind, bucket)
-		DO UPDATE SET
-			count = count + excluded.count,
-			error_count = error_count + excluded.error_count,
-			p50_us = excluded.p50_us,
-			p95_us = excluded.p95_us,
-			p99_us = excluded.p99_us,
-			max_us = MAX(max_us, excluded.max_us),
-			sum_duration_us = sum_duration_us + excluded.sum_duration_us`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, agg := range aggs {
-		if _, err := stmt.Exec(
-			agg.ProjectID, agg.Service, agg.Operation, agg.Resource, agg.Kind,
-			agg.Bucket, agg.Count, agg.ErrorCount,
-			agg.P50Us, agg.P95Us, agg.P99Us, agg.MaxUs, agg.SumDurationUs,
-		); err != nil {
+	return r.execLow(func() error {
+		tx, err := r.db.Begin()
+		if err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
+		defer tx.Rollback()
+
+		stmt, err := tx.Prepare(`INSERT INTO aggregates
+			(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(project_id, service, operation, resource, kind, bucket)
+			DO UPDATE SET
+				count = count + excluded.count,
+				error_count = error_count + excluded.error_count,
+				p50_us = excluded.p50_us,
+				p95_us = excluded.p95_us,
+				p99_us = excluded.p99_us,
+				max_us = MAX(max_us, excluded.max_us),
+				sum_duration_us = sum_duration_us + excluded.sum_duration_us`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for _, agg := range aggs {
+			if _, err := stmt.Exec(
+				agg.ProjectID, agg.Service, agg.Operation, agg.Resource, agg.Kind,
+				agg.Bucket, agg.Count, agg.ErrorCount,
+				agg.P50Us, agg.P95Us, agg.P99Us, agg.MaxUs, agg.SumDurationUs,
+			); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	})
 }
 
 func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
@@ -134,14 +138,21 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 func (r *Repository) DeleteAggregatesOlderThan(cutoff time.Time) (int64, error) {
 	var total int64
 	for {
-		res, err := r.db.Exec(
-			"DELETE FROM aggregates WHERE rowid IN (SELECT rowid FROM aggregates WHERE bucket < ? LIMIT 1000)",
-			cutoff,
-		)
+		var n int64
+		err := r.execLow(func() error {
+			res, e := r.db.Exec(
+				"DELETE FROM aggregates WHERE rowid IN (SELECT rowid FROM aggregates WHERE bucket < ? LIMIT 1000)",
+				cutoff,
+			)
+			if e != nil {
+				return e
+			}
+			n, _ = res.RowsAffected()
+			return nil
+		})
 		if err != nil {
 			return total, err
 		}
-		n, _ := res.RowsAffected()
 		total += n
 		if n == 0 {
 			break

@@ -3,14 +3,19 @@ package repository
 import "database/sql"
 
 func (r *Repository) CreateAPIKey(projectID int64, name, keyHash, scope string) (int64, error) {
-	res, err := r.db.Exec(
-		"INSERT INTO api_keys (project_id, name, key_hash, scope) VALUES (?, ?, ?, ?)",
-		projectID, name, keyHash, scope,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := r.execHigh(func() error {
+		res, e := r.db.Exec(
+			"INSERT INTO api_keys (project_id, name, key_hash, scope) VALUES (?, ?, ?, ?)",
+			projectID, name, keyHash, scope,
+		)
+		if e != nil {
+			return e
+		}
+		id, _ = res.LastInsertId()
+		return nil
+	})
+	return id, err
 }
 
 func (r *Repository) GetAPIKeyByHash(keyHash string) (APIKey, error) {
@@ -23,8 +28,10 @@ func (r *Repository) GetAPIKeyByHash(keyHash string) (APIKey, error) {
 }
 
 func (r *Repository) TouchAPIKey(id int64) error {
-	_, err := r.db.Exec("UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?", id)
-	return err
+	return r.execLow(func() error {
+		_, err := r.db.Exec("UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+		return err
+	})
 }
 
 func (r *Repository) ListAPIKeys(projectID int64) ([]APIKey, error) {
@@ -67,13 +74,15 @@ func (r *Repository) ListAllAPIKeys() ([]APIKey, error) {
 }
 
 func (r *Repository) RevokeAPIKey(id int64) error {
-	res, err := r.db.Exec("DELETE FROM api_keys WHERE id = ?", id)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return r.execHigh(func() error {
+		res, err := r.db.Exec("DELETE FROM api_keys WHERE id = ?", id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
 }

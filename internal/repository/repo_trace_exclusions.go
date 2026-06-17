@@ -23,19 +23,26 @@ func (r *Repository) ListTraceExclusions(projectID int64) ([]TraceExclusion, err
 }
 
 func (r *Repository) CreateTraceExclusion(projectID int64, operation string) (int64, error) {
-	res, err := r.db.Exec(
-		`INSERT OR IGNORE INTO trace_exclusions (project_id, operation, created_at) VALUES (?, ?, ?)`,
-		projectID, operation, time.Now().UTC(),
-	)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := r.execHigh(func() error {
+		res, e := r.db.Exec(
+			`INSERT OR IGNORE INTO trace_exclusions (project_id, operation, created_at) VALUES (?, ?, ?)`,
+			projectID, operation, time.Now().UTC(),
+		)
+		if e != nil {
+			return e
+		}
+		id, _ = res.LastInsertId()
+		return nil
+	})
+	return id, err
 }
 
 func (r *Repository) DeleteTraceExclusion(id int64) error {
-	_, err := r.db.Exec(`DELETE FROM trace_exclusions WHERE id = ?`, id)
-	return err
+	return r.execHigh(func() error {
+		_, err := r.db.Exec(`DELETE FROM trace_exclusions WHERE id = ?`, id)
+		return err
+	})
 }
 
 // ExcludedOperations returns just the operation strings for a project, used

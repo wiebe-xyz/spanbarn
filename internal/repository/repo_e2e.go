@@ -9,16 +9,27 @@ const E2EAccountTTL = 7 * 24 * time.Hour
 // the normal password form; they are only accessible through the E2E session
 // endpoint while e2e_enabled is true on the associated project.
 func (r *Repository) UpsertE2EUser(username string, expiresAt time.Time) (User, error) {
-	if _, err := r.db.Exec(
-		"INSERT OR IGNORE INTO users (username, password_hash) VALUES (?, '')",
-		username,
-	); err != nil {
-		return User{}, err
-	}
-	if _, err := r.db.Exec(
-		"UPDATE users SET e2e_expires_at = ? WHERE username = ?",
-		expiresAt, username,
-	); err != nil {
+	err := r.execLow(func() error {
+		tx, e := r.db.Begin()
+		if e != nil {
+			return e
+		}
+		defer tx.Rollback()
+		if _, e = tx.Exec(
+			"INSERT OR IGNORE INTO users (username, password_hash) VALUES (?, '')",
+			username,
+		); e != nil {
+			return e
+		}
+		if _, e = tx.Exec(
+			"UPDATE users SET e2e_expires_at = ? WHERE username = ?",
+			expiresAt, username,
+		); e != nil {
+			return e
+		}
+		return tx.Commit()
+	})
+	if err != nil {
 		return User{}, err
 	}
 	return r.GetUserByUsername(username)
@@ -27,12 +38,17 @@ func (r *Repository) UpsertE2EUser(username string, expiresAt time.Time) (User, 
 // DeleteExpiredE2EUsers removes all users whose e2e_expires_at is in the past.
 // Returns the number of rows deleted.
 func (r *Repository) DeleteExpiredE2EUsers(now time.Time) (int64, error) {
-	res, err := r.db.Exec(
-		"DELETE FROM users WHERE e2e_expires_at IS NOT NULL AND e2e_expires_at < ?",
-		now,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
+	var n int64
+	err := r.execLow(func() error {
+		res, e := r.db.Exec(
+			"DELETE FROM users WHERE e2e_expires_at IS NOT NULL AND e2e_expires_at < ?",
+			now,
+		)
+		if e != nil {
+			return e
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	return n, err
 }

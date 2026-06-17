@@ -242,7 +242,6 @@ type RedisWorker struct {
 	floor        *sampling.MinuteFloor
 	logger       *slog.Logger
 	metrics      Metrics
-	writeMu      *sync.Mutex
 	cfg          WorkerConfig
 }
 
@@ -276,13 +275,6 @@ func (w *RedisWorker) SetBoringPolicy(p BoringPolicyReader) {
 // count accurately.
 func (w *RedisWorker) SetMinuteFloor(f *sampling.MinuteFloor) {
 	w.floor = f
-}
-
-// SetWriteMutex wires in the shared write serializer. When set, the worker
-// holds the mutex for the entire write phase of each batch so that retention
-// and span inserts never compete for the SQLite write lock.
-func (w *RedisWorker) SetWriteMutex(mu *sync.Mutex) {
-	w.writeMu = mu
 }
 
 // Run loops on BRPOP until ctx is cancelled.
@@ -343,12 +335,6 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 
 	if len(interesting) == 0 {
 		return
-	}
-
-	// Acquire the shared write lock before touching the DB.
-	if w.writeMu != nil {
-		w.writeMu.Lock()
-		defer w.writeMu.Unlock()
 	}
 
 	_, insertSpan := tracer.Start(ctx, "redis_worker.insert_spans")

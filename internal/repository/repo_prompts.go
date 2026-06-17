@@ -10,56 +10,58 @@ func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
 	if len(records) == 0 {
 		return nil
 	}
-	tx, err := r.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`INSERT INTO prompt_records
-		(project_id, trace_id, span_id, parent_span_id, service, name,
-		 gen_ai_system, model, temperature, max_tokens,
-		 prompt_body, response_body,
-		 input_tokens, output_tokens, total_tokens,
-		 cached_input_tokens, reasoning_output_tokens,
-		 cost_usd, input_cost_usd, output_cost_usd, duration_us,
-		 status, finish_reason,
-		 prompt_template, prompt_hash, outcome, quality_score,
-		 feature_flag_key, feature_flag_variant, start_time_us)
-		VALUES (?, ?, ?, ?, ?, ?,
-		        ?, ?, ?, ?,
-		        ?, ?,
-		        ?, ?, ?,
-		        ?, ?,
-		        ?, ?, ?, ?,
-		        ?, ?,
-		        ?, ?, ?, ?,
-		        ?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, rec := range records {
-		var parentID *string
-		if rec.ParentSpanID != "" {
-			parentID = &rec.ParentSpanID
-		}
-		if _, err := stmt.Exec(
-			rec.ProjectID, rec.TraceID, rec.SpanID, parentID, rec.Service, rec.Name,
-			rec.GenAISystem, rec.Model, rec.Temperature, rec.MaxTokens,
-			rec.PromptBody, rec.ResponseBody,
-			rec.InputTokens, rec.OutputTokens, rec.TotalTokens,
-			rec.CachedInputTokens, rec.ReasoningOutputTokens,
-			rec.CostUSD, rec.InputCostUSD, rec.OutputCostUSD, rec.DurationUs,
-			rec.Status, rec.FinishReason,
-			rec.PromptTemplate, rec.PromptHash, rec.Outcome, rec.QualityScore,
-			rec.FeatureFlagKey, rec.FeatureFlagVariant, rec.StartTimeUs,
-		); err != nil {
+	return r.execLow(func() error {
+		tx, err := r.db.Begin()
+		if err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
+		defer tx.Rollback()
+
+		stmt, err := tx.Prepare(`INSERT INTO prompt_records
+			(project_id, trace_id, span_id, parent_span_id, service, name,
+			 gen_ai_system, model, temperature, max_tokens,
+			 prompt_body, response_body,
+			 input_tokens, output_tokens, total_tokens,
+			 cached_input_tokens, reasoning_output_tokens,
+			 cost_usd, input_cost_usd, output_cost_usd, duration_us,
+			 status, finish_reason,
+			 prompt_template, prompt_hash, outcome, quality_score,
+			 feature_flag_key, feature_flag_variant, start_time_us)
+			VALUES (?, ?, ?, ?, ?, ?,
+			        ?, ?, ?, ?,
+			        ?, ?,
+			        ?, ?, ?,
+			        ?, ?,
+			        ?, ?, ?, ?,
+			        ?, ?,
+			        ?, ?, ?, ?,
+			        ?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for _, rec := range records {
+			var parentID *string
+			if rec.ParentSpanID != "" {
+				parentID = &rec.ParentSpanID
+			}
+			if _, err := stmt.Exec(
+				rec.ProjectID, rec.TraceID, rec.SpanID, parentID, rec.Service, rec.Name,
+				rec.GenAISystem, rec.Model, rec.Temperature, rec.MaxTokens,
+				rec.PromptBody, rec.ResponseBody,
+				rec.InputTokens, rec.OutputTokens, rec.TotalTokens,
+				rec.CachedInputTokens, rec.ReasoningOutputTokens,
+				rec.CostUSD, rec.InputCostUSD, rec.OutputCostUSD, rec.DurationUs,
+				rec.Status, rec.FinishReason,
+				rec.PromptTemplate, rec.PromptHash, rec.Outcome, rec.QualityScore,
+				rec.FeatureFlagKey, rec.FeatureFlagVariant, rec.StartTimeUs,
+			); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	})
 }
 
 func (r *Repository) QueryPromptRecords(f PromptFilter) ([]PromptRecord, error) {
@@ -151,11 +153,16 @@ func (r *Repository) GetPromptRecordsByTraceID(traceID string) ([]PromptRecord, 
 }
 
 func (r *Repository) DeletePromptRecordsOlderThan(cutoff time.Time) (int64, error) {
-	res, err := r.db.Exec("DELETE FROM prompt_records WHERE ingested_at < ?", cutoff)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
+	var n int64
+	err := r.execLow(func() error {
+		res, e := r.db.Exec("DELETE FROM prompt_records WHERE ingested_at < ?", cutoff)
+		if e != nil {
+			return e
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	return n, err
 }
 
 func (r *Repository) scanPromptRecords(query string, args ...any) ([]PromptRecord, error) {

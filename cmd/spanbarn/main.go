@@ -31,6 +31,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 	"github.com/wiebe-xyz/spanbarn/internal/worker"
+	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
 var (
@@ -686,12 +687,8 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	accumulator := aggregation.NewAccumulator(repo, aggInterval, 30*time.Second, logger)
 	metricAccumulator := aggregation.NewMetricAccumulator(repo, aggInterval, 30*time.Second, logger)
 
-	// writeMu serialises all SQLite writes between the span worker and the
-	// retention worker. Without this they compete for the write connection:
-	// retention times out waiting for the lock, and retries compound the
-	// contention. With the mutex each side waits at the Go level (cheap) and
-	// SQLite only ever sees one writer at a time.
-	writeMu := &sync.Mutex{}
+	scheduler := writescheduler.New()
+	repo.SetWriteScheduler(scheduler)
 
 	boringPolicy := worker.NewCachedBoringPolicy(repo, 30*time.Second)
 
@@ -702,8 +699,8 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// The writer is the single SQLite writer, so an in-memory per-minute floor
 	// counts boring-trace survivals accurately across batches.
 	rw.SetMinuteFloor(sampling.NewMinuteFloor())
-	rw.SetWriteMutex(writeMu)
 	workerCtx, workerCancel := context.WithCancel(ctx)
+	safeGo("write-scheduler", &wg, func() { scheduler.Run(workerCtx) })
 	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
 	safeGo("accumulator", &wg, func() { accumulator.Run(workerCtx) })
@@ -759,10 +756,11 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// Retention queries (DELETE/SELECT on the full spans table) can take
 	// several minutes when the backlog is large. Give it a separate repo
 	// instance with a longer timeout so individual queries don't abort
-	// mid-cycle. Both repos share the same *sql.DB connection, so the
-	// writeMu still serialises all writes correctly.
+	// mid-cycle. Both repos share the same *sql.DB connection and write
+	// scheduler, so all writes are correctly serialised and prioritised.
 	retentionRepo := repository.NewRepository(db.DB)
 	retentionRepo.SetQueryTimeout(5 * time.Minute)
+	retentionRepo.SetWriteScheduler(scheduler)
 
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
@@ -776,7 +774,6 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 	}
 	retentionWorker := retention.NewRetentionWorker(retentionRepo, accumulator, retentionCfg, logger)
-	retentionWorker.SetWriteMutex(writeMu)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })

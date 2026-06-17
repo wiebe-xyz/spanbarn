@@ -46,47 +46,49 @@ func (r *Repository) UpsertMetricRollups(rollups []MetricRollup) error {
 	if len(rollups) == 0 {
 		return nil
 	}
-	tx, err := r.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`INSERT INTO metric_rollups
-		(project_id, name, type, unit, attr_fingerprint, attributes, bucket,
-		 count, sum, min, max, last, obs_count, extra)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(project_id, name, attr_fingerprint, bucket)
-		DO UPDATE SET
-			count = count + excluded.count,
-			sum = sum + excluded.sum,
-			min = MIN(min, excluded.min),
-			max = MAX(max, excluded.max),
-			last = excluded.last,
-			obs_count = obs_count + excluded.obs_count,
-			extra = excluded.extra`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, m := range rollups {
-		attrs := m.Attributes
-		if attrs == "" {
-			attrs = "{}"
-		}
-		var extra *string
-		if m.Extra != "" {
-			extra = &m.Extra
-		}
-		if _, err := stmt.Exec(
-			m.ProjectID, m.Name, m.Type, m.Unit, m.AttrFingerprint, attrs, m.Bucket,
-			m.Count, m.Sum, m.Min, m.Max, m.Last, m.ObsCount, extra,
-		); err != nil {
+	return r.execLow(func() error {
+		tx, err := r.db.Begin()
+		if err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
+		defer tx.Rollback()
+
+		stmt, err := tx.Prepare(`INSERT INTO metric_rollups
+			(project_id, name, type, unit, attr_fingerprint, attributes, bucket,
+			 count, sum, min, max, last, obs_count, extra)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(project_id, name, attr_fingerprint, bucket)
+			DO UPDATE SET
+				count = count + excluded.count,
+				sum = sum + excluded.sum,
+				min = MIN(min, excluded.min),
+				max = MAX(max, excluded.max),
+				last = excluded.last,
+				obs_count = obs_count + excluded.obs_count,
+				extra = excluded.extra`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for _, m := range rollups {
+			attrs := m.Attributes
+			if attrs == "" {
+				attrs = "{}"
+			}
+			var extra *string
+			if m.Extra != "" {
+				extra = &m.Extra
+			}
+			if _, err := stmt.Exec(
+				m.ProjectID, m.Name, m.Type, m.Unit, m.AttrFingerprint, attrs, m.Bucket,
+				m.Count, m.Sum, m.Min, m.Max, m.Last, m.ObsCount, extra,
+			); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	})
 }
 
 // QueryMetricRollups returns rollup buckets for a metric name, ordered by bucket
@@ -183,14 +185,21 @@ func (r *Repository) QueryProjectRollups(ctx context.Context, projectID int64, f
 func (r *Repository) DeleteMetricRollupsOlderThan(cutoff time.Time) (int64, error) {
 	var total int64
 	for {
-		res, err := r.db.Exec(
-			"DELETE FROM metric_rollups WHERE rowid IN (SELECT rowid FROM metric_rollups WHERE bucket < ? LIMIT 1000)",
-			cutoff,
-		)
+		var n int64
+		err := r.execLow(func() error {
+			res, e := r.db.Exec(
+				"DELETE FROM metric_rollups WHERE rowid IN (SELECT rowid FROM metric_rollups WHERE bucket < ? LIMIT 1000)",
+				cutoff,
+			)
+			if e != nil {
+				return e
+			}
+			n, _ = res.RowsAffected()
+			return nil
+		})
 		if err != nil {
 			return total, err
 		}
-		n, _ := res.RowsAffected()
 		total += n
 		if n == 0 {
 			break

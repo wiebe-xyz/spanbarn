@@ -59,65 +59,76 @@ func normalizeLabelFilters(s string) string {
 }
 
 func (r *Repository) CreateAlert(a Alert) (int64, error) {
-	enabled := 0
-	if a.Enabled {
-		enabled = 1
-	}
-	res, err := r.db.Exec(
-		`INSERT INTO alerts (project_id, service, operation, type, threshold,
-			comparison_window, cooldown_minutes, webhook_url, email, enabled,
-			metric_name, metric_agg, label_filters)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.ProjectID, a.Service, a.Operation, a.Type, a.Threshold,
-		a.ComparisonWindow, a.CooldownMinutes, a.WebhookURL, a.Email, enabled,
-		a.MetricName, a.MetricAgg, normalizeLabelFilters(a.LabelFilters),
-	)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := r.execHigh(func() error {
+		enabled := 0
+		if a.Enabled {
+			enabled = 1
+		}
+		res, e := r.db.Exec(
+			`INSERT INTO alerts (project_id, service, operation, type, threshold,
+				comparison_window, cooldown_minutes, webhook_url, email, enabled,
+				metric_name, metric_agg, label_filters)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			a.ProjectID, a.Service, a.Operation, a.Type, a.Threshold,
+			a.ComparisonWindow, a.CooldownMinutes, a.WebhookURL, a.Email, enabled,
+			a.MetricName, a.MetricAgg, normalizeLabelFilters(a.LabelFilters),
+		)
+		if e != nil {
+			return e
+		}
+		id, _ = res.LastInsertId()
+		return nil
+	})
+	return id, err
 }
 
 func (r *Repository) UpdateAlert(a Alert) error {
-	enabled := 0
-	if a.Enabled {
-		enabled = 1
-	}
-	res, err := r.db.Exec(
-		`UPDATE alerts SET service = ?, operation = ?, type = ?, threshold = ?,
-			comparison_window = ?, cooldown_minutes = ?, webhook_url = ?, email = ?, enabled = ?,
-			metric_name = ?, metric_agg = ?, label_filters = ?
-		WHERE id = ?`,
-		a.Service, a.Operation, a.Type, a.Threshold,
-		a.ComparisonWindow, a.CooldownMinutes, a.WebhookURL, a.Email, enabled,
-		a.MetricName, a.MetricAgg, normalizeLabelFilters(a.LabelFilters),
-		a.ID,
-	)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("alert %d not found", a.ID)
-	}
-	return nil
+	return r.execHigh(func() error {
+		enabled := 0
+		if a.Enabled {
+			enabled = 1
+		}
+		res, err := r.db.Exec(
+			`UPDATE alerts SET service = ?, operation = ?, type = ?, threshold = ?,
+				comparison_window = ?, cooldown_minutes = ?, webhook_url = ?, email = ?, enabled = ?,
+				metric_name = ?, metric_agg = ?, label_filters = ?
+			WHERE id = ?`,
+			a.Service, a.Operation, a.Type, a.Threshold,
+			a.ComparisonWindow, a.CooldownMinutes, a.WebhookURL, a.Email, enabled,
+			a.MetricName, a.MetricAgg, normalizeLabelFilters(a.LabelFilters),
+			a.ID,
+		)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("alert %d not found", a.ID)
+		}
+		return nil
+	})
 }
 
 func (r *Repository) DeleteAlert(id int64) error {
-	res, err := r.db.Exec("DELETE FROM alerts WHERE id = ?", id)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("alert %d not found", id)
-	}
-	return nil
+	return r.execHigh(func() error {
+		res, err := r.db.Exec("DELETE FROM alerts WHERE id = ?", id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("alert %d not found", id)
+		}
+		return nil
+	})
 }
 
 func (r *Repository) UpdateAlertLastTriggered(id int64, at time.Time) error {
-	_, err := r.db.Exec("UPDATE alerts SET last_triggered_at = ? WHERE id = ?", at, id)
-	return err
+	return r.execLow(func() error {
+		_, err := r.db.Exec("UPDATE alerts SET last_triggered_at = ? WHERE id = ?", at, id)
+		return err
+	})
 }
 
 // --- Error Samples ---
@@ -126,34 +137,36 @@ func (r *Repository) InsertErrorSamples(spans []Span) error {
 	if len(spans) == 0 {
 		return nil
 	}
-	tx, err := r.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`INSERT INTO error_samples
-		(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, s := range spans {
-		var parentID *string
-		if s.ParentSpanID != "" {
-			parentID = &s.ParentSpanID
-		}
-		if _, err := stmt.Exec(
-			s.ProjectID, s.TraceID, s.SpanID, parentID,
-			s.Name, s.Service, s.Resource, s.Kind, s.Status,
-			s.StartTimeUs, s.DurationUs, s.Attributes, s.Events,
-		); err != nil {
+	return r.execLow(func() error {
+		tx, err := r.db.Begin()
+		if err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
+		defer tx.Rollback()
+
+		stmt, err := tx.Prepare(`INSERT INTO error_samples
+			(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for _, s := range spans {
+			var parentID *string
+			if s.ParentSpanID != "" {
+				parentID = &s.ParentSpanID
+			}
+			if _, err := stmt.Exec(
+				s.ProjectID, s.TraceID, s.SpanID, parentID,
+				s.Name, s.Service, s.Resource, s.Kind, s.Status,
+				s.StartTimeUs, s.DurationUs, s.Attributes, s.Events,
+			); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	})
 }
 
 func (r *Repository) QueryErrorSamples(f SpanFilter) ([]Span, error) {
@@ -208,11 +221,16 @@ func (r *Repository) QueryErrorSamples(f SpanFilter) ([]Span, error) {
 }
 
 func (r *Repository) DeleteErrorSamplesOlderThan(cutoff time.Time) (int64, error) {
-	res, err := r.db.Exec("DELETE FROM error_samples WHERE sampled_at < ?", cutoff)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
+	var n int64
+	err := r.execLow(func() error {
+		res, e := r.db.Exec("DELETE FROM error_samples WHERE sampled_at < ?", cutoff)
+		if e != nil {
+			return e
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	return n, err
 }
 
 func (r *Repository) scanErrorSamples(query string, args ...any) ([]Span, error) {

@@ -14,15 +14,20 @@ type SavedQuery struct {
 }
 
 func (r *Repository) CreateSavedQuery(q SavedQuery) (int64, error) {
-	res, err := r.db.Exec(`INSERT INTO saved_queries
-		(project_id, name, service, operation, status, min_duration_us)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		q.ProjectID, q.Name, q.Service, q.Operation, q.Status, q.MinDurationUs,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	var id int64
+	err := r.execHigh(func() error {
+		res, e := r.db.Exec(`INSERT INTO saved_queries
+			(project_id, name, service, operation, status, min_duration_us)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			q.ProjectID, q.Name, q.Service, q.Operation, q.Status, q.MinDurationUs,
+		)
+		if e != nil {
+			return e
+		}
+		id, _ = res.LastInsertId()
+		return nil
+	})
+	return id, err
 }
 
 func (r *Repository) ListSavedQueries(projectID int64) ([]SavedQuery, error) {
@@ -48,6 +53,8 @@ func (r *Repository) ListSavedQueries(projectID int64) ([]SavedQuery, error) {
 }
 
 func (r *Repository) DeleteSavedQuery(id int64) error {
-	_, err := r.db.Exec("DELETE FROM saved_queries WHERE id = ?", id)
-	return err
+	return r.execHigh(func() error {
+		_, err := r.db.Exec("DELETE FROM saved_queries WHERE id = ?", id)
+		return err
+	})
 }
