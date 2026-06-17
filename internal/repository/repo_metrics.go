@@ -13,19 +13,19 @@ import (
 
 // MetricRow is the repository-layer representation of a stored metric data point.
 type MetricRow struct {
-	ID                  int64
-	ProjectID           int64
-	Name                string
-	Description         string
-	Unit                string
-	Type                string
-	TimeUnixNano        int64
-	StartTimeUnixNano   int64
-	Value               float64
-	Count               int64
-	Attributes          string
-	Extra               string
-	IngestedAt          time.Time
+	ID                int64
+	ProjectID         int64
+	Name              string
+	Description       string
+	Unit              string
+	Type              string
+	TimeUnixNano      int64
+	StartTimeUnixNano int64
+	Value             float64
+	Count             int64
+	Attributes        string
+	Extra             string
+	IngestedAt        time.Time
 }
 
 // MetricFilter scopes metric queries.
@@ -43,41 +43,43 @@ func (r *Repository) InsertMetrics(ctx context.Context, recs []model.MetricRecor
 	if len(recs) == 0 {
 		return nil
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO metrics
-		(project_id, name, description, unit, type,
-		 time_unix_nano, start_time_unix_nano,
-		 value, count, attributes, extra)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, rec := range recs {
-		attrs := string(rec.Attributes)
-		if attrs == "" || attrs == "null" {
-			attrs = "{}"
-		}
-		var extra *string
-		if len(rec.Extra) > 0 && string(rec.Extra) != "null" {
-			s := string(rec.Extra)
-			extra = &s
-		}
-		if _, err := stmt.ExecContext(ctx,
-			rec.ProjectID, rec.Name, rec.Description, rec.Unit, string(rec.Type),
-			int64(rec.TimeUnixNano), int64(rec.StartTimeUnixNano),
-			rec.Value, int64(rec.Count), attrs, extra,
-		); err != nil {
+	return r.execLow(func() error {
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
+		defer tx.Rollback()
+
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO metrics
+			(project_id, name, description, unit, type,
+			 time_unix_nano, start_time_unix_nano,
+			 value, count, attributes, extra)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for _, rec := range recs {
+			attrs := string(rec.Attributes)
+			if attrs == "" || attrs == "null" {
+				attrs = "{}"
+			}
+			var extra *string
+			if len(rec.Extra) > 0 && string(rec.Extra) != "null" {
+				s := string(rec.Extra)
+				extra = &s
+			}
+			if _, err := stmt.ExecContext(ctx,
+				rec.ProjectID, rec.Name, rec.Description, rec.Unit, string(rec.Type),
+				int64(rec.TimeUnixNano), int64(rec.StartTimeUnixNano),
+				rec.Value, int64(rec.Count), attrs, extra,
+			); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	})
 }
 
 // ListMetricNames returns distinct metric names for a project within a time range.
@@ -202,13 +204,20 @@ func (r *Repository) QueryMetricSeries(ctx context.Context, f MetricFilter) ([]M
 func (r *Repository) DeleteMetricsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	var total int64
 	for {
-		res, err := r.db.ExecContext(ctx,
-			`DELETE FROM metrics WHERE rowid IN (SELECT rowid FROM metrics WHERE ingested_at < ? LIMIT 1000)`,
-			cutoff)
+		var n int64
+		err := r.execLow(func() error {
+			res, e := r.db.ExecContext(ctx,
+				`DELETE FROM metrics WHERE rowid IN (SELECT rowid FROM metrics WHERE ingested_at < ? LIMIT 1000)`,
+				cutoff)
+			if e != nil {
+				return e
+			}
+			n, _ = res.RowsAffected()
+			return nil
+		})
 		if err != nil {
 			return total, err
 		}
-		n, _ := res.RowsAffected()
 		total += n
 		if n == 0 {
 			break

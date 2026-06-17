@@ -77,6 +77,11 @@ func (s *Server) SetOIDCClient(c *auth.OIDCClient) {
 	s.oidc = c
 }
 
+// oidcClient returns the wired OIDC adapter (may be nil). Used as the
+// request-time getter for SessionOrReadKey, since the adapter is set after
+// routes are registered.
+func (s *Server) oidcClient() *auth.OIDCClient { return s.oidc }
+
 // funnelBarnConfig captures the public bits of the FunnelBarn integration
 // that the SPA needs at boot. Empty Endpoint disables analytics.
 type funnelBarnConfig struct {
@@ -166,12 +171,12 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 			APIKey:   cfg.FunnelBarnAPIKey,
 			Project:  cfg.FunnelBarnProject,
 		},
-		rateLimiter:    NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
-		metrics:        NewMetrics(),
+		rateLimiter: NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
+		metrics:     NewMetrics(),
 		ingest:      ingestHandler,
 		querySvc:    querySvc,
-		sessionMgr:     sm,
-		logger:         logger,
+		sessionMgr:  sm,
+		logger:      logger,
 	}
 
 	for _, opt := range opts {

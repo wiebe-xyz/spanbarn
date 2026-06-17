@@ -36,8 +36,8 @@ type bugbarnEvent struct {
 }
 
 type bugbarnException struct {
-	Type       string          `json:"type"`
-	Value      string          `json:"value"`
+	Type       string         `json:"type"`
+	Value      string         `json:"value"`
 	Stacktrace []bugbarnFrame `json:"stacktrace,omitempty"`
 }
 

@@ -84,7 +84,7 @@ func (s *Server) registerRoutes() {
 	// List/aggregate endpoints get a short cache (30s); detail endpoints are not cached.
 	if s.querySvc != nil && s.sessionMgr != nil {
 		qh := &queryHandlers{svc: s.querySvc}
-		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer)
+		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer, s.oidcClient)
 		sessionAuth := SessionMiddleware(s.sessionMgr)
 		cache60 := func(h http.Handler) http.Handler { return cacheMiddleware(60, h) }
 
@@ -115,7 +115,7 @@ func (s *Server) registerRoutes() {
 	// Metrics query endpoints — rate limited + session auth required.
 	if s.repo != nil && s.sessionMgr != nil {
 		mqh := &metricsQueryHandlers{repo: s.repo}
-		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer)
+		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer, s.oidcClient)
 
 		s.mux.Handle("/api/v1/metrics/names", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricNames))))
 		s.mux.Handle("/api/v1/metrics/catalog", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricCatalog))))
@@ -127,7 +127,7 @@ func (s *Server) registerRoutes() {
 	// per-user state, so they stay session-only.
 	if s.repo != nil && s.sessionMgr != nil {
 		lqh := &logsQueryHandlers{repo: s.repo}
-		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer)
+		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer, s.oidcClient)
 		sessionAuth := SessionMiddleware(s.sessionMgr)
 
 		s.mux.Handle("/api/v1/logs", apiRL(readAuth(http.HandlerFunc(lqh.handleLogs))))
@@ -203,7 +203,7 @@ func (s *Server) registerRoutes() {
 	// middleware blocks mutating methods for API keys.
 	if s.repo != nil && s.sessionMgr != nil {
 		ph := &projectHandlers{repo: s.repo, cache: s.cache}
-		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer)
+		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer, s.oidcClient)
 
 		s.mux.Handle("/api/v1/projects", apiRL(readAuth(ph)))
 		s.mux.Handle("/api/v1/projects/", apiRL(readAuth(ph)))

@@ -22,6 +22,9 @@ type BoringPolicyReader interface {
 	// VerboseUntil returns the time until which all spans for the project
 	// should be stored (verbose / record-in-detail mode). Zero = inactive.
 	VerboseUntil(projectID int64) time.Time
+	// MinTracesPerMinute returns the minimum number of boring traces that must
+	// survive sampling per (project, operation) each minute. Default 1.
+	MinTracesPerMinute(projectID int64) int
 }
 
 // CachedBoringPolicy reads boring span policy from the settings table with a TTL
@@ -32,6 +35,8 @@ type BoringPolicyReader interface {
 //	boring.sample_ratio                  → global 1-in-N (0 or absent = skip all boring spans)
 //	boring.sample_ratio.project.{id}     → per-project override
 //	boring.verbose_until.project.{id}    → Unix timestamp (seconds) until project is verbose
+//	boring.min_traces_per_minute         → global floor: min boring traces kept per (project, op) per minute
+//	boring.min_traces_per_minute.project.{id} → per-project override (default 1 when absent)
 type CachedBoringPolicy struct {
 	repo     BoringSettingsReader
 	cacheTTL time.Duration
@@ -66,6 +71,26 @@ func (p *CachedBoringPolicy) SampleRatio(projectID int64) int {
 		}
 	}
 	return 0
+}
+
+// DefaultMinTracesPerMinute is the per-(project, operation) survival floor used
+// when no setting is configured: at least one boring trace per minute survives
+// sampling so quiet, healthy operations never vanish entirely from the UI.
+const DefaultMinTracesPerMinute = 1
+
+func (p *CachedBoringPolicy) MinTracesPerMinute(projectID int64) int {
+	projKey := fmt.Sprintf("boring.min_traces_per_minute.project.%d", projectID)
+	if s := p.get(projKey); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			return n
+		}
+	}
+	if s := p.get("boring.min_traces_per_minute"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return DefaultMinTracesPerMinute
 }
 
 func (p *CachedBoringPolicy) VerboseUntil(projectID int64) time.Time {

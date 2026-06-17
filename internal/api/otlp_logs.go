@@ -133,4 +133,3 @@ func logBodyToString(body *commonpb.AnyValue) string {
 		return string(data)
 	}
 }
-

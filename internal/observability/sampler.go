@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/binary"
 
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
-	"go.opentelemetry.io/otel/codes"
 )
 
 // DefaultSelfSamplePercent is the percentage of non-error traces that

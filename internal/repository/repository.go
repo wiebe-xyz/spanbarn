@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
 const DefaultQueryTimeout = 30 * time.Second
@@ -20,6 +22,7 @@ type Repository struct {
 	db           *sql.DB
 	queryTimeout time.Duration
 	readOnly     bool
+	scheduler    *writescheduler.Scheduler
 }
 
 // NewRepository creates a Repository backed by the given database connection.
@@ -49,4 +52,29 @@ func (r *Repository) queryContext() (context.Context, context.CancelFunc) {
 // DB returns the underlying *sql.DB, useful for testing.
 func (r *Repository) DB() *sql.DB {
 	return r.db
+}
+
+// SetWriteScheduler wires in a priority write scheduler. When set, all write
+// methods route through the scheduler instead of competing in the sql.DB pool.
+// Call before starting any goroutines that use this repository.
+func (r *Repository) SetWriteScheduler(s *writescheduler.Scheduler) {
+	r.scheduler = s
+}
+
+// execHigh submits fn as a high-priority write (admin CRUD). It blocks until
+// fn completes. Falls back to a direct call when no scheduler is configured
+// (tests, CLI commands).
+func (r *Repository) execHigh(fn func() error) error {
+	if r.scheduler == nil {
+		return fn()
+	}
+	return r.scheduler.Submit(context.Background(), writescheduler.High, fn)
+}
+
+// execLow submits fn as a low-priority write (background ingest, retention).
+func (r *Repository) execLow(fn func() error) error {
+	if r.scheduler == nil {
+		return fn()
+	}
+	return r.scheduler.Submit(context.Background(), writescheduler.Low, fn)
 }

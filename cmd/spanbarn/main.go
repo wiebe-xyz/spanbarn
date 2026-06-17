@@ -27,10 +27,12 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
+	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 	"github.com/wiebe-xyz/spanbarn/internal/worker"
+	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
 var (
@@ -726,12 +728,8 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	}
 	startSelfMetrics(ctx, cfg, &wg, writerSelfRec, logger)
 
-	// writeMu serialises all SQLite writes between the span worker and the
-	// retention worker. Without this they compete for the write connection:
-	// retention times out waiting for the lock, and retries compound the
-	// contention. With the mutex each side waits at the Go level (cheap) and
-	// SQLite only ever sees one writer at a time.
-	writeMu := &sync.Mutex{}
+	scheduler := writescheduler.New()
+	repo.SetWriteScheduler(scheduler)
 
 	boringPolicy := worker.NewCachedBoringPolicy(repo, 30*time.Second)
 
@@ -739,8 +737,11 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	rw.SetAccumulator(accumulator)
 	rw.SetConfig(worker.WorkerConfig{SlowThresholdUs: int64(cfg.SlowThresholdMS) * 1000})
 	rw.SetBoringPolicy(boringPolicy)
-	rw.SetWriteMutex(writeMu)
+	// The writer is the single SQLite writer, so an in-memory per-minute floor
+	// counts boring-trace survivals accurately across batches.
+	rw.SetMinuteFloor(sampling.NewMinuteFloor())
 	workerCtx, workerCancel := context.WithCancel(ctx)
+	safeGo("write-scheduler", &wg, func() { scheduler.Run(workerCtx) })
 	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
 	safeGo("accumulator", &wg, func() { accumulator.Run(workerCtx) })
@@ -796,10 +797,11 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// Retention queries (DELETE/SELECT on the full spans table) can take
 	// several minutes when the backlog is large. Give it a separate repo
 	// instance with a longer timeout so individual queries don't abort
-	// mid-cycle. Both repos share the same *sql.DB connection, so the
-	// writeMu still serialises all writes correctly.
+	// mid-cycle. Both repos share the same *sql.DB connection and write
+	// scheduler, so all writes are correctly serialised and prioritised.
 	retentionRepo := repository.NewRepository(db.DB)
 	retentionRepo.SetQueryTimeout(5 * time.Minute)
+	retentionRepo.SetWriteScheduler(scheduler)
 
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
@@ -813,7 +815,6 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 	}
 	retentionWorker := retention.NewRetentionWorker(retentionRepo, accumulator, retentionCfg, logger)
-	retentionWorker.SetWriteMutex(writeMu)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
@@ -861,16 +862,23 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 // not crash the process.
 func buildOIDCClient(cfg config.Config, logger *slog.Logger) *auth.OIDCClient {
 	oc := auth.OIDCConfig{
-		Issuer:        cfg.OIDCIssuer,
-		ClientID:      cfg.OIDCClientID,
-		ClientSecret:  cfg.OIDCClientSecret,
-		RedirectURL:   cfg.OIDCRedirectURL,
-		RequiredGroup: cfg.OIDCRequiredGroup,
+		Issuer:            cfg.OIDCIssuer,
+		ClientID:          cfg.OIDCClientID,
+		ClientSecret:      cfg.OIDCClientSecret,
+		RedirectURL:       cfg.OIDCRedirectURL,
+		RequiredGroup:     cfg.OIDCRequiredGroup,
+		ResourceAudiences: cfg.OIDCResourceAudiences,
+		CLIClientID:       cfg.OIDCCLIClientID,
+	}
+	// The sb CLI's device-code tokens carry the CLI client id as their
+	// audience, so accept it as a resource audience automatically.
+	if cfg.OIDCCLIClientID != "" {
+		oc.ResourceAudiences = append(oc.ResourceAudiences, cfg.OIDCCLIClientID)
 	}
 	if !oc.Enabled() {
 		return nil
 	}
-	logger.Info("oidc: enabled", "issuer", oc.Issuer, "client_id", oc.ClientID, "required_group", oc.RequiredGroup)
+	logger.Info("oidc: enabled", "issuer", oc.Issuer, "client_id", oc.ClientID, "required_group", oc.RequiredGroup, "resource_audiences", oc.ResourceAudiences)
 	return auth.NewOIDCClient(oc)
 }
 
@@ -1072,7 +1080,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	// pod is restarting. Mutation handlers will hit SQLite "readonly database"
 	// errors and return 5xx, which is the same as if the writer were down.
 	var (
-		roRepo   *repository.Repository
+		roRepo    *repository.Repository
 		keyLookup auth.KeyLookup
 	)
 	if cfg.DBPath != "" {

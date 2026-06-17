@@ -93,5 +93,5 @@ func (c *CachedRatioLookup) get(key string) int {
 // StaticRatioLookup is a fixed ratio used in tests and standalone mode.
 type StaticRatioLookup struct{ ratio int }
 
-func NewStaticRatioLookup(ratio int) *StaticRatioLookup { return &StaticRatioLookup{ratio: ratio} }
+func NewStaticRatioLookup(ratio int) *StaticRatioLookup                     { return &StaticRatioLookup{ratio: ratio} }
 func (s *StaticRatioLookup) Ratio(_ context.Context, _ int64, _ string) int { return s.ratio }

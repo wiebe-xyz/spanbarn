@@ -16,34 +16,36 @@ func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error
 	if len(spans) == 0 {
 		return nil
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO spans
-		(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, s := range spans {
-		var parentID *string
-		if s.ParentSpanID != "" {
-			parentID = &s.ParentSpanID
-		}
-		if _, err := stmt.ExecContext(ctx,
-			s.ProjectID, s.TraceID, s.SpanID, parentID,
-			s.Name, s.Service, s.Resource, s.Kind, s.Status,
-			s.StartTimeUs, s.DurationUs, s.Attributes, s.Events,
-		); err != nil {
+	return r.execLow(func() error {
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
+		defer tx.Rollback()
+
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO spans
+			(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for _, s := range spans {
+			var parentID *string
+			if s.ParentSpanID != "" {
+				parentID = &s.ParentSpanID
+			}
+			if _, err := stmt.ExecContext(ctx,
+				s.ProjectID, s.TraceID, s.SpanID, parentID,
+				s.Name, s.Service, s.Resource, s.Kind, s.Status,
+				s.StartTimeUs, s.DurationUs, s.Attributes, s.Events,
+			); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	})
 }
 
 func (r *Repository) QuerySpans(f SpanFilter) ([]Span, error) {
@@ -128,45 +130,60 @@ func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	q := "DELETE FROM spans WHERE id IN (" + strings.Join(placeholders, ",") + ")"
-	res, err := r.db.Exec(q, args...)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
+	var n int64
+	err := r.execLow(func() error {
+		placeholders := make([]string, len(ids))
+		args := make([]any, len(ids))
+		for i, id := range ids {
+			placeholders[i] = "?"
+			args[i] = id
+		}
+		q := "DELETE FROM spans WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+		res, e := r.db.Exec(q, args...)
+		if e != nil {
+			return e
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	return n, err
 }
 
 func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
-	res, err := r.db.Exec("DELETE FROM spans WHERE id <= ?", maxID)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
+	var n int64
+	err := r.execLow(func() error {
+		res, e := r.db.Exec("DELETE FROM spans WHERE id <= ?", maxID)
+		if e != nil {
+			return e
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	return n, err
 }
 
 func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThresholdUS int64) (int64, error) {
 	var total int64
 	for {
-		// Find trace_ids where ALL spans in the trace are boring (non-error, fast)
-		// and at least one span falls in the retention window.
-		res, err := r.db.Exec(`DELETE FROM spans WHERE trace_id IN (
-			SELECT trace_id FROM spans
-			WHERE ingested_at < ? AND ingested_at >= ?
-			GROUP BY trace_id
-			HAVING MAX(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) = 0
-			AND MAX(duration_us) <= ?
-			LIMIT 1000)`,
-			olderThan, newerThan, slowThresholdUS)
+		var n int64
+		err := r.execLow(func() error {
+			res, e := r.db.Exec(`DELETE FROM spans WHERE trace_id IN (
+				SELECT trace_id FROM spans
+				WHERE ingested_at < ? AND ingested_at >= ?
+				GROUP BY trace_id
+				HAVING MAX(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) = 0
+				AND MAX(duration_us) <= ?
+				LIMIT 1000)`,
+				olderThan, newerThan, slowThresholdUS)
+			if e != nil {
+				return e
+			}
+			n, _ = res.RowsAffected()
+			return nil
+		})
 		if err != nil {
 			return total, err
 		}
-		n, _ := res.RowsAffected()
 		total += n
 		if n == 0 {
 			break
@@ -176,24 +193,34 @@ func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThre
 }
 
 func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
-	res, err := r.db.Exec("DELETE FROM spans WHERE ingested_at < ?", cutoff)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
+	var n int64
+	err := r.execLow(func() error {
+		res, e := r.db.Exec("DELETE FROM spans WHERE ingested_at < ?", cutoff)
+		if e != nil {
+			return e
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	return n, err
 }
 
 // DeleteBoringSpansOlderThan removes non-error, fast spans ingested before cutoff.
 // Uses idx_spans_ingested (ingested_at) for the range scan.
 func (r *Repository) DeleteBoringSpansOlderThan(cutoff time.Time, slowThresholdUs int64) (int64, error) {
-	res, err := r.db.Exec(
-		`DELETE FROM spans WHERE ingested_at < ? AND status NOT IN ('error','ERROR','Error') AND duration_us < ?`,
-		cutoff, slowThresholdUs,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
+	var n int64
+	err := r.execLow(func() error {
+		res, e := r.db.Exec(
+			`DELETE FROM spans WHERE ingested_at < ? AND status NOT IN ('error','ERROR','Error') AND duration_us < ?`,
+			cutoff, slowThresholdUs,
+		)
+		if e != nil {
+			return e
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	return n, err
 }
 
 func (r *Repository) CountSpansOlderThan(cutoff time.Time) (int64, error) {
@@ -729,7 +756,7 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 	return result, nil
 }
 
-// QueryRootSpanGroups aggregates root spans (parent_span_id = '') by operation name,
+// QueryRootSpanGroups aggregates root spans (parent_span_id = ”) by operation name,
 // returning count, error count, and raw durations for percentile computation.
 // Uses the idx_spans_root_ingested partial index for efficient scanning.
 func (r *Repository) QueryRootSpanGroups(ctx context.Context, f SpanFilter) ([]RootSpanGroup, error) {
@@ -1050,8 +1077,8 @@ func (r *Repository) QueryWebVitalsTimeseries(service, page, metric string, from
 	defer rows.Close()
 
 	type rawBucket struct {
-		values             []int64
-		good, ni, poor     int64
+		values         []int64
+		good, ni, poor int64
 	}
 	byBucket := make(map[string]*rawBucket)
 	var bucketOrder []string

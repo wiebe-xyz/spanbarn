@@ -63,6 +63,10 @@ func cmdLogin(args []string) error {
 	apiKey := fs.String("api-key", os.Getenv("SPANBARN_API_KEY"), "read-scoped API key")
 	username := fs.String("username", os.Getenv("SPANBARN_USERNAME"), "dashboard username (session login)")
 	password := fs.String("password", "", "dashboard password (omit to be prompted)")
+	oidc := fs.Bool("oidc", false, "log in via IamBarn device-code flow (browser approval)")
+	clientID := fs.String("client-id", os.Getenv("SPANBARN_OIDC_CLIENT_ID"), "IamBarn M2M client id (client_credentials)")
+	clientSecret := fs.String("client-secret", os.Getenv("SPANBARN_OIDC_CLIENT_SECRET"), "IamBarn M2M client secret")
+	scope := fs.String("scope", "", "OAuth scope for M2M login (optional)")
 	project := fs.String("project", "", "default project slug")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -76,9 +80,21 @@ func cmdLogin(args []string) error {
 		Project: *project,
 	}
 
+	var method string
 	switch {
 	case *apiKey != "":
 		cfg.APIKey = *apiKey
+		method = "api-key"
+	case *clientID != "" && *clientSecret != "":
+		if err := clientCredentialsLogin(&cfg, "", *clientID, *clientSecret, *scope); err != nil {
+			return err
+		}
+		method = "oidc-m2m"
+	case *oidc:
+		if err := deviceLogin(&cfg); err != nil {
+			return err
+		}
+		method = "oidc-device"
 	case *username != "":
 		if *password == "" {
 			pw, err := promptPassword()
@@ -94,8 +110,9 @@ func cmdLogin(args []string) error {
 		cfg.Username = *username
 		cfg.Password = *password
 		cfg.SessionToken = token
+		method = "session"
 	default:
-		return fmt.Errorf("provide --api-key (scope read/full) or --username to authenticate")
+		return fmt.Errorf("provide one of: --api-key, --oidc (IamBarn device login), --client-id/--client-secret (M2M), or --username")
 	}
 
 	// Verify auth works against a read endpoint.
@@ -104,12 +121,8 @@ func cmdLogin(args []string) error {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
 
-	if err := saveConfig(cfg); err != nil {
+	if err := saveConfig(client.cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
-	}
-	method := "api-key"
-	if cfg.APIKey == "" {
-		method = "session"
 	}
 	fmt.Fprintf(os.Stderr, "Logged in to %s (%s)\n", cfg.URL, method)
 	writeOut(map[string]any{"ok": true, "url": cfg.URL, "auth": method})

@@ -36,12 +36,12 @@ func TestParseAttrs(t *testing.T) {
 
 func TestExtractSQLOperation(t *testing.T) {
 	cases := map[string]string{
-		"SELECT * FROM users":     "SELECT",
-		"  INSERT INTO foo (x) ":  "INSERT",
-		"DELETE":                  "DELETE",
-		"UPDATE foo SET x=1":      "UPDATE",
-		"":                        "",
-		"   ":                     "",
+		"SELECT * FROM users":        "SELECT",
+		"  INSERT INTO foo (x) ":     "INSERT",
+		"DELETE":                     "DELETE",
+		"UPDATE foo SET x=1":         "UPDATE",
+		"":                           "",
+		"   ":                        "",
 		"WITH cte AS (...) SELECT *": "WITH",
 	}
 	for input, want := range cases {

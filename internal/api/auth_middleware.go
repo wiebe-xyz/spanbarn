@@ -80,56 +80,91 @@ func APIKeyMiddleware(authorizer *auth.Authorizer) func(http.Handler) http.Handl
 	}
 }
 
-// SessionOrReadKey authorizes read/query endpoints with EITHER a session
-// (cookie or Authorization: Bearer) OR an API key with the "read" or "full"
-// scope. When an API key is presented, the request is scoped to that key's
-// project by overwriting the project_id query parameter, so downstream handlers
-// need no changes. Ingest-scoped keys are rejected with 403.
+// SessionOrReadKey authorizes read/query endpoints with any of:
+//   - an API key with the "read" or "full" scope (X-SpanBarn-Api-Key), or
+//   - an IamBarn access-token JWT (Authorization: Bearer <jwt>) when OIDC is
+//     configured, validated as a resource server and authorized by role/group, or
+//   - a SpanBarn session (cookie or Authorization: Bearer <hmac>).
 //
-// When authorizer is nil (no API key auth configured), behaviour is identical
-// to SessionMiddleware.
-func SessionOrReadKey(sm *auth.SessionManager, authorizer *auth.Authorizer) func(http.Handler) http.Handler {
+// When an API key is presented, the request is scoped to that key's project by
+// overwriting the project_id query parameter. Ingest-scoped keys are rejected
+// with 403. oidcFn is resolved at request time because the OIDC client is wired
+// after routes are registered; it may return nil. When authorizer is nil,
+// behaviour falls back to JWT/session.
+func SessionOrReadKey(sm *auth.SessionManager, authorizer *auth.Authorizer, oidcFn func() *auth.OIDCClient) func(http.Handler) http.Handler {
 	sessionMW := SessionMiddleware(sm)
 	return func(next http.Handler) http.Handler {
 		session := sessionMW(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key := r.Header.Get("X-SpanBarn-Api-Key")
-			if key == "" || authorizer == nil {
-				session.ServeHTTP(w, r)
+			if key := r.Header.Get("X-SpanBarn-Api-Key"); key != "" && authorizer != nil {
+				serveAPIKey(w, r, next, authorizer, key)
 				return
 			}
 
-			projectID, scope, err := authorizer.Authorize(key)
-			if err != nil {
-				writeError(w, http.StatusUnauthorized, "invalid API key", "")
-				return
-			}
-			if scope != "read" && scope != "full" {
-				writeError(w, http.StatusForbidden, "API key lacks read scope", "")
-				return
-			}
-			// API keys are read-only: never allow mutating requests, even on
-			// handlers that also serve writes for session users.
-			if r.Method != http.MethodGet && r.Method != http.MethodHead {
-				writeError(w, http.StatusForbidden, "API key is read-only", "")
-				return
+			// IamBarn access-token JWT (Bearer with two dots → header.payload.sig).
+			// A SpanBarn session token has a single dot, so this is unambiguous.
+			if oidcFn != nil {
+				if oc := oidcFn(); oc != nil {
+					if bearer := bearerToken(r); strings.Count(bearer, ".") == 2 {
+						claims, err := oc.VerifyAccessToken(r.Context(), bearer)
+						if err != nil {
+							writeError(w, http.StatusUnauthorized, "invalid or expired token", "")
+							return
+						}
+						if !oc.Allowed(claims) {
+							writeError(w, http.StatusForbidden, "not authorized for SpanBarn", "")
+							return
+						}
+						ctx := SetUsername(r.Context(), claims.PreferredName())
+						next.ServeHTTP(w, r.WithContext(ctx))
+						return
+					}
+				}
 			}
 
-			// Scope the request to the key's project. A non-zero project ID
-			// (a per-project key) overrides any client-supplied project_id so a
-			// key cannot read another project's data. The static/full key has
-			// project ID 0 (all projects); leave the query param untouched so
-			// it can target a specific project via project_id.
-			ctx := SetScope(r.Context(), scope)
-			if projectID != 0 {
-				ctx = SetProjectID(ctx, projectID)
-				q := r.URL.Query()
-				q.Set("project_id", strconv.FormatInt(projectID, 10))
-				r.URL.RawQuery = q.Encode()
-			}
-			next.ServeHTTP(w, r.WithContext(ctx))
+			session.ServeHTTP(w, r)
 		})
 	}
+}
+
+// serveAPIKey handles read/full API-key authentication and project scoping.
+func serveAPIKey(w http.ResponseWriter, r *http.Request, next http.Handler, authorizer *auth.Authorizer, key string) {
+	projectID, scope, err := authorizer.Authorize(key)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid API key", "")
+		return
+	}
+	if scope != "read" && scope != "full" {
+		writeError(w, http.StatusForbidden, "API key lacks read scope", "")
+		return
+	}
+	// API keys are read-only: never allow mutating requests, even on handlers
+	// that also serve writes for session users.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, http.StatusForbidden, "API key is read-only", "")
+		return
+	}
+
+	// Scope the request to the key's project. A non-zero project ID (a
+	// per-project key) overrides any client-supplied project_id so a key cannot
+	// read another project's data. The static/full key has project ID 0 (all
+	// projects); leave the query param untouched so it can target a project.
+	ctx := SetScope(r.Context(), scope)
+	if projectID != 0 {
+		ctx = SetProjectID(ctx, projectID)
+		q := r.URL.Query()
+		q.Set("project_id", strconv.FormatInt(projectID, 10))
+		r.URL.RawQuery = q.Encode()
+	}
+	next.ServeHTTP(w, r.WithContext(ctx))
+}
+
+// bearerToken returns the value of an Authorization: Bearer header, or "".
+func bearerToken(r *http.Request) string {
+	if ah := r.Header.Get("Authorization"); strings.HasPrefix(ah, "Bearer ") {
+		return strings.TrimPrefix(ah, "Bearer ")
+	}
+	return ""
 }
 
 // SessionMiddleware validates a session cookie or Authorization: Bearer token

@@ -26,16 +26,16 @@ type LogRow struct {
 
 // LogFilter scopes log queries.
 type LogFilter struct {
-	ProjectID      int64
-	TraceID        string
-	SpanID         string
-	MinSeverity    int32  // inclusive lower bound on severity_number; 0 = no filter
-	Service        string // matches JSON_EXTRACT(attributes,'$.service.name')
-	Search         string // body LIKE %search%
-	From           time.Time
-	To             time.Time
-	Limit          int
-	Offset         int
+	ProjectID   int64
+	TraceID     string
+	SpanID      string
+	MinSeverity int32  // inclusive lower bound on severity_number; 0 = no filter
+	Service     string // matches JSON_EXTRACT(attributes,'$.service.name')
+	Search      string // body LIKE %search%
+	From        time.Time
+	To          time.Time
+	Limit       int
+	Offset      int
 }
 
 // PinnedTrace is a user-saved trace reference that exempts its logs from normal deletion.
@@ -51,43 +51,45 @@ func (r *Repository) InsertLogs(ctx context.Context, recs []model.LogRecord) err
 	if len(recs) == 0 {
 		return nil
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO logs
-		(project_id, trace_id, span_id, severity_number, severity_text,
-		 time_unix_nano, observed_time_unix_nano, body, attributes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, rec := range recs {
-		var traceID, spanID *string
-		if rec.TraceID != "" {
-			traceID = &rec.TraceID
-		}
-		if rec.SpanID != "" {
-			spanID = &rec.SpanID
-		}
-		attrs := string(rec.Attributes)
-		if attrs == "" || attrs == "null" {
-			attrs = "{}"
-		}
-		if _, err := stmt.ExecContext(ctx,
-			rec.ProjectID, traceID, spanID,
-			rec.SeverityNumber, rec.SeverityText,
-			int64(rec.TimeUnixNano), int64(rec.ObservedTimeUnixNano),
-			rec.Body, attrs,
-		); err != nil {
+	return r.execLow(func() error {
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
+		defer tx.Rollback()
+
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO logs
+			(project_id, trace_id, span_id, severity_number, severity_text,
+			 time_unix_nano, observed_time_unix_nano, body, attributes)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+
+		for _, rec := range recs {
+			var traceID, spanID *string
+			if rec.TraceID != "" {
+				traceID = &rec.TraceID
+			}
+			if rec.SpanID != "" {
+				spanID = &rec.SpanID
+			}
+			attrs := string(rec.Attributes)
+			if attrs == "" || attrs == "null" {
+				attrs = "{}"
+			}
+			if _, err := stmt.ExecContext(ctx,
+				rec.ProjectID, traceID, spanID,
+				rec.SeverityNumber, rec.SeverityText,
+				int64(rec.TimeUnixNano), int64(rec.ObservedTimeUnixNano),
+				rec.Body, attrs,
+			); err != nil {
+				return err
+			}
+		}
+		return tx.Commit()
+	})
 }
 
 // QueryLogs returns log rows and total count matching f.
@@ -225,45 +227,54 @@ func (r *Repository) LogHistogram(ctx context.Context, f LogFilter, bucketSecs i
 // DeleteLogsOlderThan removes log records ingested before cutoff, skipping logs
 // whose trace_id is pinned or appears in recently-sampled error_samples.
 func (r *Repository) DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error) {
-	res, err := r.db.ExecContext(ctx, `
-		DELETE FROM logs
-		WHERE ingested_at < ?
-		AND (trace_id IS NULL
-		     OR (trace_id NOT IN (
-		             SELECT trace_id FROM pinned_traces
-		             WHERE project_id = logs.project_id
-		         )
-		         AND trace_id NOT IN (
-		             SELECT DISTINCT trace_id FROM error_samples
-		             WHERE sampled_at > ?
-		         )
-		     )
-		)`,
-		cutoff, errorLogCutoff,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
+	var n int64
+	err := r.execLow(func() error {
+		res, e := r.db.ExecContext(ctx, `
+			DELETE FROM logs
+			WHERE ingested_at < ?
+			AND (trace_id IS NULL
+			     OR (trace_id NOT IN (
+			             SELECT trace_id FROM pinned_traces
+			             WHERE project_id = logs.project_id
+			         )
+			         AND trace_id NOT IN (
+			             SELECT DISTINCT trace_id FROM error_samples
+			             WHERE sampled_at > ?
+			         )
+			     )
+			)`,
+			cutoff, errorLogCutoff,
+		)
+		if e != nil {
+			return e
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	return n, err
 }
 
 // --- Pinned Traces ---
 
 func (r *Repository) PinTrace(ctx context.Context, projectID int64, traceID, label string) error {
-	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO pinned_traces (project_id, trace_id, label) VALUES (?, ?, ?)
-		 ON CONFLICT(project_id, trace_id) DO UPDATE SET label = excluded.label`,
-		projectID, traceID, label,
-	)
-	return err
+	return r.execHigh(func() error {
+		_, err := r.db.ExecContext(ctx,
+			`INSERT INTO pinned_traces (project_id, trace_id, label) VALUES (?, ?, ?)
+			 ON CONFLICT(project_id, trace_id) DO UPDATE SET label = excluded.label`,
+			projectID, traceID, label,
+		)
+		return err
+	})
 }
 
 func (r *Repository) UnpinTrace(ctx context.Context, projectID int64, traceID string) error {
-	_, err := r.db.ExecContext(ctx,
-		`DELETE FROM pinned_traces WHERE project_id = ? AND trace_id = ?`,
-		projectID, traceID,
-	)
-	return err
+	return r.execHigh(func() error {
+		_, err := r.db.ExecContext(ctx,
+			`DELETE FROM pinned_traces WHERE project_id = ? AND trace_id = ?`,
+			projectID, traceID,
+		)
+		return err
+	})
 }
 
 func (r *Repository) ListPinnedTraces(ctx context.Context, projectID int64) ([]PinnedTrace, error) {
@@ -295,4 +306,3 @@ func (r *Repository) IsTracePinned(ctx context.Context, projectID int64, traceID
 	).Scan(&n)
 	return n > 0, err
 }
-

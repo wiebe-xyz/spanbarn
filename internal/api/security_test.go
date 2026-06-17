@@ -19,7 +19,7 @@ func TestSecurityHeaders(t *testing.T) {
 	expectedHeaders := map[string]string{
 		"X-Frame-Options":        "DENY",
 		"X-Content-Type-Options": "nosniff",
-		"X-XSS-Protection":      "0",
+		"X-XSS-Protection":       "0",
 		"Referrer-Policy":        "strict-origin-when-cross-origin",
 	}
 

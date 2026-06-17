@@ -6,11 +6,11 @@ import "encoding/json"
 type MetricType string
 
 const (
-	MetricTypeGauge               MetricType = "gauge"
-	MetricTypeSum                 MetricType = "sum"
-	MetricTypeHistogram           MetricType = "histogram"
+	MetricTypeGauge                MetricType = "gauge"
+	MetricTypeSum                  MetricType = "sum"
+	MetricTypeHistogram            MetricType = "histogram"
 	MetricTypeExponentialHistogram MetricType = "exp_histogram"
-	MetricTypeSummary             MetricType = "summary"
+	MetricTypeSummary              MetricType = "summary"
 )
 
 // MetricRecord is the in-process representation of a single OTLP data point.

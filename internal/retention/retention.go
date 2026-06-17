@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"strconv"
-	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -118,7 +117,6 @@ type RetentionWorker struct {
 	aggregator Aggregator
 	cfg        Config
 	logger     *slog.Logger
-	writeMu    *sync.Mutex
 }
 
 // NewRetentionWorker creates a new retention worker.
@@ -129,13 +127,6 @@ func NewRetentionWorker(repo Repository, aggregator Aggregator, cfg Config, logg
 		cfg:        cfg.withDefaults(),
 		logger:     logger,
 	}
-}
-
-// SetWriteMutex wires in the shared write serializer. When set, RunOnce holds
-// the mutex for its entire cycle so span inserts queue behind retention rather
-// than competing for the SQLite write lock.
-func (w *RetentionWorker) SetWriteMutex(mu *sync.Mutex) {
-	w.writeMu = mu
 }
 
 // Run starts the retention loop, ticking at cfg.Interval until ctx is cancelled.
@@ -213,18 +204,10 @@ func (w *RetentionWorker) effectiveConfig() Config {
 // Each cycle is capped at maxSpansPerCycle deletions to keep write-lock hold
 // times short. If the cap is reached, backlog_remains is logged so operators
 // know the next tick will continue draining.
-// lockBatch acquires the write mutex (if set), runs fn, then releases the
-// mutex and sleeps for cfg.BatchYield. This gives the span-insert worker a
-// regular window to drain the Redis queue between deletion batches instead of
-// being locked out for the full cycle duration.
+// lockBatch runs fn then sleeps for yield, giving the write scheduler a window
+// to drain high-priority writes between retention deletion batches.
 func (w *RetentionWorker) lockBatch(ctx context.Context, yield time.Duration, fn func()) {
-	if w.writeMu != nil {
-		w.writeMu.Lock()
-	}
 	fn()
-	if w.writeMu != nil {
-		w.writeMu.Unlock()
-	}
 	if yield > 0 {
 		select {
 		case <-ctx.Done():

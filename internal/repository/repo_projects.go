@@ -3,16 +3,21 @@ package repository
 import (
 	"database/sql"
 	"fmt"
-	"strings"
-	"time"
 )
 
 func (r *Repository) CreateProject(slug, name string) (Project, error) {
-	res, err := r.db.Exec("INSERT INTO projects (slug, name) VALUES (?, ?)", slug, name)
+	var id int64
+	err := r.execHigh(func() error {
+		res, e := r.db.Exec("INSERT INTO projects (slug, name) VALUES (?, ?)", slug, name)
+		if e != nil {
+			return e
+		}
+		id, _ = res.LastInsertId()
+		return nil
+	})
 	if err != nil {
 		return Project{}, err
 	}
-	id, _ := res.LastInsertId()
 	return r.getProjectByID(id)
 }
 
@@ -52,19 +57,21 @@ func (r *Repository) ListProjects() ([]Project, error) {
 }
 
 func (r *Repository) SetProjectE2E(id int64, enabled bool) error {
-	v := 0
-	if enabled {
-		v = 1
-	}
-	res, err := r.db.Exec("UPDATE projects SET e2e_enabled = ? WHERE id = ?", v, id)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return r.execHigh(func() error {
+		v := 0
+		if enabled {
+			v = 1
+		}
+		res, err := r.db.Exec("UPDATE projects SET e2e_enabled = ? WHERE id = ?", v, id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
 }
 
 func (r *Repository) ListProjectIDs() ([]int64, error) {
@@ -85,55 +92,59 @@ func (r *Repository) ListProjectIDs() ([]int64, error) {
 }
 
 func (r *Repository) EnsureProjectPending(slug, name string) (Project, error) {
-	for attempt := range 3 {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
-		}
-		_, err := r.db.Exec(
+	// With the write scheduler serialising all writes, SQLITE_BUSY cannot occur
+	// here, so the retry loop is no longer needed.
+	err := r.execLow(func() error {
+		_, e := r.db.Exec(
 			"INSERT OR IGNORE INTO projects (slug, name, status) VALUES (?, ?, 'pending')",
 			slug, name,
 		)
-		if err != nil {
-			if strings.Contains(err.Error(), "SQLITE_BUSY") && attempt < 2 {
-				continue
-			}
-			return Project{}, err
-		}
-		return r.GetProjectBySlug(slug)
-	}
-	return Project{}, fmt.Errorf("ensure project pending: exhausted retries")
-}
-
-func (r *Repository) ApproveProject(id int64) (Project, error) {
-	res, err := r.db.Exec("UPDATE projects SET status = 'active' WHERE id = ?", id)
+		return e
+	})
 	if err != nil {
 		return Project{}, err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return Project{}, sql.ErrNoRows
+	return r.GetProjectBySlug(slug)
+}
+
+func (r *Repository) ApproveProject(id int64) (Project, error) {
+	err := r.execHigh(func() error {
+		res, e := r.db.Exec("UPDATE projects SET status = 'active' WHERE id = ?", id)
+		if e != nil {
+			return e
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
+	if err != nil {
+		return Project{}, err
 	}
 	return r.getProjectByID(id)
 }
 
 func (r *Repository) DeleteProject(id int64) error {
-	tx, err := r.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec("DELETE FROM api_keys WHERE project_id = ?", id); err != nil {
-		return err
-	}
-	res, err := tx.Exec("DELETE FROM projects WHERE id = ?", id)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return tx.Commit()
+	return r.execHigh(func() error {
+		tx, err := r.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.Exec("DELETE FROM api_keys WHERE project_id = ?", id); err != nil {
+			return err
+		}
+		res, err := tx.Exec("DELETE FROM projects WHERE id = ?", id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+		return tx.Commit()
+	})
 }
 
 // ProjectUsageStats holds per-project span metrics.
@@ -183,9 +194,11 @@ func (r *Repository) ProjectUsageStatsAll(hours int) ([]ProjectUsageStats, error
 }
 
 func (r *Repository) EnsureSetupAPIKey(projectID int64, keySHA256 string) error {
-	_, err := r.db.Exec(
-		`INSERT OR IGNORE INTO api_keys (project_id, name, key_hash, scope) VALUES (?, 'setup', ?, 'ingest')`,
-		projectID, keySHA256,
-	)
-	return err
+	return r.execLow(func() error {
+		_, err := r.db.Exec(
+			`INSERT OR IGNORE INTO api_keys (project_id, name, key_hash, scope) VALUES (?, 'setup', ?, 'ingest')`,
+			projectID, keySHA256,
+		)
+		return err
+	})
 }

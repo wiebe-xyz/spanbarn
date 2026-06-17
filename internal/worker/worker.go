@@ -14,6 +14,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
 
@@ -238,9 +239,9 @@ type RedisWorker struct {
 	repo         Repository
 	accumulator  SpanAccumulator
 	boringPolicy BoringPolicyReader
+	floor        *sampling.MinuteFloor
 	logger       *slog.Logger
 	metrics      Metrics
-	writeMu      *sync.Mutex
 	cfg          WorkerConfig
 }
 
@@ -268,11 +269,12 @@ func (w *RedisWorker) SetBoringPolicy(p BoringPolicyReader) {
 	w.boringPolicy = p
 }
 
-// SetWriteMutex wires in the shared write serializer. When set, the worker
-// holds the mutex for the entire write phase of each batch so that retention
-// and span inserts never compete for the SQLite write lock.
-func (w *RedisWorker) SetWriteMutex(mu *sync.Mutex) {
-	w.writeMu = mu
+// SetMinuteFloor wires in the per-(project, operation) survival floor that
+// guarantees a minimum number of boring traces are stored each minute even when
+// ratio sampling would otherwise drop them all. Must back a single writer to
+// count accurately.
+func (w *RedisWorker) SetMinuteFloor(f *sampling.MinuteFloor) {
+	w.floor = f
 }
 
 // Run loops on BRPOP until ctx is cancelled.
@@ -333,12 +335,6 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 
 	if len(interesting) == 0 {
 		return
-	}
-
-	// Acquire the shared write lock before touching the DB.
-	if w.writeMu != nil {
-		w.writeMu.Lock()
-		defer w.writeMu.Unlock()
 	}
 
 	_, insertSpan := tracer.Start(ctx, "redis_worker.insert_spans")
@@ -451,6 +447,7 @@ func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.S
 		return result
 	}
 	ratioCache := make(map[int64]int, 2)
+	minCache := make(map[int64]int, 2)
 	for _, traceID := range boringTraceOrder {
 		bt := boringTraceMap[traceID]
 		ratio, ok := ratioCache[bt.projectID]
@@ -458,17 +455,51 @@ func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.S
 			ratio = w.boringPolicy.SampleRatio(bt.projectID)
 			ratioCache[bt.projectID] = ratio
 		}
+
+		// Normal ratio verdict: 1 = keep all, N>1 = keep 1-in-N, 0 = drop.
+		ratioKeep := false
 		switch {
 		case ratio == 1:
-			result = append(result, bt.spans...)
+			ratioKeep = true
 		case ratio > 1:
-			if rand.IntN(ratio) == 0 {
+			ratioKeep = rand.IntN(ratio) == 0
+		}
+
+		// The per-(project, operation) minute floor rescues a minimum number of
+		// boring traces each minute so quiet operations never vanish entirely —
+		// even when ratio == 0 would otherwise drop every boring trace.
+		if w.floor != nil {
+			min, ok := minCache[bt.projectID]
+			if !ok {
+				min = w.boringPolicy.MinTracesPerMinute(bt.projectID)
+				minCache[bt.projectID] = min
+			}
+			op, minute := boringTraceKey(bt.spans)
+			if w.floor.ShouldKeep(bt.projectID, op, minute, min, ratioKeep) {
 				result = append(result, bt.spans...)
 			}
-			// ratio == 0: skip all boring traces for this project
+			continue
+		}
+
+		if ratioKeep {
+			result = append(result, bt.spans...)
 		}
 	}
 	return result
+}
+
+// boringTraceKey returns the operation name and wall-clock minute bucket used to
+// group a boring trace for the survival floor. It prefers the root span (no
+// parent), falling back to the first span in the batch.
+func boringTraceKey(spans []repository.Span) (string, int64) {
+	root := spans[0]
+	for _, s := range spans {
+		if s.ParentSpanID == "" {
+			root = s
+			break
+		}
+	}
+	return root.Name, root.StartTimeUs / 60_000_000
 }
 
 // classifyInteresting returns only the spans that should be written to SQLite:

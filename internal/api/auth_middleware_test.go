@@ -152,7 +152,7 @@ func TestSessionOrReadKey(t *testing.T) {
 	authorizer := auth.NewAuthorizer("", lookup, nil)
 
 	newHandler := func() http.Handler {
-		return SessionOrReadKey(sm, authorizer)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		return SessionOrReadKey(sm, authorizer, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_ = r
 		}))
@@ -164,7 +164,7 @@ func TestSessionOrReadKey(t *testing.T) {
 
 		var gotPID int64
 		var gotQueryPID string
-		handler := SessionOrReadKey(sm, authorizer)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler := SessionOrReadKey(sm, authorizer, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotPID = GetProjectID(r.Context())
 			gotQueryPID = r.URL.Query().Get("project_id")
 			w.WriteHeader(http.StatusOK)
@@ -231,7 +231,7 @@ func TestSessionOrReadKey(t *testing.T) {
 
 	t.Run("session still works without key", func(t *testing.T) {
 		var gotUser string
-		handler := SessionOrReadKey(sm, authorizer)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler := SessionOrReadKey(sm, authorizer, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotUser = GetUsername(r.Context())
 			w.WriteHeader(http.StatusOK)
 		}))
@@ -260,7 +260,7 @@ func TestSessionOrReadKey(t *testing.T) {
 	})
 
 	t.Run("nil authorizer falls back to session", func(t *testing.T) {
-		handler := SessionOrReadKey(sm, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		handler := SessionOrReadKey(sm, nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}))
 
