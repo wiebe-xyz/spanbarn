@@ -13,10 +13,12 @@ ARG VERSION=dev BUILD_TIME=unknown
 RUN go build -ldflags "-X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" -o /out/spanbarn ./cmd/spanbarn
 
 FROM alpine:3.20 AS litestream
-ARG LITESTREAM_VERSION=0.3.13
+# v0.5.x asset naming differs from 0.3.x: "litestream-${VERSION}-linux-x86_64.tar.gz"
+# (no "v" prefix, "x86_64" not "amd64"). Tag still carries the "v" prefix.
+ARG LITESTREAM_VERSION=0.5.12
 RUN apk add --no-cache ca-certificates wget && \
     wget -qO /tmp/litestream.tar.gz \
-      "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-v${LITESTREAM_VERSION}-linux-amd64.tar.gz" && \
+      "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-${LITESTREAM_VERSION}-linux-x86_64.tar.gz" && \
     tar -C /usr/local/bin -xzf /tmp/litestream.tar.gz litestream
 
 FROM alpine:3.20
