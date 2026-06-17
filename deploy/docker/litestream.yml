@@ -1,12 +1,14 @@
+# Litestream 0.5.x config (single `replica` field; the 0.3.x `replicas:` array is
+# deprecated). `region` is set explicitly because the 0.5.x AWS SDK v2 expects one
+# even for custom S3-compatible endpoints; MinIO ignores the value.
 dbs:
   - path: /var/lib/spanbarn/spanbarn.db
-    replicas:
-      - type: s3
-        bucket: spanbarn-sqlite
-        path: ${LITESTREAM_REPLICA_PATH}
-        endpoint: https://s3.wiebe.xyz
-        force-path-style: true
-        access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
-        secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
-        retention: 24h
-        sync-interval: 1m
+    replica:
+      type: s3
+      bucket: spanbarn-sqlite
+      path: ${LITESTREAM_REPLICA_PATH}
+      endpoint: https://s3.wiebe.xyz
+      region: us-east-1
+      force-path-style: true
+      access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+      secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
