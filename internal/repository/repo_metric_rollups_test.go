@@ -102,7 +102,7 @@ func TestDeleteMetricRollupsOlderThan(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 
-	deleted, err := repo.DeleteMetricRollupsOlderThan(base.Add(-24 * time.Hour))
+	deleted, err := repo.DeleteMetricRollupsOlderThan(context.Background(), base.Add(-24*time.Hour))
 	if err != nil {
 		t.Fatalf("delete: %v", err)
 	}

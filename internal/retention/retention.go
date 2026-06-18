@@ -40,13 +40,13 @@ type Repository interface {
 	GetSpansForAggregation(cutoff time.Time, limit int) ([]repository.Span, error)
 	DeleteSpansByMaxID(maxID int64) (int64, error)
 	DeleteSpansOlderThan(cutoff time.Time) (int64, error)
-	DeleteBoringSpansOlderThan(cutoff time.Time, slowThresholdUs int64) (int64, error)
+	DeleteBoringSpansOlderThan(ctx context.Context, cutoff time.Time, slowThresholdUs int64) (int64, error)
 	InsertErrorSamples(spans []repository.Span) error
-	DeleteErrorSamplesOlderThan(cutoff time.Time) (int64, error)
-	DeleteAggregatesOlderThan(cutoff time.Time) (int64, error)
+	DeleteErrorSamplesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
+	DeleteAggregatesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteExpiredE2EUsers(now time.Time) (int64, error)
 	DeleteMetricsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
-	DeleteMetricRollupsOlderThan(cutoff time.Time) (int64, error)
+	DeleteMetricRollupsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error)
 	GetSetting(key string) (string, error)
 }
@@ -327,17 +327,17 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	if cfg.BoringRetentionMinutes > 0 && cfg.SlowThresholdUS > 0 {
 		boringCutoff := now.Add(-time.Duration(cfg.BoringRetentionMinutes) * time.Minute)
 		var boringErr error
-		boringDeleted, boringErr = w.repo.DeleteBoringSpansOlderThan(boringCutoff, cfg.SlowThresholdUS)
+		boringDeleted, boringErr = w.repo.DeleteBoringSpansOlderThan(ctx, boringCutoff, cfg.SlowThresholdUS)
 		if boringErr != nil {
 			return boringErr
 		}
 	}
 
-	errorSamplesDeleted, err := w.repo.DeleteErrorSamplesOlderThan(errorCutoff)
+	errorSamplesDeleted, err := w.repo.DeleteErrorSamplesOlderThan(ctx, errorCutoff)
 	if err != nil {
 		return err
 	}
-	aggregatesDeleted, err := w.repo.DeleteAggregatesOlderThan(aggCutoff)
+	aggregatesDeleted, err := w.repo.DeleteAggregatesOlderThan(ctx, aggCutoff)
 	if err != nil {
 		return err
 	}
@@ -345,7 +345,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	metricRollupsDeleted, err := w.repo.DeleteMetricRollupsOlderThan(metricRollupCutoff)
+	metricRollupsDeleted, err := w.repo.DeleteMetricRollupsOlderThan(ctx, metricRollupCutoff)
 	if err != nil {
 		return err
 	}

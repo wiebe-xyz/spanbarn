@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -220,17 +221,17 @@ func (r *Repository) QueryErrorSamples(f SpanFilter) ([]Span, error) {
 	return r.scanErrorSamples(q, args...)
 }
 
-func (r *Repository) DeleteErrorSamplesOlderThan(cutoff time.Time) (int64, error) {
-	var n int64
-	err := r.execLow(func() error {
-		res, e := r.db.Exec("DELETE FROM error_samples WHERE sampled_at < ?", cutoff)
+func (r *Repository) DeleteErrorSamplesOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	return r.batchedDelete(ctx, func() (int64, error) {
+		res, e := r.db.ExecContext(ctx,
+			"DELETE FROM error_samples WHERE rowid IN (SELECT rowid FROM error_samples WHERE sampled_at < ? LIMIT ?)",
+			cutoff, retentionDeleteBatch)
 		if e != nil {
-			return e
+			return 0, e
 		}
-		n, _ = res.RowsAffected()
-		return nil
+		n, _ := res.RowsAffected()
+		return n, nil
 	})
-	return n, err
 }
 
 func (r *Repository) scanErrorSamples(query string, args ...any) ([]Span, error) {

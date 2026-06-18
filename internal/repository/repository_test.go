@@ -1,7 +1,10 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -447,7 +450,7 @@ func TestDeleteAggregatesOlderThan(t *testing.T) {
 	bucket := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
 	_ = repo.UpsertAggregate(Aggregate{ProjectID: p.ID, Service: "web", Operation: "op", Bucket: bucket, Count: 1})
 
-	n, err := repo.DeleteAggregatesOlderThan(bucket.Add(time.Hour))
+	n, err := repo.DeleteAggregatesOlderThan(context.Background(), bucket.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("DeleteAggregatesOlderThan: %v", err)
 	}
@@ -615,7 +618,7 @@ func TestInsertAndQueryErrorSamples(t *testing.T) {
 	}
 
 	// Delete with future cutoff.
-	n, err := repo.DeleteErrorSamplesOlderThan(time.Now().Add(time.Hour))
+	n, err := repo.DeleteErrorSamplesOlderThan(context.Background(), time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("DeleteErrorSamplesOlderThan: %v", err)
 	}
@@ -709,5 +712,103 @@ func TestProjectUsageStatsAll(t *testing.T) {
 	p2stats := stats[1]
 	if p2stats.SpanCount != 3 || p2stats.ErrorCount != 1 || p2stats.RecentSpanCount != 3 {
 		t.Errorf("p2 unexpected: %+v", p2stats)
+	}
+}
+
+// insertBoringSpans inserts count non-error, fast spans backdated to ingestedAt
+// so retention's boring-span cleanup will consider them deletable.
+func insertBoringSpans(t *testing.T, repo *Repository, projectID int64, count int, ingestedAt time.Time) {
+	t.Helper()
+	spans := make([]Span, count)
+	for i := range spans {
+		spans[i] = Span{
+			ProjectID:   projectID,
+			TraceID:     fmt.Sprintf("boring-trace-%d", i),
+			SpanID:      fmt.Sprintf("boring-span-%d", i),
+			Name:        "op",
+			Service:     "svc",
+			Resource:    "/r",
+			Kind:        "server",
+			Status:      "ok",
+			StartTimeUs: ingestedAt.UnixMicro(),
+			DurationUs:  1000, // well under the slow threshold
+			Attributes:  "{}",
+			Events:      "[]",
+		}
+	}
+	if err := repo.InsertSpans(spans); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+	if _, err := repo.DB().Exec("UPDATE spans SET ingested_at = ?", ingestedAt); err != nil {
+		t.Fatalf("backdate ingested_at: %v", err)
+	}
+}
+
+func countSpans(t *testing.T, repo *Repository) int {
+	t.Helper()
+	var n int
+	if err := repo.DB().QueryRow("SELECT COUNT(*) FROM spans").Scan(&n); err != nil {
+		t.Fatalf("count spans: %v", err)
+	}
+	return n
+}
+
+// TestDeleteBoringSpansBatchedAndYields verifies the boring-span cleanup deletes
+// in retentionDeleteBatch-sized batches and pauses deleteBatchYield between them,
+// so it never holds the write lock for the whole purge.
+func TestDeleteBoringSpansBatchedAndYields(t *testing.T) {
+	repo := setupTestDB(t)
+	if _, err := repo.CreateProject("proj", "Proj"); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	// 2.5 batches => 3 statements (1000, 1000, 500) => 2 inter-batch yields.
+	total := 2*retentionDeleteBatch + retentionDeleteBatch/2
+	old := time.Now().Add(-2 * time.Hour).UTC()
+	insertBoringSpans(t, repo, 1, total, old)
+
+	const yield = 15 * time.Millisecond
+	repo.SetDeleteBatchYield(yield)
+
+	start := time.Now()
+	n, err := repo.DeleteBoringSpansOlderThan(context.Background(), time.Now(), 1_000_000)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("DeleteBoringSpansOlderThan: %v", err)
+	}
+	if int(n) != total {
+		t.Fatalf("deleted %d rows, want %d", n, total)
+	}
+	if remaining := countSpans(t, repo); remaining != 0 {
+		t.Fatalf("expected all boring spans deleted, %d remain", remaining)
+	}
+	// With 3 batches there are 2 yields; allow for scheduler slack.
+	if elapsed < 2*yield {
+		t.Fatalf("delete finished in %v, expected at least 2 yields (%v): not batched", elapsed, 2*yield)
+	}
+}
+
+// TestBatchedDeleteRespectsContextCancellation verifies a batched retention
+// delete stops promptly when its context is cancelled, leaving rows intact.
+func TestBatchedDeleteRespectsContextCancellation(t *testing.T) {
+	repo := setupTestDB(t)
+	if _, err := repo.CreateProject("proj", "Proj"); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	total := 2 * retentionDeleteBatch
+	insertBoringSpans(t, repo, 1, total, time.Now().Add(-2*time.Hour).UTC())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancelled before the first batch
+
+	n, err := repo.DeleteBoringSpansOlderThan(ctx, time.Now(), 1_000_000)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected 0 rows deleted on immediate cancel, got %d", n)
+	}
+	if remaining := countSpans(t, repo); remaining != total {
+		t.Fatalf("expected %d spans intact after cancel, got %d", total, remaining)
 	}
 }
