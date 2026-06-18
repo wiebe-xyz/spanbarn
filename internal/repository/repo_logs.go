@@ -227,31 +227,31 @@ func (r *Repository) LogHistogram(ctx context.Context, f LogFilter, bucketSecs i
 // DeleteLogsOlderThan removes log records ingested before cutoff, skipping logs
 // whose trace_id is pinned or appears in recently-sampled error_samples.
 func (r *Repository) DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error) {
-	var n int64
-	err := r.execLow(func() error {
+	return r.batchedDelete(ctx, func() (int64, error) {
 		res, e := r.db.ExecContext(ctx, `
-			DELETE FROM logs
-			WHERE ingested_at < ?
-			AND (trace_id IS NULL
-			     OR (trace_id NOT IN (
-			             SELECT trace_id FROM pinned_traces
-			             WHERE project_id = logs.project_id
+			DELETE FROM logs WHERE rowid IN (
+			    SELECT rowid FROM logs
+			    WHERE ingested_at < ?
+			    AND (trace_id IS NULL
+			         OR (trace_id NOT IN (
+			                 SELECT trace_id FROM pinned_traces
+			                 WHERE project_id = logs.project_id
+			             )
+			             AND trace_id NOT IN (
+			                 SELECT DISTINCT trace_id FROM error_samples
+			                 WHERE sampled_at > ?
+			             )
 			         )
-			         AND trace_id NOT IN (
-			             SELECT DISTINCT trace_id FROM error_samples
-			             WHERE sampled_at > ?
-			         )
-			     )
-			)`,
-			cutoff, errorLogCutoff,
+			    )
+			    LIMIT ?)`,
+			cutoff, errorLogCutoff, retentionDeleteBatch,
 		)
 		if e != nil {
-			return e
+			return 0, e
 		}
-		n, _ = res.RowsAffected()
-		return nil
+		n, _ := res.RowsAffected()
+		return n, nil
 	})
-	return n, err
 }
 
 // --- Pinned Traces ---

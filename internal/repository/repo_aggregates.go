@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -135,28 +136,16 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 	return out, rows.Err()
 }
 
-func (r *Repository) DeleteAggregatesOlderThan(cutoff time.Time) (int64, error) {
-	var total int64
-	for {
-		var n int64
-		err := r.execLow(func() error {
-			res, e := r.db.Exec(
-				"DELETE FROM aggregates WHERE rowid IN (SELECT rowid FROM aggregates WHERE bucket < ? LIMIT 1000)",
-				cutoff,
-			)
-			if e != nil {
-				return e
-			}
-			n, _ = res.RowsAffected()
-			return nil
-		})
-		if err != nil {
-			return total, err
+func (r *Repository) DeleteAggregatesOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
+	return r.batchedDelete(ctx, func() (int64, error) {
+		res, e := r.db.ExecContext(ctx,
+			"DELETE FROM aggregates WHERE rowid IN (SELECT rowid FROM aggregates WHERE bucket < ? LIMIT ?)",
+			cutoff, retentionDeleteBatch,
+		)
+		if e != nil {
+			return 0, e
 		}
-		total += n
-		if n == 0 {
-			break
-		}
-	}
-	return total, nil
+		n, _ := res.RowsAffected()
+		return n, nil
+	})
 }

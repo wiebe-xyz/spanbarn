@@ -206,21 +206,24 @@ func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
 }
 
 // DeleteBoringSpansOlderThan removes non-error, fast spans ingested before cutoff.
-// Uses idx_spans_ingested (ingested_at) for the range scan.
-func (r *Repository) DeleteBoringSpansOlderThan(cutoff time.Time, slowThresholdUs int64) (int64, error) {
-	var n int64
-	err := r.execLow(func() error {
-		res, e := r.db.Exec(
-			`DELETE FROM spans WHERE ingested_at < ? AND status NOT IN ('error','ERROR','Error') AND duration_us < ?`,
-			cutoff, slowThresholdUs,
+// Uses idx_spans_ingested (ingested_at) for the range scan. The delete is batched
+// (retentionDeleteBatch rows per statement) so a large purge never holds the
+// write lock long enough to block the WAL checkpoint or read-only queries.
+func (r *Repository) DeleteBoringSpansOlderThan(ctx context.Context, cutoff time.Time, slowThresholdUs int64) (int64, error) {
+	return r.batchedDelete(ctx, func() (int64, error) {
+		res, e := r.db.ExecContext(ctx,
+			`DELETE FROM spans WHERE rowid IN (
+				SELECT rowid FROM spans
+				WHERE ingested_at < ? AND status NOT IN ('error','ERROR','Error') AND duration_us < ?
+				LIMIT ?)`,
+			cutoff, slowThresholdUs, retentionDeleteBatch,
 		)
 		if e != nil {
-			return e
+			return 0, e
 		}
-		n, _ = res.RowsAffected()
-		return nil
+		n, _ := res.RowsAffected()
+		return n, nil
 	})
-	return n, err
 }
 
 func (r *Repository) CountSpansOlderThan(cutoff time.Time) (int64, error) {

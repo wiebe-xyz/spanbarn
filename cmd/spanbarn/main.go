@@ -191,6 +191,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		ErrorLogRetentionDays:     cfg.ErrorLogRetentionDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 	}
+	repo.SetDeleteBatchYield(time.Duration(cfg.RetentionDeleteBatchYieldMS) * time.Millisecond)
 	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
@@ -802,6 +803,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionRepo := repository.NewRepository(db.DB)
 	retentionRepo.SetQueryTimeout(5 * time.Minute)
 	retentionRepo.SetWriteScheduler(scheduler)
+	retentionRepo.SetDeleteBatchYield(time.Duration(cfg.RetentionDeleteBatchYieldMS) * time.Millisecond)
 
 	retentionCfg := retention.Config{
 		FullRetentionHours:        cfg.RetentionFullHours,
