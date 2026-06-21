@@ -43,9 +43,10 @@ spec:
             - name: SPANBARN_DB_PATH
               value: "/var/lib/spanbarn/spanbarn.db"
             # Tell Go's GC the soft cap so it reacts to memory pressure before
-            # the cgroup OOM-kills us. ~90% of the 256Mi limit.
+            # the cgroup OOM-kills us. ~90% of the 512Mi limit, leaving room for
+            # the read-only SQLite page cache (32 MiB) + reclaimable mmap window.
             - name: GOMEMLIMIT
-              value: "230MiB"
+              value: "448MiB"
           envFrom:
             - secretRef:
                 name: spanbarn-secrets
@@ -56,10 +57,10 @@ spec:
           resources:
             requests:
               cpu: 50m
-              memory: 64Mi
+              memory: 128Mi
             limits:
               cpu: 200m
-              memory: 256Mi
+              memory: 512Mi
           livenessProbe:
             httpGet:
               path: /api/v1/health

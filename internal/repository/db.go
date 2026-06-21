@@ -50,9 +50,25 @@ func buildDSN(dbPath string, readOnly bool) string {
 		// stop at any reader snapshot boundary, so they cannot prevent unbounded
 		// WAL growth under sustained read load.
 		q.Add("_pragma", "wal_autocheckpoint(0)")
+		// Keep the index working set resident. The spans table carries ~12
+		// indexes, so every insert traverses many B-trees; with the SQLite
+		// default 2 MiB cache against a ~900 MB DB those pages were evicted and
+		// pread back from disk on every batch, collapsing write throughput below
+		// the ingest rate and backing up the redis write-queue. A 256 MiB page
+		// cache holds the hot interior pages; the mmap window serves the rest
+		// from the OS page cache (reclaimable) instead of per-page pread.
+		// Sized to fit under the writer pod's GOMEMLIMIT / memory limit.
+		q.Add("_pragma", "cache_size(-262144)")   // 256 MiB (negative = KiB)
+		q.Add("_pragma", "mmap_size(2147483648)") // 2 GiB
 	}
 	if readOnly {
 		q.Set("mode", "ro")
+		// Reader/query handles run in memory-constrained pods, so keep the page
+		// cache modest (still 16x the SQLite default). The mmap window is OS page
+		// cache and reclaimable under pressure, so it speeds up dashboard/alert
+		// reads without growing the Go heap.
+		q.Add("_pragma", "cache_size(-32768)")    // 32 MiB
+		q.Add("_pragma", "mmap_size(1073741824)") // 1 GiB
 	}
 	prefix := "file:"
 	if !strings.HasPrefix(dbPath, "file:") && dbPath != ":memory:" {

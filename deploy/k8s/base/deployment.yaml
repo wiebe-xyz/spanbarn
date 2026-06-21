@@ -28,7 +28,7 @@ spec:
             - name: SPANBARN_MODE
               value: "writer"
             - name: GOMEMLIMIT
-              value: "230MiB"
+              value: "1024MiB"
             - name: SPANBARN_REDIS_QUEUE_URL
               valueFrom:
                 secretKeyRef:
@@ -42,10 +42,14 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 64Mi
+              memory: 512Mi
             limits:
               cpu: 500m
-              memory: 256Mi
+              # Sized for the 256 MiB SQLite page cache + Go heap (GOMEMLIMIT
+              # 1 GiB) + reclaimable mmap window against a ~900 MB DB. The prior
+              # 256Mi cap forced the default 2 MiB cache, which thrashed index
+              # pages to disk and collapsed write throughput.
+              memory: 2Gi
           # startupProbe disables liveness/readiness until the container is
           # actually up. With a 6 GB+ SQLite DB, a fresh migration (e.g. a
           # CREATE INDEX) can take several minutes during which the binary
