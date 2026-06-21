@@ -109,11 +109,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Install nfpm
-        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+        # Pin nfpm (not @latest) so a new release bumping its Go requirement
+        # can't break the .deb build out from under us. v2.47.0 needs Go >= 1.26.4.
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
 
       - name: Build binary
         env:
