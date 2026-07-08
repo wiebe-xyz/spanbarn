@@ -168,16 +168,16 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 	safeGo("worker", &wg, func() { w.Run(workerCtx) })
-	// Always run the app-side checkpoint even when Litestream is active.
-	// Litestream's own PASSIVE checkpoint has no busy_timeout on its connection
-	// and returns SQLITE_BUSY immediately when a write transaction is in flight
-	// (~20 span writes/s means it almost never succeeds). The app's TRUNCATE
-	// checkpoint has busy_timeout(30000) and will wait for a clear window.
-	// WAL-level reader locks ensure Litestream's unstreamed frames are never
-	// truncated before S3 confirms them, so dual checkpointing is safe.
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	// Run the app-side checkpoint on a fixed interval. Its busy_timeout(30000)
+	// lets it wait for a clear write window, which Litestream's own checkpoint
+	// (no busy_timeout, ~20 writes/s) rarely gets — so the writer stays the
+	// reliable WAL flush. When Litestream is attached we checkpoint in PASSIVE
+	// mode so we never reset its WAL generation (a TRUNCATE would force a full
+	// re-snapshot); Litestream itself owns WAL truncation of the same generation.
+	cpMode := checkpointMode()
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, logger) })
 	if litestreamActive() {
-		logger.Info("litestream active: WAL checkpoint also running in-process with busy_timeout")
+		logger.Info("litestream active: writer runs PASSIVE WAL checkpoints; Litestream owns WAL truncation")
 	}
 
 	retentionCfg := retention.Config{
@@ -332,7 +332,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	ingestHandler.Stop()
 	workerCancel()
 	wg.Wait()
-	db.FinalCheckpoint(logger)
+	db.FinalCheckpoint(checkpointMode(), logger)
 
 	logger.Info("shutdown complete")
 	return nil
@@ -790,9 +790,10 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 			}
 		}
 	})
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	cpMode := checkpointMode()
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, logger) })
 	if litestreamActive() {
-		logger.Info("litestream active: WAL checkpoint also running in-process with busy_timeout")
+		logger.Info("litestream active: writer runs PASSIVE WAL checkpoints; Litestream owns WAL truncation")
 	}
 
 	// Retention queries (DELETE/SELECT on the full spans table) can take
@@ -852,7 +853,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionCancel()
 	workerCancel()
 	wg.Wait()
-	db.FinalCheckpoint(logger)
+	db.FinalCheckpoint(checkpointMode(), logger)
 
 	logger.Info("writer shutdown complete")
 	return nil
@@ -922,10 +923,22 @@ func safeGo(name string, wg *sync.WaitGroup, fn func()) {
 }
 
 // litestreamActive returns true when this process is running as the -exec child
-// of Litestream. In that case Litestream owns WAL checkpointing as part of its
-// replication cycle; spanbarn must not run a competing checkpoint goroutine.
+// of Litestream. In that case Litestream owns WAL generations and truncation as
+// part of its replication cycle, so the writer must checkpoint in PASSIVE mode
+// (see checkpointMode) — a TRUNCATE would reset the WAL header and force
+// Litestream into a costly full re-snapshot.
 func litestreamActive() bool {
 	return os.Getenv("LITESTREAM_ACCESS_KEY_ID") != ""
+}
+
+// checkpointMode picks the WAL checkpoint strategy for this process: PASSIVE when
+// a Litestream replica is attached (so we never reset its WAL generation), else
+// TRUNCATE for aggressive standalone WAL bounding.
+func checkpointMode() repository.CheckpointMode {
+	if litestreamActive() {
+		return repository.CheckpointPassive
+	}
+	return repository.CheckpointTruncate
 }
 
 // startSelfMetrics wires and launches the periodic self-metrics reporter, which

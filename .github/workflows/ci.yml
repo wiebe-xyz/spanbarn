@@ -43,6 +43,14 @@ jobs:
       - name: Go checks
         if: steps.detect.outputs.go_mods != '0'
         shell: bash
+        env:
+          # Isolate the Go module cache per job. These self-hosted runners host
+          # many repos on one machine sharing the default GOMODCACHE; a
+          # concurrent `go clean -modcache` or module churn from another repo can
+          # truncate a module extraction mid-parse and surface here as a spurious
+          # "expected 'package', found 'EOF'". A job-scoped cache is immune to
+          # that cross-repo race.
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
         run: |
           set -euo pipefail
           prune=( \( -path './.git' -o -path './.cache' -o -path './.ci-venv' -o -path '*/node_modules' -o -path '*/.venv' \) -prune -o )
