@@ -175,7 +175,14 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	// mode so we never reset its WAL generation (a TRUNCATE would force a full
 	// re-snapshot); Litestream itself owns WAL truncation of the same generation.
 	cpMode := checkpointMode()
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, logger) })
+	// Under Litestream (PASSIVE) the WAL grows under sustained read load; escalate
+	// to a bounding TRUNCATE only once it exceeds the configured size (~256 WAL
+	// frames per MiB at the default 4 KiB page size). 0 = never (standalone TRUNCATE).
+	cpTruncateFrames := 0
+	if cpMode == repository.CheckpointPassive {
+		cpTruncateFrames = cfg.WALTruncateThresholdMB * 256
+	}
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, cpTruncateFrames, logger) })
 	if litestreamActive() {
 		logger.Info("litestream active: writer runs PASSIVE WAL checkpoints; Litestream owns WAL truncation")
 	}
@@ -791,7 +798,14 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		}
 	})
 	cpMode := checkpointMode()
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, logger) })
+	// Under Litestream (PASSIVE) the WAL grows under sustained read load; escalate
+	// to a bounding TRUNCATE only once it exceeds the configured size (~256 WAL
+	// frames per MiB at the default 4 KiB page size). 0 = never (standalone TRUNCATE).
+	cpTruncateFrames := 0
+	if cpMode == repository.CheckpointPassive {
+		cpTruncateFrames = cfg.WALTruncateThresholdMB * 256
+	}
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, cpTruncateFrames, logger) })
 	if litestreamActive() {
 		logger.Info("litestream active: writer runs PASSIVE WAL checkpoints; Litestream owns WAL truncation")
 	}

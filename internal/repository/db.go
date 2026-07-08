@@ -154,7 +154,12 @@ const (
 // BugBarn and FunnelBarn do. Once Litestream is doing the periodic checkpoint
 // as part of its replication loop, this goroutine can go away entirely and
 // "snapshots are not the writer's problem" becomes literally true.
-func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, mode CheckpointMode, log *slog.Logger) {
+// truncateAboveFrames, when > 0 and mode is PASSIVE, escalates to a one-off
+// TRUNCATE on any tick where the WAL still holds more than that many frames
+// after the PASSIVE pass. This bounds the WAL under sustained read load (PASSIVE
+// cannot reset it past the oldest reader snapshot) at the cost of an occasional
+// Litestream re-snapshot — only when the WAL actually grows large, not every tick.
+func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, mode CheckpointMode, truncateAboveFrames int, log *slog.Logger) {
 	retryInterval := 5 * time.Second
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -163,7 +168,12 @@ func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, 
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			d.checkpoint(ctx, mode, retryInterval, log)
+			frames := d.checkpoint(ctx, mode, retryInterval, log)
+			if mode == CheckpointPassive && truncateAboveFrames > 0 && frames > truncateAboveFrames {
+				log.Info("wal exceeded truncate threshold; escalating to one TRUNCATE checkpoint",
+					"wal_frames", frames, "threshold_frames", truncateAboveFrames)
+				d.checkpoint(ctx, CheckpointTruncate, retryInterval, log)
+			}
 		}
 	}
 }
@@ -178,20 +188,24 @@ func (d *DB) FinalCheckpoint(mode CheckpointMode, log *slog.Logger) {
 	d.checkpoint(ctx, mode, 0, log)
 }
 
-func (d *DB) checkpoint(ctx context.Context, mode CheckpointMode, retryInterval time.Duration, log *slog.Logger) {
+// checkpoint runs one wal_checkpoint(mode) and returns the WAL size in frames
+// after the attempt (the pragma's `log` column), or -1 if it errored. In
+// TRUNCATE mode it retries on busy=1 (reader blocking backfill); PASSIVE returns
+// after a single pass.
+func (d *DB) checkpoint(ctx context.Context, mode CheckpointMode, retryInterval time.Duration, log *slog.Logger) int {
 	for {
 		var busy, walFrames, checkpointed int
 		if err := d.QueryRowContext(ctx, "PRAGMA wal_checkpoint("+string(mode)+")").Scan(&busy, &walFrames, &checkpointed); err != nil {
 			if ctx.Err() == nil {
 				log.Warn("wal checkpoint error", "mode", string(mode), "error", err)
 			}
-			return
+			return -1
 		}
 		if busy == 0 {
 			// Reclaim up to 5000 freed pages (~20 MiB) per tick. No-op when
 			// auto_vacuum != INCREMENTAL (i.e. before migration 018 has run).
 			_, _ = d.ExecContext(ctx, "PRAGMA incremental_vacuum(5000)")
-			return
+			return walFrames
 		}
 		// busy=1: a reader snapshot is blocking full WAL backfill. PASSIVE has
 		// already flushed every frame it could this pass and does not escalate, so
@@ -199,15 +213,15 @@ func (d *DB) checkpoint(ctx context.Context, mode CheckpointMode, retryInterval 
 		// interval. TRUNCATE retries so the WAL is actually reset once the reader
 		// releases.
 		if mode != CheckpointTruncate {
-			return
+			return walFrames
 		}
 		log.Debug("wal checkpoint blocked by reader, retrying", "wal_frames", walFrames, "checkpointed", checkpointed)
 		if retryInterval == 0 {
-			return
+			return walFrames
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return walFrames
 		case <-time.After(retryInterval):
 		}
 	}

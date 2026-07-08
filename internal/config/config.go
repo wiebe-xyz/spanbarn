@@ -30,6 +30,7 @@ type Config struct {
 	LogRetentionHours           int // SPANBARN_LOG_RETENTION_HOURS — how long to keep log records (default 24)
 	ErrorLogRetentionDays       int // SPANBARN_ERROR_LOG_RETENTION_DAYS — how long to keep logs for error traces (default 30)
 	RetentionDeleteBatchYieldMS int // SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS — pause between batched retention deletes so the WAL checkpoint and reads aren't starved (default 200)
+	WALTruncateThresholdMB      int // SPANBARN_WAL_TRUNCATE_THRESHOLD_MB — under Litestream the writer checkpoints PASSIVE (no forced re-snapshot) but escalates to one TRUNCATE when the WAL grows past this size, to bound it under sustained read load (default 256; 0 disables escalation)
 	IngestSampleRate            float64
 	SlowThresholdMS             int
 	AggregationInterval         string
@@ -89,6 +90,7 @@ func Load() Config {
 		LogRetentionHours:           getenvInt("SPANBARN_LOG_RETENTION_HOURS", 24),
 		ErrorLogRetentionDays:       getenvInt("SPANBARN_ERROR_LOG_RETENTION_DAYS", 30),
 		RetentionDeleteBatchYieldMS: getenvInt("SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS", 200),
+		WALTruncateThresholdMB:      getenvInt("SPANBARN_WAL_TRUNCATE_THRESHOLD_MB", 256),
 		IngestSampleRate:            getenvFloat("SPANBARN_INGEST_SAMPLE_RATE", 1.0),
 		SlowThresholdMS:             getenvInt("SPANBARN_SLOW_THRESHOLD_MS", 500),
 		AggregationInterval:         getenv("SPANBARN_AGGREGATION_INTERVAL", "1m"),
