@@ -45,10 +45,12 @@ func buildDSN(dbPath string, readOnly bool) string {
 	if !readOnly {
 		q.Add("_pragma", "journal_mode(WAL)")
 		q.Add("_pragma", "synchronous(NORMAL)")
-		// Disable automatic passive checkpoints; the writer runs explicit TRUNCATE
-		// checkpoints on a fixed interval instead. Passive checkpoints silently
-		// stop at any reader snapshot boundary, so they cannot prevent unbounded
-		// WAL growth under sustained read load.
+		// Disable SQLite's automatic passive checkpoints; the writer issues
+		// explicit checkpoints on a fixed interval instead — TRUNCATE when running
+		// standalone, or PASSIVE when a Litestream replica is attached (see
+		// RunPeriodicCheckpoint / CheckpointMode). SQLite's own automatic passive
+		// checkpoints silently stop at any reader snapshot boundary, so they cannot
+		// prevent unbounded WAL growth under sustained read load.
 		q.Add("_pragma", "wal_autocheckpoint(0)")
 		// Keep the index working set resident. The spans table carries ~12
 		// indexes, so every insert traverses many B-trees; with the SQLite
@@ -109,10 +111,30 @@ func (d *DB) Close() error {
 	return d.DB.Close()
 }
 
-// RunPeriodicCheckpoint blocks until ctx is cancelled, issuing a WAL TRUNCATE
-// checkpoint on each tick. When a checkpoint returns busy=1 (a reader snapshot
-// blocks full WAL backfill), it retries every retryInterval until the readers
-// release or the next full-interval tick arrives.
+// CheckpointMode selects the WAL checkpoint strategy the writer issues.
+//
+//   - CheckpointTruncate resets the WAL to zero bytes on each tick. It bounds WAL
+//     size aggressively, but RESTARTS the WAL header — which a co-resident
+//     Litestream replica reads as "wal truncated by another process" and answers
+//     by starting a new generation and re-uploading a full snapshot (multi-minute,
+//     lock-contending). Use only when no Litestream replica is attached.
+//   - CheckpointPassive folds committed frames into the main DB without resetting
+//     the WAL header, so an attached Litestream keeps streaming the same generation
+//     (no forced re-snapshot). Litestream performs its own WAL restarts as part of
+//     replication; the writer's PASSIVE pass is the reliable flush that keeps the
+//     WAL bounded even when Litestream's own checkpoint loses the write-lock race.
+type CheckpointMode string
+
+const (
+	CheckpointTruncate CheckpointMode = "TRUNCATE"
+	CheckpointPassive  CheckpointMode = "PASSIVE"
+)
+
+// RunPeriodicCheckpoint blocks until ctx is cancelled, issuing a WAL checkpoint
+// in the given mode on each tick. In TRUNCATE mode, when a checkpoint returns
+// busy=1 (a reader snapshot blocks full WAL backfill) it retries every
+// retryInterval until the readers release or the next full-interval tick arrives;
+// PASSIVE mode never escalates, so it simply waits for the next tick.
 //
 // Note: TRUNCATE mode does NOT automatically retry via busy_timeout when readers
 // block WAL backfill — it returns SQLITE_BUSY immediately in that phase. busy_timeout
@@ -132,7 +154,7 @@ func (d *DB) Close() error {
 // BugBarn and FunnelBarn do. Once Litestream is doing the periodic checkpoint
 // as part of its replication loop, this goroutine can go away entirely and
 // "snapshots are not the writer's problem" becomes literally true.
-func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, log *slog.Logger) {
+func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, mode CheckpointMode, log *slog.Logger) {
 	retryInterval := 5 * time.Second
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -141,27 +163,27 @@ func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, 
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			d.checkpoint(ctx, retryInterval, log)
+			d.checkpoint(ctx, mode, retryInterval, log)
 		}
 	}
 }
 
-// FinalCheckpoint runs one WAL TRUNCATE checkpoint on a fresh context. Call
-// after all writers have stopped (e.g. after wg.Wait()) and before db.Close(),
-// so the WAL is merged into the main file on every clean shutdown.
+// FinalCheckpoint runs one WAL checkpoint (in the given mode) on a fresh context.
+// Call after all writers have stopped (e.g. after wg.Wait()) and before
+// db.Close(), so the WAL is merged into the main file on every clean shutdown.
 // With wal_autocheckpoint(0), db.Close() does not checkpoint automatically.
-func (d *DB) FinalCheckpoint(log *slog.Logger) {
+func (d *DB) FinalCheckpoint(mode CheckpointMode, log *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	d.checkpoint(ctx, 0, log)
+	d.checkpoint(ctx, mode, 0, log)
 }
 
-func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) {
+func (d *DB) checkpoint(ctx context.Context, mode CheckpointMode, retryInterval time.Duration, log *slog.Logger) {
 	for {
 		var busy, walFrames, checkpointed int
-		if err := d.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
+		if err := d.QueryRowContext(ctx, "PRAGMA wal_checkpoint("+string(mode)+")").Scan(&busy, &walFrames, &checkpointed); err != nil {
 			if ctx.Err() == nil {
-				log.Warn("wal checkpoint error", "error", err)
+				log.Warn("wal checkpoint error", "mode", string(mode), "error", err)
 			}
 			return
 		}
@@ -171,8 +193,14 @@ func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *s
 			_, _ = d.ExecContext(ctx, "PRAGMA incremental_vacuum(5000)")
 			return
 		}
-		// busy=1: a reader snapshot is blocking full WAL backfill. Retry after a
-		// short interval so the WAL can be drained once the reader finishes.
+		// busy=1: a reader snapshot is blocking full WAL backfill. PASSIVE has
+		// already flushed every frame it could this pass and does not escalate, so
+		// there is nothing to gain by retrying within the tick — wait for the next
+		// interval. TRUNCATE retries so the WAL is actually reset once the reader
+		// releases.
+		if mode != CheckpointTruncate {
+			return
+		}
 		log.Debug("wal checkpoint blocked by reader, retrying", "wal_frames", walFrames, "checkpointed", checkpointed)
 		if retryInterval == 0 {
 			return
