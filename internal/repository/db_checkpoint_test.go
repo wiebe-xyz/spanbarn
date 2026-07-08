@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -64,5 +65,35 @@ func TestCheckpointModes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCheckpointFrameCount verifies checkpoint() reports the WAL frame count that
+// RunPeriodicCheckpoint's PASSIVE->TRUNCATE escalation depends on: PASSIVE leaves
+// frames in the WAL (>0), TRUNCATE resets it to 0.
+func TestCheckpointFrameCount(t *testing.T) {
+	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	path := filepath.Join(t.TempDir(), "cp.db")
+	db, err := NewDB(path)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := Migrate(db.DB); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	repo := NewRepository(db.DB)
+	for i := 0; i < 50; i++ {
+		if _, err := repo.CreateProject(fmt.Sprintf("p%d", i), "x"); err != nil {
+			t.Fatalf("CreateProject %d: %v", i, err)
+		}
+	}
+	ctx := context.Background()
+
+	if n := db.checkpoint(ctx, CheckpointPassive, 0, discard); n <= 0 {
+		t.Fatalf("PASSIVE checkpoint should report >0 WAL frames, got %d", n)
+	}
+	if n := db.checkpoint(ctx, CheckpointTruncate, 0, discard); n != 0 {
+		t.Fatalf("TRUNCATE checkpoint should report 0 WAL frames after reset, got %d", n)
 	}
 }
