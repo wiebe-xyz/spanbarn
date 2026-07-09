@@ -104,6 +104,22 @@ func (r *Repository) execLowAffecting(query string, args ...any) (int64, error) 
 	return n, err
 }
 
+// execHighExpectingRows runs a single high-priority write (admin update/delete
+// by key) and returns sql.ErrNoRows when it affected no rows, i.e. the target
+// row did not exist. Shared by the admin CRUD methods.
+func (r *Repository) execHighExpectingRows(query string, args ...any) error {
+	return r.execHigh(func() error {
+		res, err := r.db.Exec(query, args...)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
+}
+
 // SetDeleteBatchYield sets how long batchedDelete pauses between batches. The
 // pause releases the write lock so the periodic WAL checkpoint and read-only
 // queries get a turn during a large retention purge. 0 (the default) disables

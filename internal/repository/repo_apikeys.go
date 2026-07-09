@@ -1,7 +1,5 @@
 package repository
 
-import "database/sql"
-
 func (r *Repository) CreateAPIKey(projectID int64, name, keyHash, scope string) (int64, error) {
 	var id int64
 	err := r.execHigh(func() error {
@@ -74,15 +72,5 @@ func (r *Repository) ListAllAPIKeys() ([]APIKey, error) {
 }
 
 func (r *Repository) RevokeAPIKey(id int64) error {
-	return r.execHigh(func() error {
-		res, err := r.db.Exec("DELETE FROM api_keys WHERE id = ?", id)
-		if err != nil {
-			return err
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return sql.ErrNoRows
-		}
-		return nil
-	})
+	return r.execHighExpectingRows("DELETE FROM api_keys WHERE id = ?", id)
 }
