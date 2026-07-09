@@ -715,10 +715,11 @@ func TestProjectUsageStatsAll(t *testing.T) {
 	}
 }
 
-// insertBoringSpans inserts count non-error, fast spans backdated to ingestedAt
-// so retention's boring-span cleanup will consider them deletable.
+// insertBoringSpans inserts count sampled-boring spans with a stamped expires_at
+// already in the past, so retention's boring-span cleanup will delete them.
 func insertBoringSpans(t *testing.T, repo *Repository, projectID int64, count int, ingestedAt time.Time) {
 	t.Helper()
+	exp := ingestedAt // expires_at in the past → immediately deletable
 	spans := make([]Span, count)
 	for i := range spans {
 		spans[i] = Span{
@@ -734,6 +735,7 @@ func insertBoringSpans(t *testing.T, repo *Repository, projectID int64, count in
 			DurationUs:  1000, // well under the slow threshold
 			Attributes:  "{}",
 			Events:      "[]",
+			ExpiresAt:   &exp,
 		}
 	}
 	if err := repo.InsertSpans(spans); err != nil {
@@ -771,10 +773,10 @@ func TestDeleteBoringSpansBatchedAndYields(t *testing.T) {
 	repo.SetDeleteBatchYield(yield)
 
 	start := time.Now()
-	n, err := repo.DeleteBoringSpansOlderThan(context.Background(), time.Now(), 1_000_000)
+	n, err := repo.DeleteExpiredBoringSpans(context.Background(), time.Now())
 	elapsed := time.Since(start)
 	if err != nil {
-		t.Fatalf("DeleteBoringSpansOlderThan: %v", err)
+		t.Fatalf("DeleteExpiredBoringSpans: %v", err)
 	}
 	if int(n) != total {
 		t.Fatalf("deleted %d rows, want %d", n, total)
@@ -801,7 +803,7 @@ func TestBatchedDeleteRespectsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancelled before the first batch
 
-	n, err := repo.DeleteBoringSpansOlderThan(ctx, time.Now(), 1_000_000)
+	n, err := repo.DeleteExpiredBoringSpans(ctx, time.Now())
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}

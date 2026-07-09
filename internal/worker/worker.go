@@ -229,6 +229,10 @@ type WorkerConfig struct {
 	// threshold with no errors are boring and skipped. 0 disables the filter
 	// (all spans are written).
 	SlowThresholdUs int64
+	// BoringRetention is how long a sampled-boring span is kept before the boring
+	// cleanup may delete it (stamped as expires_at at classification). 0 leaves
+	// expires_at unset, so boring spans fall back to the aggregate-then-delete pass.
+	BoringRetention time.Duration
 }
 
 // RedisWorker consumes span batches from a Redis write queue and persists
@@ -452,18 +456,35 @@ func (w *RedisWorker) stageSpans(ctx context.Context, spans []repository.Span) {
 // are sampled whole at the per-project ratio — the die is rolled once per
 // trace_id, and either all spans in that trace are kept or none are.
 func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.Span {
-	return classifySpansForStorage(spans, w.cfg.SlowThresholdUs, w.boringPolicy, w.floor)
+	return classifySpansForStorage(spans, w.cfg.SlowThresholdUs, w.cfg.BoringRetention, w.boringPolicy, w.floor)
 }
 
 // classifySpansForStorage builds the set of spans to persist from a set of spans
 // that ideally covers whole traces. Extracted so the staging flusher can reuse
 // the exact same trace-level classification the inline worker path uses.
-func classifySpansForStorage(spans []repository.Span, slowThresholdUs int64, boringPolicy BoringPolicyReader, floor *sampling.MinuteFloor) []repository.Span {
+func classifySpansForStorage(spans []repository.Span, slowThresholdUs int64, boringRetention time.Duration, boringPolicy BoringPolicyReader, floor *sampling.MinuteFloor) []repository.Span {
 	if slowThresholdUs <= 0 {
 		return spans
 	}
 
 	now := time.Now()
+
+	// stampBoring marks sampled-boring spans with an expires_at so the cleanup can
+	// delete them with a plain indexed range scan. A non-positive retention leaves
+	// expires_at nil, so those spans fall back to the aggregate-then-delete pass.
+	stampBoring := func(bs []repository.Span) {
+		if boringRetention <= 0 {
+			return
+		}
+		for i := range bs {
+			base := bs[i].IngestedAt
+			if base.IsZero() {
+				base = now
+			}
+			exp := base.Add(boringRetention)
+			bs[i].ExpiresAt = &exp
+		}
+	}
 
 	// Determine which projects are in verbose mode (record all spans).
 	verboseProject := make(map[int64]bool, 2)
@@ -541,12 +562,14 @@ func classifySpansForStorage(spans []repository.Span, slowThresholdUs int64, bor
 			}
 			op, minute := boringTraceKey(bt.spans)
 			if floor.ShouldKeep(bt.projectID, op, minute, min, ratioKeep) {
+				stampBoring(bt.spans)
 				result = append(result, bt.spans...)
 			}
 			continue
 		}
 
 		if ratioKeep {
+			stampBoring(bt.spans)
 			result = append(result, bt.spans...)
 		}
 	}

@@ -40,7 +40,7 @@ type Repository interface {
 	GetSpansForAggregation(cutoff time.Time, limit int) ([]repository.Span, error)
 	DeleteSpansByMaxID(maxID int64) (int64, error)
 	DeleteSpansOlderThan(cutoff time.Time) (int64, error)
-	DeleteBoringSpansOlderThan(ctx context.Context, cutoff time.Time, slowThresholdUs int64) (int64, error)
+	DeleteExpiredBoringSpans(ctx context.Context, now time.Time) (int64, error)
 	InsertErrorSamples(spans []repository.Span) error
 	DeleteErrorSamplesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteAggregatesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
@@ -321,16 +321,14 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		}
 	}
 
-	// Fast boring-span cleanup: delete sampled boring spans past their short retention window.
-	// This is a simple indexed range DELETE — no correlated subquery, runs in milliseconds.
-	var boringDeleted int64
-	if cfg.BoringRetentionMinutes > 0 && cfg.SlowThresholdUS > 0 {
-		boringCutoff := now.Add(-time.Duration(cfg.BoringRetentionMinutes) * time.Minute)
-		var boringErr error
-		boringDeleted, boringErr = w.repo.DeleteBoringSpansOlderThan(ctx, boringCutoff, cfg.SlowThresholdUS)
-		if boringErr != nil {
-			return boringErr
-		}
+	// Fast boring-span cleanup: delete sampled-boring spans whose stamped
+	// expires_at has passed. Classification writes expires_at (= ingested_at +
+	// boring retention) at storage time, so this is a bounded seek of the partial
+	// idx_spans_expires index — it no longer scans the table classifying by
+	// status/duration_us (which had wedged the writer for 30s+).
+	boringDeleted, err := w.repo.DeleteExpiredBoringSpans(ctx, now)
+	if err != nil {
+		return err
 	}
 
 	errorSamplesDeleted, err := w.repo.DeleteErrorSamplesOlderThan(ctx, errorCutoff)

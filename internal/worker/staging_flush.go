@@ -36,6 +36,7 @@ type StagingFlusherConfig struct {
 	MaxAge          time.Duration // staging rows older than this are dropped unconditionally
 	BatchTraces     int           // max ready traces processed per flush transaction
 	SlowThresholdUs int64         // classification: spans slower than this make a trace interesting
+	BoringRetention time.Duration // sampled-boring spans are stamped expires_at = ingested + this
 }
 
 // StagingFlusher moves complete traces out of spans_staging: it feeds every span
@@ -159,7 +160,7 @@ func (f *StagingFlusher) flushOnce(ctx context.Context) (int, error) {
 			f.accumulator.Add(spans[i])
 		}
 	}
-	interesting := classifySpansForStorage(spans, f.cfg.SlowThresholdUs, f.boringPolicy, f.floor)
+	interesting := classifySpansForStorage(spans, f.cfg.SlowThresholdUs, f.cfg.BoringRetention, f.boringPolicy, f.floor)
 
 	// Atomically move interesting spans to the indexed table and delete all
 	// processed rows for these traces.
