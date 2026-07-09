@@ -16,11 +16,20 @@ import (
 
 var alertTracer = otel.Tracer("spanbarn/alert")
 
-// AlertRepository defines the data access methods needed by the evaluator.
+// AlertRepository defines the read data access methods needed by the evaluator.
+// These run every interval and can be pointed at a read-only DB connection so
+// alert evaluation never contends with the single writer connection.
 type AlertRepository interface {
 	ListAlerts(projectID int64) ([]repository.Alert, error)
 	QueryAggregates(filter repository.AggregateFilter) ([]repository.Aggregate, error)
 	QueryMetricRollups(ctx context.Context, f repository.MetricRollupFilter) ([]repository.MetricRollup, error)
+	UpdateAlertLastTriggered(alertID int64, at time.Time) error
+}
+
+// AlertTriggerWriter performs the one write the evaluator makes — recording a
+// trigger. It only fires when an alert actually crosses its threshold (rare), so
+// it can stay on the writable connection while reads move to the read-only one.
+type AlertTriggerWriter interface {
 	UpdateAlertLastTriggered(alertID int64, at time.Time) error
 }
 
@@ -50,7 +59,8 @@ type SampleRatioLookup interface {
 
 // Evaluator checks alert conditions against aggregate data and sends notifications.
 type Evaluator struct {
-	repo        AlertRepository
+	repo        AlertRepository    // reads (may be a read-only connection)
+	triggers    AlertTriggerWriter // the rare trigger write (writable connection)
 	notify      Notifier
 	logger      *slog.Logger
 	now         func() time.Time // injectable clock for testing
@@ -59,17 +69,28 @@ type Evaluator struct {
 
 // NewEvaluator creates an Evaluator with the given dependencies. ratioLookup
 // is used to correct error rates for projects using error-biased sampling.
-// Pass nil for no correction.
+// Pass nil for no correction. repo serves both reads and (by default) the
+// trigger write; call SetTriggerWriter to route the write to a separate
+// (writable) connection when repo is read-only.
 func NewEvaluator(repo AlertRepository, notifier Notifier, logger *slog.Logger, ratioLookup SampleRatioLookup) *Evaluator {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Evaluator{
 		repo:        repo,
+		triggers:    repo,
 		notify:      notifier,
 		logger:      logger,
 		now:         time.Now,
 		ratioLookup: ratioLookup,
+	}
+}
+
+// SetTriggerWriter routes the trigger-recording write to a separate connection
+// (typically the writable one) so read queries can run on a read-only pool.
+func (e *Evaluator) SetTriggerWriter(w AlertTriggerWriter) {
+	if w != nil {
+		e.triggers = w
 	}
 }
 
@@ -273,8 +294,8 @@ func (e *Evaluator) maybeTrigger(ctx context.Context, span trace.Span, a reposit
 		}
 	}
 
-	// Update last_triggered_at.
-	if err := e.repo.UpdateAlertLastTriggered(a.ID, now); err != nil {
+	// Update last_triggered_at on the writable connection.
+	if err := e.triggers.UpdateAlertLastTriggered(a.ID, now); err != nil {
 		return fmt.Errorf("update last_triggered_at: %w", err)
 	}
 

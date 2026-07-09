@@ -208,8 +208,12 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	ratioLookup := ingest.NewCachedRatioLookup(queryRepo, time.Minute)
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
-	alertEval := alert.NewEvaluator(repo, alertNotifier, logger, ratioLookup)
-	alertRunner := alert.NewRunner(alertEval, repo, time.Minute, logger)
+	// Alert reads (ListAlerts/QueryAggregates/QueryMetricRollups, every interval)
+	// run on the read-only connection so they never contend with the single
+	// writer connection; the rare trigger write stays on the writable repo.
+	alertEval := alert.NewEvaluator(queryRepo, alertNotifier, logger, ratioLookup)
+	alertEval.SetTriggerWriter(repo)
+	alertRunner := alert.NewRunner(alertEval, queryRepo, time.Minute, logger)
 	alertCtx, alertCancel := context.WithCancel(ctx)
 	defer alertCancel()
 	safeGo("alert-runner", &wg, func() { alertRunner.Run(alertCtx) })
@@ -847,8 +851,11 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
-	alertEval := alert.NewEvaluator(repo, alertNotifier, logger, writerRatioLookup)
-	alertRunner := alert.NewRunner(alertEval, repo, time.Minute, logger)
+	// Alert reads run on the read-only connection; the rare trigger write stays
+	// on the writable repo. Keeps alert evaluation off the single writer path.
+	alertEval := alert.NewEvaluator(queryRepo, alertNotifier, logger, writerRatioLookup)
+	alertEval.SetTriggerWriter(repo)
+	alertRunner := alert.NewRunner(alertEval, queryRepo, time.Minute, logger)
 	alertCtx, alertCancel := context.WithCancel(ctx)
 	defer alertCancel()
 	safeGo("alert-runner", &wg, func() { alertRunner.Run(alertCtx) })
