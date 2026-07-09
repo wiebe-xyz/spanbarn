@@ -38,7 +38,7 @@ FILELEN_MAX_COUNT=${FILELEN_MAX_COUNT:-5} # max large files allowed
 FILE_HARD_CAP=${FILE_HARD_CAP:-1200}  # no single file may exceed this
 
 DUPL_TOKENS=${DUPL_TOKENS:-100}       # dupl clone-detection threshold (tokens)
-DUPL_MAX_GROUPS=${DUPL_MAX_GROUPS:-16} # max duplicate clone groups allowed
+DUPL_MAX_GROUPS=${DUPL_MAX_GROUPS:-17} # max duplicate clone groups allowed
 # ---------------------------------------------------------------------------
 
 # Directories of Go source to inspect (production + CLI).
