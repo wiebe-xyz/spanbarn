@@ -746,17 +746,37 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 
 	boringPolicy := worker.NewCachedBoringPolicy(repo, 30*time.Second)
 
+	// The writer is the single SQLite writer, so an in-memory per-minute floor
+	// counts boring-trace survivals accurately across batches.
+	minuteFloor := sampling.NewMinuteFloor()
+
 	rw := worker.NewRedisWorker(writeQueue, &workerRepoAdapter{repo: repo}, logger)
 	rw.SetAccumulator(accumulator)
 	rw.SetConfig(worker.WorkerConfig{SlowThresholdUs: int64(cfg.SlowThresholdMS) * 1000})
 	rw.SetBoringPolicy(boringPolicy)
-	// The writer is the single SQLite writer, so an in-memory per-minute floor
-	// counts boring-trace survivals accurately across batches.
-	rw.SetMinuteFloor(sampling.NewMinuteFloor())
+	rw.SetMinuteFloor(minuteFloor)
+	rw.SetStagingMode(cfg.SpanStagingEnabled)
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	safeGo("write-scheduler", &wg, func() { scheduler.Run(workerCtx) })
 	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
+
+	// Span staging (opt-in): the redis worker only appends to spans_staging; this
+	// flusher does accumulation + classification + indexed storage per complete
+	// trace off the hot path, with a hard-age GC so staging can't grow unbounded.
+	if cfg.SpanStagingEnabled {
+		flusher := worker.NewStagingFlusher(repo, worker.StagingFlusherConfig{
+			Window:          time.Duration(cfg.TraceBufferWindowSeconds) * time.Second,
+			MaxAge:          time.Duration(cfg.StagingMaxAgeSeconds) * time.Second,
+			SlowThresholdUs: int64(cfg.SlowThresholdMS) * 1000,
+		}, logger)
+		flusher.SetAccumulator(accumulator)
+		flusher.SetBoringPolicy(boringPolicy)
+		flusher.SetMinuteFloor(minuteFloor)
+		safeGo("staging-flusher", &wg, func() { flusher.Run(workerCtx) })
+		logger.Info("span staging enabled: worker stages spans, flusher classifies per trace",
+			"window_s", cfg.TraceBufferWindowSeconds, "max_age_s", cfg.StagingMaxAgeSeconds)
+	}
 	safeGo("accumulator", &wg, func() { accumulator.Run(workerCtx) })
 	safeGo("metric-accumulator", &wg, func() { metricAccumulator.Run(workerCtx) })
 	safeGo("metrics-consumer", &wg, func() {
@@ -1030,6 +1050,10 @@ type workerRepoAdapter struct {
 
 func (a *workerRepoAdapter) InsertSpans(ctx context.Context, spans []repository.Span) error {
 	return a.repo.InsertSpansContext(ctx, spans)
+}
+
+func (a *workerRepoAdapter) InsertSpansStaging(ctx context.Context, spans []repository.Span) error {
+	return a.repo.InsertSpansStaging(ctx, spans)
 }
 
 func (a *workerRepoAdapter) InsertPromptRecords(_ context.Context, records []repository.PromptRecord) error {
