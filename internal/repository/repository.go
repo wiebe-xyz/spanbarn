@@ -149,6 +149,35 @@ func (r *Repository) execHighExpectingRows(query string, args ...any) error {
 // guarantees the checkpoint a contention-free window.
 func (r *Repository) SetDeleteBatchYield(d time.Duration) { r.deleteBatchYield = d }
 
+// distinctProjectIDs enumerates the distinct project_ids present in a
+// project-keyed table using a loose-index-scan: each step seeks the next
+// project_id via the leading index column, so it is cheap even on a huge table
+// and — unlike reading the projects table — also covers rows of deleted
+// projects. table is a trusted internal constant, never user input.
+func (r *Repository) distinctProjectIDs(ctx context.Context, table string) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		WITH RECURSIVE dp(pid) AS (
+			SELECT MIN(project_id) FROM `+table+`
+			UNION ALL
+			SELECT (SELECT MIN(project_id) FROM `+table+` WHERE project_id > dp.pid)
+			FROM dp WHERE dp.pid IS NOT NULL
+		)
+		SELECT pid FROM dp WHERE pid IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var pids []int64
+	for rows.Next() {
+		var pid int64
+		if err := rows.Scan(&pid); err != nil {
+			return nil, err
+		}
+		pids = append(pids, pid)
+	}
+	return pids, rows.Err()
+}
+
 // deleteOlderThanPerProject deletes rows older than cutoff from a project-keyed
 // table one project at a time. A global `WHERE timeCol < ?` cannot use these
 // tables' indexes (they all lead with project_id) and so full-scans the whole
@@ -162,28 +191,8 @@ func (r *Repository) SetDeleteBatchYield(d time.Duration) { r.deleteBatchYield =
 // on a huge table and — unlike reading the projects table — also covers rows of
 // deleted projects. table and timeCol are trusted internal constants.
 func (r *Repository) deleteOlderThanPerProject(ctx context.Context, table, timeCol string, cutoff time.Time) (int64, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		WITH RECURSIVE dp(pid) AS (
-			SELECT MIN(project_id) FROM `+table+`
-			UNION ALL
-			SELECT (SELECT MIN(project_id) FROM `+table+` WHERE project_id > dp.pid)
-			FROM dp WHERE dp.pid IS NOT NULL
-		)
-		SELECT pid FROM dp WHERE pid IS NOT NULL`)
+	pids, err := r.distinctProjectIDs(ctx, table)
 	if err != nil {
-		return 0, err
-	}
-	var pids []int64
-	for rows.Next() {
-		var pid int64
-		if err := rows.Scan(&pid); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		pids = append(pids, pid)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return 0, err
 	}
 
