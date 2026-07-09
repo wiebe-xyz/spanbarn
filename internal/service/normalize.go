@@ -18,87 +18,106 @@ func NormalizeSQL(sql string) string {
 
 	var b strings.Builder
 	b.Grow(len(sql))
-	i := 0
-	n := len(sql)
+	i, n := 0, len(sql)
 
 	for i < n {
-		ch := sql[i]
-
-		// Single-quoted string literal → ?
-		if ch == '\'' {
+		switch ch := sql[i]; {
+		case ch == '\'':
+			i = scanStringLiteral(sql, i, &b)
+		case ch == '$' && i+1 < n && sql[i+1] >= '1' && sql[i+1] <= '9':
+			i = scanPgParam(sql, i, &b)
+		case ch >= '0' && ch <= '9' && (i == 0 || !isIdentChar(sql[i-1])):
+			i = scanNumber(sql, i, &b)
+		case isSpace(ch):
+			i = scanWhitespace(sql, i, &b)
+		case ch == '"':
+			i = scanQuotedIdent(sql, i, &b)
+		default:
+			b.WriteRune(unicode.ToLower(rune(ch)))
 			i++
-			for i < n {
-				if sql[i] == '\'' {
-					i++
-					if i < n && sql[i] == '\'' {
-						i++ // escaped quote ''
-						continue
-					}
-					break
-				}
-				i++
-			}
-			b.WriteByte('?')
-			continue
 		}
-
-		// Postgres $N parameter → ?
-		if ch == '$' && i+1 < n && sql[i+1] >= '1' && sql[i+1] <= '9' {
-			i++
-			for i < n && sql[i] >= '0' && sql[i] <= '9' {
-				i++
-			}
-			// Handle ::TYPE cast after parameter
-			if i+1 < n && sql[i] == ':' && sql[i+1] == ':' {
-				i += 2
-				for i < n && (isIdentChar(sql[i])) {
-					i++
-				}
-			}
-			b.WriteByte('?')
-			continue
-		}
-
-		// Numeric literal (not part of identifier) → ?
-		if (ch >= '0' && ch <= '9') && (i == 0 || !isIdentChar(sql[i-1])) {
-			for i < n && ((sql[i] >= '0' && sql[i] <= '9') || sql[i] == '.') {
-				i++
-			}
-			b.WriteByte('?')
-			continue
-		}
-
-		// Whitespace → single space
-		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
-			i++
-			for i < n && (sql[i] == ' ' || sql[i] == '\t' || sql[i] == '\n' || sql[i] == '\r') {
-				i++
-			}
-			b.WriteByte(' ')
-			continue
-		}
-
-		// Double-quoted identifier — preserve as-is
-		if ch == '"' {
-			b.WriteByte(ch)
-			i++
-			for i < n && sql[i] != '"' {
-				b.WriteByte(sql[i])
-				i++
-			}
-			if i < n {
-				b.WriteByte(sql[i])
-				i++
-			}
-			continue
-		}
-
-		// Regular character — lowercase
-		b.WriteRune(unicode.ToLower(rune(ch)))
-		i++
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+// Each scanXxx consumes one token starting at i, writes its canonical form to b,
+// and returns the index just past the token.
+
+// scanStringLiteral collapses a single-quoted string literal (with ” escapes) to ?.
+func scanStringLiteral(sql string, i int, b *strings.Builder) int {
+	n := len(sql)
+	i++ // opening quote
+	for i < n {
+		if sql[i] == '\'' {
+			i++
+			if i < n && sql[i] == '\'' {
+				i++ // escaped quote ''
+				continue
+			}
+			break
+		}
+		i++
+	}
+	b.WriteByte('?')
+	return i
+}
+
+// scanPgParam collapses a Postgres $N parameter (with optional ::TYPE cast) to ?.
+func scanPgParam(sql string, i int, b *strings.Builder) int {
+	n := len(sql)
+	i++ // '$'
+	for i < n && sql[i] >= '0' && sql[i] <= '9' {
+		i++
+	}
+	if i+1 < n && sql[i] == ':' && sql[i+1] == ':' {
+		i += 2
+		for i < n && isIdentChar(sql[i]) {
+			i++
+		}
+	}
+	b.WriteByte('?')
+	return i
+}
+
+// scanNumber collapses a numeric literal in value position to ?.
+func scanNumber(sql string, i int, b *strings.Builder) int {
+	n := len(sql)
+	for i < n && ((sql[i] >= '0' && sql[i] <= '9') || sql[i] == '.') {
+		i++
+	}
+	b.WriteByte('?')
+	return i
+}
+
+// scanWhitespace collapses a whitespace run to a single space.
+func scanWhitespace(sql string, i int, b *strings.Builder) int {
+	n := len(sql)
+	for i < n && isSpace(sql[i]) {
+		i++
+	}
+	b.WriteByte(' ')
+	return i
+}
+
+// scanQuotedIdent preserves a double-quoted identifier verbatim.
+func scanQuotedIdent(sql string, i int, b *strings.Builder) int {
+	n := len(sql)
+	b.WriteByte(sql[i]) // opening quote
+	i++
+	for i < n && sql[i] != '"' {
+		b.WriteByte(sql[i])
+		i++
+	}
+	if i < n {
+		b.WriteByte(sql[i]) // closing quote
+		i++
+	}
+	return i
+}
+
+func isSpace(ch byte) bool {
+	return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
 }
 
 func isIdentChar(ch byte) bool {
