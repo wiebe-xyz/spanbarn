@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -180,6 +181,63 @@ func TestQueryMetricSeriesLabelFilter(t *testing.T) {
 	}
 	if rows[0].Value != 10 {
 		t.Errorf("want value 10, got %v", rows[0].Value)
+	}
+}
+
+// TestQueryMetricSeriesRejectsInjectionKey is a regression test for the metric
+// label-key SQL injection: a key that tries to break out of the JSON-path string
+// literal (e.g. `x') OR 1=1 --`) must be rejected with ErrInvalidLabelKey rather
+// than interpolated, so it can never widen the query past its project scope.
+func TestQueryMetricSeriesRejectsInjectionKey(t *testing.T) {
+	repo := setupTestDB(t)
+	now := time.Now().UTC()
+
+	svcA, _ := json.Marshal(map[string]string{"service.name": "svc-a"})
+	svcB, _ := json.Marshal(map[string]string{"service.name": "svc-b"})
+	recs := []model.MetricRecord{
+		{ProjectID: 1, Name: "req", Type: model.MetricTypeSum, TimeUnixNano: uint64(now.UnixNano()), Value: 10, Attributes: svcA},
+		{ProjectID: 2, Name: "req", Type: model.MetricTypeSum, TimeUnixNano: uint64(now.UnixNano()), Value: 20, Attributes: svcB},
+	}
+	if err := repo.InsertMetrics(context.Background(), recs); err != nil {
+		t.Fatalf("InsertMetrics: %v", err)
+	}
+
+	injections := []string{
+		`x') OR 1=1 --`,
+		`service.name"='svc-a`,
+		`a' UNION SELECT 1 --`,
+	}
+	for _, badKey := range injections {
+		_, err := repo.QueryMetricSeries(context.Background(), MetricFilter{
+			ProjectID:  1,
+			Name:       "req",
+			From:       now.Add(-time.Minute),
+			To:         now.Add(time.Minute),
+			Attributes: map[string]string{badKey: "1"},
+		})
+		if !errors.Is(err, ErrInvalidLabelKey) {
+			t.Errorf("QueryMetricSeries(%q): want ErrInvalidLabelKey, got %v", badKey, err)
+		}
+
+		_, err = repo.QueryMetricRollups(context.Background(), MetricRollupFilter{
+			ProjectID:  1,
+			Name:       "req",
+			From:       now.Add(-time.Minute),
+			To:         now.Add(time.Minute),
+			Attributes: map[string]string{badKey: "1"},
+		})
+		if !errors.Is(err, ErrInvalidLabelKey) {
+			t.Errorf("QueryMetricRollups(%q): want ErrInvalidLabelKey, got %v", badKey, err)
+		}
+	}
+
+	// A legitimate dotted key must still work.
+	if _, err := repo.QueryMetricSeries(context.Background(), MetricFilter{
+		ProjectID: 1, Name: "req",
+		From: now.Add(-time.Minute), To: now.Add(time.Minute),
+		Attributes: map[string]string{"service.name": "svc-a"},
+	}); err != nil {
+		t.Fatalf("QueryMetricSeries(valid key): %v", err)
 	}
 }
 

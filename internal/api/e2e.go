@@ -68,7 +68,7 @@ func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secure := r.TLS != nil
+	secure := isSecureRequest(r)
 	sessionExpires := time.Now().Add(s.sessionMgr.TTL())
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",

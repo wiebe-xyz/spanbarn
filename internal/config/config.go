@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -142,6 +143,30 @@ func Load() Config {
 	}
 
 	return cfg
+}
+
+// IsDevEnvironment reports whether the configured environment is a local/dev
+// one where relaxed security defaults (e.g. an empty session secret) are
+// tolerated. Every named deployment environment (testing, staging, production)
+// is treated as non-dev.
+func (c Config) IsDevEnvironment() bool {
+	switch strings.ToLower(strings.TrimSpace(c.Environment)) {
+	case "", "development", "dev", "local":
+		return true
+	default:
+		return false
+	}
+}
+
+// Validate checks configuration invariants required to run an API server safely.
+// It is called for the long-running server modes, not the CLI subcommands.
+func (c Config) Validate() error {
+	if c.SessionSecret == "" && !c.IsDevEnvironment() {
+		return fmt.Errorf("SPANBARN_SESSION_SECRET must be set in the %q environment: "+
+			"it signs session tokens and derives per-project setup keys, so a missing "+
+			"secret makes both forgeable", c.Environment)
+	}
+	return nil
 }
 
 func getenv(key, fallback string) string {

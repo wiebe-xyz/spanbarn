@@ -82,6 +82,38 @@ func TestLoginSuccess(t *testing.T) {
 	}
 }
 
+// TestLoginCookieSecureOnForwardedProto verifies the session cookie is marked
+// Secure when the request arrived over HTTPS at the proxy (X-Forwarded-Proto),
+// which is the only signal available since TLS terminates upstream.
+func TestLoginCookieSecureOnForwardedProto(t *testing.T) {
+	userAuth, sm := setupLoginTest(t)
+	handler := HandleLogin(userAuth, sm, nil)
+
+	body, _ := json.Marshal(loginRequest{Username: "admin", Password: "correct-pass"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var found bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "session" {
+			found = true
+			if !c.Secure {
+				t.Error("session cookie should be Secure when X-Forwarded-Proto is https")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected session cookie to be set")
+	}
+}
+
 func TestLoginWrongPassword(t *testing.T) {
 	userAuth, sm := setupLoginTest(t)
 	handler := HandleLogin(userAuth, sm, nil)

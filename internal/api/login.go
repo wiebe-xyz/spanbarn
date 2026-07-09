@@ -58,6 +58,7 @@ func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager, onLo
 			Path:     "/",
 			Expires:  time.Now().Add(sm.TTL()),
 			HttpOnly: true,
+			Secure:   isSecureRequest(r),
 			SameSite: http.SameSiteLaxMode,
 		})
 
@@ -81,6 +82,7 @@ func HandleLogout() http.HandlerFunc {
 			Path:     "/",
 			MaxAge:   -1,
 			HttpOnly: true,
+			Secure:   isSecureRequest(r),
 			SameSite: http.SameSiteLaxMode,
 		})
 		// Clear the auth-method hint set by the OIDC callback so a

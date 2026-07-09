@@ -30,7 +30,7 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "oidc unavailable", "")
 		return
 	}
-	secure := r.TLS != nil
+	secure := isSecureRequest(r)
 	http.SetCookie(w, oidcShortLivedCookie(oidcStateCookie, state, secure))
 	http.SetCookie(w, oidcShortLivedCookie(oidcNonceCookie, nonce, secure))
 	// Stash the post-login redirect target so the callback can send the user
@@ -95,7 +95,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "session unavailable", "")
 		return
 	}
-	secure := r.TLS != nil
+	secure := isSecureRequest(r)
 	expires := time.Now().Add(s.sessionMgr.TTL())
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",

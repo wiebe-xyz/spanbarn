@@ -68,3 +68,21 @@ func TestHSTSOnTLS(t *testing.T) {
 		t.Errorf("HSTS header: expected %q, got %q", expected, got)
 	}
 }
+
+// TestHSTSOnForwardedProto covers the real deployment shape: TLS terminates at
+// the proxy (r.TLS == nil) and the scheme arrives via X-Forwarded-Proto, which
+// must still drive HSTS emission.
+func TestHSTSOnForwardedProto(t *testing.T) {
+	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Strict-Transport-Security"); got == "" {
+		t.Error("HSTS should be set when X-Forwarded-Proto is https")
+	}
+}

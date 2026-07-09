@@ -10,12 +10,12 @@ import (
 	"time"
 )
 
-const setupInsecureFallback = "spanbarn-setup-insecure"
-
+// setupKey deterministically derives a project's setup ingest key from the
+// server session secret and the project slug. The secret is mandatory outside
+// dev (enforced by config.Validate), so there is deliberately no constant
+// fallback — a weak/guessable key would let anyone forge a project's ingest
+// credentials, and the setup endpoint is public.
 func setupKey(secret, slug string) (plaintext, keySHA256 string) {
-	if secret == "" {
-		secret = setupInsecureFallback
-	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte("setup:" + slug))
 	raw := mac.Sum(nil)

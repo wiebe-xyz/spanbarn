@@ -70,6 +70,10 @@ func run() error {
 		}
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
 	switch cfg.Mode {
 	case "ingest":
 		return runIngestMode(cfg, logger)
