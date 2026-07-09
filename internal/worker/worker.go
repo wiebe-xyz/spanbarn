@@ -29,6 +29,7 @@ const (
 // Repository is the interface the worker needs to persist spans.
 type Repository interface {
 	InsertSpans(ctx context.Context, spans []repository.Span) error
+	InsertSpansStaging(ctx context.Context, spans []repository.Span) error
 	InsertPromptRecords(ctx context.Context, records []repository.PromptRecord) error
 }
 
@@ -243,6 +244,18 @@ type RedisWorker struct {
 	logger       *slog.Logger
 	metrics      Metrics
 	cfg          WorkerConfig
+	// stageOnly, when set, makes the worker append every consumed span to the
+	// spans_staging table and return immediately, deferring accumulation,
+	// classification and indexed storage to the StagingFlusher. This keeps the
+	// Redis drain fast (cheap unindexed appends) so the queue never backs up.
+	stageOnly bool
+}
+
+// SetStagingMode switches the worker to append consumed spans to spans_staging
+// instead of accumulating/classifying/inserting inline. The StagingFlusher then
+// does that work off the hot path.
+func (w *RedisWorker) SetStagingMode(on bool) {
+	w.stageOnly = on
 }
 
 // NewRedisWorker creates a worker that drains the Redis write queue.
@@ -316,6 +329,14 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 
 	spans := convertRecords(records)
 
+	// Staging mode: cheap append to spans_staging and return. The StagingFlusher
+	// picks these up per complete trace and does accumulation + classification +
+	// indexed storage off the hot path.
+	if w.stageOnly {
+		w.stageSpans(ctx, spans)
+		return
+	}
+
 	// Feed every span to the accumulator for in-memory aggregation, including
 	// boring spans that will not reach SQLite.
 	if w.accumulator != nil {
@@ -388,13 +409,57 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 	}
 }
 
+// stageSpans appends every span to spans_staging with the same bounded retry as
+// the inline path. This is the cheap Redis-draining write; the StagingFlusher
+// does the expensive classification + indexed storage later.
+func (w *RedisWorker) stageSpans(ctx context.Context, spans []repository.Span) {
+	ctx, span := tracer.Start(ctx, "redis_worker.stage_spans")
+	defer span.End()
+	span.SetAttributes(attribute.Int("batch.size", len(spans)))
+
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if err := w.repo.InsertSpansStaging(ctx, spans); err != nil {
+			lastErr = err
+			backoff := time.Duration(attempt*attempt) * 500 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			continue
+		}
+		lastErr = nil
+		break
+	}
+	if lastErr != nil {
+		span.RecordError(lastErr)
+		span.SetStatus(codes.Error, lastErr.Error())
+		w.logger.Error("redis worker: staging insert failed after retries", "count", len(spans), "error", lastErr)
+		w.metrics.mu.Lock()
+		w.metrics.ErrorCount += int64(len(spans))
+		w.metrics.mu.Unlock()
+		return
+	}
+	w.metrics.mu.Lock()
+	w.metrics.ProcessedCount += int64(len(spans))
+	w.metrics.mu.Unlock()
+}
+
 // classifyForStorage builds the set of spans to write to SQLite.
 // All spans in error/slow traces are included unconditionally. Spans in
 // verbose-mode projects bypass boring classification. Remaining boring traces
 // are sampled whole at the per-project ratio — the die is rolled once per
 // trace_id, and either all spans in that trace are kept or none are.
 func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.Span {
-	if w.cfg.SlowThresholdUs <= 0 {
+	return classifySpansForStorage(spans, w.cfg.SlowThresholdUs, w.boringPolicy, w.floor)
+}
+
+// classifySpansForStorage builds the set of spans to persist from a set of spans
+// that ideally covers whole traces. Extracted so the staging flusher can reuse
+// the exact same trace-level classification the inline worker path uses.
+func classifySpansForStorage(spans []repository.Span, slowThresholdUs int64, boringPolicy BoringPolicyReader, floor *sampling.MinuteFloor) []repository.Span {
+	if slowThresholdUs <= 0 {
 		return spans
 	}
 
@@ -402,10 +467,10 @@ func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.S
 
 	// Determine which projects are in verbose mode (record all spans).
 	verboseProject := make(map[int64]bool, 2)
-	if w.boringPolicy != nil {
+	if boringPolicy != nil {
 		for _, s := range spans {
 			if _, seen := verboseProject[s.ProjectID]; !seen {
-				until := w.boringPolicy.VerboseUntil(s.ProjectID)
+				until := boringPolicy.VerboseUntil(s.ProjectID)
 				verboseProject[s.ProjectID] = !until.IsZero() && now.Before(until)
 			}
 		}
@@ -414,7 +479,7 @@ func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.S
 	// First pass: find trace IDs that are definitely interesting.
 	interestingTraces := make(map[string]struct{}, len(spans))
 	for _, s := range spans {
-		if verboseProject[s.ProjectID] || s.Status == "error" || s.DurationUs > w.cfg.SlowThresholdUs {
+		if verboseProject[s.ProjectID] || s.Status == "error" || s.DurationUs > slowThresholdUs {
 			interestingTraces[s.TraceID] = struct{}{}
 		}
 	}
@@ -443,7 +508,7 @@ func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.S
 	}
 
 	// Sample whole boring traces per project policy.
-	if w.boringPolicy == nil || len(boringTraceOrder) == 0 {
+	if boringPolicy == nil || len(boringTraceOrder) == 0 {
 		return result
 	}
 	ratioCache := make(map[int64]int, 2)
@@ -452,7 +517,7 @@ func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.S
 		bt := boringTraceMap[traceID]
 		ratio, ok := ratioCache[bt.projectID]
 		if !ok {
-			ratio = w.boringPolicy.SampleRatio(bt.projectID)
+			ratio = boringPolicy.SampleRatio(bt.projectID)
 			ratioCache[bt.projectID] = ratio
 		}
 
@@ -468,14 +533,14 @@ func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.S
 		// The per-(project, operation) minute floor rescues a minimum number of
 		// boring traces each minute so quiet operations never vanish entirely —
 		// even when ratio == 0 would otherwise drop every boring trace.
-		if w.floor != nil {
+		if floor != nil {
 			min, ok := minCache[bt.projectID]
 			if !ok {
-				min = w.boringPolicy.MinTracesPerMinute(bt.projectID)
+				min = boringPolicy.MinTracesPerMinute(bt.projectID)
 				minCache[bt.projectID] = min
 			}
 			op, minute := boringTraceKey(bt.spans)
-			if w.floor.ShouldKeep(bt.projectID, op, minute, min, ratioKeep) {
+			if floor.ShouldKeep(bt.projectID, op, minute, min, ratioKeep) {
 				result = append(result, bt.spans...)
 			}
 			continue
