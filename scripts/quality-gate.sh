@@ -31,7 +31,7 @@ COVERAGE_REPOSITORY_MIN=${COVERAGE_REPOSITORY_MIN:-69.0}
 MIN_FILE_COVERAGE=${MIN_FILE_COVERAGE:-57.5}
 
 COMPLEXITY=${COMPLEXITY:-15}          # gocyclo score considered "complex"
-CYCLO_MAX_COUNT=${CYCLO_MAX_COUNT:-25} # max functions allowed over COMPLEXITY
+CYCLO_MAX_COUNT=${CYCLO_MAX_COUNT:-24} # max functions allowed over COMPLEXITY
 
 FILE_LINES=${FILE_LINES:-500}         # a file this long counts as "large"
 FILELEN_MAX_COUNT=${FILELEN_MAX_COUNT:-5} # max large files allowed
