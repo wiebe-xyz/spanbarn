@@ -150,16 +150,22 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 // spans_staging can never grow without bound if the flush stalls. It sheds the
 // oldest rows (graceful degradation) rather than letting the table grow.
 func (r *Repository) DeleteStagingOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
-	var deleted int64
-	err := r.execLow(func() error {
-		res, e := r.db.ExecContext(ctx, `DELETE FROM spans_staging WHERE ingested_at < ?`, cutoff.UTC())
+	// Batched so a large backlog (e.g. rows accumulated across a restart) is never
+	// deleted in one statement that holds the single write connection for tens of
+	// seconds and wedges the writer. Rows are inserted in ~ingested_at order
+	// (monotonic rowid), so each LIMIT batch's scan hits the oldest rows first and
+	// returns fast even without a standalone ingested_at index on staging.
+	c := cutoff.UTC()
+	return r.batchedDelete(ctx, func() (int64, error) {
+		res, e := r.db.ExecContext(ctx,
+			`DELETE FROM spans_staging WHERE rowid IN (SELECT rowid FROM spans_staging WHERE ingested_at < ? LIMIT ?)`,
+			c, retentionDeleteBatch)
 		if e != nil {
-			return e
+			return 0, e
 		}
-		deleted, _ = res.RowsAffected()
-		return nil
+		n, _ := res.RowsAffected()
+		return n, nil
 	})
-	return deleted, err
 }
 
 // CountStagingRows returns the current staging depth for observability.
