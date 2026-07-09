@@ -22,13 +22,13 @@ GOCYCLO="go run github.com/fzipp/gocyclo/cmd/gocyclo@v0.6.0"
 DUPL="go run github.com/mibk/dupl@v1.1.0"
 
 # ---- Baselines (ratchet DOWN as the codebase improves) ---------------------
-COVERAGE_SERVICE_MIN=${COVERAGE_SERVICE_MIN:-65.0}
-COVERAGE_REPOSITORY_MIN=${COVERAGE_REPOSITORY_MIN:-66.0}
+COVERAGE_SERVICE_MIN=${COVERAGE_SERVICE_MIN:-75.0}
+COVERAGE_REPOSITORY_MIN=${COVERAGE_REPOSITORY_MIN:-67.0}
 # Per-file floor: no single source file in the gated packages may sit at/under
 # this coverage, so a fully-untested file can't hide behind well-covered
 # siblings in the same package aggregate. Migration DDL and test files are
-# excluded. "0% files" are the primary target.
-MIN_FILE_COVERAGE=${MIN_FILE_COVERAGE:-1.0}
+# excluded.
+MIN_FILE_COVERAGE=${MIN_FILE_COVERAGE:-50.0}
 
 COMPLEXITY=${COMPLEXITY:-15}          # gocyclo score considered "complex"
 CYCLO_MAX_COUNT=${CYCLO_MAX_COUNT:-27} # max functions allowed over COMPLEXITY
