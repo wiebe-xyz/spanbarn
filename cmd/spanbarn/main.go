@@ -720,7 +720,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// flusher does accumulation + classification + indexed storage per complete
 	// trace off the hot path, with a hard-age GC so staging can't grow unbounded.
 	if cfg.SpanStagingEnabled {
-		flusher := worker.NewStagingFlusher(repo, worker.StagingFlusherConfig{
+		flusher := worker.NewStagingFlusher(queryRepo, repo, worker.StagingFlusherConfig{
 			Window:          time.Duration(cfg.TraceBufferWindowSeconds) * time.Second,
 			MaxAge:          time.Duration(cfg.StagingMaxAgeSeconds) * time.Second,
 			SlowThresholdUs: int64(cfg.SlowThresholdMS) * 1000,

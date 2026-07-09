@@ -9,13 +9,22 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 )
 
-// StagingRepository is the data access the flusher needs.
-type StagingRepository interface {
+// StagingReader is the flusher's READ access. It MUST be backed by the
+// read-only DB connection: ReadyStagingTraceIDs runs a GROUP-BY scan over
+// spans_staging that is slow and I/O-bound, and if it ran on the single write
+// connection it would hold that connection and block every write — the exact
+// self-inflicted "wedge" the goroutine dump revealed.
+type StagingReader interface {
 	ReadyStagingTraceIDs(ctx context.Context, cutoff time.Time, limit int) ([]string, error)
 	GetStagingSpansByTraceIDs(ctx context.Context, traceIDs []string) ([]repository.Span, error)
+	CountStagingRows(ctx context.Context) (int64, error)
+}
+
+// StagingRepository is the flusher's WRITE access (routes through the write
+// scheduler / single writer connection).
+type StagingRepository interface {
 	CommitStagingFlush(ctx context.Context, traceIDs []string, interesting []repository.Span) error
 	DeleteStagingOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
-	CountStagingRows(ctx context.Context) (int64, error)
 	InsertPromptRecords(records []repository.PromptRecord) error
 }
 
@@ -34,7 +43,8 @@ type StagingFlusherConfig struct {
 // in the indexed spans table, and deletes the processed rows — with a hard-age GC
 // backstop so staging can never grow without bound.
 type StagingFlusher struct {
-	repo         StagingRepository
+	reader       StagingReader     // reads on the read-only connection
+	repo         StagingRepository // writes through the write scheduler
 	accumulator  SpanAccumulator
 	boringPolicy BoringPolicyReader
 	floor        *sampling.MinuteFloor
@@ -42,8 +52,10 @@ type StagingFlusher struct {
 	logger       *slog.Logger
 }
 
-// NewStagingFlusher creates a flusher, applying sane defaults for any unset config.
-func NewStagingFlusher(repo StagingRepository, cfg StagingFlusherConfig, logger *slog.Logger) *StagingFlusher {
+// NewStagingFlusher creates a flusher. reader MUST be the read-only connection so
+// its staging scans never contend with the single writer connection; repo is the
+// writer used for the atomic move+delete and GC.
+func NewStagingFlusher(reader StagingReader, repo StagingRepository, cfg StagingFlusherConfig, logger *slog.Logger) *StagingFlusher {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -62,7 +74,7 @@ func NewStagingFlusher(repo StagingRepository, cfg StagingFlusherConfig, logger 
 	if cfg.BatchTraces <= 0 {
 		cfg.BatchTraces = 200
 	}
-	return &StagingFlusher{repo: repo, cfg: cfg, logger: logger}
+	return &StagingFlusher{reader: reader, repo: repo, cfg: cfg, logger: logger}
 }
 
 // maxFlushIterationsPerTick caps how many BatchTraces batches a single flush tick
@@ -127,7 +139,7 @@ func (f *StagingFlusher) gcLoop(ctx context.Context) {
 // handled (0 means nothing was ready).
 func (f *StagingFlusher) flushOnce(ctx context.Context) (int, error) {
 	cutoff := time.Now().Add(-f.cfg.Window)
-	traceIDs, err := f.repo.ReadyStagingTraceIDs(ctx, cutoff, f.cfg.BatchTraces)
+	traceIDs, err := f.reader.ReadyStagingTraceIDs(ctx, cutoff, f.cfg.BatchTraces)
 	if err != nil {
 		return 0, err
 	}
@@ -135,7 +147,7 @@ func (f *StagingFlusher) flushOnce(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
-	spans, err := f.repo.GetStagingSpansByTraceIDs(ctx, traceIDs)
+	spans, err := f.reader.GetStagingSpansByTraceIDs(ctx, traceIDs)
 	if err != nil {
 		return 0, err
 	}
@@ -178,7 +190,7 @@ func (f *StagingFlusher) gcOnce(ctx context.Context) {
 		// Non-zero means the flush fell behind and we shed unprocessed spans.
 		f.logger.Warn("staging gc dropped rows older than max age", "deleted", deleted, "max_age", f.cfg.MaxAge.String())
 	}
-	if n, err := f.repo.CountStagingRows(ctx); err == nil {
+	if n, err := f.reader.CountStagingRows(ctx); err == nil {
 		f.logger.Info("staging depth", "rows", n)
 	}
 }

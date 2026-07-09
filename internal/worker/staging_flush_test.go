@@ -52,7 +52,7 @@ func TestStagingFlusherFlushOnce(t *testing.T) {
 		},
 	}
 	acc := &countingAcc{}
-	f := NewStagingFlusher(repo, StagingFlusherConfig{SlowThresholdUs: 1000}, nil)
+	f := NewStagingFlusher(repo, repo, StagingFlusherConfig{SlowThresholdUs: 1000}, nil)
 	f.SetAccumulator(acc)
 
 	n, err := f.flushOnce(context.Background())
@@ -81,7 +81,7 @@ func TestStagingFlusherFlushOnce(t *testing.T) {
 
 func TestStagingFlusherGCUsesMaxAge(t *testing.T) {
 	repo := &mockStagingRepo{gcDeleted: 3, count: 10}
-	f := NewStagingFlusher(repo, StagingFlusherConfig{MaxAge: 10 * time.Minute}, nil)
+	f := NewStagingFlusher(repo, repo, StagingFlusherConfig{MaxAge: 10 * time.Minute}, nil)
 	f.gcOnce(context.Background())
 	if age := time.Since(repo.gcCutoff); age < 9*time.Minute || age > 11*time.Minute {
 		t.Fatalf("gc cutoff should be ~MaxAge ago, was %v ago", age)
