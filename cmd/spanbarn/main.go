@@ -197,18 +197,8 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		logger.Info("litestream active: writer runs PASSIVE WAL checkpoints; Litestream owns WAL truncation")
 	}
 
-	retentionCfg := retention.Config{
-		FullRetentionHours:        cfg.RetentionFullHours,
-		InterestingRetentionHours: cfg.RetentionInterestingHours,
-		BoringRetentionMinutes:    cfg.BoringRetentionMinutes,
-		ErrorRetentionDays:        cfg.RetentionErrorDays,
-		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
-		MetricsRetentionDays:      cfg.MetricsRetentionDays,
-		LogRetentionHours:         cfg.LogRetentionHours,
-		ErrorLogRetentionDays:     cfg.ErrorLogRetentionDays,
-		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
-	}
-	repo.SetDeleteBatchYield(time.Duration(cfg.RetentionDeleteBatchYieldMS) * time.Millisecond)
+	retentionCfg := retentionConfigFrom(cfg)
+	repo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
 	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
@@ -260,22 +250,8 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		defer queryCache.Close()
 	}
 
-	serverCfg := api.ServerConfig{
-		APIKey:             cfg.APIKey,
-		MaxBodyBytes:       cfg.MaxBodyBytes,
-		AllowedOrigins:     cfg.AllowedOrigins,
-		Version:            Version,
-		Environment:        cfg.Environment,
-		MetricsToken:       cfg.MetricsToken,
-		LoginRate:          cfg.LoginRatePerMinute,
-		IngestRate:         cfg.IngestRatePerMinute,
-		APIRate:            cfg.APIRatePerMinute,
-		SessionSecret:      cfg.SessionSecret,
-		PublicURL:          cfg.PublicURL,
-		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
-		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
-		FunnelBarnProject:  cfg.FunnelBarnProject,
-	}
+	serverCfg := serverConfigFrom(cfg)
+	serverCfg.MetricsToken = cfg.MetricsToken
 	// Mutations (trace exclusions, alerts CRUD) still use the write repo.
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger,
 		api.WithRepository(repo),
@@ -454,21 +430,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	}
 	authorizer := auth.NewAuthorizer(staticKeyHash, keyLookup, logger)
 
-	serverCfg := api.ServerConfig{
-		APIKey:             cfg.APIKey,
-		MaxBodyBytes:       cfg.MaxBodyBytes,
-		AllowedOrigins:     cfg.AllowedOrigins,
-		Version:            Version,
-		Environment:        cfg.Environment,
-		LoginRate:          cfg.LoginRatePerMinute,
-		IngestRate:         cfg.IngestRatePerMinute,
-		APIRate:            cfg.APIRatePerMinute,
-		SessionSecret:      cfg.SessionSecret,
-		PublicURL:          cfg.PublicURL,
-		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
-		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
-		FunnelBarnProject:  cfg.FunnelBarnProject,
-	}
+	serverCfg := serverConfigFrom(cfg)
 	// Trace buffer: holds spans for up to 10 min then applies ratio-based
 	// sampling per (project, operation). Error traces always pass intact.
 	var ratioLookup ingest.SampleRatioLookup
@@ -684,22 +646,8 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		defer queryCache.Close()
 	}
 
-	serverCfg := api.ServerConfig{
-		APIKey:             cfg.APIKey,
-		MaxBodyBytes:       cfg.MaxBodyBytes,
-		AllowedOrigins:     cfg.AllowedOrigins,
-		Version:            Version,
-		Environment:        cfg.Environment,
-		MetricsToken:       cfg.MetricsToken,
-		LoginRate:          cfg.LoginRatePerMinute,
-		IngestRate:         cfg.IngestRatePerMinute,
-		APIRate:            cfg.APIRatePerMinute,
-		SessionSecret:      cfg.SessionSecret,
-		PublicURL:          cfg.PublicURL,
-		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
-		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
-		FunnelBarnProject:  cfg.FunnelBarnProject,
-	}
+	serverCfg := serverConfigFrom(cfg)
+	serverCfg.MetricsToken = cfg.MetricsToken
 	// No ingest handler — OTLP goes to the reader pod per ingress rules.
 	apiServer := api.NewServerWithQuery(serverCfg, nil, querySvc, sessionMgr, logger,
 		api.WithRepository(repo),
@@ -861,19 +809,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionRepo := repository.NewRepository(db.DB)
 	retentionRepo.SetQueryTimeout(5 * time.Minute)
 	retentionRepo.SetWriteScheduler(scheduler)
-	retentionRepo.SetDeleteBatchYield(time.Duration(cfg.RetentionDeleteBatchYieldMS) * time.Millisecond)
+	retentionRepo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
 
-	retentionCfg := retention.Config{
-		FullRetentionHours:        cfg.RetentionFullHours,
-		InterestingRetentionHours: cfg.RetentionInterestingHours,
-		BoringRetentionMinutes:    cfg.BoringRetentionMinutes,
-		ErrorRetentionDays:        cfg.RetentionErrorDays,
-		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
-		MetricsRetentionDays:      cfg.MetricsRetentionDays,
-		LogRetentionHours:         cfg.LogRetentionHours,
-		ErrorLogRetentionDays:     cfg.ErrorLogRetentionDays,
-		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
-	}
+	retentionCfg := retentionConfigFrom(cfg)
 	retentionWorker := retention.NewRetentionWorker(retentionRepo, accumulator, retentionCfg, logger)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
@@ -925,18 +863,18 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 // not crash the process.
 func buildOIDCClient(cfg config.Config, logger *slog.Logger) *auth.OIDCClient {
 	oc := auth.OIDCConfig{
-		Issuer:            cfg.OIDCIssuer,
-		ClientID:          cfg.OIDCClientID,
-		ClientSecret:      cfg.OIDCClientSecret,
-		RedirectURL:       cfg.OIDCRedirectURL,
-		RequiredGroup:     cfg.OIDCRequiredGroup,
-		ResourceAudiences: cfg.OIDCResourceAudiences,
-		CLIClientID:       cfg.OIDCCLIClientID,
+		Issuer:            cfg.OIDC.Issuer,
+		ClientID:          cfg.OIDC.ClientID,
+		ClientSecret:      cfg.OIDC.ClientSecret,
+		RedirectURL:       cfg.OIDC.RedirectURL,
+		RequiredGroup:     cfg.OIDC.RequiredGroup,
+		ResourceAudiences: cfg.OIDC.ResourceAudiences,
+		CLIClientID:       cfg.OIDC.CLIClientID,
 	}
 	// The sb CLI's device-code tokens carry the CLI client id as their
 	// audience, so accept it as a resource audience automatically.
-	if cfg.OIDCCLIClientID != "" {
-		oc.ResourceAudiences = append(oc.ResourceAudiences, cfg.OIDCCLIClientID)
+	if cfg.OIDC.CLIClientID != "" {
+		oc.ResourceAudiences = append(oc.ResourceAudiences, cfg.OIDC.CLIClientID)
 	}
 	if !oc.Enabled() {
 		return nil
@@ -1005,11 +943,11 @@ func checkpointMode() repository.CheckpointMode {
 // POSTs SpanBarn's own OTLP metrics to its ingest endpoint so the Metrics page
 // always has live data (dogfooding). A nil rec or disabled config is a no-op.
 func startSelfMetrics(ctx context.Context, cfg config.Config, wg *sync.WaitGroup, rec *selfmetrics.Recorder, logger *slog.Logger) {
-	if rec == nil || cfg.SelfMetricsDisabled {
+	if rec == nil || cfg.Self.MetricsDisabled {
 		return
 	}
-	endpoint := cfg.SelfEndpoint
-	apiKey := cfg.SelfAPIKey
+	endpoint := cfg.Self.Endpoint
+	apiKey := cfg.Self.APIKey
 	if endpoint == "" {
 		// In standalone mode (no explicit endpoint) post to ourselves so the
 		// feature works out of the box without extra env vars.
@@ -1030,7 +968,7 @@ func startSelfMetrics(ctx context.Context, cfg config.Config, wg *sync.WaitGroup
 	reporter := selfmetrics.NewReporter(
 		rec,
 		endpoint, apiKey,
-		time.Duration(cfg.SelfMetricsIntervalSec)*time.Second,
+		time.Duration(cfg.Self.MetricsIntervalSec)*time.Second,
 		map[string]string{
 			"service.name":     "spanbarn",
 			"spanbarn.mode":    cfg.Mode,
@@ -1039,7 +977,7 @@ func startSelfMetrics(ctx context.Context, cfg config.Config, wg *sync.WaitGroup
 		startNano,
 		logger,
 	)
-	logger.Info("self-metrics enabled", "endpoint", endpoint, "interval_s", cfg.SelfMetricsIntervalSec)
+	logger.Info("self-metrics enabled", "endpoint", endpoint, "interval_s", cfg.Self.MetricsIntervalSec)
 	safeGo("self-metrics", wg, func() { reporter.Run(ctx) })
 }
 
@@ -1209,21 +1147,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 		defer queryCache.Close()
 	}
 
-	serverCfg := api.ServerConfig{
-		APIKey:             cfg.APIKey,
-		MaxBodyBytes:       cfg.MaxBodyBytes,
-		AllowedOrigins:     cfg.AllowedOrigins,
-		Version:            Version,
-		Environment:        cfg.Environment,
-		LoginRate:          cfg.LoginRatePerMinute,
-		IngestRate:         cfg.IngestRatePerMinute,
-		APIRate:            cfg.APIRatePerMinute,
-		SessionSecret:      cfg.SessionSecret,
-		PublicURL:          cfg.PublicURL,
-		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
-		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
-		FunnelBarnProject:  cfg.FunnelBarnProject,
-	}
+	serverCfg := serverConfigFrom(cfg)
 	opts := []api.ServerOption{api.WithAuthorizer(authorizer)}
 	if roRepo != nil {
 		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
