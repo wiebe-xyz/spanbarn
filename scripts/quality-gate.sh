@@ -22,7 +22,7 @@ GOCYCLO="go run github.com/fzipp/gocyclo/cmd/gocyclo@v0.6.0"
 DUPL="go run github.com/mibk/dupl@v1.1.0"
 
 # ---- Baselines (ratchet DOWN as the codebase improves) ---------------------
-COVERAGE_SERVICE_MIN=${COVERAGE_SERVICE_MIN:-77.1}
+COVERAGE_SERVICE_MIN=${COVERAGE_SERVICE_MIN:-79.5}
 COVERAGE_REPOSITORY_MIN=${COVERAGE_REPOSITORY_MIN:-69.0}
 # Per-file floor: no single source file in the gated packages may sit at/under
 # this coverage, so a fully-untested file can't hide behind well-covered
@@ -31,14 +31,14 @@ COVERAGE_REPOSITORY_MIN=${COVERAGE_REPOSITORY_MIN:-69.0}
 MIN_FILE_COVERAGE=${MIN_FILE_COVERAGE:-57.5}
 
 COMPLEXITY=${COMPLEXITY:-15}          # gocyclo score considered "complex"
-CYCLO_MAX_COUNT=${CYCLO_MAX_COUNT:-27} # max functions allowed over COMPLEXITY
+CYCLO_MAX_COUNT=${CYCLO_MAX_COUNT:-25} # max functions allowed over COMPLEXITY
 
 FILE_LINES=${FILE_LINES:-500}         # a file this long counts as "large"
-FILELEN_MAX_COUNT=${FILELEN_MAX_COUNT:-6} # max large files allowed
+FILELEN_MAX_COUNT=${FILELEN_MAX_COUNT:-5} # max large files allowed
 FILE_HARD_CAP=${FILE_HARD_CAP:-1200}  # no single file may exceed this
 
 DUPL_TOKENS=${DUPL_TOKENS:-100}       # dupl clone-detection threshold (tokens)
-DUPL_MAX_GROUPS=${DUPL_MAX_GROUPS:-17} # max duplicate clone groups allowed
+DUPL_MAX_GROUPS=${DUPL_MAX_GROUPS:-16} # max duplicate clone groups allowed
 # ---------------------------------------------------------------------------
 
 # Directories of Go source to inspect (production + CLI).
