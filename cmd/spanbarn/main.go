@@ -91,6 +91,18 @@ func run() error {
 	}
 }
 
+// registerAuthRoutes wires the login route (rate-limited with a per-account
+// throttle and a post-login cache warm) and the logout route onto mux. Shared
+// by every serving mode.
+func registerAuthRoutes(mux *http.ServeMux, cfg config.Config, userAuth *auth.UserAuthenticator, sessionMgr *auth.SessionManager, querySvc *service.QueryService, logger *slog.Logger) {
+	loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
+	loginRL := api.RateLimitMiddleware(loginLimiter, "login")
+	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
+		api.WarmLoginCaches(context.Background(), querySvc, logger)
+	})))
+	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+}
+
 // runStandalone is the all-in-one single-node mode (docker-compose, small
 // self-hosted installs). No Redis queue required. Reads go to a dedicated
 // read-only DB connection so the writer goroutines are never starved by
@@ -277,12 +289,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	api.WarmCaches(ctx, queryRepo, querySvc.Cache(), logger)
 
 	mux := http.NewServeMux()
-	loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
-	loginRL := api.RateLimitMiddleware(loginLimiter, "login")
-	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
-		api.WarmLoginCaches(context.Background(), querySvc, logger)
-	})))
-	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+	registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
 	mux.Handle("/", apiServer.Handler())
 
 	httpServer := &http.Server{
@@ -398,7 +405,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 			if cfg.QueryTimeoutSeconds > 0 {
 				roRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 			}
-			keyLookup = &readOnlyKeyLookupAdapter{repo: roRepo}
+			keyLookup = &readOnlyKeyLookupAdapter{keyLookupAdapter{repo: roRepo}}
 
 			sessionMgr = auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
 			userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
@@ -490,12 +497,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 	mux := http.NewServeMux()
 	if sessionMgr != nil && userAuth != nil {
-		loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
-		loginRL := api.RateLimitMiddleware(loginLimiter, "login")
-		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
-			api.WarmLoginCaches(context.Background(), querySvc, logger)
-		})))
-		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+		registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
 	}
 	mux.Handle("/", apiServer.Handler())
 
@@ -658,12 +660,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
 	}
-	loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
-	loginRL := api.RateLimitMiddleware(loginLimiter, "login")
-	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
-		api.WarmLoginCaches(context.Background(), querySvc, logger)
-	})))
-	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+	registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
 	mux.Handle("/", apiServer.Handler())
 	logger.Info("writer API ready")
 
@@ -1028,22 +1025,11 @@ func (a *keyLookupAdapter) TouchAPIKey(id int64) error {
 }
 
 // readOnlyKeyLookupAdapter is used by the ingest pod which opens the database
-// in read-only mode. TouchAPIKey is a no-op because last_used_at can be
-// inferred from the presence of spans in the writer's database.
+// in read-only mode. It reuses keyLookupAdapter's GetAPIKeyByHash and overrides
+// TouchAPIKey to a no-op, because last_used_at can be inferred from the presence
+// of spans in the writer's database.
 type readOnlyKeyLookupAdapter struct {
-	repo *repository.Repository
-}
-
-func (a *readOnlyKeyLookupAdapter) GetAPIKeyByHash(keyHash string) (auth.APIKeyRecord, error) {
-	k, err := a.repo.GetAPIKeyByHash(keyHash)
-	if err != nil {
-		return auth.APIKeyRecord{}, err
-	}
-	return auth.APIKeyRecord{
-		ID:        k.ID,
-		ProjectID: k.ProjectID,
-		Scope:     k.Scope,
-	}, nil
+	keyLookupAdapter
 }
 
 func (a *readOnlyKeyLookupAdapter) TouchAPIKey(_ int64) error { return nil }
@@ -1110,7 +1096,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 			if cfg.QueryTimeoutSeconds > 0 {
 				roRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 			}
-			keyLookup = &readOnlyKeyLookupAdapter{repo: roRepo}
+			keyLookup = &readOnlyKeyLookupAdapter{keyLookupAdapter{repo: roRepo}}
 			logger.Info("read-only DB attached for failover reads", "path", cfg.DBPath)
 		}
 	}
@@ -1163,12 +1149,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 
 	mux := http.NewServeMux()
 	if sessionMgr != nil && userAuth != nil {
-		loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
-		loginRL := api.RateLimitMiddleware(loginLimiter, "login")
-		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
-			api.WarmLoginCaches(context.Background(), querySvc, logger)
-		})))
-		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+		registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
 	}
 	mux.Handle("/", apiServer.Handler())
 
