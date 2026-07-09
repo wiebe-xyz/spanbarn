@@ -97,3 +97,32 @@ func TestCheckpointFrameCount(t *testing.T) {
 		t.Fatalf("TRUNCATE checkpoint should report 0 WAL frames after reset, got %d", n)
 	}
 }
+
+// TestCheckpointGate covers the busy-skip decision: skip while busy up to the
+// cap, then force a checkpoint; never skip when idle.
+func TestCheckpointGate(t *testing.T) {
+	// Not busy: always checkpoint, skip count resets.
+	if skip, next := checkpointGate(false, 0); skip || next != 0 {
+		t.Fatalf("idle should checkpoint: skip=%v next=%d", skip, next)
+	}
+	if skip, next := checkpointGate(false, 5); skip || next != 0 {
+		t.Fatalf("idle should checkpoint and reset skips: skip=%v next=%d", skip, next)
+	}
+
+	// Busy: skip and increment, until the cap is reached.
+	skipped := 0
+	for i := 0; i < maxSkippedCheckpoints; i++ {
+		skip, next := checkpointGate(true, skipped)
+		if !skip {
+			t.Fatalf("busy below cap (skipped=%d) should skip", skipped)
+		}
+		skipped = next
+	}
+	if skipped != maxSkippedCheckpoints {
+		t.Fatalf("expected %d consecutive skips, got %d", maxSkippedCheckpoints, skipped)
+	}
+	// At the cap while still busy: force a checkpoint (don't skip), reset count.
+	if skip, next := checkpointGate(true, skipped); skip || next != 0 {
+		t.Fatalf("busy at cap should force checkpoint and reset: skip=%v next=%d", skip, next)
+	}
+}

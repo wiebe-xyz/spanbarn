@@ -182,7 +182,8 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	if cpMode == repository.CheckpointPassive {
 		cpTruncateFrames = cfg.WALTruncateThresholdMB * 256
 	}
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, cpTruncateFrames, logger) })
+	// Combined (spool) mode has no Redis write-queue backlog to gate on, so no busy skip.
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, cpTruncateFrames, nil, logger) })
 	if litestreamActive() {
 		logger.Info("litestream active: writer runs PASSIVE WAL checkpoints; Litestream owns WAL truncation")
 	}
@@ -805,7 +806,16 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	if cpMode == repository.CheckpointPassive {
 		cpTruncateFrames = cfg.WALTruncateThresholdMB * 256
 	}
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, cpTruncateFrames, logger) })
+	// While the span write-queue is backed up, skip checkpoints so the single
+	// writer connection isn't blocked (up to busy_timeout) draining the backlog.
+	cpBusy := func() bool {
+		if cfg.CheckpointSkipQueueDepth <= 0 {
+			return false
+		}
+		n, err := writeQueue.Len(workerCtx)
+		return err == nil && n > int64(cfg.CheckpointSkipQueueDepth)
+	}
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, cpTruncateFrames, cpBusy, logger) })
 	if litestreamActive() {
 		logger.Info("litestream active: writer runs PASSIVE WAL checkpoints; Litestream owns WAL truncation")
 	}
