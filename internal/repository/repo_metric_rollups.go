@@ -183,15 +183,7 @@ func (r *Repository) QueryProjectRollups(ctx context.Context, projectID int64, f
 // DeleteMetricRollupsOlderThan removes rollup buckets older than cutoff, in
 // bounded chunks so the write lock is never held long enough to block ingest.
 func (r *Repository) DeleteMetricRollupsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
-	return r.batchedDelete(ctx, func() (int64, error) {
-		res, e := r.db.ExecContext(ctx,
-			"DELETE FROM metric_rollups WHERE rowid IN (SELECT rowid FROM metric_rollups WHERE bucket < ? LIMIT ?)",
-			cutoff, retentionDeleteBatch,
-		)
-		if e != nil {
-			return 0, e
-		}
-		n, _ := res.RowsAffected()
-		return n, nil
-	})
+	// Per project so each batch seeks idx_metric_rollups_project_bucket instead
+	// of full-scanning the table (bucket has no standalone index).
+	return r.deleteOlderThanPerProject(ctx, "metric_rollups", "bucket", cutoff)
 }

@@ -201,16 +201,9 @@ func (r *Repository) QueryMetricSeries(ctx context.Context, f MetricFilter) ([]M
 // in bounded chunks so a large backlog never holds the write lock long enough to
 // block ingest (an unbatched DELETE here previously stalled writes for minutes).
 func (r *Repository) DeleteMetricsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
-	return r.batchedDelete(ctx, func() (int64, error) {
-		res, e := r.db.ExecContext(ctx,
-			`DELETE FROM metrics WHERE rowid IN (SELECT rowid FROM metrics WHERE ingested_at < ? LIMIT ?)`,
-			cutoff, retentionDeleteBatch)
-		if e != nil {
-			return 0, e
-		}
-		n, _ := res.RowsAffected()
-		return n, nil
-	})
+	// Per project so each batch seeks idx_metrics_project_ingested instead of
+	// full-scanning the (large) metrics table — see deleteOlderThanPerProject.
+	return r.deleteOlderThanPerProject(ctx, "metrics", "ingested_at", cutoff)
 }
 
 // MarshalMetricExtra serialises the Extra field of a MetricRow for JSON responses.
