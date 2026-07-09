@@ -452,6 +452,26 @@ func TestRunOnceDeletesBoringSpans(t *testing.T) {
 	recentBoring := time.Now().UTC().Add(-5 * time.Minute)
 	insertTestSpans(t, repo, 1, "ok", 100_000, recentBoring)
 
+	// Stamp expires_at on the boring (ok) spans the way classification would at
+	// storage time: ingested_at + the 30-minute boring window. Stamped with Go
+	// time values (matching how the writer stores them) so the delete's time
+	// comparison is format-consistent. The old boring spans get a past expires_at
+	// (deletable); the recent one a future expires_at (kept). Error spans stay
+	// NULL (removed only by the aggregate-then-delete pass).
+	boringSplit := time.Now().UTC().Add(-30 * time.Minute)
+	if _, err := repo.DB().Exec(
+		`UPDATE spans SET expires_at = ? WHERE status = 'ok' AND ingested_at < ?`,
+		time.Now().UTC().Add(-15*time.Minute), boringSplit,
+	); err != nil {
+		t.Fatalf("stamp old boring expires_at: %v", err)
+	}
+	if _, err := repo.DB().Exec(
+		`UPDATE spans SET expires_at = ? WHERE status = 'ok' AND ingested_at >= ?`,
+		time.Now().UTC().Add(25*time.Minute), boringSplit,
+	); err != nil {
+		t.Fatalf("stamp recent boring expires_at: %v", err)
+	}
+
 	if err := worker.RunOnce(context.Background()); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}

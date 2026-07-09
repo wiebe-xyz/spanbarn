@@ -414,6 +414,62 @@ func TestClassifyForStorageBoringPolicy(t *testing.T) {
 	}
 }
 
+// TestClassifyStampsBoringExpiry verifies classification stamps sampled-boring
+// spans with expires_at = ingested_at + BoringRetention, while interesting spans
+// are left unstamped (nil) so only the cheap indexed cleanup — not the aggregate
+// pass — reclaims boring spans.
+func TestClassifyStampsBoringExpiry(t *testing.T) {
+	ingested := time.Now().Add(-time.Minute).UTC()
+	spans := []repository.Span{
+		{ProjectID: 1, TraceID: "boring", SpanID: "b1", Status: "ok", DurationUs: 100, IngestedAt: ingested},
+		{ProjectID: 1, TraceID: "err", SpanID: "e1", Status: "error", DurationUs: 100, IngestedAt: ingested},
+	}
+
+	rw := &RedisWorker{cfg: WorkerConfig{SlowThresholdUs: 1_000_000, BoringRetention: 30 * time.Minute}}
+	rw.boringPolicy = &mockBoringPolicy{ratio: 1} // keep boring traces
+
+	result := rw.classifyForStorage(spans)
+
+	byID := make(map[string]repository.Span, len(result))
+	for _, s := range result {
+		byID[s.SpanID] = s
+	}
+	boring, ok := byID["b1"]
+	if !ok {
+		t.Fatal("boring span was not kept")
+	}
+	if boring.ExpiresAt == nil {
+		t.Fatal("boring span must be stamped with expires_at")
+	}
+	if want := ingested.Add(30 * time.Minute); !boring.ExpiresAt.Equal(want) {
+		t.Fatalf("boring expires_at = %v, want %v", boring.ExpiresAt, want)
+	}
+	if interesting, ok := byID["e1"]; !ok {
+		t.Fatal("interesting span was not kept")
+	} else if interesting.ExpiresAt != nil {
+		t.Fatalf("interesting span must not be stamped, got %v", interesting.ExpiresAt)
+	}
+}
+
+// TestClassifyNoBoringRetentionLeavesUnstamped verifies that a zero retention
+// leaves boring spans unstamped, so they fall back to the aggregate-then-delete
+// pass rather than being stamped for immediate deletion.
+func TestClassifyNoBoringRetentionLeavesUnstamped(t *testing.T) {
+	spans := []repository.Span{
+		{ProjectID: 1, TraceID: "boring", SpanID: "b1", Status: "ok", DurationUs: 100, IngestedAt: time.Now().UTC()},
+	}
+	rw := &RedisWorker{cfg: WorkerConfig{SlowThresholdUs: 1_000_000, BoringRetention: 0}}
+	rw.boringPolicy = &mockBoringPolicy{ratio: 1}
+
+	result := rw.classifyForStorage(spans)
+	if len(result) != 1 {
+		t.Fatalf("want boring span kept, got %d spans", len(result))
+	}
+	if result[0].ExpiresAt != nil {
+		t.Fatalf("zero retention must leave expires_at nil, got %v", result[0].ExpiresAt)
+	}
+}
+
 func TestClassifyForStorageSamplesWholeTrace(t *testing.T) {
 	// A boring trace with 3 spans — when sampled, all 3 must be included.
 	spans := []repository.Span{

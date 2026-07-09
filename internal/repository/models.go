@@ -48,6 +48,10 @@ type Span struct {
 	Attributes   string    `json:"attributes"`
 	Events       string    `json:"events"`
 	IngestedAt   time.Time `json:"ingestedAt"`
+	// ExpiresAt, when non-nil, is the time after which the boring-span cleanup may
+	// delete this span (set by classification for sampled-boring spans). Interesting
+	// spans leave it nil and are removed by the aggregate-then-delete pass instead.
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
 type Aggregate struct {

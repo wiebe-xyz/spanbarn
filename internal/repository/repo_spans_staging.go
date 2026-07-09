@@ -110,8 +110,8 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 
 		if len(interesting) > 0 {
 			stmt, err := tx.PrepareContext(ctx, `INSERT INTO spans
-				(`+stagingCols+`)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+				(`+stagingCols+`, expires_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 			if err != nil {
 				return err
 			}
@@ -124,6 +124,7 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 					s.ProjectID, s.TraceID, s.SpanID, parentID,
 					s.Name, s.Service, s.Resource, s.Kind, s.Status,
 					s.StartTimeUs, s.DurationUs, s.Attributes, s.Events, s.IngestedAt,
+					s.ExpiresAt,
 				); err != nil {
 					stmt.Close()
 					return err

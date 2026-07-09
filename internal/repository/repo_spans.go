@@ -24,8 +24,8 @@ func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error
 		defer tx.Rollback()
 
 		stmt, err := tx.PrepareContext(ctx, `INSERT INTO spans
-			(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+			(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events, expires_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		if err != nil {
 			return err
 		}
@@ -39,7 +39,7 @@ func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error
 			if _, err := stmt.ExecContext(ctx,
 				s.ProjectID, s.TraceID, s.SpanID, parentID,
 				s.Name, s.Service, s.Resource, s.Kind, s.Status,
-				s.StartTimeUs, s.DurationUs, s.Attributes, s.Events,
+				s.StartTimeUs, s.DurationUs, s.Attributes, s.Events, s.ExpiresAt,
 			); err != nil {
 				return err
 			}
@@ -197,18 +197,22 @@ func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
 	return r.execLowAffecting("DELETE FROM spans WHERE ingested_at < ?", cutoff)
 }
 
-// DeleteBoringSpansOlderThan removes non-error, fast spans ingested before cutoff.
-// Uses idx_spans_ingested (ingested_at) for the range scan. The delete is batched
-// (retentionDeleteBatch rows per statement) so a large purge never holds the
-// write lock long enough to block the WAL checkpoint or read-only queries.
-func (r *Repository) DeleteBoringSpansOlderThan(ctx context.Context, cutoff time.Time, slowThresholdUs int64) (int64, error) {
+// DeleteExpiredBoringSpans deletes sampled-boring spans whose stamped expires_at
+// has passed. Classification stamps expires_at at storage time, so cleanup is a
+// bounded seek of the partial idx_spans_expires index — no scan of the whole
+// table fetching duration_us per row (which had grown into a 30s+ write-slot
+// wedge). Interesting spans carry a NULL expires_at and are removed by the
+// aggregate-then-delete pass instead; pre-migration rows are also NULL and drain
+// that same way.
+func (r *Repository) DeleteExpiredBoringSpans(ctx context.Context, now time.Time) (int64, error) {
+	cutoff := now.UTC()
 	return r.batchedDelete(ctx, func() (int64, error) {
 		res, e := r.db.ExecContext(ctx,
 			`DELETE FROM spans WHERE rowid IN (
 				SELECT rowid FROM spans
-				WHERE ingested_at < ? AND status NOT IN ('error','ERROR','Error') AND duration_us < ?
+				WHERE expires_at IS NOT NULL AND expires_at < ?
 				LIMIT ?)`,
-			cutoff, slowThresholdUs, retentionDeleteBatch,
+			cutoff, retentionDeleteBatch,
 		)
 		if e != nil {
 			return 0, e

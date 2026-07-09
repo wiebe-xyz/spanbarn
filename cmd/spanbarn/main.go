@@ -707,7 +707,10 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 
 	rw := worker.NewRedisWorker(writeQueue, &workerRepoAdapter{repo: repo}, logger)
 	rw.SetAccumulator(accumulator)
-	rw.SetConfig(worker.WorkerConfig{SlowThresholdUs: int64(cfg.SlowThresholdMS) * 1000})
+	rw.SetConfig(worker.WorkerConfig{
+		SlowThresholdUs: int64(cfg.SlowThresholdMS) * 1000,
+		BoringRetention: time.Duration(cfg.Retention.BoringMinutes) * time.Minute,
+	})
 	rw.SetBoringPolicy(boringPolicy)
 	rw.SetMinuteFloor(minuteFloor)
 	rw.SetStagingMode(cfg.SpanStagingEnabled)
@@ -724,6 +727,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 			Window:          time.Duration(cfg.TraceBufferWindowSeconds) * time.Second,
 			MaxAge:          time.Duration(cfg.StagingMaxAgeSeconds) * time.Second,
 			SlowThresholdUs: int64(cfg.SlowThresholdMS) * 1000,
+			BoringRetention: time.Duration(cfg.Retention.BoringMinutes) * time.Minute,
 		}, logger)
 		flusher.SetAccumulator(accumulator)
 		flusher.SetBoringPolicy(boringPolicy)
