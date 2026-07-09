@@ -4,8 +4,21 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
+	"strings"
 	"time"
 )
+
+// safeNextPath returns next only if it is a root-relative local path, otherwise
+// "/". This blocks open-redirect abuse of the post-login ?next= parameter: an
+// absolute URL, a protocol-relative "//evil.com", or a "/\evil" backslash trick
+// would otherwise send the freshly-authenticated user to an attacker's site.
+func safeNextPath(next string) string {
+	if next == "" || !strings.HasPrefix(next, "/") ||
+		strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\") {
+		return "/"
+	}
+	return next
+}
 
 const (
 	oidcStateCookie = "spanbarn_oidc_state"
@@ -35,7 +48,8 @@ func (s *Server) handleOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, oidcShortLivedCookie(oidcNonceCookie, nonce, secure))
 	// Stash the post-login redirect target so the callback can send the user
 	// back to the page they came from (e.g. /profile after a token refresh).
-	if next := r.URL.Query().Get("next"); next != "" {
+	// Only local paths are stored, never an attacker-supplied absolute URL.
+	if next := safeNextPath(r.URL.Query().Get("next")); next != "/" {
 		http.SetCookie(w, oidcShortLivedCookie(oidcNextCookie, next, secure))
 	}
 	http.Redirect(w, r, authURL, http.StatusFound)
@@ -134,9 +148,10 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, oidcShortLivedCookie(oidcStateCookie, "", secure))
 	http.SetCookie(w, oidcShortLivedCookie(oidcNonceCookie, "", secure))
 	// Redirect back to the original page if one was stashed, otherwise /.
+	// Re-validate at the point of use so only a local path is ever followed.
 	next := "/"
-	if c, err := r.Cookie(oidcNextCookie); err == nil && c.Value != "" {
-		next = c.Value
+	if c, err := r.Cookie(oidcNextCookie); err == nil {
+		next = safeNextPath(c.Value)
 	}
 	http.SetCookie(w, oidcShortLivedCookie(oidcNextCookie, "", secure))
 	// Prevent the browser from caching this redirect — a cached response

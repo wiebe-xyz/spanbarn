@@ -22,10 +22,14 @@ func (s *Server) handleIAMProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strip the /api/iam-proxy prefix to get the path on IamBarn.
+	// Strip the /api/iam-proxy prefix to get the path on IamBarn. Only the
+	// widget's own API namespace may be reached — this is a scoped proxy for the
+	// iambarn-profile widget, not an open relay for arbitrary IamBarn paths with
+	// the user's bearer token.
 	path := strings.TrimPrefix(r.URL.Path, "/api/iam-proxy")
-	if path == "" {
-		path = "/"
+	if !strings.HasPrefix(path, "/api/") {
+		writeError(w, http.StatusForbidden, "path not allowed", "")
+		return
 	}
 	issuer := strings.TrimRight(s.oidc.Config().Issuer, "/")
 	targetURL := issuer + path
@@ -50,11 +54,26 @@ func (s *Server) handleIAMProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	for k, vals := range resp.Header {
-		for _, v := range vals {
-			w.Header().Add(k, v)
+	// Copy only a safe allowlist of response headers. Notably never forward
+	// Set-Cookie (which would let IamBarn set cookies on the SpanBarn origin) or
+	// hop-by-hop headers.
+	for _, h := range proxyResponseHeaders {
+		if v := resp.Header.Get(h); v != "" {
+			w.Header().Set(h, v)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// proxyResponseHeaders is the set of upstream response headers the IAM proxy
+// echoes back to the browser. Everything else (Set-Cookie, hop-by-hop headers,
+// server fingerprints) is dropped.
+var proxyResponseHeaders = []string{
+	"Content-Type",
+	"Content-Length",
+	"Cache-Control",
+	"ETag",
+	"Last-Modified",
+	"Vary",
 }

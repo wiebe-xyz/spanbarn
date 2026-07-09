@@ -21,6 +21,26 @@ func (m *mockUserLookup) GetUserByUsername(username string) (UserRecord, error) 
 	return UserRecord{}, errors.New("not found")
 }
 
+func TestHashPasswordTooLong(t *testing.T) {
+	// 73 bytes: one past bcrypt's usable length. Must be rejected, not truncated.
+	long := make([]byte, maxPasswordBytes+1)
+	for i := range long {
+		long[i] = 'a'
+	}
+	if _, err := HashPassword(string(long)); !errors.Is(err, ErrPasswordTooLong) {
+		t.Errorf("want ErrPasswordTooLong for %d-byte password, got %v", len(long), err)
+	}
+
+	// Exactly 72 bytes is still accepted.
+	ok := make([]byte, maxPasswordBytes)
+	for i := range ok {
+		ok[i] = 'a'
+	}
+	if _, err := HashPassword(string(ok)); err != nil {
+		t.Errorf("72-byte password should hash, got %v", err)
+	}
+}
+
 func TestHashAndVerifyPassword(t *testing.T) {
 	password := "super-secret-123"
 	hash, err := HashPassword(password)

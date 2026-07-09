@@ -11,6 +11,18 @@ import (
 // ErrInvalidCredentials is returned when username/password don't match.
 var ErrInvalidCredentials = errors.New("invalid credentials")
 
+// ErrPasswordTooLong is returned when a password exceeds bcrypt's usable length.
+var ErrPasswordTooLong = errors.New("password too long (max 72 bytes)")
+
+const (
+	// bcryptCost is the work factor for new password hashes. Existing hashes keep
+	// their own cost (bcrypt stores it), so raising this needs no migration.
+	bcryptCost = 12
+	// maxPasswordBytes is bcrypt's hard limit; bytes past it are ignored, so we
+	// reject rather than silently truncate (which would weaken a long password).
+	maxPasswordBytes = 72
+)
+
 // UserLookup abstracts the repository method needed for user authentication.
 type UserLookup interface {
 	GetUserByUsername(username string) (UserRecord, error)
@@ -65,9 +77,14 @@ func (a *UserAuthenticator) Authenticate(username, password string) error {
 	return nil
 }
 
-// HashPassword hashes a plaintext password using bcrypt. Useful for CLI user creation.
+// HashPassword hashes a plaintext password using bcrypt. Useful for CLI user
+// creation. Passwords longer than bcrypt's 72-byte limit are rejected rather
+// than silently truncated.
 func HashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if len(password) > maxPasswordBytes {
+		return "", ErrPasswordTooLong
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return "", err
 	}

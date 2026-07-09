@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -175,6 +176,12 @@ func maxBodyBytesMiddleware(maxBytes int64, next http.Handler) http.Handler {
 	})
 }
 
+// secretEqual compares two secrets in constant time to avoid leaking their
+// contents through response-timing differences.
+func secretEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 // apiKeyAuth validates the X-SpanBarn-Api-Key header.
 func apiKeyAuth(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +190,7 @@ func apiKeyAuth(apiKey string, next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "missing API key", "set X-SpanBarn-Api-Key header")
 			return
 		}
-		if key != apiKey {
+		if !secretEqual(key, apiKey) {
 			writeError(w, http.StatusUnauthorized, "invalid API key", "")
 			return
 		}
@@ -207,7 +214,7 @@ func apiKeyOrBearerAuth(apiKey string, next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "missing API key", "set X-SpanBarn-Api-Key or Authorization: Bearer header")
 			return
 		}
-		if key != apiKey {
+		if !secretEqual(key, apiKey) {
 			writeError(w, http.StatusUnauthorized, "invalid API key", "")
 			return
 		}
