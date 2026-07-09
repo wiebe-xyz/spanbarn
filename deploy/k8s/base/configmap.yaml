@@ -10,6 +10,11 @@ data:
   SPANBARN_RETENTION_ERROR_DAYS: "30"
   SPANBARN_RETENTION_AGGREGATED_DAYS: "90"
   SPANBARN_AGGREGATION_INTERVAL: "5m"
+  # Span staging (tail sampling): the writer appends consumed spans to
+  # spans_staging (cheap) and a background flusher classifies whole traces off
+  # the hot path, so the Redis write-queue never backs up to the cap. Validated
+  # on staging 2026-07-09. Window/GC use code defaults (90s / 900s).
+  SPANBARN_SPAN_STAGING_ENABLED: "1"
   SPANBARN_BUGBARN_ENDPOINT: "https://bugbarn.wiebe.xyz"
   SPANBARN_SELF_ENDPOINT: "http://spanbarn-ingest:8080"
   SPANBARN_REDIS_URL: "redis://spanbarn-redis:6379"
