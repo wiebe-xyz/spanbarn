@@ -71,7 +71,6 @@ type Config struct {
 	MaxSpoolBytes            int64
 	Retention                RetentionConfig
 	WALTruncateThresholdMB   int  // SPANBARN_WAL_TRUNCATE_THRESHOLD_MB — under Litestream the writer checkpoints PASSIVE (no forced re-snapshot) but escalates to one TRUNCATE when the WAL grows past this size, to bound it under sustained read load (default 256; 0 disables escalation)
-	CheckpointSkipQueueDepth int  // SPANBARN_CHECKPOINT_SKIP_QUEUE_DEPTH — when the span write-queue holds more than this many pending batches, the writer skips WAL checkpoints so it can drain the backlog (default 100; 0 disables gating)
 	SpanStagingEnabled       bool // SPANBARN_SPAN_STAGING_ENABLED — when true, the redis worker appends consumed spans to spans_staging (cheap) and a background flusher does accumulation+classification+indexed storage per complete trace off the hot path (default false)
 	TraceBufferWindowSeconds int  // SPANBARN_TRACE_BUFFER_WINDOW_SECONDS — how long a trace's spans buffer in spans_staging before the flusher treats the trace as complete (default 90)
 	StagingMaxAgeSeconds     int  // SPANBARN_STAGING_MAX_AGE_SECONDS — hard backstop: spans_staging rows older than this are dropped unconditionally so the table can never grow without bound (default 900)
@@ -126,7 +125,6 @@ func Load() Config {
 			DeleteBatchYieldMS: getenvInt("SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS", 200),
 		},
 		WALTruncateThresholdMB:   getenvInt("SPANBARN_WAL_TRUNCATE_THRESHOLD_MB", 256),
-		CheckpointSkipQueueDepth: getenvInt("SPANBARN_CHECKPOINT_SKIP_QUEUE_DEPTH", 100),
 		SpanStagingEnabled:       getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
 		TraceBufferWindowSeconds: getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
 		StagingMaxAgeSeconds:     getenvInt("SPANBARN_STAGING_MAX_AGE_SECONDS", 900),

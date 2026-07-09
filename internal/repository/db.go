@@ -154,54 +154,30 @@ const (
 // BugBarn and FunnelBarn do. Once Litestream is doing the periodic checkpoint
 // as part of its replication loop, this goroutine can go away entirely and
 // "snapshots are not the writer's problem" becomes literally true.
-// maxSkippedCheckpoints bounds how many consecutive ticks the busy gate may skip
-// before a checkpoint is forced anyway, so a long catch-up cannot grow the WAL
-// without limit. At a 30s interval this is ~10 minutes.
-const maxSkippedCheckpoints = 20
-
-// checkpointGate decides whether to skip this checkpoint tick. While the writer
-// is busy draining a backlog, a checkpoint is skipped so it doesn't block the
-// single connection — but only up to maxSkippedCheckpoints consecutive ticks, so
-// the WAL still gets bounded during a long catch-up. Returns whether to skip and
-// the updated consecutive-skip count.
-func checkpointGate(busy bool, skipped int) (skip bool, nextSkipped int) {
-	if busy && skipped < maxSkippedCheckpoints {
-		return true, skipped + 1
-	}
-	return false, 0
-}
-
 // truncateAboveFrames, when > 0 and mode is PASSIVE, escalates to a one-off
 // TRUNCATE on any tick where the WAL still holds more than that many frames
 // after the PASSIVE pass. This bounds the WAL under sustained read load (PASSIVE
 // cannot reset it past the oldest reader snapshot) at the cost of an occasional
 // Litestream re-snapshot — only when the WAL actually grows large, not every tick.
 //
-// busy, when non-nil and returning true, means the writer is behind on its
-// backlog. A checkpoint runs on the single writer connection and can block span
-// inserts for up to busy_timeout, so while busy we skip the tick and pour
-// throughput into draining — except every maxSkippedCheckpoints ticks, where one
-// checkpoint is forced to keep the WAL bounded during a long catch-up.
-func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, mode CheckpointMode, truncateAboveFrames int, busy func() bool, log *slog.Logger) {
+// The checkpoint runs unconditionally on every tick. An earlier version skipped
+// checkpoints while the Redis write-queue backlog was deep, on the theory that a
+// checkpoint competes with backlog-draining writes on the single connection. In
+// production the stale backlog kept that gate tripped permanently, so no
+// checkpoint ever ran and the WAL bloated to hundreds of MB — which made *every*
+// write slow (each op walks the WAL), the exact opposite of the intended effect,
+// and even stalled a schema migration on first open. PASSIVE checkpoints are
+// cheap; running them every tick keeps the WAL small and writes fast, so there is
+// no gate.
+func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, mode CheckpointMode, truncateAboveFrames int, log *slog.Logger) {
 	retryInterval := 5 * time.Second
 	t := time.NewTicker(interval)
 	defer t.Stop()
-	skipped := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			isBusy := busy != nil && busy()
-			if skip, next := checkpointGate(isBusy, skipped); skip {
-				skipped = next
-				log.Debug("writer catching up on backlog; skipping checkpoint", "consecutive_skips", skipped)
-				continue
-			}
-			if skipped >= maxSkippedCheckpoints {
-				log.Info("forcing checkpoint after prolonged catch-up to bound the WAL", "skipped", skipped)
-			}
-			skipped = 0
 			frames := d.checkpoint(ctx, mode, retryInterval, log)
 			if mode == CheckpointPassive && truncateAboveFrames > 0 && frames > truncateAboveFrames {
 				log.Info("wal exceeded truncate threshold; escalating to one TRUNCATE checkpoint",
