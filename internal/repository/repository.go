@@ -3,10 +3,32 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
+
+// writeOpLabel names the repository method that submitted a write, captured from
+// the call stack, so the write scheduler's tracing and wedge diagnostics can say
+// which operation is running/stuck without threading a label through every call.
+// skip=0 → writeOpLabel, 1 → execHigh/execLow, 2 → the repo method.
+func writeOpLabel() string {
+	pc, _, _, ok := runtime.Caller(2)
+	if !ok {
+		return "unknown"
+	}
+	f := runtime.FuncForPC(pc)
+	if f == nil {
+		return "unknown"
+	}
+	name := f.Name() // e.g. .../internal/repository.(*Repository).InsertSpansStaging
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		name = name[i+1:]
+	}
+	return name
+}
 
 const DefaultQueryTimeout = 30 * time.Second
 
@@ -77,7 +99,7 @@ func (r *Repository) execHigh(fn func() error) error {
 	if r.scheduler == nil {
 		return fn()
 	}
-	return r.scheduler.Submit(context.Background(), writescheduler.High, fn)
+	return r.scheduler.Submit(context.Background(), writescheduler.High, writeOpLabel(), fn)
 }
 
 // execLow submits fn as a low-priority write (background ingest, retention).
@@ -85,7 +107,7 @@ func (r *Repository) execLow(fn func() error) error {
 	if r.scheduler == nil {
 		return fn()
 	}
-	return r.scheduler.Submit(context.Background(), writescheduler.Low, fn)
+	return r.scheduler.Submit(context.Background(), writescheduler.Low, writeOpLabel(), fn)
 }
 
 // execLowAffecting runs a single low-priority write statement and returns the
