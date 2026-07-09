@@ -229,8 +229,16 @@ func (r *Repository) LogHistogram(ctx context.Context, f LogFilter, bucketSecs i
 func (r *Repository) DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error) {
 	// Per project so each batch seeks idx_logs_project_ingested instead of
 	// full-scanning the logs table on a global `WHERE ingested_at < ?` (logs has
-	// no standalone ingested_at index). The correlated subqueries still filter on
-	// logs.project_id, which is the fixed project within each pass.
+	// no standalone ingested_at index).
+	//
+	// The exemptions use NOT EXISTS (indexed seek per candidate row) rather than
+	// `trace_id NOT IN (SELECT ... FROM error_samples ...)`. The NOT IN form
+	// materialised the whole error_samples table (270k+ rows, a full scan with a
+	// per-row sampled_at fetch) on EVERY batch of EVERY project — a single batch
+	// took 90s+ and held the one write slot the whole time, wedging the writer.
+	// NOT EXISTS seeks idx_error_samples_trace by the candidate row's trace_id, so
+	// the cost scales with the small logs set, not the large error_samples table.
+	// It is also NULL-safe (NOT IN deletes nothing if the subquery yields a NULL).
 	pids, err := r.distinctProjectIDs(ctx, "logs")
 	if err != nil {
 		return 0, err
@@ -244,13 +252,15 @@ func (r *Repository) DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCu
 				    SELECT rowid FROM logs
 				    WHERE project_id = ? AND ingested_at < ?
 				    AND (trace_id IS NULL
-				         OR (trace_id NOT IN (
-				                 SELECT trace_id FROM pinned_traces
-				                 WHERE project_id = logs.project_id
+				         OR (NOT EXISTS (
+				                 SELECT 1 FROM pinned_traces p
+				                 WHERE p.project_id = logs.project_id
+				                   AND p.trace_id = logs.trace_id
 				             )
-				             AND trace_id NOT IN (
-				                 SELECT DISTINCT trace_id FROM error_samples
-				                 WHERE sampled_at > ?
+				             AND NOT EXISTS (
+				                 SELECT 1 FROM error_samples e
+				                 WHERE e.trace_id = logs.trace_id
+				                   AND e.sampled_at > ?
 				             )
 				         )
 				    )
