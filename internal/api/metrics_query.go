@@ -169,6 +169,12 @@ func (h *metricsQueryHandlers) handleMetricSeries(w http.ResponseWriter, r *http
 	}
 
 	labels := parseLabelParams(r)
+	for k := range labels {
+		if !repository.ValidLabelKey(k) {
+			writeError(w, http.StatusBadRequest, "invalid label key", "")
+			return
+		}
+	}
 	groupBy := parseGroupBy(r)
 
 	// Long ranges read the downsampled rollups instead of scanning raw points.

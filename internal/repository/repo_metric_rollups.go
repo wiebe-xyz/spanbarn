@@ -99,9 +99,9 @@ func (r *Repository) QueryMetricRollups(ctx context.Context, f MetricRollupFilte
 
 	where := []string{"project_id = ?", "name = ?", "bucket >= ?", "bucket <= ?"}
 	args := []any{f.ProjectID, f.Name, f.From, f.To}
-	for k, v := range f.Attributes {
-		where = append(where, fmt.Sprintf(`JSON_EXTRACT(attributes, '$."%s"') = ?`, k))
-		args = append(args, v)
+	where, args, err := appendAttrFilters(where, args, f.Attributes)
+	if err != nil {
+		return nil, err
 	}
 
 	limit := f.Limit

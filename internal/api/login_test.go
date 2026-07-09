@@ -43,7 +43,7 @@ func setupLoginTest(t *testing.T) (*auth.UserAuthenticator, *auth.SessionManager
 
 func TestLoginSuccess(t *testing.T) {
 	userAuth, sm := setupLoginTest(t)
-	handler := HandleLogin(userAuth, sm, nil)
+	handler := HandleLogin(userAuth, sm, nil, nil)
 
 	body, _ := json.Marshal(loginRequest{Username: "admin", Password: "correct-pass"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/login", bytes.NewReader(body))
@@ -82,9 +82,41 @@ func TestLoginSuccess(t *testing.T) {
 	}
 }
 
+// TestLoginCookieSecureOnForwardedProto verifies the session cookie is marked
+// Secure when the request arrived over HTTPS at the proxy (X-Forwarded-Proto),
+// which is the only signal available since TLS terminates upstream.
+func TestLoginCookieSecureOnForwardedProto(t *testing.T) {
+	userAuth, sm := setupLoginTest(t)
+	handler := HandleLogin(userAuth, sm, nil, nil)
+
+	body, _ := json.Marshal(loginRequest{Username: "admin", Password: "correct-pass"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var found bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "session" {
+			found = true
+			if !c.Secure {
+				t.Error("session cookie should be Secure when X-Forwarded-Proto is https")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected session cookie to be set")
+	}
+}
+
 func TestLoginWrongPassword(t *testing.T) {
 	userAuth, sm := setupLoginTest(t)
-	handler := HandleLogin(userAuth, sm, nil)
+	handler := HandleLogin(userAuth, sm, nil, nil)
 
 	body, _ := json.Marshal(loginRequest{Username: "admin", Password: "wrong-pass"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/login", bytes.NewReader(body))
@@ -98,9 +130,37 @@ func TestLoginWrongPassword(t *testing.T) {
 	}
 }
 
+// TestLoginAccountThrottle verifies the per-username limiter bounds attempts
+// against one account regardless of source IP: with a 2/min account limit, the
+// third attempt is refused with 429 even before password checking.
+func TestLoginAccountThrottle(t *testing.T) {
+	userAuth, sm := setupLoginTest(t)
+	limiter := NewRateLimiter(2 /*login*/, 1000, 1000)
+	handler := HandleLogin(userAuth, sm, limiter, nil)
+
+	do := func() int {
+		body, _ := json.Marshal(loginRequest{Username: "admin", Password: "wrong-pass"})
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/login", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	if c := do(); c != http.StatusUnauthorized {
+		t.Fatalf("attempt 1: want 401, got %d", c)
+	}
+	if c := do(); c != http.StatusUnauthorized {
+		t.Fatalf("attempt 2: want 401, got %d", c)
+	}
+	if c := do(); c != http.StatusTooManyRequests {
+		t.Fatalf("attempt 3: want 429 (account throttled), got %d", c)
+	}
+}
+
 func TestLoginMethodNotAllowed(t *testing.T) {
 	userAuth, sm := setupLoginTest(t)
-	handler := HandleLogin(userAuth, sm, nil)
+	handler := HandleLogin(userAuth, sm, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/login", nil)
 	rec := httptest.NewRecorder()

@@ -21,7 +21,11 @@ type loginResponse struct {
 // onLoginSuccess is called (in the request goroutine) after a session is
 // created; pass nil to skip. The function should return quickly or launch its
 // own goroutine — the HTTP response is written immediately after the call.
-func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager, onLoginSuccess func()) http.HandlerFunc {
+//
+// accountLimiter (may be nil) throttles attempts per-username under the "login"
+// category, so a distributed brute-force spread across many source IPs is still
+// bounded per account — the per-IP RateLimitMiddleware only limits a single IP.
+func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager, accountLimiter *RateLimiter, onLoginSuccess func()) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_, span := apiTracer.Start(r.Context(), "api.login")
 		defer span.End()
@@ -35,6 +39,14 @@ func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager, onLo
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON", err.Error())
 			return
+		}
+
+		if accountLimiter != nil && req.Username != "" {
+			if !accountLimiter.Allow("login", "acct:"+req.Username) {
+				w.Header().Set("Retry-After", "60")
+				writeError(w, http.StatusTooManyRequests, "too many login attempts", "")
+				return
+			}
 		}
 
 		if err := userAuth.Authenticate(req.Username, req.Password); err != nil {
@@ -58,6 +70,7 @@ func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager, onLo
 			Path:     "/",
 			Expires:  time.Now().Add(sm.TTL()),
 			HttpOnly: true,
+			Secure:   isSecureRequest(r),
 			SameSite: http.SameSiteLaxMode,
 		})
 
@@ -81,6 +94,7 @@ func HandleLogout() http.HandlerFunc {
 			Path:     "/",
 			MaxAge:   -1,
 			HttpOnly: true,
+			Secure:   isSecureRequest(r),
 			SameSite: http.SameSiteLaxMode,
 		})
 		// Clear the auth-method hint set by the OIDC callback so a

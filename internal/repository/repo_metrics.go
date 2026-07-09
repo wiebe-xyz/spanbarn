@@ -156,10 +156,9 @@ func (r *Repository) QueryMetricSeries(ctx context.Context, f MetricFilter) ([]M
 	where := []string{"project_id = ?", "name = ?", "ingested_at >= ?", "ingested_at <= ?"}
 	args := []any{f.ProjectID, f.Name, f.From, f.To}
 
-	for k, v := range f.Attributes {
-		// Double-quoting the key handles dots in names like "service.name".
-		where = append(where, fmt.Sprintf(`JSON_EXTRACT(attributes, '$."%s"') = ?`, k))
-		args = append(args, v)
+	where, args, err := appendAttrFilters(where, args, f.Attributes)
+	if err != nil {
+		return nil, err
 	}
 
 	limit := f.Limit

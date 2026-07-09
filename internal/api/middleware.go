@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -98,25 +99,25 @@ func recoveryMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 }
 
 // corsMiddleware applies CORS headers.
-// For ingest and traces endpoints, it allows wildcard origins (browser SDK support).
-// For other routes, it respects the configured AllowedOrigins.
+//
+// Three tiers, matched on the exact path so a public prefix can never bleed into
+// a sibling (e.g. the ingest endpoint /api/v1/spans vs the session-authed SSE
+// stream /api/v1/spans/live):
+//   - Public, API-key ingest: any origin, but never with credentials.
+//   - Session-authed browser ingest: credentials, but only for allow-listed
+//     origins — reflecting an arbitrary origin with credentials would let any
+//     site drive a logged-in operator's browser into writing data.
+//   - Everything else (dashboard APIs, live-tail SSE): the strict AllowedOrigins
+//     policy, without credentials.
 func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-
-		// Ingest endpoints allow any origin for browser SDKs.
-		// Echo the request origin instead of '*' so credentialed requests
-		// (credentials: 'include') are also accepted by the browser.
-		if strings.HasPrefix(path, "/api/v1/spans") ||
-			strings.HasPrefix(path, "/v1/traces") ||
-			path == "/api/v1/telemetry" ||
-			path == "/api/v1/client-errors" {
-			origin := r.Header.Get("Origin")
-			if origin == "" {
-				origin = "*"
-			}
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		switch r.URL.Path {
+		// Public, API-key-authenticated ingest. Browser SDKs post cross-origin
+		// and authenticate with the X-SpanBarn-Api-Key header, not cookies, so
+		// any origin is allowed WITHOUT credentials. Never combine a reflected
+		// origin with Allow-Credentials here.
+		case "/api/v1/spans", "/v1/traces":
+			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-SpanBarn-Api-Key, Authorization, traceparent, tracestate")
 			w.Header().Set("Access-Control-Max-Age", "86400")
@@ -127,15 +128,36 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 			}
 			next.ServeHTTP(w, r)
 			return
+
+		// Session-authenticated, browser-driven ingest (frontend telemetry and
+		// client errors). These carry the session cookie, so credentials are
+		// required — but only for allow-listed origins. Reflecting an arbitrary
+		// origin with credentials was the cross-origin write-injection vector.
+		case "/api/v1/telemetry", "/api/v1/client-errors":
+			if origin := r.Header.Get("Origin"); origin != "" && originAllowed(origin, allowedOrigins) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-SpanBarn-Api-Key, Authorization, traceparent, tracestate")
+				w.Header().Set("Access-Control-Max-Age", "86400")
+				w.Header().Set("Vary", "Origin")
+			}
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
 		}
 
-		// Other routes: respect AllowedOrigins config.
+		// All other routes: respect AllowedOrigins config, without credentials.
 		origin := r.Header.Get("Origin")
 		if origin != "" && originAllowed(origin, allowedOrigins) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.Header().Set("Vary", "Origin")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
@@ -154,6 +176,12 @@ func maxBodyBytesMiddleware(maxBytes int64, next http.Handler) http.Handler {
 	})
 }
 
+// secretEqual compares two secrets in constant time to avoid leaking their
+// contents through response-timing differences.
+func secretEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 // apiKeyAuth validates the X-SpanBarn-Api-Key header.
 func apiKeyAuth(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -162,7 +190,7 @@ func apiKeyAuth(apiKey string, next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "missing API key", "set X-SpanBarn-Api-Key header")
 			return
 		}
-		if key != apiKey {
+		if !secretEqual(key, apiKey) {
 			writeError(w, http.StatusUnauthorized, "invalid API key", "")
 			return
 		}
@@ -186,7 +214,7 @@ func apiKeyOrBearerAuth(apiKey string, next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "missing API key", "set X-SpanBarn-Api-Key or Authorization: Bearer header")
 			return
 		}
-		if key != apiKey {
+		if !secretEqual(key, apiKey) {
 			writeError(w, http.StatusUnauthorized, "invalid API key", "")
 			return
 		}

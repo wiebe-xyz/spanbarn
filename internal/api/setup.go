@@ -3,19 +3,21 @@ package api
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 )
 
-const setupInsecureFallback = "spanbarn-setup-insecure"
-
+// setupKey deterministically derives a project's setup ingest key from the
+// server session secret and the project slug. The secret is mandatory outside
+// dev (enforced by config.Validate), so there is deliberately no constant
+// fallback — a weak/guessable key would let anyone forge a project's ingest
+// credentials, and the setup endpoint is public.
 func setupKey(secret, slug string) (plaintext, keySHA256 string) {
-	if secret == "" {
-		secret = setupInsecureFallback
-	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte("setup:" + slug))
 	raw := mac.Sum(nil)
@@ -29,23 +31,35 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	_, span := apiTracer.Start(r.Context(), "api.setup")
 	defer span.End()
 
+	// This endpoint is intentionally public (onboarding UX) but must not be a
+	// write amplifier: only GET is allowed and, once a project exists, the page
+	// is served read-only with no further writes.
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
 	slug := r.PathValue("slug")
 	if slug == "" {
 		http.Error(w, "slug is required", http.StatusBadRequest)
 		return
 	}
 
-	project, err := s.repo.EnsureProjectPending(slug, slug)
-	if err != nil {
-		s.logger.Error("setup: ensure project", "slug", slug, "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
+	// The setup key is deterministic from (session secret, slug), so it never
+	// needs to be read back; render it directly.
 	plaintext, keySHA := setupKey(s.sessionSecret, slug)
 
-	if err := s.repo.EnsureSetupAPIKey(project.ID, keySHA); err != nil {
-		s.logger.Error("setup: ensure api key", "project_id", project.ID, "error", err)
+	project, err := s.repo.GetProjectBySlug(slug)
+	if errors.Is(err, sql.ErrNoRows) {
+		// First visit for this slug: create the pending project and register its
+		// setup key. Repeat visits skip both writes.
+		project, err = s.repo.EnsureProjectPending(slug, slug)
+		if err == nil {
+			err = s.repo.EnsureSetupAPIKey(project.ID, keySHA)
+		}
+	}
+	if err != nil {
+		s.logger.Error("setup: ensure project/key", "slug", slug, "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}

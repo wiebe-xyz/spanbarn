@@ -129,8 +129,10 @@ func MakeExpiredToken(secret, username string) string {
 func randomHex(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
-		// Fallback: use current time (very unlikely).
-		return time.Now().UTC().Format(time.RFC3339Nano)
+		// crypto/rand should never fail; if it does, the system entropy source is
+		// broken and continuing would emit a predictable session secret or nonce.
+		// Fail hard rather than degrade to a guessable value.
+		panic("auth: crypto/rand failed: " + err.Error())
 	}
 	return hex.EncodeToString(b)
 }

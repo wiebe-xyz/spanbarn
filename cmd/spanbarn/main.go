@@ -70,6 +70,15 @@ func run() error {
 		}
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	// Trust proxy forwarding headers for client-IP determination only when
+	// configured (default: on outside dev), so rate limiting keys on the real
+	// client behind Caddy/Nginx instead of the shared proxy IP.
+	api.SetTrustProxy(cfg.TrustProxy)
+
 	switch cfg.Mode {
 	case "ingest":
 		return runIngestMode(cfg, logger)
@@ -292,8 +301,9 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	api.WarmCaches(ctx, queryRepo, querySvc.Cache(), logger)
 
 	mux := http.NewServeMux()
-	loginRL := api.RateLimitMiddleware(api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), "login")
-	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
+	loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
+	loginRL := api.RateLimitMiddleware(loginLimiter, "login")
+	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
 		api.WarmLoginCaches(context.Background(), querySvc, logger)
 	})))
 	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
@@ -518,11 +528,9 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 	mux := http.NewServeMux()
 	if sessionMgr != nil && userAuth != nil {
-		loginRL := api.RateLimitMiddleware(
-			api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute),
-			"login",
-		)
-		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
+		loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
+		loginRL := api.RateLimitMiddleware(loginLimiter, "login")
+		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
 			api.WarmLoginCaches(context.Background(), querySvc, logger)
 		})))
 		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
@@ -702,8 +710,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
 	}
-	loginRL := api.RateLimitMiddleware(api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), "login")
-	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
+	loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
+	loginRL := api.RateLimitMiddleware(loginLimiter, "login")
+	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
 		api.WarmLoginCaches(context.Background(), querySvc, logger)
 	})))
 	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
@@ -1230,11 +1239,9 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 
 	mux := http.NewServeMux()
 	if sessionMgr != nil && userAuth != nil {
-		loginRL := api.RateLimitMiddleware(
-			api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute),
-			"login",
-		)
-		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, func() {
+		loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
+		loginRL := api.RateLimitMiddleware(loginLimiter, "login")
+		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
 			api.WarmLoginCaches(context.Background(), querySvc, logger)
 		})))
 		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))

@@ -33,7 +33,8 @@ func newCORSTestServer(t *testing.T) *httptest.Server {
 func TestCORSIngestEndpoint(t *testing.T) {
 	ts := newCORSTestServer(t)
 
-	// Preflight to /api/v1/spans
+	// Preflight to /api/v1/spans — public API-key ingest is wildcard, and must
+	// NOT be credentialed (that would expose it to cross-site cookie use).
 	req, _ := http.NewRequest(http.MethodOptions, ts.URL+"/api/v1/spans", nil)
 	req.Header.Set("Origin", "https://example.com")
 	req.Header.Set("Access-Control-Request-Method", "POST")
@@ -47,8 +48,11 @@ func TestCORSIngestEndpoint(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("expected 204 for OPTIONS, got %d", resp.StatusCode)
 	}
-	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "https://example.com" {
-		t.Fatalf("expected CORS allow-origin 'https://example.com', got %q", acao)
+	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "*" {
+		t.Fatalf("expected CORS allow-origin '*', got %q", acao)
+	}
+	if cred := resp.Header.Get("Access-Control-Allow-Credentials"); cred != "" {
+		t.Fatalf("public ingest must not be credentialed, got Allow-Credentials %q", cred)
 	}
 	acah := resp.Header.Get("Access-Control-Allow-Headers")
 	if !strings.Contains(acah, "X-SpanBarn-Api-Key") {
@@ -74,13 +78,69 @@ func TestCORSOTLPEndpoint(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("expected 204 for OPTIONS preflight, got %d", resp.StatusCode)
 	}
-	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "https://geobarn.test.wiebe.xyz" {
-		t.Fatalf("expected CORS allow-origin 'https://geobarn.test.wiebe.xyz', got %q", acao)
+	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "*" {
+		t.Fatalf("expected CORS allow-origin '*', got %q", acao)
+	}
+	if cred := resp.Header.Get("Access-Control-Allow-Credentials"); cred != "" {
+		t.Fatalf("public OTLP ingest must not be credentialed, got Allow-Credentials %q", cred)
 	}
 	acah := resp.Header.Get("Access-Control-Allow-Headers")
 	for _, h := range []string{"Authorization", "traceparent", "Content-Type"} {
 		if !strings.Contains(acah, h) {
 			t.Fatalf("expected CORS allow-headers to include %q, got %q", h, acah)
+		}
+	}
+}
+
+// TestCORSLiveTailNotWildcard is the S6 regression: the session-authed SSE
+// stream /api/v1/spans/live shares a prefix with the public ingest endpoint but
+// must NOT get wildcard/credentialed CORS. With no AllowedOrigins configured, an
+// arbitrary origin must receive no Access-Control-Allow-Origin at all.
+func TestCORSLiveTailNotWildcard(t *testing.T) {
+	ts := newCORSTestServer(t)
+
+	req, _ := http.NewRequest(http.MethodOptions, ts.URL+"/api/v1/spans/live", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if acao := resp.Header.Get("Access-Control-Allow-Origin"); acao != "" {
+		t.Fatalf("live-tail must not reflect an arbitrary origin, got ACAO %q", acao)
+	}
+	if cred := resp.Header.Get("Access-Control-Allow-Credentials"); cred != "" {
+		t.Fatalf("live-tail must not be credentialed, got Allow-Credentials %q", cred)
+	}
+}
+
+// TestCORSTelemetryRequiresAllowlist is the S8 regression: session-authed
+// browser ingest must only be credentialed for allow-listed origins. With no
+// AllowedOrigins configured, an arbitrary origin gets neither a reflected origin
+// nor Allow-Credentials, so it cannot drive credentialed cross-origin writes.
+func TestCORSTelemetryRequiresAllowlist(t *testing.T) {
+	ts := newCORSTestServer(t)
+
+	for _, path := range []string{"/api/v1/telemetry", "/api/v1/client-errors"} {
+		req, _ := http.NewRequest(http.MethodOptions, ts.URL+path, nil)
+		req.Header.Set("Origin", "https://evil.example")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s: request failed: %v", path, err)
+		}
+		acao := resp.Header.Get("Access-Control-Allow-Origin")
+		cred := resp.Header.Get("Access-Control-Allow-Credentials")
+		resp.Body.Close()
+		if acao == "https://evil.example" || acao == "*" {
+			t.Errorf("%s: must not allow arbitrary origin, got ACAO %q", path, acao)
+		}
+		if cred != "" {
+			t.Errorf("%s: must not credential an unlisted origin, got Allow-Credentials %q", path, cred)
 		}
 	}
 }

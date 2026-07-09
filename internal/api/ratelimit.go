@@ -2,10 +2,47 @@ package api
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// trustProxyHeaders controls whether X-Forwarded-For/X-Real-IP are trusted when
+// determining the client IP for rate limiting. It is process-global because the
+// trust decision is a property of the deployment, not of any one limiter.
+var trustProxyHeaders atomic.Bool
+
+// SetTrustProxy configures proxy-header trust for client-IP determination.
+// Enable it only when the app sits behind a reverse proxy that overwrites the
+// forwarding headers (Caddy/Nginx); otherwise clients could spoof them to evade
+// rate limits. Call once at startup, before serving.
+func SetTrustProxy(v bool) { trustProxyHeaders.Store(v) }
+
+// clientIP returns the rate-limit key IP for a request. Behind a trusted proxy
+// it uses the right-most X-Forwarded-For entry (the hop the proxy itself
+// appended — left entries can be client-forged) or X-Real-IP, falling back to
+// the transport peer. Directly exposed, it always uses the transport peer so
+// forwarding headers cannot be spoofed to dodge limits.
+func clientIP(r *http.Request) string {
+	if trustProxyHeaders.Load() {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
+				return ip
+			}
+		}
+		if xr := strings.TrimSpace(r.Header.Get("X-Real-IP")); xr != "" {
+			return xr
+		}
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
 
 // bucket implements a token bucket for rate limiting.
 type bucket struct {
@@ -102,16 +139,7 @@ func (rl *RateLimiter) cleanup() {
 func RateLimitMiddleware(rl *RateLimiter, category string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			clientIP := r.RemoteAddr
-			// Strip port if present.
-			if idx := lastIndexByte(clientIP, ':'); idx != -1 {
-				// Check if this looks like host:port (not just IPv6).
-				if clientIP[0] != '[' || idx > 0 {
-					clientIP = clientIP[:idx]
-				}
-			}
-
-			if !rl.Allow(category, clientIP) {
+			if !rl.Allow(category, clientIP(r)) {
 				w.Header().Set("Retry-After", "60")
 				writeError(w, http.StatusTooManyRequests, "rate limit exceeded", "")
 				return
@@ -119,13 +147,4 @@ func RateLimitMiddleware(rl *RateLimiter, category string) func(http.Handler) ht
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-func lastIndexByte(s string, c byte) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == c {
-			return i
-		}
-	}
-	return -1
 }

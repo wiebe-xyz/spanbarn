@@ -60,7 +60,7 @@ func (m *Metrics) Handler(metricsToken string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if metricsToken != "" {
 			auth := r.Header.Get("Authorization")
-			if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != metricsToken {
+			if !strings.HasPrefix(auth, "Bearer ") || !secretEqual(strings.TrimPrefix(auth, "Bearer "), metricsToken) {
 				writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or missing bearer token")
 				return
 			}
