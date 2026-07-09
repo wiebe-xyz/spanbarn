@@ -36,11 +36,21 @@ make dev      # docker compose up --build
 - Go: `go test ./...` (race detector in CI)
 - Frontend: Vitest
 - E2E: Playwright
-- Coverage gate: service + repository packages >= 60%
+
+## Quality gate (`make quality-gate`, CI job `quality`)
+
+`scripts/quality-gate.sh` is a ratchet: CI fails if any metric regresses past the
+baseline recorded in that script. Baselines only move in the improving direction
+— when you legitimately improve a metric, ratchet its baseline DOWN in the script.
+Enforced metrics:
+- **Coverage** — `internal/service` and `internal/repository` stay above their floors.
+- **Cyclomatic complexity** — the count of functions over gocyclo 15 may not grow.
+- **File length** — the count of files over 500 lines may not grow, and no file may exceed a hard cap.
+- **Duplication** — the count of `dupl` clone groups may not grow.
 
 ## CI/CD (GitHub Actions)
 
-- `ci.yml` — lint, test, build on every push/PR
+- `ci.yml` — spec, lint/test/build (`code`), and the `quality` gate on every push/PR
 - `build-and-test.yml` — Docker build + deploy to k3s testing
 - `deploy-production.yml` — manual production deploy with confirmation
 - `binary-release.yml` — semver tags, .deb packages, macOS tarballs, npm/PyPI SDK publish
