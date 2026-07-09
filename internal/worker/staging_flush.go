@@ -60,28 +60,40 @@ func NewStagingFlusher(repo StagingRepository, cfg StagingFlusherConfig, logger 
 		cfg.MaxAge = 15 * time.Minute
 	}
 	if cfg.BatchTraces <= 0 {
-		cfg.BatchTraces = 500
+		cfg.BatchTraces = 200
 	}
 	return &StagingFlusher{repo: repo, cfg: cfg, logger: logger}
 }
+
+// maxFlushIterationsPerTick caps how many BatchTraces batches a single flush tick
+// processes before yielding, so the flush loop always returns to let the GC and
+// the span-staging inserts get the single connection.
+const maxFlushIterationsPerTick = 8
 
 func (f *StagingFlusher) SetAccumulator(a SpanAccumulator)        { f.accumulator = a }
 func (f *StagingFlusher) SetBoringPolicy(p BoringPolicyReader)    { f.boringPolicy = p }
 func (f *StagingFlusher) SetMinuteFloor(fl *sampling.MinuteFloor) { f.floor = fl }
 
-// Run flushes ready traces and GCs the staging table until ctx is cancelled.
+// Run flushes ready traces and GCs the staging table until ctx is cancelled. The
+// GC runs in its own goroutine so a busy flush loop can never starve it — that is
+// what guarantees spans_staging stays bounded even under sustained overload.
 func (f *StagingFlusher) Run(ctx context.Context) {
-	flush := time.NewTicker(f.cfg.FlushInterval)
-	gc := time.NewTicker(f.cfg.GCInterval)
-	defer flush.Stop()
-	defer gc.Stop()
+	go f.gcLoop(ctx)
+	f.flushLoop(ctx)
+}
+
+func (f *StagingFlusher) flushLoop(ctx context.Context) {
+	t := time.NewTicker(f.cfg.FlushInterval)
+	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-flush.C:
-			// Drain every currently-ready trace this cycle (bounded per tx).
-			for {
+		case <-t.C:
+			// Process ready traces, but cap iterations per tick so the flush
+			// yields the single connection back to staging inserts and returns
+			// to the ticker regularly instead of monopolizing the loop.
+			for i := 0; i < maxFlushIterationsPerTick; i++ {
 				n, err := f.flushOnce(ctx)
 				if err != nil {
 					if ctx.Err() != nil {
@@ -94,7 +106,18 @@ func (f *StagingFlusher) Run(ctx context.Context) {
 					break // caught up
 				}
 			}
-		case <-gc.C:
+		}
+	}
+}
+
+func (f *StagingFlusher) gcLoop(ctx context.Context) {
+	t := time.NewTicker(f.cfg.GCInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
 			f.gcOnce(ctx)
 		}
 	}
