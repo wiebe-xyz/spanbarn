@@ -55,6 +55,36 @@ func scopedClient(projectFlag string) (*Client, error) {
 	return c, nil
 }
 
+// runQueryCmd handles the common CLI shape: the standard project + time-range
+// flags, an optional --service filter, then a GET to endpoint and emit.
+// Commands with additional flags keep their own implementation.
+func runQueryCmd(name, endpoint string, args []string, withService bool) error {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	project := commonFlags(fs)
+	from, to := addTimeFlags(fs)
+	var service *string
+	if withService {
+		service = fs.String("service", "", "filter by service")
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	client, err := scopedClient(*project)
+	if err != nil {
+		return err
+	}
+	params := url.Values{}
+	applyTimeRange(params, *from, *to)
+	if service != nil && *service != "" {
+		params.Set("service", *service)
+	}
+	data, err := client.query(endpoint, params)
+	if err != nil {
+		return err
+	}
+	return emit(data)
+}
+
 // --- auth / setup ---
 
 func cmdLogin(args []string) error {
@@ -452,23 +482,7 @@ func cmdMetrics(args []string) error {
 }
 
 func cmdMetricNames(args []string) error {
-	fs := flag.NewFlagSet("metrics names", flag.ContinueOnError)
-	project := commonFlags(fs)
-	from, to := addTimeFlags(fs)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	client, err := scopedClient(*project)
-	if err != nil {
-		return err
-	}
-	params := url.Values{}
-	applyTimeRange(params, *from, *to)
-	data, err := client.query("/api/v1/metrics/names", params)
-	if err != nil {
-		return err
-	}
-	return emit(data)
+	return runQueryCmd("metrics names", "/api/v1/metrics/names", args, false)
 }
 
 func cmdMetricSeries(args []string) error {
@@ -592,69 +606,13 @@ func cmdPromptDetail(args []string) error {
 }
 
 func cmdDeps(args []string) error {
-	fs := flag.NewFlagSet("deps", flag.ContinueOnError)
-	project := commonFlags(fs)
-	from, to := addTimeFlags(fs)
-	service := fs.String("service", "", "filter by source service")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	client, err := scopedClient(*project)
-	if err != nil {
-		return err
-	}
-	params := url.Values{}
-	applyTimeRange(params, *from, *to)
-	if *service != "" {
-		params.Set("service", *service)
-	}
-	data, err := client.query("/api/v1/dependencies", params)
-	if err != nil {
-		return err
-	}
-	return emit(data)
+	return runQueryCmd("deps", "/api/v1/dependencies", args, true)
 }
 
 func cmdDatabase(args []string) error {
-	fs := flag.NewFlagSet("database", flag.ContinueOnError)
-	project := commonFlags(fs)
-	from, to := addTimeFlags(fs)
-	service := fs.String("service", "", "filter by service")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	client, err := scopedClient(*project)
-	if err != nil {
-		return err
-	}
-	params := url.Values{}
-	applyTimeRange(params, *from, *to)
-	if *service != "" {
-		params.Set("service", *service)
-	}
-	data, err := client.query("/api/v1/database", params)
-	if err != nil {
-		return err
-	}
-	return emit(data)
+	return runQueryCmd("database", "/api/v1/database", args, true)
 }
 
 func cmdServiceMap(args []string) error {
-	fs := flag.NewFlagSet("service-map", flag.ContinueOnError)
-	project := commonFlags(fs)
-	from, to := addTimeFlags(fs)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	client, err := scopedClient(*project)
-	if err != nil {
-		return err
-	}
-	params := url.Values{}
-	applyTimeRange(params, *from, *to)
-	data, err := client.query("/api/v1/service-map", params)
-	if err != nil {
-		return err
-	}
-	return emit(data)
+	return runQueryCmd("service-map", "/api/v1/service-map", args, false)
 }
