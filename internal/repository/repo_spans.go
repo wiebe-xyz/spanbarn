@@ -160,16 +160,7 @@ func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
 }
 
 func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
-	var n int64
-	err := r.execLow(func() error {
-		res, e := r.db.Exec("DELETE FROM spans WHERE id <= ?", maxID)
-		if e != nil {
-			return e
-		}
-		n, _ = res.RowsAffected()
-		return nil
-	})
-	return n, err
+	return r.execLowAffecting("DELETE FROM spans WHERE id <= ?", maxID)
 }
 
 func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThresholdUS int64) (int64, error) {
@@ -203,16 +194,7 @@ func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThre
 }
 
 func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
-	var n int64
-	err := r.execLow(func() error {
-		res, e := r.db.Exec("DELETE FROM spans WHERE ingested_at < ?", cutoff)
-		if e != nil {
-			return e
-		}
-		n, _ = res.RowsAffected()
-		return nil
-	})
-	return n, err
+	return r.execLowAffecting("DELETE FROM spans WHERE ingested_at < ?", cutoff)
 }
 
 // DeleteBoringSpansOlderThan removes non-error, fast spans ingested before cutoff.

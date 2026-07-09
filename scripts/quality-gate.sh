@@ -23,7 +23,7 @@ DUPL="go run github.com/mibk/dupl@v1.1.0"
 
 # ---- Baselines (ratchet DOWN as the codebase improves) ---------------------
 COVERAGE_SERVICE_MIN=${COVERAGE_SERVICE_MIN:-77.1}
-COVERAGE_REPOSITORY_MIN=${COVERAGE_REPOSITORY_MIN:-68.8}
+COVERAGE_REPOSITORY_MIN=${COVERAGE_REPOSITORY_MIN:-69.0}
 # Per-file floor: no single source file in the gated packages may sit at/under
 # this coverage, so a fully-untested file can't hide behind well-covered
 # siblings in the same package aggregate. Migration DDL and test files are

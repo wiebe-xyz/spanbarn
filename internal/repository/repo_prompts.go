@@ -153,16 +153,7 @@ func (r *Repository) GetPromptRecordsByTraceID(traceID string) ([]PromptRecord, 
 }
 
 func (r *Repository) DeletePromptRecordsOlderThan(cutoff time.Time) (int64, error) {
-	var n int64
-	err := r.execLow(func() error {
-		res, e := r.db.Exec("DELETE FROM prompt_records WHERE ingested_at < ?", cutoff)
-		if e != nil {
-			return e
-		}
-		n, _ = res.RowsAffected()
-		return nil
-	})
-	return n, err
+	return r.execLowAffecting("DELETE FROM prompt_records WHERE ingested_at < ?", cutoff)
 }
 
 func (r *Repository) scanPromptRecords(query string, args ...any) ([]PromptRecord, error) {

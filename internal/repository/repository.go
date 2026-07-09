@@ -88,6 +88,22 @@ func (r *Repository) execLow(fn func() error) error {
 	return r.scheduler.Submit(context.Background(), writescheduler.Low, fn)
 }
 
+// execLowAffecting runs a single low-priority write statement and returns the
+// number of rows it affected. It captures the execLow+Exec+RowsAffected boiler-
+// plate shared by the retention DeleteXOlderThan / DeleteXByY methods.
+func (r *Repository) execLowAffecting(query string, args ...any) (int64, error) {
+	var n int64
+	err := r.execLow(func() error {
+		res, e := r.db.Exec(query, args...)
+		if e != nil {
+			return e
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	return n, err
+}
+
 // SetDeleteBatchYield sets how long batchedDelete pauses between batches. The
 // pause releases the write lock so the periodic WAL checkpoint and read-only
 // queries get a turn during a large retention purge. 0 (the default) disables
