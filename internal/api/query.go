@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 
@@ -19,14 +20,8 @@ func (h *queryHandlers) handleServices(w http.ResponseWriter, r *http.Request) {
 	ctx, span := apiTracer.Start(r.Context(), "api.query.services")
 	defer span.End()
 
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
-	}
-
-	from, to, err := parseTimeRange(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+	from, to, ok := parseGetTimeRange(w, r)
+	if !ok {
 		return
 	}
 
@@ -116,14 +111,8 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 	ctx, span := apiTracer.Start(r.Context(), "api.query.traces")
 	defer span.End()
 
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
-	}
-
-	from, to, err := parseTimeRange(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+	from, to, ok := parseGetTimeRange(w, r)
+	if !ok {
 		return
 	}
 
@@ -160,14 +149,8 @@ func (h *queryHandlers) handleTraceGroups(w http.ResponseWriter, r *http.Request
 	ctx, span := apiTracer.Start(r.Context(), "api.query.trace_groups")
 	defer span.End()
 
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
-	}
-
-	from, to, err := parseTimeRange(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+	from, to, ok := parseGetTimeRange(w, r)
+	if !ok {
 		return
 	}
 
@@ -223,14 +206,8 @@ func (h *queryHandlers) handleDependencies(w http.ResponseWriter, r *http.Reques
 	ctx, span := apiTracer.Start(r.Context(), "api.query.dependencies")
 	defer span.End()
 
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
-	}
-
-	from, to, err := parseTimeRange(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+	from, to, ok := parseGetTimeRange(w, r)
+	if !ok {
 		return
 	}
 
@@ -249,14 +226,8 @@ func (h *queryHandlers) handleDependencyTraces(w http.ResponseWriter, r *http.Re
 	ctx, span := apiTracer.Start(r.Context(), "api.query.dependency_traces")
 	defer span.End()
 
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
-	}
-
-	from, to, err := parseTimeRange(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+	from, to, ok := parseGetTimeRange(w, r)
+	if !ok {
 		return
 	}
 
@@ -285,14 +256,8 @@ func (h *queryHandlers) handleDatabaseQueries(w http.ResponseWriter, r *http.Req
 	ctx, span := apiTracer.Start(r.Context(), "api.query.database")
 	defer span.End()
 
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
-	}
-
-	from, to, err := parseTimeRange(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+	from, to, ok := parseGetTimeRange(w, r)
+	if !ok {
 		return
 	}
 
@@ -311,14 +276,8 @@ func (h *queryHandlers) handleDatabaseQueryDetail(w http.ResponseWriter, r *http
 	ctx, span := apiTracer.Start(r.Context(), "api.query.database_detail")
 	defer span.End()
 
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
-	}
-
-	from, to, err := parseTimeRange(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+	from, to, ok := parseGetTimeRange(w, r)
+	if !ok {
 		return
 	}
 
@@ -342,14 +301,8 @@ func (h *queryHandlers) handleServiceMap(w http.ResponseWriter, r *http.Request)
 	ctx, span := apiTracer.Start(r.Context(), "api.query.service_map")
 	defer span.End()
 
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
-	}
-
-	from, to, err := parseTimeRange(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+	from, to, ok := parseGetTimeRange(w, r)
+	if !ok {
 		return
 	}
 
@@ -368,14 +321,8 @@ func (h *queryHandlers) handleWebVitals(w http.ResponseWriter, r *http.Request) 
 	ctx, span := apiTracer.Start(r.Context(), "api.query.web_vitals")
 	defer span.End()
 
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
-	}
-
-	from, to, err := parseTimeRange(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+	from, to, ok := parseGetTimeRange(w, r)
+	if !ok {
 		return
 	}
 
@@ -394,14 +341,8 @@ func (h *queryHandlers) handleWebVitalsTimeseries(w http.ResponseWriter, r *http
 	ctx, span := apiTracer.Start(r.Context(), "api.query.web_vitals_timeseries")
 	defer span.End()
 
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
-	}
-
-	from, to, err := parseTimeRange(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+	from, to, ok := parseGetTimeRange(w, r)
+	if !ok {
 		return
 	}
 
@@ -512,4 +453,35 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeListJSON writes a JSON list response for a list endpoint: a query error
+// becomes a 500, a nil slice is normalised to [] (so the client always sees an
+// array), and the list is written with 200. what names the resource in the
+// error message.
+func writeListJSON[T any](w http.ResponseWriter, r *http.Request, what string, list []T, err error) {
+	if err != nil {
+		writeServerError(w, r, "failed to list "+what, err)
+		return
+	}
+	if list == nil {
+		list = []T{}
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// parseGetTimeRange runs the preamble shared by the GET query handlers: it
+// enforces the GET method and parses the ?from/?to range, writing the
+// appropriate error response and returning ok=false on failure.
+func parseGetTimeRange(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok bool) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+	f, t, err := parseTimeRange(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+		return
+	}
+	return f, t, true
 }

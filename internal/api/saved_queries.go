@@ -31,14 +31,7 @@ func (h *savedQueryHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *savedQueryHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	projectID := parseInt64Param(r, "project_id", 1)
 	queries, err := h.repo.ListSavedQueries(projectID)
-	if err != nil {
-		writeServerError(w, r, "failed to list saved queries", err)
-		return
-	}
-	if queries == nil {
-		queries = []repository.SavedQuery{}
-	}
-	writeJSON(w, http.StatusOK, queries)
+	writeListJSON(w, r, "saved queries", queries, err)
 }
 
 func (h *savedQueryHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
