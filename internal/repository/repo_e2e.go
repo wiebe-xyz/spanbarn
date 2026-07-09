@@ -38,17 +38,6 @@ func (r *Repository) UpsertE2EUser(username string, expiresAt time.Time) (User, 
 // DeleteExpiredE2EUsers removes all users whose e2e_expires_at is in the past.
 // Returns the number of rows deleted.
 func (r *Repository) DeleteExpiredE2EUsers(now time.Time) (int64, error) {
-	var n int64
-	err := r.execLow(func() error {
-		res, e := r.db.Exec(
-			"DELETE FROM users WHERE e2e_expires_at IS NOT NULL AND e2e_expires_at < ?",
-			now,
-		)
-		if e != nil {
-			return e
-		}
-		n, _ = res.RowsAffected()
-		return nil
-	})
-	return n, err
+	return r.execLowAffecting(
+		"DELETE FROM users WHERE e2e_expires_at IS NOT NULL AND e2e_expires_at < ?", now)
 }

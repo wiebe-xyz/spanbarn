@@ -48,17 +48,15 @@ func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error
 	})
 }
 
-func (r *Repository) QuerySpans(f SpanFilter) ([]Span, error) {
-	var where []string
-	var args []any
-
+// appendCommonWhere appends the optional span filters shared by the span/trace
+// query methods — project, service, operation, status, minimum duration and the
+// ingested_at time range — as parameterised predicates. Method-specific filters
+// (trace ID, operation exclusions) are added separately by the caller. All
+// predicates are ANDed, so the append order does not affect results.
+func (f SpanFilter) appendCommonWhere(where []string, args []any) ([]string, []any) {
 	if f.ProjectID != 0 {
 		where = append(where, "project_id = ?")
 		args = append(args, f.ProjectID)
-	}
-	if f.TraceID != "" {
-		where = append(where, "trace_id = ?")
-		args = append(args, f.TraceID)
 	}
 	if f.Service != "" {
 		where = append(where, "service = ?")
@@ -83,6 +81,18 @@ func (r *Repository) QuerySpans(f SpanFilter) ([]Span, error) {
 	if !f.To.IsZero() {
 		where = append(where, "ingested_at <= ?")
 		args = append(args, f.To)
+	}
+	return where, args
+}
+
+func (r *Repository) QuerySpans(f SpanFilter) ([]Span, error) {
+	var where []string
+	var args []any
+
+	where, args = f.appendCommonWhere(where, args)
+	if f.TraceID != "" {
+		where = append(where, "trace_id = ?")
+		args = append(args, f.TraceID)
 	}
 
 	q := "SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at FROM spans"
@@ -150,16 +160,7 @@ func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
 }
 
 func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
-	var n int64
-	err := r.execLow(func() error {
-		res, e := r.db.Exec("DELETE FROM spans WHERE id <= ?", maxID)
-		if e != nil {
-			return e
-		}
-		n, _ = res.RowsAffected()
-		return nil
-	})
-	return n, err
+	return r.execLowAffecting("DELETE FROM spans WHERE id <= ?", maxID)
 }
 
 func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThresholdUS int64) (int64, error) {
@@ -193,16 +194,7 @@ func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThre
 }
 
 func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
-	var n int64
-	err := r.execLow(func() error {
-		res, e := r.db.Exec("DELETE FROM spans WHERE ingested_at < ?", cutoff)
-		if e != nil {
-			return e
-		}
-		n, _ = res.RowsAffected()
-		return nil
-	})
-	return n, err
+	return r.execLowAffecting("DELETE FROM spans WHERE ingested_at < ?", cutoff)
 }
 
 // DeleteBoringSpansOlderThan removes non-error, fast spans ingested before cutoff.
@@ -273,26 +265,7 @@ type TraceSummaryRow struct {
 func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSummaryRow, error) {
 	var where []string
 	var args []any
-	if f.ProjectID != 0 {
-		where = append(where, "project_id = ?")
-		args = append(args, f.ProjectID)
-	}
-	if f.Service != "" {
-		where = append(where, "service = ?")
-		args = append(args, f.Service)
-	}
-	if f.Operation != "" {
-		where = append(where, "name = ?")
-		args = append(args, f.Operation)
-	}
-	if f.Status != "" {
-		where = append(where, "status = ?")
-		args = append(args, f.Status)
-	}
-	if f.MinDuration > 0 {
-		where = append(where, "duration_us >= ?")
-		args = append(args, f.MinDuration)
-	}
+	where, args = f.appendCommonWhere(where, args)
 	if len(f.ExcludeOperations) > 0 {
 		placeholders := strings.Repeat("?,", len(f.ExcludeOperations))
 		placeholders = placeholders[:len(placeholders)-1]
@@ -300,14 +273,6 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 		for _, op := range f.ExcludeOperations {
 			args = append(args, op)
 		}
-	}
-	if !f.From.IsZero() {
-		where = append(where, "ingested_at >= ?")
-		args = append(args, f.From)
-	}
-	if !f.To.IsZero() {
-		where = append(where, "ingested_at <= ?")
-		args = append(args, f.To)
 	}
 	whereSQL := ""
 	if len(where) > 0 {
@@ -497,34 +462,7 @@ func (r *Repository) StreamSpans(f SpanFilter, fn func(Span) error) error {
 	var where []string
 	var args []any
 
-	if f.ProjectID != 0 {
-		where = append(where, "project_id = ?")
-		args = append(args, f.ProjectID)
-	}
-	if f.Service != "" {
-		where = append(where, "service = ?")
-		args = append(args, f.Service)
-	}
-	if f.Operation != "" {
-		where = append(where, "name = ?")
-		args = append(args, f.Operation)
-	}
-	if f.Status != "" {
-		where = append(where, "status = ?")
-		args = append(args, f.Status)
-	}
-	if f.MinDuration > 0 {
-		where = append(where, "duration_us >= ?")
-		args = append(args, f.MinDuration)
-	}
-	if !f.From.IsZero() {
-		where = append(where, "ingested_at >= ?")
-		args = append(args, f.From)
-	}
-	if !f.To.IsZero() {
-		where = append(where, "ingested_at <= ?")
-		args = append(args, f.To)
-	}
+	where, args = f.appendCommonWhere(where, args)
 
 	q := "SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at FROM spans"
 	if len(where) > 0 {

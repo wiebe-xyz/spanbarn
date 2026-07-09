@@ -2,16 +2,12 @@ package api
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
-	"strings"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 )
 
 func (s *Server) handleOTLPLogs(w http.ResponseWriter, r *http.Request) {
@@ -20,48 +16,20 @@ func (s *Server) handleOTLPLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if strings.Contains(err.Error(), "http: request body too large") {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large", "")
-			return
-		}
-		writeError(w, http.StatusBadRequest, "failed to read body", err.Error())
+	body, ok := readOTLPBody(w, r)
+	if !ok {
 		return
 	}
 
 	var req collectorlogspb.ExportLogsServiceRequest
-	ct := r.Header.Get("Content-Type")
-	switch {
-	case strings.Contains(ct, "application/json"):
-		if err := protojson.Unmarshal(body, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON", err.Error())
-			return
-		}
-	default:
-		if err := proto.Unmarshal(body, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid protobuf", err.Error())
-			return
-		}
+	if !decodeOTLP(w, r, body, &req) {
+		return
 	}
 
 	projectID := GetProjectID(r.Context())
-	recs := otlpToLogRecords(&req, projectID)
-	s.logsIngest.Enqueue(recs)
+	s.logsIngest.Enqueue(otlpToLogRecords(&req, projectID))
 
-	resp := &collectorlogspb.ExportLogsServiceResponse{}
-	accept := r.Header.Get("Accept")
-	if strings.Contains(accept, "application/json") {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		data, _ := protojson.Marshal(resp)
-		_, _ = w.Write(data)
-	} else {
-		w.Header().Set("Content-Type", "application/x-protobuf")
-		w.WriteHeader(http.StatusOK)
-		data, _ := proto.Marshal(resp)
-		_, _ = w.Write(data)
-	}
+	writeOTLPResponse(w, r, &collectorlogspb.ExportLogsServiceResponse{})
 }
 
 // otlpToLogRecords converts an ExportLogsServiceRequest into LogRecords.

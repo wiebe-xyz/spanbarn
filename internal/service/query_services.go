@@ -19,6 +19,39 @@ import (
 // and was the cause of the "context deadline exceeded" issues (SPA-13/14/17).
 const spanFallbackWindow = 90 * time.Second
 
+// aggStats accumulates count, error count and count-weighted percentile sums so
+// a weighted p50/p95/p99 can be derived. ListServices, ListOperations and
+// GetTimeseries build the same rollup, keyed by service / operation / bucket.
+type aggStats struct {
+	count, errorCount               int64
+	aggP50Sum, aggP95Sum, aggP99Sum int64
+	aggCount                        int64
+}
+
+// foldAggregate folds a pre-aggregated row in; its percentiles are always
+// meaningful, so they are always count-weighted into the sums.
+func (a *aggStats) foldAggregate(count, errorCount, p50, p95, p99 int64) {
+	a.count += count
+	a.errorCount += errorCount
+	a.aggP50Sum += p50 * count
+	a.aggP95Sum += p95 * count
+	a.aggP99Sum += p99 * count
+	a.aggCount += count
+}
+
+// foldSpanFallback folds a raw-span-derived row in. Such rows may carry no
+// percentile data, so the percentile sums are only weighted in when present.
+func (a *aggStats) foldSpanFallback(count, errorCount, p50, p95, p99 int64) {
+	a.count += count
+	a.errorCount += errorCount
+	if p50 > 0 || p95 > 0 || p99 > 0 {
+		a.aggP50Sum += p50 * count
+		a.aggP95Sum += p95 * count
+		a.aggP99Sum += p99 * count
+		a.aggCount += count
+	}
+}
+
 // narrowFallback clamps `from` to be no earlier than now-spanFallbackWindow.
 // If `to` is older than that window, returns ok=false so the caller can skip
 // the raw-span query entirely.
@@ -101,15 +134,10 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 		st.buckets += a.Count
 	}
 
-	type mergedStats struct {
-		count, errorCount               int64
-		aggP50Sum, aggP95Sum, aggP99Sum int64
-		aggCount                        int64
-	}
-	merged := make(map[string]*mergedStats)
+	merged := make(map[string]*aggStats)
 
 	for svc, st := range byService {
-		merged[svc] = &mergedStats{
+		merged[svc] = &aggStats{
 			count:      st.count,
 			errorCount: st.errorCount,
 			aggP50Sum:  st.p50Sum,
@@ -128,15 +156,10 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 			}) {
 				ms := merged[a.Service]
 				if ms == nil {
-					ms = &mergedStats{}
+					ms = &aggStats{}
 					merged[a.Service] = ms
 				}
-				ms.count += a.Count
-				ms.errorCount += a.ErrorCount
-				ms.aggP50Sum += a.P50Us * a.Count
-				ms.aggP95Sum += a.P95Us * a.Count
-				ms.aggP99Sum += a.P99Us * a.Count
-				ms.aggCount += a.Count
+				ms.foldAggregate(a.Count, a.ErrorCount, a.P50Us, a.P95Us, a.P99Us)
 			}
 		} else {
 			spanStats, err := s.repo.QueryServiceStatsFromSpans(projectID, fbFrom, to, kind)
@@ -146,17 +169,10 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 			for _, ss := range spanStats {
 				ms := merged[ss.Service]
 				if ms == nil {
-					ms = &mergedStats{}
+					ms = &aggStats{}
 					merged[ss.Service] = ms
 				}
-				ms.count += ss.Count
-				ms.errorCount += ss.ErrorCount
-				if ss.P50Us > 0 || ss.P95Us > 0 || ss.P99Us > 0 {
-					ms.aggP50Sum += ss.P50Us * ss.Count
-					ms.aggP95Sum += ss.P95Us * ss.Count
-					ms.aggP99Sum += ss.P99Us * ss.Count
-					ms.aggCount += ss.Count
-				}
+				ms.foldSpanFallback(ss.Count, ss.ErrorCount, ss.P50Us, ss.P95Us, ss.P99Us)
 			}
 		}
 	}
@@ -222,25 +238,15 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 	type opKey struct {
 		operation, resource, kind string
 	}
-	type opStats struct {
-		count, errorCount               int64
-		aggP50Sum, aggP95Sum, aggP99Sum int64
-		aggCount                        int64
-	}
-	byOp := make(map[opKey]*opStats)
+	byOp := make(map[opKey]*aggStats)
 	for _, a := range aggs {
 		k := opKey{a.Operation, a.Resource, a.Kind}
 		st, ok := byOp[k]
 		if !ok {
-			st = &opStats{}
+			st = &aggStats{}
 			byOp[k] = st
 		}
-		st.count += a.Count
-		st.errorCount += a.ErrorCount
-		st.aggP50Sum += a.P50Us * a.Count
-		st.aggP95Sum += a.P95Us * a.Count
-		st.aggP99Sum += a.P99Us * a.Count
-		st.aggCount += a.Count
+		st.foldAggregate(a.Count, a.ErrorCount, a.P50Us, a.P95Us, a.P99Us)
 	}
 
 	if fbFrom, ok := narrowFallback(from, to); ok {
@@ -251,15 +257,10 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 				k := opKey{a.Operation, a.Resource, a.Kind}
 				st := byOp[k]
 				if st == nil {
-					st = &opStats{}
+					st = &aggStats{}
 					byOp[k] = st
 				}
-				st.count += a.Count
-				st.errorCount += a.ErrorCount
-				st.aggP50Sum += a.P50Us * a.Count
-				st.aggP95Sum += a.P95Us * a.Count
-				st.aggP99Sum += a.P99Us * a.Count
-				st.aggCount += a.Count
+				st.foldAggregate(a.Count, a.ErrorCount, a.P50Us, a.P95Us, a.P99Us)
 			}
 		} else {
 			spanStats, err := s.repo.QueryOperationStatsFromSpans(projectID, service, fbFrom, to, kind)
@@ -270,17 +271,10 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 				k := opKey{ss.Operation, ss.Resource, ss.Kind}
 				st := byOp[k]
 				if st == nil {
-					st = &opStats{}
+					st = &aggStats{}
 					byOp[k] = st
 				}
-				st.count += ss.Count
-				st.errorCount += ss.ErrorCount
-				if ss.P50Us > 0 || ss.P95Us > 0 || ss.P99Us > 0 {
-					st.aggP50Sum += ss.P50Us * ss.Count
-					st.aggP95Sum += ss.P95Us * ss.Count
-					st.aggP99Sum += ss.P99Us * ss.Count
-					st.aggCount += ss.Count
-				}
+				st.foldSpanFallback(ss.Count, ss.ErrorCount, ss.P50Us, ss.P95Us, ss.P99Us)
 			}
 		}
 	}
@@ -346,25 +340,15 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 		return nil, err
 	}
 
-	type bucketStats struct {
-		count, errorCount               int64
-		aggP50Sum, aggP95Sum, aggP99Sum int64
-		aggCount                        int64
-	}
-	byBucket := make(map[time.Time]*bucketStats)
+	byBucket := make(map[time.Time]*aggStats)
 	for _, a := range aggs {
 		b := a.Bucket.Truncate(interval)
 		st, ok := byBucket[b]
 		if !ok {
-			st = &bucketStats{}
+			st = &aggStats{}
 			byBucket[b] = st
 		}
-		st.count += a.Count
-		st.errorCount += a.ErrorCount
-		st.aggP50Sum += a.P50Us * a.Count
-		st.aggP95Sum += a.P95Us * a.Count
-		st.aggP99Sum += a.P99Us * a.Count
-		st.aggCount += a.Count
+		st.foldAggregate(a.Count, a.ErrorCount, a.P50Us, a.P95Us, a.P99Us)
 	}
 
 	if fbFrom, ok := narrowFallback(from, to); ok {
@@ -375,15 +359,10 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 				b := a.Bucket.Truncate(interval)
 				st := byBucket[b]
 				if st == nil {
-					st = &bucketStats{}
+					st = &aggStats{}
 					byBucket[b] = st
 				}
-				st.count += a.Count
-				st.errorCount += a.ErrorCount
-				st.aggP50Sum += a.P50Us * a.Count
-				st.aggP95Sum += a.P95Us * a.Count
-				st.aggP99Sum += a.P99Us * a.Count
-				st.aggCount += a.Count
+				st.foldAggregate(a.Count, a.ErrorCount, a.P50Us, a.P95Us, a.P99Us)
 			}
 		} else {
 			spanBuckets, err := s.repo.QuerySpanTimeseries(projectID, svcName, operation, fbFrom, to, int64(interval.Seconds()))
@@ -394,17 +373,10 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 				b := sb.Bucket.Truncate(interval)
 				st := byBucket[b]
 				if st == nil {
-					st = &bucketStats{}
+					st = &aggStats{}
 					byBucket[b] = st
 				}
-				st.count += sb.Count
-				st.errorCount += sb.ErrorCount
-				if sb.P50Us > 0 || sb.P95Us > 0 || sb.P99Us > 0 {
-					st.aggP50Sum += sb.P50Us * sb.Count
-					st.aggP95Sum += sb.P95Us * sb.Count
-					st.aggP99Sum += sb.P99Us * sb.Count
-					st.aggCount += sb.Count
-				}
+				st.foldSpanFallback(sb.Count, sb.ErrorCount, sb.P50Us, sb.P95Us, sb.P99Us)
 			}
 		}
 	}

@@ -48,14 +48,7 @@ func (h *traceExclusionHandlers) ServeHTTP(w http.ResponseWriter, r *http.Reques
 func (h *traceExclusionHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	projectID := parseInt64Param(r, "project_id", 1)
 	exclusions, err := h.repo.ListTraceExclusions(projectID)
-	if err != nil {
-		writeServerError(w, r, "failed to list trace exclusions", err)
-		return
-	}
-	if exclusions == nil {
-		exclusions = []repository.TraceExclusion{}
-	}
-	writeJSON(w, http.StatusOK, exclusions)
+	writeListJSON(w, r, "trace exclusions", exclusions, err)
 }
 
 func (h *traceExclusionHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {

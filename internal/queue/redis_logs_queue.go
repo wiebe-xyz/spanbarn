@@ -2,10 +2,6 @@ package queue
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-
-	"github.com/redis/go-redis/v9"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 )
@@ -18,38 +14,14 @@ const (
 // PublishLogs serialises log records as JSON and LPUSHes them to the logs queue
 // in batches. Called by the reader pod's LogsHandler.
 func (q *RedisQueue) PublishLogs(ctx context.Context, records []model.LogRecord) error {
-	for i := 0; i < len(records); i += logsQueueBatchSize {
-		end := i + logsQueueBatchSize
-		if end > len(records) {
-			end = len(records)
-		}
-		data, err := json.Marshal(records[i:end])
-		if err != nil {
-			return fmt.Errorf("queue: marshal logs: %w", err)
-		}
-		if err := q.client.LPush(ctx, LogsQueueKey, data).Err(); err != nil {
-			return fmt.Errorf("queue: lpush logs: %w", err)
-		}
-	}
-	return nil
+	return publishBatch(ctx, q, LogsQueueKey, "logs", logsQueueBatchSize, records)
 }
 
 // ConsumeLogs blocks for up to brpopTimeout waiting for a batch from the logs
 // queue. Returns nil, nil when the queue is empty.
 // Called by the writer pod's logs consumer goroutine.
 func (q *RedisQueue) ConsumeLogs(ctx context.Context) ([]model.LogRecord, error) {
-	result, err := q.client.BRPop(ctx, brpopTimeout, LogsQueueKey).Result()
-	if err == redis.Nil {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("queue: brpop logs: %w", err)
-	}
-	var records []model.LogRecord
-	if err := json.Unmarshal([]byte(result[1]), &records); err != nil {
-		return nil, fmt.Errorf("queue: unmarshal logs: %w", err)
-	}
-	return records, nil
+	return consumeBatch[model.LogRecord](ctx, q, LogsQueueKey, "logs")
 }
 
 // LogsPublisher implements ingest.LogsRepository by publishing records to the

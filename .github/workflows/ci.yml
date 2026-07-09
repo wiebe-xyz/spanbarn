@@ -120,3 +120,20 @@ jobs:
               (cd "$dir" && python -m build)
             fi
           done < <(find . "${prune[@]}" \( -name pyproject.toml -o -name requirements.txt \) -print)
+
+  quality:
+    runs-on: [self-hosted, build]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Quality gate
+        shell: bash
+        env:
+          # Job-scoped module cache — same cross-repo race avoidance as the
+          # `code` job (see its note). The gate fetches gocyclo/dupl via `go run`.
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+        run: bash scripts/quality-gate.sh

@@ -104,15 +104,7 @@ func (h *projectHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 
 	projects, err := h.repo.ListProjects()
-	if err != nil {
-		writeServerError(w, r, "failed to list projects", err)
-		return
-	}
-	if projects == nil {
-		projects = []repository.Project{}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(projects)
+	writeListJSON(w, r, "projects", projects, err)
 }
 
 func (h *projectHandlers) handleDelete(w http.ResponseWriter, r *http.Request, id int64) {

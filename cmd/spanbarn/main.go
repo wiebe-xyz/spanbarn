@@ -91,6 +91,18 @@ func run() error {
 	}
 }
 
+// registerAuthRoutes wires the login route (rate-limited with a per-account
+// throttle and a post-login cache warm) and the logout route onto mux. Shared
+// by every serving mode.
+func registerAuthRoutes(mux *http.ServeMux, cfg config.Config, userAuth *auth.UserAuthenticator, sessionMgr *auth.SessionManager, querySvc *service.QueryService, logger *slog.Logger) {
+	loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
+	loginRL := api.RateLimitMiddleware(loginLimiter, "login")
+	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
+		api.WarmLoginCaches(context.Background(), querySvc, logger)
+	})))
+	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+}
+
 // runStandalone is the all-in-one single-node mode (docker-compose, small
 // self-hosted installs). No Redis queue required. Reads go to a dedicated
 // read-only DB connection so the writer goroutines are never starved by
@@ -197,18 +209,8 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		logger.Info("litestream active: writer runs PASSIVE WAL checkpoints; Litestream owns WAL truncation")
 	}
 
-	retentionCfg := retention.Config{
-		FullRetentionHours:        cfg.RetentionFullHours,
-		InterestingRetentionHours: cfg.RetentionInterestingHours,
-		BoringRetentionMinutes:    cfg.BoringRetentionMinutes,
-		ErrorRetentionDays:        cfg.RetentionErrorDays,
-		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
-		MetricsRetentionDays:      cfg.MetricsRetentionDays,
-		LogRetentionHours:         cfg.LogRetentionHours,
-		ErrorLogRetentionDays:     cfg.ErrorLogRetentionDays,
-		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
-	}
-	repo.SetDeleteBatchYield(time.Duration(cfg.RetentionDeleteBatchYieldMS) * time.Millisecond)
+	retentionCfg := retentionConfigFrom(cfg)
+	repo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
 	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
@@ -260,22 +262,8 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		defer queryCache.Close()
 	}
 
-	serverCfg := api.ServerConfig{
-		APIKey:             cfg.APIKey,
-		MaxBodyBytes:       cfg.MaxBodyBytes,
-		AllowedOrigins:     cfg.AllowedOrigins,
-		Version:            Version,
-		Environment:        cfg.Environment,
-		MetricsToken:       cfg.MetricsToken,
-		LoginRate:          cfg.LoginRatePerMinute,
-		IngestRate:         cfg.IngestRatePerMinute,
-		APIRate:            cfg.APIRatePerMinute,
-		SessionSecret:      cfg.SessionSecret,
-		PublicURL:          cfg.PublicURL,
-		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
-		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
-		FunnelBarnProject:  cfg.FunnelBarnProject,
-	}
+	serverCfg := serverConfigFrom(cfg)
+	serverCfg.MetricsToken = cfg.MetricsToken
 	// Mutations (trace exclusions, alerts CRUD) still use the write repo.
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger,
 		api.WithRepository(repo),
@@ -301,12 +289,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	api.WarmCaches(ctx, queryRepo, querySvc.Cache(), logger)
 
 	mux := http.NewServeMux()
-	loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
-	loginRL := api.RateLimitMiddleware(loginLimiter, "login")
-	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
-		api.WarmLoginCaches(context.Background(), querySvc, logger)
-	})))
-	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+	registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
 	mux.Handle("/", apiServer.Handler())
 
 	httpServer := &http.Server{
@@ -422,7 +405,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 			if cfg.QueryTimeoutSeconds > 0 {
 				roRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 			}
-			keyLookup = &readOnlyKeyLookupAdapter{repo: roRepo}
+			keyLookup = &readOnlyKeyLookupAdapter{keyLookupAdapter{repo: roRepo}}
 
 			sessionMgr = auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
 			userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
@@ -454,21 +437,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	}
 	authorizer := auth.NewAuthorizer(staticKeyHash, keyLookup, logger)
 
-	serverCfg := api.ServerConfig{
-		APIKey:             cfg.APIKey,
-		MaxBodyBytes:       cfg.MaxBodyBytes,
-		AllowedOrigins:     cfg.AllowedOrigins,
-		Version:            Version,
-		Environment:        cfg.Environment,
-		LoginRate:          cfg.LoginRatePerMinute,
-		IngestRate:         cfg.IngestRatePerMinute,
-		APIRate:            cfg.APIRatePerMinute,
-		SessionSecret:      cfg.SessionSecret,
-		PublicURL:          cfg.PublicURL,
-		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
-		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
-		FunnelBarnProject:  cfg.FunnelBarnProject,
-	}
+	serverCfg := serverConfigFrom(cfg)
 	// Trace buffer: holds spans for up to 10 min then applies ratio-based
 	// sampling per (project, operation). Error traces always pass intact.
 	var ratioLookup ingest.SampleRatioLookup
@@ -528,12 +497,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 	mux := http.NewServeMux()
 	if sessionMgr != nil && userAuth != nil {
-		loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
-		loginRL := api.RateLimitMiddleware(loginLimiter, "login")
-		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
-			api.WarmLoginCaches(context.Background(), querySvc, logger)
-		})))
-		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+		registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
 	}
 	mux.Handle("/", apiServer.Handler())
 
@@ -684,22 +648,8 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		defer queryCache.Close()
 	}
 
-	serverCfg := api.ServerConfig{
-		APIKey:             cfg.APIKey,
-		MaxBodyBytes:       cfg.MaxBodyBytes,
-		AllowedOrigins:     cfg.AllowedOrigins,
-		Version:            Version,
-		Environment:        cfg.Environment,
-		MetricsToken:       cfg.MetricsToken,
-		LoginRate:          cfg.LoginRatePerMinute,
-		IngestRate:         cfg.IngestRatePerMinute,
-		APIRate:            cfg.APIRatePerMinute,
-		SessionSecret:      cfg.SessionSecret,
-		PublicURL:          cfg.PublicURL,
-		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
-		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
-		FunnelBarnProject:  cfg.FunnelBarnProject,
-	}
+	serverCfg := serverConfigFrom(cfg)
+	serverCfg.MetricsToken = cfg.MetricsToken
 	// No ingest handler — OTLP goes to the reader pod per ingress rules.
 	apiServer := api.NewServerWithQuery(serverCfg, nil, querySvc, sessionMgr, logger,
 		api.WithRepository(repo),
@@ -710,12 +660,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
 	}
-	loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
-	loginRL := api.RateLimitMiddleware(loginLimiter, "login")
-	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
-		api.WarmLoginCaches(context.Background(), querySvc, logger)
-	})))
-	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+	registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
 	mux.Handle("/", apiServer.Handler())
 	logger.Info("writer API ready")
 
@@ -861,19 +806,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionRepo := repository.NewRepository(db.DB)
 	retentionRepo.SetQueryTimeout(5 * time.Minute)
 	retentionRepo.SetWriteScheduler(scheduler)
-	retentionRepo.SetDeleteBatchYield(time.Duration(cfg.RetentionDeleteBatchYieldMS) * time.Millisecond)
+	retentionRepo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
 
-	retentionCfg := retention.Config{
-		FullRetentionHours:        cfg.RetentionFullHours,
-		InterestingRetentionHours: cfg.RetentionInterestingHours,
-		BoringRetentionMinutes:    cfg.BoringRetentionMinutes,
-		ErrorRetentionDays:        cfg.RetentionErrorDays,
-		AggregateRetentionDays:    cfg.RetentionAggregatedDays,
-		MetricsRetentionDays:      cfg.MetricsRetentionDays,
-		LogRetentionHours:         cfg.LogRetentionHours,
-		ErrorLogRetentionDays:     cfg.ErrorLogRetentionDays,
-		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
-	}
+	retentionCfg := retentionConfigFrom(cfg)
 	retentionWorker := retention.NewRetentionWorker(retentionRepo, accumulator, retentionCfg, logger)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
@@ -925,18 +860,18 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 // not crash the process.
 func buildOIDCClient(cfg config.Config, logger *slog.Logger) *auth.OIDCClient {
 	oc := auth.OIDCConfig{
-		Issuer:            cfg.OIDCIssuer,
-		ClientID:          cfg.OIDCClientID,
-		ClientSecret:      cfg.OIDCClientSecret,
-		RedirectURL:       cfg.OIDCRedirectURL,
-		RequiredGroup:     cfg.OIDCRequiredGroup,
-		ResourceAudiences: cfg.OIDCResourceAudiences,
-		CLIClientID:       cfg.OIDCCLIClientID,
+		Issuer:            cfg.OIDC.Issuer,
+		ClientID:          cfg.OIDC.ClientID,
+		ClientSecret:      cfg.OIDC.ClientSecret,
+		RedirectURL:       cfg.OIDC.RedirectURL,
+		RequiredGroup:     cfg.OIDC.RequiredGroup,
+		ResourceAudiences: cfg.OIDC.ResourceAudiences,
+		CLIClientID:       cfg.OIDC.CLIClientID,
 	}
 	// The sb CLI's device-code tokens carry the CLI client id as their
 	// audience, so accept it as a resource audience automatically.
-	if cfg.OIDCCLIClientID != "" {
-		oc.ResourceAudiences = append(oc.ResourceAudiences, cfg.OIDCCLIClientID)
+	if cfg.OIDC.CLIClientID != "" {
+		oc.ResourceAudiences = append(oc.ResourceAudiences, cfg.OIDC.CLIClientID)
 	}
 	if !oc.Enabled() {
 		return nil
@@ -1005,11 +940,11 @@ func checkpointMode() repository.CheckpointMode {
 // POSTs SpanBarn's own OTLP metrics to its ingest endpoint so the Metrics page
 // always has live data (dogfooding). A nil rec or disabled config is a no-op.
 func startSelfMetrics(ctx context.Context, cfg config.Config, wg *sync.WaitGroup, rec *selfmetrics.Recorder, logger *slog.Logger) {
-	if rec == nil || cfg.SelfMetricsDisabled {
+	if rec == nil || cfg.Self.MetricsDisabled {
 		return
 	}
-	endpoint := cfg.SelfEndpoint
-	apiKey := cfg.SelfAPIKey
+	endpoint := cfg.Self.Endpoint
+	apiKey := cfg.Self.APIKey
 	if endpoint == "" {
 		// In standalone mode (no explicit endpoint) post to ourselves so the
 		// feature works out of the box without extra env vars.
@@ -1030,7 +965,7 @@ func startSelfMetrics(ctx context.Context, cfg config.Config, wg *sync.WaitGroup
 	reporter := selfmetrics.NewReporter(
 		rec,
 		endpoint, apiKey,
-		time.Duration(cfg.SelfMetricsIntervalSec)*time.Second,
+		time.Duration(cfg.Self.MetricsIntervalSec)*time.Second,
 		map[string]string{
 			"service.name":     "spanbarn",
 			"spanbarn.mode":    cfg.Mode,
@@ -1039,7 +974,7 @@ func startSelfMetrics(ctx context.Context, cfg config.Config, wg *sync.WaitGroup
 		startNano,
 		logger,
 	)
-	logger.Info("self-metrics enabled", "endpoint", endpoint, "interval_s", cfg.SelfMetricsIntervalSec)
+	logger.Info("self-metrics enabled", "endpoint", endpoint, "interval_s", cfg.Self.MetricsIntervalSec)
 	safeGo("self-metrics", wg, func() { reporter.Run(ctx) })
 }
 
@@ -1090,22 +1025,11 @@ func (a *keyLookupAdapter) TouchAPIKey(id int64) error {
 }
 
 // readOnlyKeyLookupAdapter is used by the ingest pod which opens the database
-// in read-only mode. TouchAPIKey is a no-op because last_used_at can be
-// inferred from the presence of spans in the writer's database.
+// in read-only mode. It reuses keyLookupAdapter's GetAPIKeyByHash and overrides
+// TouchAPIKey to a no-op, because last_used_at can be inferred from the presence
+// of spans in the writer's database.
 type readOnlyKeyLookupAdapter struct {
-	repo *repository.Repository
-}
-
-func (a *readOnlyKeyLookupAdapter) GetAPIKeyByHash(keyHash string) (auth.APIKeyRecord, error) {
-	k, err := a.repo.GetAPIKeyByHash(keyHash)
-	if err != nil {
-		return auth.APIKeyRecord{}, err
-	}
-	return auth.APIKeyRecord{
-		ID:        k.ID,
-		ProjectID: k.ProjectID,
-		Scope:     k.Scope,
-	}, nil
+	keyLookupAdapter
 }
 
 func (a *readOnlyKeyLookupAdapter) TouchAPIKey(_ int64) error { return nil }
@@ -1172,7 +1096,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 			if cfg.QueryTimeoutSeconds > 0 {
 				roRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 			}
-			keyLookup = &readOnlyKeyLookupAdapter{repo: roRepo}
+			keyLookup = &readOnlyKeyLookupAdapter{keyLookupAdapter{repo: roRepo}}
 			logger.Info("read-only DB attached for failover reads", "path", cfg.DBPath)
 		}
 	}
@@ -1209,21 +1133,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 		defer queryCache.Close()
 	}
 
-	serverCfg := api.ServerConfig{
-		APIKey:             cfg.APIKey,
-		MaxBodyBytes:       cfg.MaxBodyBytes,
-		AllowedOrigins:     cfg.AllowedOrigins,
-		Version:            Version,
-		Environment:        cfg.Environment,
-		LoginRate:          cfg.LoginRatePerMinute,
-		IngestRate:         cfg.IngestRatePerMinute,
-		APIRate:            cfg.APIRatePerMinute,
-		SessionSecret:      cfg.SessionSecret,
-		PublicURL:          cfg.PublicURL,
-		FunnelBarnEndpoint: cfg.FunnelBarnEndpoint,
-		FunnelBarnAPIKey:   cfg.FunnelBarnAPIKey,
-		FunnelBarnProject:  cfg.FunnelBarnProject,
-	}
+	serverCfg := serverConfigFrom(cfg)
 	opts := []api.ServerOption{api.WithAuthorizer(authorizer)}
 	if roRepo != nil {
 		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
@@ -1239,12 +1149,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 
 	mux := http.NewServeMux()
 	if sessionMgr != nil && userAuth != nil {
-		loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
-		loginRL := api.RateLimitMiddleware(loginLimiter, "login")
-		mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
-			api.WarmLoginCaches(context.Background(), querySvc, logger)
-		})))
-		mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+		registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
 	}
 	mux.Handle("/", apiServer.Handler())
 

@@ -8,7 +8,7 @@ export XDG_CACHE_HOME := $(CURDIR)/.cache
 export GOCACHE := $(CURDIR)/.cache/go-build
 export GOMODCACHE := $(CURDIR)/.cache/go-mod
 
-.PHONY: help setup test lint build dev docker-build spec-check
+.PHONY: help setup test lint build dev docker-build spec-check quality-gate
 
 help:
 	@printf '%s\n' \
@@ -16,6 +16,7 @@ help:
 		'  setup        bootstrap local tooling when manifests exist' \
 		'  test         run spec checks plus available language tests' \
 		'  lint         run available linters and static checks' \
+		'  quality-gate enforce coverage/complexity/file-length/duplication baselines' \
 		'  build        run available build checks' \
 		'  dev          start the local compose stack if available' \
 		'  docker-build build placeholder images when Dockerfiles exist' \
@@ -130,6 +131,11 @@ lint:
 		fi; \
 	done; \
 	if [ "$$found" -eq 0 ]; then echo "[lint] no code manifests found yet"; fi
+
+quality-gate:
+	@set -eu; \
+	for dir in $(GOCACHE) $(GOMODCACHE); do mkdir -p "$$dir"; done; \
+	bash scripts/quality-gate.sh
 
 build:
 	@set -eu; \
