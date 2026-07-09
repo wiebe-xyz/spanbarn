@@ -696,6 +696,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	startSelfMetrics(ctx, cfg, &wg, writerSelfRec, logger)
 
 	scheduler := writescheduler.New()
+	scheduler.SetLogger(logger)
 	repo.SetWriteScheduler(scheduler)
 
 	boringPolicy := worker.NewCachedBoringPolicy(repo, 30*time.Second)
