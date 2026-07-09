@@ -189,9 +189,11 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/export", apiRL(sessionAuth(eh)))
 	}
 
-	// Setup endpoint — public, no auth required.
+	// Setup endpoint — intentionally public (onboarding), but rate-limited and
+	// GET-only + read-idempotent (see handleSetup) so anonymous callers cannot
+	// use it to spam projects or amplify writes.
 	if s.repo != nil {
-		s.mux.HandleFunc("/api/v1/setup/{slug}", s.handleSetup)
+		s.mux.Handle("/api/v1/setup/{slug}", apiRL(http.HandlerFunc(s.handleSetup)))
 	}
 
 	// E2E session endpoint — API key auth required; only works when e2e_enabled.

@@ -65,6 +65,7 @@ type Config struct {
 	OIDCResourceAudiences       []string // SPANBARN_OIDC_RESOURCE_AUDIENCES — CSV of audiences accepted on IamBarn access tokens (sb CLI)
 	OIDCCLIClientID             string   // SPANBARN_OIDC_CLI_CLIENT_ID — public IamBarn client the sb device-code flow uses
 	GRPCAddr                    string   // SPANBARN_GRPC_ADDR — gRPC listener for OTLP; empty = disabled
+	TrustProxy                  bool     // SPANBARN_TRUST_PROXY — trust X-Forwarded-For/X-Real-IP for client IP (rate limiting); defaults to true outside dev
 }
 
 // Load reads configuration from SPANBARN_* environment variables with defaults.
@@ -142,6 +143,12 @@ func Load() Config {
 		}
 	}
 
+	// Trust proxy headers for client-IP determination by default in every named
+	// deployment (which always sits behind Caddy/Nginx), but not in dev where the
+	// app is reached directly and headers would be client-spoofable. Explicit
+	// SPANBARN_TRUST_PROXY overrides either way.
+	cfg.TrustProxy = getenvBool("SPANBARN_TRUST_PROXY", !cfg.IsDevEnvironment())
+
 	return cfg
 }
 
@@ -189,6 +196,18 @@ func getenvInt64(key string, fallback int64) int64 {
 	if raw := os.Getenv(key); raw != "" {
 		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
 			return parsed
+		}
+	}
+	return fallback
+}
+
+func getenvBool(key string, fallback bool) bool {
+	if raw := os.Getenv(key); raw != "" {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
 		}
 	}
 	return fallback

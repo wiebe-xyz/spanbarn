@@ -97,6 +97,18 @@ func TestSessionOrReadKey_IamBarnJWT(t *testing.T) {
 		}
 	})
 
+	t.Run("write method rejected as read-only → 403", func(t *testing.T) {
+		for _, m := range []string{http.MethodDelete, http.MethodPost, http.MethodPut} {
+			req := httptest.NewRequest(m, "/api/v1/projects/1", nil)
+			req.Header.Set("Authorization", "Bearer "+sign(base()))
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("%s: expected 403 (read-only), got %d", m, rec.Code)
+			}
+		}
+	})
+
 	t.Run("disallowed role → 403", func(t *testing.T) {
 		c := base()
 		c["roles"] = []string{"member"}
