@@ -43,7 +43,7 @@ make dev      # docker compose up --build
 baseline recorded in that script. Baselines only move in the improving direction
 — when you legitimately improve a metric, ratchet its baseline DOWN in the script.
 Enforced metrics:
-- **Coverage** — `internal/service` and `internal/repository` stay above their floors.
+- **Coverage** — `internal/service` and `internal/repository` stay above their package floors, AND every individual source file in them stays above a per-file floor (no fully-uncovered file hiding behind well-covered siblings; migration DDL and test files excluded).
 - **Cyclomatic complexity** — the count of functions over gocyclo 15 may not grow.
 - **File length** — the count of files over 500 lines may not grow, and no file may exceed a hard cap.
 - **Duplication** — the count of `dupl` clone groups may not grow.

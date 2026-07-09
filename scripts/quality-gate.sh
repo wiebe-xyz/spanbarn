@@ -24,6 +24,11 @@ DUPL="go run github.com/mibk/dupl@v1.1.0"
 # ---- Baselines (ratchet DOWN as the codebase improves) ---------------------
 COVERAGE_SERVICE_MIN=${COVERAGE_SERVICE_MIN:-65.0}
 COVERAGE_REPOSITORY_MIN=${COVERAGE_REPOSITORY_MIN:-66.0}
+# Per-file floor: no single source file in the gated packages may sit at/under
+# this coverage, so a fully-untested file can't hide behind well-covered
+# siblings in the same package aggregate. Migration DDL and test files are
+# excluded. "0% files" are the primary target.
+MIN_FILE_COVERAGE=${MIN_FILE_COVERAGE:-1.0}
 
 COMPLEXITY=${COMPLEXITY:-15}          # gocyclo score considered "complex"
 CYCLO_MAX_COUNT=${CYCLO_MAX_COUNT:-27} # max functions allowed over COMPLEXITY
@@ -47,10 +52,12 @@ geq() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 >= b+0)}'; }
 
 echo "== quality gate =="
 
-# --- 1. Coverage ------------------------------------------------------------
+# --- 1. Coverage (per-package aggregate + per-file floor) -------------------
 # The trailing whitespace class ([[:space:]]) matches the package line
 # (".../internal/repository<TAB>...") without matching the ".../repository/migrations" line.
-cov_out=$(go test -cover ./internal/service/... ./internal/repository/... 2>/dev/null)
+cover_profile=$(mktemp)
+trap 'rm -f "$cover_profile"' EXIT
+cov_out=$(go test -cover -coverprofile="$cover_profile" ./internal/service/... ./internal/repository/... 2>/dev/null)
 svc_cov=$(echo "$cov_out" | grep -E 'internal/service[[:space:]]' | grep -oE '[0-9.]+% of statements' | grep -oE '[0-9.]+' | head -1)
 repo_cov=$(echo "$cov_out" | grep -E 'internal/repository[[:space:]]' | grep -oE '[0-9.]+% of statements' | grep -oE '[0-9.]+' | head -1)
 : "${svc_cov:=0}"; : "${repo_cov:=0}"
@@ -64,6 +71,28 @@ if geq "$repo_cov" "$COVERAGE_REPOSITORY_MIN"; then
   note "coverage repository:   $repo_cov% (min $COVERAGE_REPOSITORY_MIN%)" "OK"
 else
   note "coverage repository:   $repo_cov% (min $COVERAGE_REPOSITORY_MIN%)" "FAIL"; fail=1
+fi
+
+# Per-file floor — aggregate the profile per file (excluding migration DDL and
+# test files) and flag any at/under MIN_FILE_COVERAGE.
+under_floor=$(awk -v min="$MIN_FILE_COVERAGE" '
+  NR>1 {
+    split($1, a, ":"); f=a[1];
+    if (index(f, "/migrations/") > 0) next;
+    if (f ~ /_test\.go$/) next;
+    total[f]+=$2; if ($3>0) covered[f]+=$2;
+  }
+  END {
+    for (f in total) {
+      pct = total[f]>0 ? 100*covered[f]/total[f] : 100;
+      if (pct <= min+0) printf "%.1f%%  %s\n", pct, f;
+    }
+  }' "$cover_profile" | sort -n)
+if [ -z "$under_floor" ]; then
+  note "per-file floor $MIN_FILE_COVERAGE% (no 0% files):" "OK"
+else
+  note "per-file floor $MIN_FILE_COVERAGE% (no 0% files):" "FAIL"; fail=1
+  echo "    files at/under floor:"; printf '%s\n' "$under_floor" | sed 's/^/      /'
 fi
 
 # --- 2. Cyclomatic complexity (production code only) ------------------------
