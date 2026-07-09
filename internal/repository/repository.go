@@ -149,6 +149,65 @@ func (r *Repository) execHighExpectingRows(query string, args ...any) error {
 // guarantees the checkpoint a contention-free window.
 func (r *Repository) SetDeleteBatchYield(d time.Duration) { r.deleteBatchYield = d }
 
+// deleteOlderThanPerProject deletes rows older than cutoff from a project-keyed
+// table one project at a time. A global `WHERE timeCol < ?` cannot use these
+// tables' indexes (they all lead with project_id) and so full-scans the whole
+// table every batch — on a large table that holds the single write connection
+// for minutes and wedges the writer (observed: DeleteMetricsOlderThan at 469s).
+// Adding `project_id = ?` lets each bounded DELETE SEEK the (project_id, timeCol)
+// index instead.
+//
+// The distinct project_ids are enumerated with a loose-index-scan (each step
+// seeks the next project_id via the leading index column), so it is cheap even
+// on a huge table and — unlike reading the projects table — also covers rows of
+// deleted projects. table and timeCol are trusted internal constants.
+func (r *Repository) deleteOlderThanPerProject(ctx context.Context, table, timeCol string, cutoff time.Time) (int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		WITH RECURSIVE dp(pid) AS (
+			SELECT MIN(project_id) FROM `+table+`
+			UNION ALL
+			SELECT (SELECT MIN(project_id) FROM `+table+` WHERE project_id > dp.pid)
+			FROM dp WHERE dp.pid IS NOT NULL
+		)
+		SELECT pid FROM dp WHERE pid IS NOT NULL`)
+	if err != nil {
+		return 0, err
+	}
+	var pids []int64
+	for rows.Next() {
+		var pid int64
+		if err := rows.Scan(&pid); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		pids = append(pids, pid)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	q := "DELETE FROM " + table + " WHERE rowid IN (SELECT rowid FROM " + table +
+		" WHERE project_id = ? AND " + timeCol + " < ? LIMIT ?)"
+	var total int64
+	for _, pid := range pids {
+		pid := pid
+		n, err := r.batchedDelete(ctx, func() (int64, error) {
+			res, e := r.db.ExecContext(ctx, q, pid, cutoff, retentionDeleteBatch)
+			if e != nil {
+				return 0, e
+			}
+			m, _ := res.RowsAffected()
+			return m, nil
+		})
+		total += n
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
 // batchedDelete repeatedly runs exec — a single retentionDeleteBatch-bounded
 // DELETE returning the rows it affected — through the low-priority write queue
 // until a batch deletes fewer than retentionDeleteBatch rows (i.e. the tail is
