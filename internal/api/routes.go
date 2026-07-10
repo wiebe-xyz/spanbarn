@@ -44,6 +44,9 @@ func (s *Server) registerRoutes() {
 	// configured server-side, so the SPA can fall through to local login.
 	s.mux.HandleFunc("/api/v1/oidc/login", s.handleOIDCLogin)
 	s.mux.HandleFunc("/api/v1/oidc/callback", s.handleOIDCCallback)
+	// Post-logout landing — IamBarn redirects here after end-session; clears
+	// the local session cookies. Public: it runs while tearing a session down.
+	s.mux.HandleFunc("/api/v1/oidc/logout-complete", s.handleOIDCLogoutComplete)
 
 	// Internal ingest endpoint — used by ingest pods to forward spans to writer.
 	// Uses raw API key auth (pod-to-pod, no need for SHA256/DB lookup).

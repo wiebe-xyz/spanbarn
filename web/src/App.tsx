@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { DashboardLayout } from './components/DashboardLayout'
 import { TimeRangeProvider } from './contexts/TimeRangeContext'
 
@@ -53,7 +53,9 @@ function App() {
               <Route path="alerts" element={<AlertsPage />} />
               <Route path="metrics" element={<MetricsPage />} />
               <Route path="settings" element={<SettingsPage />} />
-              <Route path="profile" element={<ProfilePage />} />
+              <Route path="account" element={<ProfilePage />} />
+              {/* Back-compat: the account page used to live at /profile. */}
+              <Route path="profile" element={<Navigate to="/account" replace />} />
             </Route>
           </Routes>
         </Suspense>

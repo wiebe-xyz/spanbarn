@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -31,6 +32,11 @@ type OIDCConfig struct {
 	RequiredGroup     string   // SPANBARN_OIDC_REQUIRED_GROUP — defaults to "spanbarn-users"
 	ResourceAudiences []string // SPANBARN_OIDC_RESOURCE_AUDIENCES — CSV of audiences accepted on IamBarn access tokens (sb CLI)
 	CLIClientID       string   // SPANBARN_OIDC_CLI_CLIENT_ID — public IamBarn client the sb device-code flow uses
+	// PostLogoutRedirectURI is where IamBarn sends the browser back after an
+	// RP-initiated /oauth2/end-session logout. It must be registered on the
+	// client's post-logout allowlist. SPANBARN_OIDC_POST_LOGOUT_REDIRECT_URI;
+	// defaults to the RedirectURL origin + /api/v1/oidc/logout-complete.
+	PostLogoutRedirectURI string
 }
 
 // SelfConfig groups self-instrumentation (SpanBarn reporting to itself/BugBarn).
@@ -158,12 +164,13 @@ func Load() Config {
 		Mode:                getenv("SPANBARN_MODE", "standalone"),
 		WriterURL:           os.Getenv("SPANBARN_WRITER_URL"),
 		OIDC: OIDCConfig{
-			Issuer:        os.Getenv("SPANBARN_OIDC_ISSUER"),
-			ClientID:      os.Getenv("SPANBARN_OIDC_CLIENT_ID"),
-			ClientSecret:  os.Getenv("SPANBARN_OIDC_CLIENT_SECRET"),
-			RedirectURL:   os.Getenv("SPANBARN_OIDC_REDIRECT_URL"),
-			RequiredGroup: getenv("SPANBARN_OIDC_REQUIRED_GROUP", "spanbarn-users"),
-			CLIClientID:   os.Getenv("SPANBARN_OIDC_CLI_CLIENT_ID"),
+			Issuer:                os.Getenv("SPANBARN_OIDC_ISSUER"),
+			ClientID:              os.Getenv("SPANBARN_OIDC_CLIENT_ID"),
+			ClientSecret:          os.Getenv("SPANBARN_OIDC_CLIENT_SECRET"),
+			RedirectURL:           os.Getenv("SPANBARN_OIDC_REDIRECT_URL"),
+			RequiredGroup:         getenv("SPANBARN_OIDC_REQUIRED_GROUP", "spanbarn-users"),
+			CLIClientID:           os.Getenv("SPANBARN_OIDC_CLI_CLIENT_ID"),
+			PostLogoutRedirectURI: os.Getenv("SPANBARN_OIDC_POST_LOGOUT_REDIRECT_URI"),
 		},
 		GRPCAddr: getenv("SPANBARN_GRPC_ADDR", ":4317"),
 	}
@@ -189,6 +196,16 @@ func Load() Config {
 	// app is reached directly and headers would be client-spoofable. Explicit
 	// SPANBARN_TRUST_PROXY overrides either way.
 	cfg.TrustProxy = getenvBool("SPANBARN_TRUST_PROXY", !cfg.IsDevEnvironment())
+
+	// Default the post-logout redirect to this app's own logout-complete
+	// landing (which clears the local session) on the same origin as the OIDC
+	// callback, so RP-initiated logout works with zero extra config and no
+	// hard-coded host.
+	if cfg.OIDC.PostLogoutRedirectURI == "" && cfg.OIDC.RedirectURL != "" {
+		if u, err := url.Parse(cfg.OIDC.RedirectURL); err == nil && u.Scheme != "" && u.Host != "" {
+			cfg.OIDC.PostLogoutRedirectURI = u.Scheme + "://" + u.Host + "/api/v1/oidc/logout-complete"
+		}
+	}
 
 	return cfg
 }

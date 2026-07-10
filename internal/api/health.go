@@ -50,10 +50,19 @@ func (s *Server) handleClientConfig(w http.ResponseWriter, _ *http.Request) {
 		}
 		resp["oidc"] = oidcCfg
 		if issuer != "" {
-			resp["iambarn"] = map[string]string{
+			iambarnCfg := map[string]string{
 				"issuer":      issuer,
 				"profile_url": issuer + "/admin#profile",
 			}
+			// Non-secret values the hosted widgets + logout flow need in the
+			// browser: the client id and the post-logout landing URL.
+			if oc.ClientID != "" {
+				iambarnCfg["client_id"] = oc.ClientID
+			}
+			if oc.PostLogoutRedirectURI != "" {
+				iambarnCfg["post_logout_redirect_uri"] = oc.PostLogoutRedirectURI
+			}
+			resp["iambarn"] = iambarnCfg
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -106,6 +106,17 @@ func HandleLogout() http.HandlerFunc {
 			MaxAge:   -1,
 			SameSite: http.SameSiteLaxMode,
 		})
+		// Clear the OIDC access token used for iambarn-proxy requests, so a
+		// local logout fully tears down the browser's IamBarn linkage too.
+		http.SetCookie(w, &http.Cookie{
+			Name:     "spanbarn_iam_token",
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   isSecureRequest(r),
+			SameSite: http.SameSiteLaxMode,
+		})
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

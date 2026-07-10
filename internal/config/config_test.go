@@ -2,6 +2,24 @@ package config
 
 import "testing"
 
+func TestPostLogoutRedirectURIDefault(t *testing.T) {
+	t.Setenv("SPANBARN_OIDC_REDIRECT_URL", "https://spanbarn.example.com/api/v1/oidc/callback")
+	cfg := Load()
+	want := "https://spanbarn.example.com/api/v1/oidc/logout-complete"
+	if cfg.OIDC.PostLogoutRedirectURI != want {
+		t.Fatalf("derived post-logout uri = %q, want %q", cfg.OIDC.PostLogoutRedirectURI, want)
+	}
+}
+
+func TestPostLogoutRedirectURIExplicitWins(t *testing.T) {
+	t.Setenv("SPANBARN_OIDC_REDIRECT_URL", "https://spanbarn.example.com/api/v1/oidc/callback")
+	t.Setenv("SPANBARN_OIDC_POST_LOGOUT_REDIRECT_URI", "https://spanbarn.example.com/bye")
+	cfg := Load()
+	if cfg.OIDC.PostLogoutRedirectURI != "https://spanbarn.example.com/bye" {
+		t.Fatalf("explicit post-logout uri not honoured: %q", cfg.OIDC.PostLogoutRedirectURI)
+	}
+}
+
 func TestValidateSessionSecret(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -160,6 +160,30 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, next, http.StatusFound)
 }
 
+// handleOIDCLogoutComplete is the landing endpoint IamBarn redirects the
+// browser back to after an RP-initiated /oauth2/end-session logout (it is the
+// registered post_logout_redirect_uri). By the time we get here the IamBarn
+// session is already ended; this clears SpanBarn's own session cookies and
+// sends the user to the login page. It is intentionally public — the whole
+// point is to run while tearing a session down.
+func (s *Server) handleOIDCLogoutComplete(w http.ResponseWriter, r *http.Request) {
+	secure := isSecureRequest(r)
+	for _, name := range []string{"session", "spanbarn_auth_method", "spanbarn_iam_token"} {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: name != "spanbarn_auth_method", // the auth-method hint is JS-readable
+			Secure:   secure,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
+	// Never cache the teardown; a replayed 302 must not resurrect a cleared UI.
+	w.Header().Set("Cache-Control", "no-store")
+	http.Redirect(w, r, "/login", http.StatusFound)
+}
+
 func oidcShortLivedCookie(name, value string, secure bool) *http.Cookie {
 	maxAge := int(oidcCookieTTL.Seconds())
 	if value == "" {

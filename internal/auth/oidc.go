@@ -33,6 +33,11 @@ type OIDCConfig struct {
 	// CLIClientID is the public IamBarn client the `sb` CLI uses for the
 	// device-code flow. Advertised to the CLI via /api/v1/client-config.
 	CLIClientID string
+
+	// PostLogoutRedirectURI is where IamBarn returns the browser after an
+	// RP-initiated /oauth2/end-session logout. Advertised to the SPA via
+	// /api/v1/client-config so the hosted widgets can build the logout URL.
+	PostLogoutRedirectURI string
 }
 
 // Enabled reports whether all four required fields are present.
