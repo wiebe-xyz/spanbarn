@@ -117,6 +117,74 @@ func TestClientConfigIAMBarnProfileURL(t *testing.T) {
 	}
 }
 
+func TestClientConfigIAMBarnWidgetFields(t *testing.T) {
+	srv := newServer(t, "1.0.0")
+	srv.SetOIDCClient(auth.NewOIDCClient(auth.OIDCConfig{
+		Issuer:                "https://iam.example.com/",
+		ClientID:              "spanbarn-web",
+		ClientSecret:          "secret",
+		RedirectURL:           "https://spanbarn.example.com/api/v1/oidc/callback",
+		PostLogoutRedirectURI: "https://spanbarn.example.com/api/v1/oidc/logout-complete",
+	}))
+
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/api/v1/client-config")
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		IAMBarn struct {
+			ClientID              string `json:"client_id"`
+			PostLogoutRedirectURI string `json:"post_logout_redirect_uri"`
+		} `json:"iambarn"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.IAMBarn.ClientID != "spanbarn-web" {
+		t.Fatalf("client_id = %q, want spanbarn-web", body.IAMBarn.ClientID)
+	}
+	if body.IAMBarn.PostLogoutRedirectURI != "https://spanbarn.example.com/api/v1/oidc/logout-complete" {
+		t.Fatalf("post_logout_redirect_uri = %q", body.IAMBarn.PostLogoutRedirectURI)
+	}
+}
+
+func TestOIDCLogoutComplete(t *testing.T) {
+	srv := newServer(t, "1.0.0")
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Get(ts.URL + "/api/v1/oidc/logout-complete")
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected 302, got %d", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "/login" {
+		t.Fatalf("expected redirect to /login, got %q", loc)
+	}
+	cleared := map[string]bool{"session": false, "spanbarn_auth_method": false, "spanbarn_iam_token": false}
+	for _, c := range resp.Cookies() {
+		if _, ok := cleared[c.Name]; ok && c.MaxAge < 0 {
+			cleared[c.Name] = true
+		}
+	}
+	for name, ok := range cleared {
+		if !ok {
+			t.Fatalf("cookie %q was not cleared", name)
+		}
+	}
+}
+
 func TestMeEndpoint(t *testing.T) {
 	sm := auth.NewSessionManager("test-secret", 3600)
 	token, err := sm.Create("alice")

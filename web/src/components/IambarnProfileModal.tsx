@@ -73,7 +73,7 @@ export function IambarnProfileModal({ issuer: _issuer, proxyUrl: _proxyUrl, trig
     >
       <button
         style={{ ...menuItem, color: 'var(--text)' }}
-        onClick={() => { onClose(); navigate('/profile') }}
+        onClick={() => { onClose(); navigate('/account') }}
       >
         <UserCog size={16} />
         Account settings

@@ -2,23 +2,7 @@ import { useEffect, useState, type CSSProperties, type ReactElement } from 'reac
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
 import { fetchClientConfig, isOIDCSession } from '../api/clientConfig'
-
-let scriptPromise: Promise<void> | null = null
-
-function loadWidgetScript(src: string): Promise<void> {
-  if (!scriptPromise) {
-    scriptPromise = new Promise<void>((resolve, reject) => {
-      if (document.querySelector('script[data-iambarn-widget]')) { resolve(); return }
-      const el = document.createElement('script')
-      el.src = src
-      el.dataset['iambarnWidget'] = ''
-      el.onload = () => resolve()
-      el.onerror = () => { scriptPromise = null; reject(new Error('Failed to load widget')) }
-      document.head.appendChild(el)
-    })
-  }
-  return scriptPromise
-}
+import { loadWidgetScript } from '../api/iambarnWidget'
 
 const widgetStyle: CSSProperties = {
   ...({
@@ -57,7 +41,7 @@ export function ProfilePage(): ReactElement {
 
       void fetchClientConfig().then((cfg) => {
         const issuer = cfg.iambarn?.issuer
-        if (issuer) void loadWidgetScript(`${issuer}/widget/iambarn-widget.iife.js`)
+        if (issuer) void loadWidgetScript(issuer)
       })
       setStatus('ready')
     })()
@@ -100,7 +84,7 @@ export function ProfilePage(): ReactElement {
             Your session has expired. Sign in again to manage your account.
           </p>
           <a
-            href={'/api/v1/oidc/login?next=/profile'}
+            href={'/api/v1/oidc/login?next=/account'}
             className="btn"
             style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
           >

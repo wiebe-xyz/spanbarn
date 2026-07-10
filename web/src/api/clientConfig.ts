@@ -5,28 +5,11 @@
 export interface ClientConfig {
   funnelbarn?: { endpoint?: string; api_key?: string; project?: string }
   oidc?: { enabled?: boolean; loginURL?: string }
-  iambarn?: { profile_url?: string; issuer?: string }
-}
-
-export interface IambarnUser {
-  display_name: string
-  email: string
-  picture: string
-}
-
-// Fetch user info from SpanBarn's own session endpoint — same-origin, no
-// cross-origin cookie issues. The issuer parameter is kept for API compat.
-// The issuer parameter is unused — user info now comes from SpanBarn's own
-// session endpoint to avoid cross-origin cookie issues.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function fetchIambarnMe(_issuer: string): Promise<IambarnUser | null> {
-  try {
-    const res = await fetch('/api/v1/me', { credentials: 'same-origin' })
-    if (!res.ok) return null
-    const data = await (res.json() as Promise<{ display_name: string }>)
-    return { display_name: data.display_name, email: '', picture: '' }
-  } catch {
-    return null
+  iambarn?: {
+    profile_url?: string
+    issuer?: string
+    client_id?: string
+    post_logout_redirect_uri?: string
   }
 }
 

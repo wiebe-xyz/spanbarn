@@ -1,11 +1,21 @@
-import { type ReactElement, useEffect, useRef, useState } from 'react'
+import { type CSSProperties, type ReactElement, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Activity, BarChart2, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe, ScrollText } from 'lucide-react'
-import { api } from '../api/client'
-import { fetchClientConfig, isOIDCSession, fetchIambarnMe, type IambarnUser } from '../api/clientConfig'
+import { useIambarnSession, iambarnLogout } from '../api/iambarnWidget'
 import { IambarnProfileModal } from './IambarnProfileModal'
 import { MobileTabBar } from './MobileTabBar'
 import { PWAInstallBanner } from './PWAInstallBanner'
+
+// Theme the hosted <iambarn-user-badge> to match SpanBarn's tokens.
+const badgeStyle: CSSProperties = {
+  ...({
+    '--iambarn-bg': 'transparent',
+    '--iambarn-text': 'var(--text)',
+    '--iambarn-muted': 'var(--text-muted)',
+    '--iambarn-accent': 'var(--accent)',
+  } as CSSProperties),
+  width: '100%',
+}
 
 const navItems = [
   { to: '/', icon: Activity, label: 'Services' },
@@ -25,8 +35,7 @@ const navItems = [
 export function DashboardLayout(): ReactElement {
   const navigate = useNavigate()
   const location = useLocation()
-  const [iambarnIssuer, setIambarnIssuer] = useState<string | null>(null)
-  const [iambarnUser, setIambarnUser] = useState<IambarnUser | null>(null)
+  const session = useIambarnSession()
   const [profileOpen, setProfileOpen] = useState(false)
   const chipRef = useRef<HTMLButtonElement>(null)
 
@@ -39,31 +48,9 @@ export function DashboardLayout(): ReactElement {
     }
   }, [location.pathname])
 
-  useEffect(() => {
-    // Only sessions opened via the iambarn OIDC callback have a remote
-    // profile to manage — local password sessions do not.
-    if (!isOIDCSession()) return
-    let cancelled = false
-    void fetchClientConfig().then(async (cfg) => {
-      const issuer = cfg.iambarn?.issuer
-      if (cancelled || !issuer) return
-      setIambarnIssuer(issuer)
-      const user = await fetchIambarnMe(issuer)
-      if (!cancelled) setIambarnUser(user)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
   const handleLogout = async () => {
     setProfileOpen(false)
-    try {
-      await api.logout()
-    } catch {
-      // ignore
-    }
-    navigate('/login', { replace: true })
+    await iambarnLogout(session, () => navigate('/login', { replace: true }))
   }
 
   return (
@@ -126,7 +113,7 @@ export function DashboardLayout(): ReactElement {
 
         {/* User actions */}
         <div style={{ padding: '0.75rem 0.5rem', borderTop: '1px solid var(--border)' }}>
-          {iambarnIssuer ? (
+          {session ? (
             <button
               ref={chipRef}
               onClick={() => setProfileOpen(true)}
@@ -137,53 +124,11 @@ export function DashboardLayout(): ReactElement {
                 background: 'transparent',
                 border: 'none',
                 color: 'var(--text-muted)',
-                gap: '0.625rem',
+                padding: '0.25rem',
               }}
             >
-              {iambarnUser?.picture ? (
-                <img
-                  src={iambarnUser.picture}
-                  alt=""
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: '50%',
-                    objectFit: 'cover',
-                    flexShrink: 0,
-                  }}
-                  onError={(e) => {
-                    ;(e.currentTarget as HTMLImageElement).style.display = 'none'
-                  }}
-                />
-              ) : (
-                <div
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: '50%',
-                    background: 'var(--accent)',
-                    color: '#fff',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    flexShrink: 0,
-                  }}
-                >
-                  {(iambarnUser?.display_name || iambarnUser?.email || '?')[0].toUpperCase()}
-                </div>
-              )}
-              <span
-                style={{
-                  fontSize: '0.875rem',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {iambarnUser?.display_name || iambarnUser?.email || 'Profile'}
-              </span>
+              {/* Hosted IAMBarn avatar + name (+email), fed same-origin via the proxy. */}
+              <iambarn-user-badge server-url={session.proxyUrl} show-email="" style={badgeStyle} />
             </button>
           ) : (
             <button
@@ -202,10 +147,10 @@ export function DashboardLayout(): ReactElement {
             </button>
           )}
         </div>
-        {profileOpen && iambarnIssuer && (
+        {profileOpen && session && (
           <IambarnProfileModal
-            issuer={iambarnIssuer}
-            proxyUrl={window.location.origin + '/api/iam-proxy'}
+            issuer={session.issuer}
+            proxyUrl={session.proxyUrl}
             triggerRef={chipRef}
             onClose={() => setProfileOpen(false)}
             onLogout={handleLogout}
