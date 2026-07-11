@@ -26,7 +26,87 @@ const (
 	oidcNonceCookie = "spanbarn_oidc_nonce"
 	oidcNextCookie  = "spanbarn_oidc_next"
 	oidcCookieTTL   = 10 * time.Minute
+
+	// iamAccessCookie holds the raw iambarn access_token used to authenticate
+	// outbound /api/iam-proxy requests. HttpOnly: JS on the page never sees it.
+	iamAccessCookie = "spanbarn_iam_token"
+	// iamRefreshCookie holds the iambarn refresh_token. Same protections as
+	// the access token, but longer-lived — treated like a password, never
+	// exposed to page JS. It rotates on every use (handleIAMProxy overwrites
+	// it after each silent refresh).
+	iamRefreshCookie = "spanbarn_iam_refresh"
+	// iamRefreshTokenTTL mirrors iambarn's refresh_token lifetime: 30 days
+	// from issuance, extended another 30 days on every use. There's no
+	// absolute cap, so each refresh resets this cookie's Max-Age too.
+	iamRefreshTokenTTL = 30 * 24 * time.Hour
+	// iamAccessFallbackTTL is used only if a token response omits
+	// expires_in (shouldn't happen against iambarn, but a zero Expiry can't
+	// be turned into a sane cookie Expires).
+	iamAccessFallbackTTL = 15 * time.Minute
 )
+
+// setIAMTokenCookies stores the iambarn access/refresh token pair as
+// HttpOnly, Secure cookies. Used both on initial OIDC login and after a
+// silent refresh (handleIAMProxy), where it also carries the rotated
+// refresh_token that must overwrite the one just spent.
+//
+// When a refresh_token is present, the access-token cookie is given the same
+// long Max-Age as the refresh cookie rather than the access token's real
+// ~15m lifetime: staleness is now detected server-side via a 401 from
+// IamBarn and repaired with a silent refresh (see handleIAMProxy), so the
+// browser must keep sending the cookie well past 15 minutes for that path to
+// ever run. Expiring it on the access token's real lifetime would have the
+// browser discard it before a refresh could happen, reproducing the exact
+// forced-relogin bug this is fixing. Without a refresh_token there's nothing
+// to renew with, so it keeps the short, real expiry as before.
+func setIAMTokenCookies(w http.ResponseWriter, accessToken, refreshToken string, accessExpiresAt time.Time, secure bool) {
+	accessExp := accessExpiresAt
+	if accessExp.IsZero() {
+		accessExp = time.Now().Add(iamAccessFallbackTTL)
+	}
+	if refreshToken != "" {
+		accessExp = time.Now().Add(iamRefreshTokenTTL)
+	}
+	if accessToken != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     iamAccessCookie,
+			Value:    accessToken,
+			Path:     "/",
+			Expires:  accessExp,
+			HttpOnly: true,
+			Secure:   secure,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
+	if refreshToken != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     iamRefreshCookie,
+			Value:    refreshToken,
+			Path:     "/",
+			Expires:  time.Now().Add(iamRefreshTokenTTL),
+			HttpOnly: true,
+			Secure:   secure,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
+}
+
+// clearIAMTokenCookies removes both iambarn token cookies, e.g. on logout or
+// once a refresh has failed with an invalid_grant (the refresh token is dead
+// and retrying it would only replay-revoke the token family further).
+func clearIAMTokenCookies(w http.ResponseWriter, secure bool) {
+	for _, name := range []string{iamAccessCookie, iamRefreshCookie} {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   secure,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
+}
 
 // handleOIDCLogin starts the OIDC authorization-code flow by redirecting the
 // browser to the iambarn authorize endpoint. State + nonce are stored in
@@ -121,20 +201,13 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
-	// Store the OIDC access token so SpanBarn can proxy iambarn-profile widget
-	// API calls server-to-server. HttpOnly prevents JS access; the proxy
-	// handler reads it for outbound Bearer requests to IamBarn.
-	if exchanged.AccessToken != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name:     "spanbarn_iam_token",
-			Value:    exchanged.AccessToken,
-			Path:     "/",
-			Expires:  expires,
-			HttpOnly: true,
-			Secure:   secure,
-			SameSite: http.SameSiteLaxMode,
-		})
-	}
+	// Store the iambarn access/refresh token pair so SpanBarn can proxy
+	// iambarn-profile widget API calls server-to-server. HttpOnly prevents JS
+	// access; handleIAMProxy reads them for outbound Bearer requests to
+	// IamBarn and silently refreshes the access token via the refresh token
+	// once it expires, instead of forcing the user through a full re-login.
+	// RefreshToken is empty if the client wasn't granted offline_access.
+	setIAMTokenCookies(w, exchanged.AccessToken, exchanged.RefreshToken, exchanged.ExpiresAt, secure)
 	// Non-HttpOnly hint so the SPA can show OIDC-specific UI only for
 	// sessions that actually came from iambarn. Same expiry as the session.
 	http.SetCookie(w, &http.Cookie{
@@ -186,8 +259,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 // point is to run while tearing a session down.
 func (s *Server) handleOIDCLogoutComplete(w http.ResponseWriter, r *http.Request) {
 	secure := isSecureRequest(r)
+	clearIAMTokenCookies(w, secure)
 	jsReadable := map[string]bool{"spanbarn_auth_method": true, "spanbarn_iam_profile": true}
-	for _, name := range []string{"session", "spanbarn_auth_method", "spanbarn_iam_token", "spanbarn_iam_profile"} {
+	for _, name := range []string{"session", "spanbarn_auth_method", "spanbarn_iam_profile"} {
 		http.SetCookie(w, &http.Cookie{
 			Name:     name,
 			Value:    "",

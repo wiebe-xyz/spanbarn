@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
@@ -62,6 +64,13 @@ type Server struct {
 	logger         *slog.Logger
 	oidc           *auth.OIDCClient
 	selfMetrics    *selfmetrics.Recorder
+
+	// iamRefresh collapses concurrent iam-proxy requests that discover the
+	// same expired refresh_token into a single token-endpoint call. Refresh
+	// tokens are single-use and rotate on every call, so firing two
+	// refreshes with the same token would have iambarn reject the second as
+	// a replay and revoke the whole token family. Zero value is ready to use.
+	iamRefresh singleflight.Group
 }
 
 // SetSelfMetricsRecorder wires the self-metrics recorder so the request
