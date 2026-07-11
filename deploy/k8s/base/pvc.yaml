@@ -6,7 +6,7 @@ spec:
   accessModes:
     - ReadWriteOnce
   storageClassName: spanbarn-local
-  volumeName: spanbarn-data-storage
+  volumeName: spanbarn-fast-storage
   resources:
     requests:
-      storage: 200Gi
+      storage: 5Gi
