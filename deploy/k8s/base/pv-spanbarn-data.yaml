@@ -1,17 +1,36 @@
+# One-time cluster-setup resource — apply manually, NOT part of the rolling deploy.
+#
+# Production SQLite lives on a HARD-CAPPED 5 GB ext4 loopback on the layer7-prod
+# ROOT SSD (vda), not the slow vdb network volume. The loopback both makes SQLite
+# fast (SSD random I/O) and hard-bounds spanbarn's disk use so a Litestream local
+# cache runaway (cf. the 117 GB staging incident) can only fill its own 5 GB, never
+# the node.
+#
+# Node-level setup on layer7-prod (host mount namespace; survives reboot via fstab):
+#   fallocate -l 5G /var/lib/rancher/k3s/storage/spanbarn-fast.img
+#   mkfs.ext4 -m 0 /var/lib/rancher/k3s/storage/spanbarn-fast.img
+#   mkdir -p /var/lib/rancher/k3s/storage/spanbarn-fast
+#   echo '/var/lib/rancher/k3s/storage/spanbarn-fast.img /var/lib/rancher/k3s/storage/spanbarn-fast ext4 loop,rw 0 0' >> /etc/fstab
+#   mount /var/lib/rancher/k3s/storage/spanbarn-fast
+#   chown 100:101 /var/lib/rancher/k3s/storage/spanbarn-fast   # spanbarn uid:gid
+#
+# The previous vdb PV (spanbarn-data-storage, /mnt/storage/spanbarn, 200Gi, Retain)
+# is kept as rollback — its data is retained on delete. To roll back, clear its
+# claimRef and point the PVC's volumeName back at it.
 apiVersion: v1
 kind: PersistentVolume
 metadata:
-  name: spanbarn-data-storage
+  name: spanbarn-fast-storage
 spec:
   capacity:
-    storage: 200Gi
+    storage: 5Gi
   volumeMode: Filesystem
   accessModes:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
   storageClassName: spanbarn-local
   local:
-    path: /mnt/storage/spanbarn
+    path: /var/lib/rancher/k3s/storage/spanbarn-fast
   nodeAffinity:
     required:
       nodeSelectorTerms:
