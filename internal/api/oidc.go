@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -144,6 +145,23 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
+	// Non-HttpOnly profile snapshot (name/email/picture) taken from the ID token
+	// so the header chip can render the live avatar + name with no runtime
+	// dependency on IamBarn (the access token is short-lived; this is stable for
+	// the session). Values are non-secret identity attributes the user owns.
+	profile, _ := json.Marshal(map[string]string{
+		"name":    username,
+		"email":   claims.Email,
+		"picture": claims.Picture,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "spanbarn_iam_profile",
+		Value:    base64.RawURLEncoding.EncodeToString(profile),
+		Path:     "/",
+		Expires:  expires,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	})
 	// Clear the short-lived state/nonce/next cookies.
 	http.SetCookie(w, oidcShortLivedCookie(oidcStateCookie, "", secure))
 	http.SetCookie(w, oidcShortLivedCookie(oidcNonceCookie, "", secure))
@@ -168,13 +186,14 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 // point is to run while tearing a session down.
 func (s *Server) handleOIDCLogoutComplete(w http.ResponseWriter, r *http.Request) {
 	secure := isSecureRequest(r)
-	for _, name := range []string{"session", "spanbarn_auth_method", "spanbarn_iam_token"} {
+	jsReadable := map[string]bool{"spanbarn_auth_method": true, "spanbarn_iam_profile": true}
+	for _, name := range []string{"session", "spanbarn_auth_method", "spanbarn_iam_token", "spanbarn_iam_profile"} {
 		http.SetCookie(w, &http.Cookie{
 			Name:     name,
 			Value:    "",
 			Path:     "/",
 			MaxAge:   -1,
-			HttpOnly: name != "spanbarn_auth_method", // the auth-method hint is JS-readable
+			HttpOnly: !jsReadable[name],
 			Secure:   secure,
 			SameSite: http.SameSiteLaxMode,
 		})

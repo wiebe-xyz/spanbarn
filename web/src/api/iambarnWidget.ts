@@ -18,6 +18,32 @@ export interface IambarnSession {
   postLogoutRedirectUri?: string
 }
 
+export interface IambarnProfile {
+  name: string
+  email: string
+  picture: string
+}
+
+// Read the profile snapshot (name/email/picture) the OIDC callback stored in the
+// non-HttpOnly `spanbarn_iam_profile` cookie. This lets the header render the
+// live avatar + name with zero runtime dependency on IamBarn — it never blanks
+// out when an access token expires. Returns null for non-OIDC sessions.
+export function getIambarnProfile(): IambarnProfile | null {
+  if (typeof document === 'undefined') return null
+  const raw = document.cookie
+    .split('; ')
+    .find((c) => c.startsWith('spanbarn_iam_profile='))
+    ?.slice('spanbarn_iam_profile='.length)
+  if (!raw) return null
+  try {
+    const json = atob(raw.replace(/-/g, '+').replace(/_/g, '/'))
+    const p = JSON.parse(json) as Partial<IambarnProfile>
+    return { name: p.name ?? '', email: p.email ?? '', picture: p.picture ?? '' }
+  } catch {
+    return null
+  }
+}
+
 let scriptPromise: Promise<void> | null = null
 
 // Inject the hosted widget bundle once; every custom element is registered by
