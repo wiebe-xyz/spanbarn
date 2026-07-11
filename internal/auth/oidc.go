@@ -82,10 +82,12 @@ func (c *OIDCClient) AuthorizeURL(state, nonce string) (string, error) {
 	return c.oauth.AuthCodeURL(state, oidcv3.Nonce(nonce)), nil
 }
 
-// ExchangeResult holds the parsed claims and the raw OIDC access token.
+// ExchangeResult holds the parsed claims and the raw OIDC tokens.
 type ExchangeResult struct {
-	Claims      OIDCClaims
-	AccessToken string
+	Claims       OIDCClaims
+	AccessToken  string
+	RefreshToken string    // empty if the client/grant did not include offline_access
+	ExpiresAt    time.Time // zero if the token response omitted expires_in
 }
 
 // ExchangeFull swaps an authorization code for tokens, verifies the ID token,
@@ -116,7 +118,65 @@ func (c *OIDCClient) ExchangeFull(ctx context.Context, code, nonce string) (Exch
 	if err := idToken.Claims(&claims); err != nil {
 		return ExchangeResult{}, fmt.Errorf("oidc: decode claims: %w", err)
 	}
-	return ExchangeResult{Claims: claims, AccessToken: tok.AccessToken}, nil
+	return ExchangeResult{
+		Claims:       claims,
+		AccessToken:  tok.AccessToken,
+		RefreshToken: tok.RefreshToken,
+		ExpiresAt:    tok.Expiry,
+	}, nil
+}
+
+// ErrRefreshInvalid indicates iambarn rejected the refresh_token outright
+// (invalid_grant: revoked, expired, already-rotated/replayed, or the user was
+// suspended). The caller must not retry the same token — it is dead — and
+// should fall back to a full interactive login.
+var ErrRefreshInvalid = errors.New("oidc: refresh token invalid")
+
+// RefreshedTokens holds the renewed access/refresh token pair from a
+// refresh_token grant. Iambarn rotates the refresh token on every use, so
+// RefreshToken here always replaces whatever was previously stored.
+type RefreshedTokens struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    time.Time
+}
+
+// Refresh exchanges a refresh_token for a new access/refresh token pair.
+// It authenticates as the client using the same style already established
+// for the authorization_code exchange (c.oauth carries ClientID/ClientSecret
+// and golang.org/x/oauth2 picks and caches the auth style per token
+// endpoint), so no separate client-auth logic is needed here.
+//
+// Refresh tokens are single-use: iambarn invalidates the one sent here the
+// moment it issues the replacement. Callers MUST NOT invoke Refresh
+// concurrently with the same refreshToken — a second call with an
+// already-rotated token is treated as a replay and revokes the whole token
+// family. Callers are responsible for serializing refreshes per session
+// (e.g. via singleflight).
+func (c *OIDCClient) Refresh(ctx context.Context, refreshToken string) (RefreshedTokens, error) {
+	if err := c.ensureReady(ctx); err != nil {
+		return RefreshedTokens{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	tok, err := c.oauth.TokenSource(ctx, &oauth2.Token{RefreshToken: refreshToken}).Token()
+	if err != nil {
+		var retrieveErr *oauth2.RetrieveError
+		if errors.As(err, &retrieveErr) && retrieveErr.ErrorCode == "invalid_grant" {
+			return RefreshedTokens{}, ErrRefreshInvalid
+		}
+		return RefreshedTokens{}, fmt.Errorf("oidc: refresh token: %w", err)
+	}
+	// golang.org/x/oauth2 falls back to the refresh_token we sent if the
+	// response omits one (its accommodation for non-rotating providers), so
+	// tok.RefreshToken is never empty here on a successful response —
+	// iambarn always rotates, so in practice this is always the new token.
+	return RefreshedTokens{
+		AccessToken:  tok.AccessToken,
+		RefreshToken: tok.RefreshToken,
+		ExpiresAt:    tok.Expiry,
+	}, nil
 }
 
 // Exchange swaps an authorization code for tokens and verifies the ID token's
@@ -217,7 +277,13 @@ func (c *OIDCClient) ensureReady(ctx context.Context) error {
 		ClientSecret: c.cfg.ClientSecret,
 		Endpoint:     prov.Endpoint(),
 		RedirectURL:  c.cfg.RedirectURL,
-		Scopes:       []string{oidcv3.ScopeOpenID, "profile", "email"},
+		// offline_access asks iambarn for a refresh_token alongside the
+		// short-lived (15m) access_token, so the session can be renewed
+		// silently instead of forcing a full re-login every 15 minutes.
+		// Requesting it here is required even though it's allowed on the
+		// client record — iambarn only grants what's both allowed AND
+		// explicitly requested.
+		Scopes: []string{oidcv3.ScopeOpenID, "profile", "email", "offline_access"},
 	}
 	return nil
 }
