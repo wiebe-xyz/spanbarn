@@ -229,6 +229,7 @@ type OIDCClaims struct {
 	Email             string   `json:"email"`
 	PreferredUsername string   `json:"preferred_username"`
 	Name              string   `json:"name"`
+	Picture           string   `json:"picture"`
 	Groups            []string `json:"groups"`
 	Roles             []string `json:"roles"`
 	TokenUse          string   `json:"token_use"` // "access_token" for resource-server validation

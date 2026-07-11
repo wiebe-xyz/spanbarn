@@ -1,18 +1,9 @@
-import { useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import { useRef, useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { Activity, BarChart2, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut, ScrollText } from 'lucide-react'
-import { useIambarnSession, iambarnLogout } from '../api/iambarnWidget'
+import { useIambarnSession, iambarnLogout, getIambarnProfile } from '../api/iambarnWidget'
+import { isOIDCSession } from '../api/clientConfig'
 import { IambarnProfileModal } from './IambarnProfileModal'
-
-const badgeStyle: CSSProperties = {
-  ...({
-    '--iambarn-bg': 'transparent',
-    '--iambarn-text': 'var(--text-muted)',
-    '--iambarn-muted': 'var(--text-muted)',
-    '--iambarn-accent': 'var(--accent)',
-  } as CSSProperties),
-  width: '100%',
-}
 
 const tabs = [
   { to: '/', icon: Activity, label: 'Services' },
@@ -24,6 +15,8 @@ const tabs = [
 export function MobileTabBar(): ReactElement {
   const [moreOpen, setMoreOpen] = useState(false)
   const session = useIambarnSession()
+  const oidc = isOIDCSession()
+  const profile = getIambarnProfile()
   const [profileOpen, setProfileOpen] = useState(false)
   const profileBtnRef = useRef<HTMLButtonElement>(null)
   const navigate = useNavigate()
@@ -218,7 +211,7 @@ export function MobileTabBar(): ReactElement {
             <Settings size={18} />
             Settings
           </NavLink>
-          {session && (
+          {oidc && (
             <button
               ref={profileBtnRef}
               onClick={() => {
@@ -232,14 +225,33 @@ export function MobileTabBar(): ReactElement {
                 width: '100%',
                 padding: '0.625rem 0.75rem',
                 borderRadius: '0.5rem',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+                color: 'var(--text-muted)',
                 background: 'transparent',
                 border: 'none',
                 cursor: 'pointer',
                 textAlign: 'left',
               }}
             >
-              {/* Hosted IAMBarn avatar + name (+email), fed same-origin via the proxy. */}
-              <iambarn-user-badge server-url={session.proxyUrl} show-email="" style={badgeStyle} />
+              {profile?.picture ? (
+                <img
+                  src={profile.picture}
+                  alt=""
+                  style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: '#fff',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, flexShrink: 0,
+                  }}
+                >
+                  {(profile?.name || profile?.email || '?')[0].toUpperCase()}
+                </div>
+              )}
+              {profile?.name || profile?.email || 'Account'}
             </button>
           )}
           <button
@@ -336,10 +348,10 @@ export function MobileTabBar(): ReactElement {
           More
         </button>
       </nav>
-      {profileOpen && session && (
+      {profileOpen && oidc && (
         <IambarnProfileModal
-          issuer={session.issuer}
-          proxyUrl={session.proxyUrl}
+          issuer={session?.issuer ?? ''}
+          proxyUrl={session?.proxyUrl ?? ''}
           triggerRef={profileBtnRef}
           onClose={() => setProfileOpen(false)}
           onLogout={handleLogout}

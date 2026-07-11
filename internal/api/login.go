@@ -117,6 +117,14 @@ func HandleLogout() http.HandlerFunc {
 			Secure:   isSecureRequest(r),
 			SameSite: http.SameSiteLaxMode,
 		})
+		// Clear the JS-readable profile snapshot used by the header chip.
+		http.SetCookie(w, &http.Cookie{
+			Name:     "spanbarn_iam_profile",
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			SameSite: http.SameSiteLaxMode,
+		})
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

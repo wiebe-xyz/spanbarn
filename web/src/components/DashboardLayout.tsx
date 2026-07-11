@@ -1,21 +1,11 @@
-import { type CSSProperties, type ReactElement, useEffect, useRef, useState } from 'react'
+import { type ReactElement, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Activity, BarChart2, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe, ScrollText } from 'lucide-react'
-import { useIambarnSession, iambarnLogout } from '../api/iambarnWidget'
+import { useIambarnSession, iambarnLogout, getIambarnProfile } from '../api/iambarnWidget'
+import { isOIDCSession } from '../api/clientConfig'
 import { IambarnProfileModal } from './IambarnProfileModal'
 import { MobileTabBar } from './MobileTabBar'
 import { PWAInstallBanner } from './PWAInstallBanner'
-
-// Theme the hosted <iambarn-user-badge> to match SpanBarn's tokens.
-const badgeStyle: CSSProperties = {
-  ...({
-    '--iambarn-bg': 'transparent',
-    '--iambarn-text': 'var(--text)',
-    '--iambarn-muted': 'var(--text-muted)',
-    '--iambarn-accent': 'var(--accent)',
-  } as CSSProperties),
-  width: '100%',
-}
 
 const navItems = [
   { to: '/', icon: Activity, label: 'Services' },
@@ -36,6 +26,8 @@ export function DashboardLayout(): ReactElement {
   const navigate = useNavigate()
   const location = useLocation()
   const session = useIambarnSession()
+  const oidc = isOIDCSession()
+  const profile = getIambarnProfile()
   const [profileOpen, setProfileOpen] = useState(false)
   const chipRef = useRef<HTMLButtonElement>(null)
 
@@ -113,7 +105,7 @@ export function DashboardLayout(): ReactElement {
 
         {/* User actions */}
         <div style={{ padding: '0.75rem 0.5rem', borderTop: '1px solid var(--border)' }}>
-          {session ? (
+          {oidc ? (
             <button
               ref={chipRef}
               onClick={() => setProfileOpen(true)}
@@ -124,11 +116,30 @@ export function DashboardLayout(): ReactElement {
                 background: 'transparent',
                 border: 'none',
                 color: 'var(--text-muted)',
-                padding: '0.25rem',
+                gap: '0.625rem',
               }}
             >
-              {/* Hosted IAMBarn avatar + name (+email), fed same-origin via the proxy. */}
-              <iambarn-user-badge server-url={session.proxyUrl} show-email="" style={badgeStyle} />
+              {/* SpanBarn-owned chip fed by the profile cookie — never blanks out. */}
+              {profile?.picture ? (
+                <img
+                  src={profile.picture}
+                  alt=""
+                  style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: 28, height: 28, borderRadius: '50%', background: 'var(--accent)', color: '#fff',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, flexShrink: 0,
+                  }}
+                >
+                  {(profile?.name || profile?.email || '?')[0].toUpperCase()}
+                </div>
+              )}
+              <span style={{ fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {profile?.name || profile?.email || 'Account'}
+              </span>
             </button>
           ) : (
             <button
@@ -147,10 +158,10 @@ export function DashboardLayout(): ReactElement {
             </button>
           )}
         </div>
-        {profileOpen && session && (
+        {profileOpen && oidc && (
           <IambarnProfileModal
-            issuer={session.issuer}
-            proxyUrl={session.proxyUrl}
+            issuer={session?.issuer ?? ''}
+            proxyUrl={session?.proxyUrl ?? ''}
             triggerRef={chipRef}
             onClose={() => setProfileOpen(false)}
             onLogout={handleLogout}
