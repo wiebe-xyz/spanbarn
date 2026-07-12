@@ -42,6 +42,14 @@ spec:
         - name: spanbarn
           port: 8080
 
+    # OIDC login/callback/logout write the server-side session row — writer only.
+    - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && PathPrefix(`/api/v1/oidc`)
+      kind: Rule
+      priority: 200
+      services:
+        - name: spanbarn
+          port: 8080
+
     # Well-known theme manifest served by the Go backend, not the SPA.
     # priority: 101 beats the static frontend catch-all.
     - match: (Host(`spanbarn.staging.wiebe.xyz`) || Host(`spanbarn-staging.nijmegen.wiebe.xyz`)) && Path(`/.well-known/iambarn-theme.json`)

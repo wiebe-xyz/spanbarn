@@ -37,6 +37,21 @@ export class ApiError extends Error {
   }
 }
 
+// scheduleSessionRefresh fires a throttled, fire-and-forget POST that lets
+// the backend rotate the OIDC tokens on the session row. Read-only replicas
+// serve stale sessions with an X-Session-Refresh-Due header; the POST is
+// routed to the writer by the ingress method rule.
+let lastSessionRefresh = 0
+function scheduleSessionRefresh(): void {
+  const now = Date.now()
+  if (now - lastSessionRefresh < 30_000) return
+  lastSessionRefresh = now
+  void fetch('/api/v1/session/refresh', {
+    method: 'POST',
+    credentials: 'same-origin',
+  }).catch(() => undefined)
+}
+
 export async function fetchJSON<T>(
   url: string,
   init?: RequestInit,
@@ -46,6 +61,11 @@ export async function fetchJSON<T>(
     credentials: 'same-origin',
     ...init,
   })
+
+  // Optional chaining: unit tests stub fetch with plain objects lacking headers.
+  if (res.headers?.get('X-Session-Refresh-Due') === '1') {
+    scheduleSessionRefresh()
+  }
 
   if (res.status === 401) {
     if (!window.location.pathname.includes('/login')) {
@@ -86,7 +106,9 @@ export const api = {
     }),
 
   logout: () =>
-    fetchJSON<{ status: string }>('/api/v1/logout', { method: 'POST' }),
+    fetchJSON<{ status: string; logout_url?: string }>('/api/v1/logout', {
+      method: 'POST',
+    }),
 
   getServices: (from: string, to: string, serverOnly = true) =>
     fetchJSON<ServiceSummary[]>(`/api/v1/services${qs({ from, to, server_only: serverOnly ? 'true' : undefined })}`),

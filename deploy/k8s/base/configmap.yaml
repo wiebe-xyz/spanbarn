@@ -18,3 +18,14 @@ data:
   SPANBARN_BUGBARN_ENDPOINT: "https://bugbarn.wiebe.xyz"
   SPANBARN_SELF_ENDPOINT: "http://spanbarn-ingest:8080"
   SPANBARN_REDIS_URL: "redis://spanbarn-redis:6379"
+  # Token-bound sessions: how long an OIDC session keeps being served with a
+  # stale access token while iambarn refresh fails TRANSIENTLY (network/5xx).
+  # invalid_grant never gets grace. SPANBARN_SESSION_TTL_SECONDS (default 12h)
+  # remains the absolute session cap.
+  SPANBARN_OIDC_REFRESH_GRACE_SECONDS: "3600"
+  # SPANBARN_TRUSTED_PROXIES is deliberately unset: outside dev the app then
+  # assumes TLS terminates upstream (Secure cookies + HSTS always on) instead
+  # of trusting a client-spoofable X-Forwarded-Proto. Set it to the ingress
+  # pod CIDRs only if per-request scheme detection is ever needed.
+  # SPANBARN_E2E_ENABLED stays unset (off) here; the testing/staging overlays
+  # enable it for CI Playwright. Production additionally hard-blocks e2e.

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -18,14 +19,16 @@ type loginResponse struct {
 }
 
 // HandleLogin returns an http.HandlerFunc for POST /api/v1/login.
-// onLoginSuccess is called (in the request goroutine) after a session is
-// created; pass nil to skip. The function should return quickly or launch its
-// own goroutine — the HTTP response is written immediately after the call.
+// A successful login creates a server-side session row (auth_method "local")
+// and hands the browser only the opaque handle. onLoginSuccess is called (in
+// the request goroutine) after a session is created; pass nil to skip. The
+// function should return quickly or launch its own goroutine — the HTTP
+// response is written immediately after the call.
 //
 // accountLimiter (may be nil) throttles attempts per-username under the "login"
 // category, so a distributed brute-force spread across many source IPs is still
 // bounded per account — the per-IP RateLimitMiddleware only limits a single IP.
-func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager, accountLimiter *RateLimiter, onLoginSuccess func()) http.HandlerFunc {
+func HandleLogin(userAuth *auth.UserAuthenticator, sessions *SessionService, accountLimiter *RateLimiter, onLoginSuccess func()) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_, span := apiTracer.Start(r.Context(), "api.login")
 		defer span.End()
@@ -54,7 +57,11 @@ func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager, acco
 			return
 		}
 
-		token, err := sm.Create(req.Username)
+		if sessions == nil {
+			writeError(w, http.StatusServiceUnavailable, "session unavailable", "")
+			return
+		}
+		token, expires, err := sessions.Create(req.Username, "local", nil)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create session", "")
 			return
@@ -68,7 +75,7 @@ func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager, acco
 			Name:     "session",
 			Value:    token,
 			Path:     "/",
-			Expires:  time.Now().Add(sm.TTL()),
+			Expires:  expires,
 			HttpOnly: true,
 			Secure:   isSecureRequest(r),
 			SameSite: http.SameSiteLaxMode,
@@ -80,21 +87,38 @@ func HandleLogin(userAuth *auth.UserAuthenticator, sm *auth.SessionManager, acco
 	}
 }
 
-// HandleLogout returns an http.HandlerFunc for POST /api/v1/logout.
-func HandleLogout() http.HandlerFunc {
+// HandleLogout returns an http.HandlerFunc for POST /api/v1/logout. It
+// destroys the server-side session row and, for OIDC sessions, best-effort
+// revokes the stored refresh token at the issuer and returns a logout_url —
+// the issuer's end-session URL with id_token_hint — that the SPA should
+// navigate to so the IamBarn session dies too (never a front-end-only
+// logout).
+func HandleLogout(sessions *SessionService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 			return
 		}
 
+		var logoutURL string
+		if sessions != nil {
+			if token := sessionToken(r); token != "" {
+				// Bound the best-effort revocation call: logout must respond
+				// even when the issuer hangs.
+				ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+				logoutURL = sessions.Logout(ctx, token)
+				cancel()
+			}
+		}
+
+		secure := isSecureRequest(r)
 		http.SetCookie(w, &http.Cookie{
 			Name:     "session",
 			Value:    "",
 			Path:     "/",
 			MaxAge:   -1,
 			HttpOnly: true,
-			Secure:   isSecureRequest(r),
+			Secure:   secure,
 			SameSite: http.SameSiteLaxMode,
 		})
 		// Clear the auth-method hint set by the OIDC callback so a
@@ -106,21 +130,15 @@ func HandleLogout() http.HandlerFunc {
 			MaxAge:   -1,
 			SameSite: http.SameSiteLaxMode,
 		})
-		// Clear the iambarn access/refresh tokens used for iambarn-proxy
-		// requests, so a local logout fully tears down the browser's IamBarn
-		// linkage too.
-		clearIAMTokenCookies(w, isSecureRequest(r))
-		// Clear the JS-readable profile snapshot used by the header chip.
-		http.SetCookie(w, &http.Cookie{
-			Name:     "spanbarn_iam_profile",
-			Value:    "",
-			Path:     "/",
-			MaxAge:   -1,
-			SameSite: http.SameSiteLaxMode,
-		})
+		// Clear raw-token cookies left behind by pre-session-store deploys.
+		clearLegacyIAMCookies(w, secure)
 
+		resp := map[string]string{"status": "ok"}
+		if logoutURL != "" {
+			resp["logout_url"] = logoutURL
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(resp)
 	}
 }

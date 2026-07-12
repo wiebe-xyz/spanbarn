@@ -11,6 +11,10 @@ patches:
     target:
       kind: Deployment
       name: spanbarn
+  - path: configmap-e2e-patch.yaml
+    target:
+      kind: ConfigMap
+      name: spanbarn-config
   - path: patch-ingest-strategy.yaml
     target:
       kind: Deployment

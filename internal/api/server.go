@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"golang.org/x/sync/singleflight"
-
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
@@ -33,6 +31,9 @@ type ServerConfig struct {
 	FunnelBarnEndpoint string
 	FunnelBarnAPIKey   string
 	FunnelBarnProject  string
+	// E2EEnabled explicitly opens the /api/v1/e2e/session endpoint on
+	// non-production environments (SPANBARN_E2E_ENABLED). Default off.
+	E2EEnabled bool
 }
 
 // Server is the HTTP server for SpanBarn.
@@ -55,7 +56,7 @@ type Server struct {
 	logsIngest     *ingest.LogsHandler
 	traceBuffer    *ingest.TraceBuffer
 	querySvc       *service.QueryService
-	sessionMgr     *auth.SessionManager
+	sessions       *SessionService
 	authorizer     *auth.Authorizer
 	repo           *repository.Repository
 	dbPath         string
@@ -64,13 +65,7 @@ type Server struct {
 	logger         *slog.Logger
 	oidc           *auth.OIDCClient
 	selfMetrics    *selfmetrics.Recorder
-
-	// iamRefresh collapses concurrent iam-proxy requests that discover the
-	// same expired refresh_token into a single token-endpoint call. Refresh
-	// tokens are single-use and rotate on every call, so firing two
-	// refreshes with the same token would have iambarn reject the second as
-	// a replay and revoke the whole token family. Zero value is ready to use.
-	iamRefresh singleflight.Group
+	e2eEnabled     bool
 }
 
 // SetSelfMetricsRecorder wires the self-metrics recorder so the request
@@ -157,7 +152,9 @@ func NewServer(cfg ServerConfig, ingestHandler *ingest.Handler, logger *slog.Log
 }
 
 // NewServerWithQuery creates a new HTTP server with query service support.
-func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySvc *service.QueryService, sm *auth.SessionManager, logger *slog.Logger, opts ...ServerOption) *Server {
+// sessions may be nil, in which case no session-authenticated route is
+// registered (ingest-only deployments without a database).
+func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySvc *service.QueryService, sessions *SessionService, logger *slog.Logger, opts ...ServerOption) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -184,12 +181,20 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		metrics:     NewMetrics(),
 		ingest:      ingestHandler,
 		querySvc:    querySvc,
-		sessionMgr:  sm,
+		sessions:    sessions,
+		e2eEnabled:  cfg.E2EEnabled,
 		logger:      logger,
 	}
 
 	for _, opt := range opts {
 		opt(s)
+	}
+
+	// The session service refreshes OIDC sessions through the same client the
+	// server proxies with; resolve at request time because SetOIDCClient runs
+	// after construction.
+	if s.sessions != nil {
+		s.sessions.SetOIDCProvider(s.oidcClient)
 	}
 
 	s.registerRoutes()

@@ -45,6 +45,7 @@ type Repository interface {
 	DeleteErrorSamplesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteAggregatesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteExpiredE2EUsers(now time.Time) (int64, error)
+	DeleteExpiredWebSessions(now time.Time) (int64, error)
 	DeleteMetricsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteMetricRollupsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error)
@@ -355,6 +356,12 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Web sessions past their absolute cap are already unusable (the session
+	// middleware enforces absolute_expires_at); this prunes the rows.
+	webSessionsDeleted, err := w.repo.DeleteExpiredWebSessions(now)
+	if err != nil {
+		return err
+	}
 
 	span.SetAttributes(
 		attribute.Int64("spans_aggregated", totalAggregated),
@@ -367,6 +374,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		attribute.Int64("metric_rollups_deleted", metricRollupsDeleted),
 		attribute.Int64("logs_deleted", logsDeleted),
 		attribute.Int64("e2e_users_deleted", e2eUsersDeleted),
+		attribute.Int64("web_sessions_deleted", webSessionsDeleted),
 		attribute.Bool("backlog_remains", backlogRemains),
 	)
 	w.logger.Info("retention cycle complete",
@@ -380,6 +388,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		"metric_rollups_deleted", metricRollupsDeleted,
 		"logs_deleted", logsDeleted,
 		"e2e_users_deleted", e2eUsersDeleted,
+		"web_sessions_deleted", webSessionsDeleted,
 		"backlog_remains", backlogRemains,
 	)
 	return nil

@@ -1,234 +1,163 @@
 package api
 
 import (
-	"encoding/json"
+	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
+	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
-// newIAMProxyTestIssuer spins up a fake iambarn that serves discovery, a
-// refresh_token token endpoint, and /api/v1/me — enough to drive
-// handleIAMProxy's silent-refresh path end to end. currentAccess tracks the
-// access token /api/v1/me currently accepts; refreshTo/refreshCount let tests
-// script and observe the token endpoint.
-type iamProxyTestIssuer struct {
-	srv *httptest.Server
-
-	mu              sync.Mutex
-	currentAccess   string
-	nextAccess      string
-	nextRefresh     string
-	refreshCalls    int32
-	refreshRejected bool
-	// refreshDelay, when set, holds the token endpoint open briefly so tests
-	// can force many concurrent callers to overlap in time before the first
-	// one completes — singleflight only collapses calls that are genuinely
-	// in flight together, so without this an in-process mock responds fast
-	// enough that goroutines can serialize through as separate (still
-	// individually valid, non-overlapping) calls.
-	refreshDelay time.Duration
-}
-
-func newIAMProxyTestIssuer(t *testing.T) *iamProxyTestIssuer {
+// iamProxyStack builds a server whose /api/iam-proxy/ route is wrapped in the
+// session middleware, exactly like registerRoutes does.
+func iamProxyStack(t *testing.T) (*fakeIdP, *SessionService, *repository.Repository, http.Handler) {
 	t.Helper()
-	it := &iamProxyTestIssuer{}
-	mux := http.NewServeMux()
-	it.srv = httptest.NewServer(mux)
-	t.Cleanup(it.srv.Close)
-	issuer := it.srv.URL
-
-	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer":                                issuer,
-			"authorization_endpoint":                issuer + "/oauth2/authorize",
-			"token_endpoint":                        issuer + "/oauth2/token",
-			"jwks_uri":                              issuer + "/jwks",
-			"id_token_signing_alg_values_supported": []string{"EdDSA"},
-			"response_types_supported":              []string{"code"},
-			"subject_types_supported":               []string{"public"},
-		})
-	})
-	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{}})
-	})
-	mux.HandleFunc("/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&it.refreshCalls, 1)
-		if it.refreshDelay > 0 {
-			time.Sleep(it.refreshDelay)
-		}
-		it.mu.Lock()
-		defer it.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		if it.refreshRejected {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant"})
-			return
-		}
-		it.currentAccess = it.nextAccess
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"access_token":  it.nextAccess,
-			"refresh_token": it.nextRefresh,
-			"token_type":    "Bearer",
-			"expires_in":    900,
-		})
-	})
-	mux.HandleFunc("/api/v1/me", func(w http.ResponseWriter, r *http.Request) {
-		it.mu.Lock()
-		want := it.currentAccess
-		it.mu.Unlock()
-		got := r.Header.Get("Authorization")
-		if got != "Bearer "+want {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"username": "wiebe"})
-	})
-	return it
+	idp := newFakeIdP(t)
+	svc, repo := newTestSessions(t)
+	oc := idp.client()
+	svc.SetOIDCProvider(func() *auth.OIDCClient { return oc })
+	s := &Server{logger: slog.Default(), oidc: oc, sessions: svc}
+	handler := SessionMiddleware(svc)(http.HandlerFunc(s.handleIAMProxy))
+	return idp, svc, repo, handler
 }
 
-func newIAMProxyTestServer(oc *auth.OIDCClient) *Server {
-	return &Server{logger: slog.Default(), oidc: oc}
-}
-
-func iamProxyRequest(accessCookie, refreshCookie string) *http.Request {
+func proxyRequest(token string) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/iam-proxy/api/v1/me", nil)
-	if accessCookie != "" {
-		req.AddCookie(&http.Cookie{Name: "spanbarn_iam_token", Value: accessCookie})
-	}
-	if refreshCookie != "" {
-		req.AddCookie(&http.Cookie{Name: "spanbarn_iam_refresh", Value: refreshCookie})
+	if token != "" {
+		req.AddCookie(&http.Cookie{Name: "session", Value: token})
 	}
 	return req
 }
 
-func TestHandleIAMProxySilentlyRefreshesExpiredToken(t *testing.T) {
-	it := newIAMProxyTestIssuer(t)
-	it.currentAccess = "server-side-current-token"
-	it.nextAccess = "fresh-access"
-	it.nextRefresh = "fresh-refresh"
+// TestIAMProxyForwardsSessionAccessToken: the proxy authenticates upstream
+// with the access token from the caller's session row.
+func TestIAMProxyForwardsSessionAccessToken(t *testing.T) {
+	idp, svc, _, handler := iamProxyStack(t)
+	idp.mu.Lock()
+	idp.meAccess = "at-login" // upstream accepts the login-time token
+	idp.mu.Unlock()
 
-	oc := auth.NewOIDCClient(auth.OIDCConfig{Issuer: it.srv.URL, ClientID: "spanbarn-web", ClientSecret: "sek", RedirectURL: "https://spanbarn.example.com/cb"})
-	s := newIAMProxyTestServer(oc)
+	token := newOIDCSessionRow(t, svc, time.Now().Add(10*time.Minute), "rt-1")
 
-	req := iamProxyRequest("expired-access", "old-refresh")
 	rec := httptest.NewRecorder()
-	s.handleIAMProxy(rec, req)
-
+	handler.ServeHTTP(rec, proxyRequest(token))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected the caller to never see the 401 (silent refresh), got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if atomic.LoadInt32(&it.refreshCalls) != 1 {
-		t.Errorf("expected exactly 1 refresh call, got %d", it.refreshCalls)
-	}
-
-	cookies := rec.Result().Cookies()
-	var gotAccess, gotRefresh string
-	for _, c := range cookies {
-		switch c.Name {
-		case "spanbarn_iam_token":
-			gotAccess = c.Value
-		case "spanbarn_iam_refresh":
-			gotRefresh = c.Value
-		}
-	}
-	if gotAccess != "fresh-access" {
-		t.Errorf("access cookie not updated: got %q, want fresh-access", gotAccess)
-	}
-	if gotRefresh != "fresh-refresh" {
-		t.Errorf("refresh cookie not rotated: got %q, want fresh-refresh", gotRefresh)
+	if idp.calls() != 0 {
+		t.Errorf("no refresh expected for a live token, got %d", idp.calls())
 	}
 }
 
-func TestHandleIAMProxyClearsCookiesOnInvalidGrant(t *testing.T) {
-	it := newIAMProxyTestIssuer(t)
-	it.currentAccess = "server-side-current-token"
-	it.refreshRejected = true
+// TestIAMProxyRefreshesOnUpstream401: when IamBarn rejects the stored access
+// token (revoked/expired upstream before our bookkeeping noticed), the proxy
+// runs the shared refresh path once, persists the rotation, and retries —
+// the caller never sees the 401.
+func TestIAMProxyRefreshesOnUpstream401(t *testing.T) {
+	idp, svc, repo, handler := iamProxyStack(t)
+	// Upstream no longer accepts at-login; a refresh yields at-2 which it does.
+	idp.script(0, "at-2", "rt-2", nil)
 
-	oc := auth.NewOIDCClient(auth.OIDCConfig{Issuer: it.srv.URL, ClientID: "spanbarn-web", ClientSecret: "sek", RedirectURL: "https://spanbarn.example.com/cb"})
-	s := newIAMProxyTestServer(oc)
+	token := newOIDCSessionRow(t, svc, time.Now().Add(10*time.Minute), "rt-1")
 
-	req := iamProxyRequest("expired-access", "dead-refresh")
 	rec := httptest.NewRecorder()
-	s.handleIAMProxy(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected a clean 401 (dead refresh token), got %d", rec.Code)
+	handler.ServeHTTP(rec, proxyRequest(token))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected silent refresh + retry to yield 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	for _, c := range rec.Result().Cookies() {
-		if (c.Name == "spanbarn_iam_token" || c.Name == "spanbarn_iam_refresh") && c.MaxAge >= 0 {
-			t.Errorf("cookie %q should be cleared (MaxAge<0), got MaxAge=%d value=%q", c.Name, c.MaxAge, c.Value)
-		}
+	if idp.calls() != 1 {
+		t.Errorf("expected exactly 1 refresh call, got %d", idp.calls())
+	}
+
+	// The rotation must be persisted on the session row.
+	ws, err := repo.GetWebSessionByIDHash(auth.HashSessionToken(token))
+	if err != nil {
+		t.Fatalf("session row gone: %v", err)
+	}
+	if ws.AccessToken != "at-2" || ws.RefreshToken != "rt-2" {
+		t.Errorf("rotation not persisted: %+v", ws)
 	}
 }
 
-func TestHandleIAMProxyNoRefreshCookieReturns401(t *testing.T) {
-	it := newIAMProxyTestIssuer(t)
-	it.currentAccess = "server-side-current-token"
+// TestIAMProxy401AndRowDeletedOnInvalidGrant: a dead refresh token surfaces
+// as a clean 401 and the session row is destroyed — the SPA lands on the
+// "sign in again" screen.
+func TestIAMProxy401AndRowDeletedOnInvalidGrant(t *testing.T) {
+	idp, svc, repo, handler := iamProxyStack(t)
+	idp.script(http.StatusBadRequest, "", "", nil)
 
-	oc := auth.NewOIDCClient(auth.OIDCConfig{Issuer: it.srv.URL, ClientID: "spanbarn-web", ClientSecret: "sek", RedirectURL: "https://spanbarn.example.com/cb"})
-	s := newIAMProxyTestServer(oc)
+	token := newOIDCSessionRow(t, svc, time.Now().Add(10*time.Minute), "rt-dead")
 
-	// No refresh cookie at all (e.g. a session predating offline_access) —
-	// must fall straight through to 401, no refresh attempt.
-	req := iamProxyRequest("expired-access", "")
 	rec := httptest.NewRecorder()
-	s.handleIAMProxy(rec, req)
-
+	handler.ServeHTTP(rec, proxyRequest(token))
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", rec.Code)
+		t.Fatalf("expected 401 (dead refresh token), got %d", rec.Code)
 	}
-	if atomic.LoadInt32(&it.refreshCalls) != 0 {
-		t.Errorf("should not have attempted a refresh with no refresh cookie, got %d calls", it.refreshCalls)
+	if _, err := repo.GetWebSessionByIDHash(auth.HashSessionToken(token)); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("session row must be deleted on invalid_grant, got err = %v", err)
 	}
 }
 
-// TestHandleIAMProxyConcurrentRequestsShareOneRefresh reproduces two widget
-// API calls firing back-to-back right after the access token expires. Both
-// present the same (single-use) refresh_token; only one token-endpoint call
-// must happen — a second concurrent call with the same refresh_token would
-// be replay-rejected by iambarn and revoke the whole token family.
-func TestHandleIAMProxyConcurrentRequestsShareOneRefresh(t *testing.T) {
-	it := newIAMProxyTestIssuer(t)
-	it.currentAccess = "server-side-current-token"
-	it.nextAccess = "fresh-access"
-	it.nextRefresh = "fresh-refresh"
-	// Force every goroutine's refresh attempt to overlap: without this, an
-	// in-process mock can respond fast enough that 8 goroutines serialize
-	// through as separate (individually valid) calls instead of racing.
-	it.refreshDelay = 50 * time.Millisecond
+// TestIAMProxyLocalSessionHasNoToken: local-password sessions carry no IdP
+// tokens; the proxy must reject them without touching the token endpoint.
+func TestIAMProxyLocalSessionHasNoToken(t *testing.T) {
+	idp, svc, _, handler := iamProxyStack(t)
+	token := mintSession(t, svc, "admin")
 
-	oc := auth.NewOIDCClient(auth.OIDCConfig{Issuer: it.srv.URL, ClientID: "spanbarn-web", ClientSecret: "sek", RedirectURL: "https://spanbarn.example.com/cb"})
-	s := newIAMProxyTestServer(oc)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, proxyRequest(token))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for a local session, got %d", rec.Code)
+	}
+	if idp.calls() != 0 {
+		t.Errorf("no refresh attempt expected, got %d", idp.calls())
+	}
+}
+
+// TestIAMProxyPathScope: only the widget API namespace may be proxied.
+func TestIAMProxyPathScope(t *testing.T) {
+	_, svc, _, handler := iamProxyStack(t)
+	token := newOIDCSessionRow(t, svc, time.Now().Add(10*time.Minute), "rt-1")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/iam-proxy/admin/users", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: token})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for a non-/api/ path, got %d", rec.Code)
+	}
+}
+
+// TestIAMProxyConcurrentRequestsShareOneRefresh reproduces two widget API
+// calls firing back-to-back right after upstream starts rejecting the stored
+// access token. Both requests belong to the same session (single-use refresh
+// token); only one token-endpoint call must happen.
+func TestIAMProxyConcurrentRequestsShareOneRefresh(t *testing.T) {
+	idp, svc, _, handler := iamProxyStack(t)
+	idp.script(0, "at-2", "rt-2", nil)
+
+	token := newOIDCSessionRow(t, svc, time.Now().Add(10*time.Minute), "rt-1")
 
 	const n = 8
 	var wg sync.WaitGroup
-	var ready sync.WaitGroup
 	start := make(chan struct{})
 	codes := make([]int, n)
-	ready.Add(n)
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			req := iamProxyRequest("expired-access", "old-refresh")
 			rec := httptest.NewRecorder()
-			ready.Done()
-			<-start // all goroutines fire together, maximizing overlap
-			s.handleIAMProxy(rec, req)
+			<-start
+			handler.ServeHTTP(rec, proxyRequest(token))
 			codes[i] = rec.Code
 		}(i)
 	}
-	ready.Wait()
 	close(start)
 	wg.Wait()
 
@@ -237,7 +166,7 @@ func TestHandleIAMProxyConcurrentRequestsShareOneRefresh(t *testing.T) {
 			t.Errorf("request %d: expected 200, got %d", i, code)
 		}
 	}
-	if got := atomic.LoadInt32(&it.refreshCalls); got != 1 {
+	if got := idp.calls(); got != 1 {
 		t.Errorf("expected exactly 1 refresh call across %d concurrent requests, got %d", n, got)
 	}
 }

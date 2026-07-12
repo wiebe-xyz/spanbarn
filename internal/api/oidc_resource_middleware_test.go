@@ -65,7 +65,7 @@ func newTestOIDC(t *testing.T, audiences ...string) (*auth.OIDCClient, func(map[
 }
 
 func TestSessionOrReadKey_IamBarnJWT(t *testing.T) {
-	sm := auth.NewSessionManager("test-secret", 3600)
+	sm, _ := newTestSessions(t)
 	oc, sign, issuer := newTestOIDC(t, "spanbarn-cli")
 	oidcFn := func() *auth.OIDCClient { return oc }
 

@@ -1,8 +1,11 @@
 package main
 
 import (
+	"log/slog"
+
 	"github.com/wiebe-xyz/spanbarn/internal/api"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
+	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
 )
 
@@ -26,7 +29,21 @@ func serverConfigFrom(cfg config.Config) api.ServerConfig {
 		FunnelBarnEndpoint: cfg.FunnelBarn.Endpoint,
 		FunnelBarnAPIKey:   cfg.FunnelBarn.APIKey,
 		FunnelBarnProject:  cfg.FunnelBarn.Project,
+		E2EEnabled:         cfg.E2EEnabled,
 	}
+}
+
+// newSessionService builds the token-bound web-session service over the given
+// repository. Returns nil when this mode has no database access at all, in
+// which case no session-authenticated route works (matching the old
+// behaviour of a nil session manager). On read-only repositories (reader /
+// ingest pods) the service validates sessions but never runs the refresh
+// grant — rotations happen on the writer via POST /api/v1/session/refresh.
+func newSessionService(repo *repository.Repository, cfg config.Config, logger *slog.Logger) *api.SessionService {
+	if repo == nil {
+		return nil
+	}
+	return api.NewSessionService(repo, cfg.SessionTTLSeconds, cfg.OIDC.RefreshGraceSeconds, logger)
 }
 
 // retentionConfigFrom maps the app config's retention windows onto the retention

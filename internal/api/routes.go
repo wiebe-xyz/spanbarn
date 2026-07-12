@@ -18,8 +18,8 @@ func (s *Server) registerRoutes() {
 	// Me endpoint — session auth required. Returns the current user's display
 	// name so the SPA can show it in the profile chip without a cross-origin
 	// request to IamBarn.
-	if s.sessionMgr != nil {
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+	if s.sessions != nil {
+		sessionAuth := SessionMiddleware(s.sessions)
 		s.mux.Handle("/api/v1/me", apiRL(sessionAuth(http.HandlerFunc(s.handleMe))))
 	}
 
@@ -30,8 +30,8 @@ func (s *Server) registerRoutes() {
 	// Registered unconditionally — handleIAMProxy returns 404 when OIDC is
 	// not configured. (SetOIDCClient runs after registerRoutes, so we cannot
 	// gate registration on s.oidc != nil here.)
-	if s.sessionMgr != nil {
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+	if s.sessions != nil {
+		sessionAuth := SessionMiddleware(s.sessions)
 		s.mux.Handle("/api/iam-proxy/", sessionAuth(http.HandlerFunc(s.handleIAMProxy)))
 	}
 
@@ -47,6 +47,13 @@ func (s *Server) registerRoutes() {
 	// Post-logout landing — IamBarn redirects here after end-session; clears
 	// the local session cookies. Public: it runs while tearing a session down.
 	s.mux.HandleFunc("/api/v1/oidc/logout-complete", s.handleOIDCLogoutComplete)
+	// Back-channel logout — public (the IdP is the caller; authenticity comes
+	// from the signed logout token) but rate-limited under the login bucket.
+	s.mux.Handle("/api/v1/oidc/backchannel-logout",
+		RateLimitMiddleware(rl, "login")(http.HandlerFunc(s.handleBackchannelLogout)))
+	// Forced session refresh — POST so split deployments route it to the
+	// writer (readers mount SQLite read-only and cannot persist rotations).
+	s.mux.Handle("/api/v1/session/refresh", apiRL(http.HandlerFunc(s.handleSessionRefresh)))
 
 	// Internal ingest endpoint — used by ingest pods to forward spans to writer.
 	// Uses raw API key auth (pod-to-pod, no need for SHA256/DB lookup).
@@ -85,10 +92,10 @@ func (s *Server) registerRoutes() {
 
 	// Query endpoints — rate limited + session auth required.
 	// List/aggregate endpoints get a short cache (30s); detail endpoints are not cached.
-	if s.querySvc != nil && s.sessionMgr != nil {
+	if s.querySvc != nil && s.sessions != nil {
 		qh := &queryHandlers{svc: s.querySvc}
-		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer, s.oidcClient)
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+		readAuth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
+		sessionAuth := SessionMiddleware(s.sessions)
 		cache60 := func(h http.Handler) http.Handler { return cacheMiddleware(60, h) }
 
 		s.mux.Handle("/api/v1/services", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleServices)))))
@@ -109,16 +116,16 @@ func (s *Server) registerRoutes() {
 	}
 
 	// Live tail SSE endpoint — session auth required.
-	if s.ingest != nil && s.sessionMgr != nil {
+	if s.ingest != nil && s.sessions != nil {
 		lth := &liveTailHandler{broadcaster: s.ingest.Broadcaster()}
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+		sessionAuth := SessionMiddleware(s.sessions)
 		s.mux.Handle("/api/v1/spans/live", sessionAuth(lth))
 	}
 
 	// Metrics query endpoints — rate limited + session auth required.
-	if s.repo != nil && s.sessionMgr != nil {
+	if s.repo != nil && s.sessions != nil {
 		mqh := &metricsQueryHandlers{repo: s.repo}
-		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer, s.oidcClient)
+		readAuth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
 
 		s.mux.Handle("/api/v1/metrics/names", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricNames))))
 		s.mux.Handle("/api/v1/metrics/catalog", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricCatalog))))
@@ -128,10 +135,10 @@ func (s *Server) registerRoutes() {
 
 	// Logs query endpoints — read auth (session or read key). Pinned-traces are
 	// per-user state, so they stay session-only.
-	if s.repo != nil && s.sessionMgr != nil {
+	if s.repo != nil && s.sessions != nil {
 		lqh := &logsQueryHandlers{repo: s.repo}
-		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer, s.oidcClient)
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+		readAuth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
+		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/logs", apiRL(readAuth(http.HandlerFunc(lqh.handleLogs))))
 		s.mux.Handle("/api/v1/logs/histogram", apiRL(readAuth(http.HandlerFunc(lqh.handleLogsHistogram))))
@@ -140,18 +147,18 @@ func (s *Server) registerRoutes() {
 	}
 
 	// Alert endpoints — rate limited + session auth required.
-	if s.repo != nil && s.sessionMgr != nil {
+	if s.repo != nil && s.sessions != nil {
 		ah := &alertHandlers{repo: s.repo}
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/alerts", apiRL(sessionAuth(ah)))
 		s.mux.Handle("/api/v1/alerts/", apiRL(sessionAuth(ah)))
 	}
 
 	// Settings + stats endpoints — rate limited + session auth required.
-	if s.repo != nil && s.sessionMgr != nil {
+	if s.repo != nil && s.sessions != nil {
 		sh := &settingsHandlers{repo: s.repo, dbPath: s.dbPath, spoolDir: s.spoolDir, cache: s.cache}
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/settings", apiRL(sessionAuth(sh)))
 		s.mux.Handle("/api/v1/stats/db-size", apiRL(sessionAuth(sh)))
@@ -160,34 +167,34 @@ func (s *Server) registerRoutes() {
 	}
 
 	// Saved queries endpoints — rate limited + session auth required.
-	if s.repo != nil && s.sessionMgr != nil {
+	if s.repo != nil && s.sessions != nil {
 		sqh := &savedQueryHandlers{repo: s.repo}
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/saved-queries", apiRL(sessionAuth(sqh)))
 		s.mux.Handle("/api/v1/saved-queries/", apiRL(sessionAuth(sqh)))
 	}
 
 	// Trace exclusions — persistent operation-level filters per project.
-	if s.repo != nil && s.sessionMgr != nil {
+	if s.repo != nil && s.sessions != nil {
 		teh := &traceExclusionHandlers{repo: s.repo}
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/trace-exclusions", apiRL(sessionAuth(teh)))
 		s.mux.Handle("/api/v1/trace-exclusions/", apiRL(sessionAuth(teh)))
 	}
 
 	// Frontend telemetry — session auth, accepts same format as /api/v1/spans.
-	if s.ingest != nil && s.sessionMgr != nil {
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+	if s.ingest != nil && s.sessions != nil {
+		sessionAuth := SessionMiddleware(s.sessions)
 		s.mux.Handle("/api/v1/telemetry", ingestRL(sessionAuth(http.HandlerFunc(s.handleIngest))))
 		s.mux.Handle("/api/v1/client-errors", ingestRL(sessionAuth(http.HandlerFunc(s.handleClientError))))
 	}
 
 	// Export endpoint — rate limited + session auth required, streams NDJSON.
-	if s.repo != nil && s.sessionMgr != nil {
+	if s.repo != nil && s.sessions != nil {
 		eh := &exportHandlers{repo: s.repo}
-		sessionAuth := SessionMiddleware(s.sessionMgr)
+		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/export", apiRL(sessionAuth(eh)))
 	}
@@ -200,15 +207,15 @@ func (s *Server) registerRoutes() {
 	}
 
 	// E2E session endpoint — API key auth required; only works when e2e_enabled.
-	if s.repo != nil && s.sessionMgr != nil && s.authorizer != nil {
+	if s.repo != nil && s.sessions != nil && s.authorizer != nil {
 		s.mux.Handle("/api/v1/e2e/session", ingestRL(ingestAuth(http.HandlerFunc(s.handleE2ESession))))
 	}
 
 	// Project endpoints — read auth (session or read key) for listing; the
 	// middleware blocks mutating methods for API keys.
-	if s.repo != nil && s.sessionMgr != nil {
+	if s.repo != nil && s.sessions != nil {
 		ph := &projectHandlers{repo: s.repo, cache: s.cache}
-		readAuth := SessionOrReadKey(s.sessionMgr, s.authorizer, s.oidcClient)
+		readAuth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
 
 		s.mux.Handle("/api/v1/projects", apiRL(readAuth(ph)))
 		s.mux.Handle("/api/v1/projects/", apiRL(readAuth(ph)))

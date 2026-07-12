@@ -25,7 +25,7 @@ make dev      # docker compose up --build
 ## Key Patterns (mirror BugBarn/FunnelBarn)
 
 - Config via environment variables (`SPANBARN_*`)
-- Auth: bcrypt passwords + HMAC sessions + SHA256 API keys
+- Auth: bcrypt passwords + token-bound server-side sessions (opaque cookie -> web_sessions row; OIDC tokens live server-side with refresh) + SHA256 API keys
 - CLI subcommands: `spanbarn user/project/apikey create`
 - Spool rotation at 64 MiB
 - Dead-letter on 3 failed processing attempts

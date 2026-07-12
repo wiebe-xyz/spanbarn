@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 // newRefreshTestIssuer spins up a minimal OIDC issuer (discovery + token
@@ -57,7 +59,7 @@ func TestAuthorizeURLRequestsOfflineAccessScope(t *testing.T) {
 	srv := newRefreshTestIssuer(t, nil)
 	oc := testOIDCClient(srv.URL)
 
-	raw, err := oc.AuthorizeURL("state1", "nonce1")
+	raw, err := oc.AuthorizeURL("state1", "nonce1", oauth2.GenerateVerifier())
 	if err != nil {
 		t.Fatalf("AuthorizeURL: %v", err)
 	}
@@ -76,6 +78,113 @@ func TestAuthorizeURLRequestsOfflineAccessScope(t *testing.T) {
 		if !got {
 			t.Errorf("authorize URL scope %q missing from %q", scope, u.Query().Get("scope"))
 		}
+	}
+}
+
+// TestAuthorizeURLCarriesPKCEChallenge: PKCE is sent even though SpanBarn is
+// a confidential client — the S256 challenge must appear on the authorize URL
+// so the later code exchange is bound to this browser flow.
+func TestAuthorizeURLCarriesPKCEChallenge(t *testing.T) {
+	srv := newRefreshTestIssuer(t, nil)
+	oc := testOIDCClient(srv.URL)
+
+	verifier := oauth2.GenerateVerifier()
+	raw, err := oc.AuthorizeURL("state1", "nonce1", verifier)
+	if err != nil {
+		t.Fatalf("AuthorizeURL: %v", err)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse authorize url: %v", err)
+	}
+	if got := u.Query().Get("code_challenge_method"); got != "S256" {
+		t.Errorf("code_challenge_method = %q, want S256", got)
+	}
+	if got := u.Query().Get("code_challenge"); got == "" || got == verifier {
+		t.Errorf("code_challenge = %q, want a non-empty S256 hash of the verifier", got)
+	}
+}
+
+func TestRevokeRefreshToken(t *testing.T) {
+	var gotForm url.Values
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                                srv.URL,
+			"authorization_endpoint":                srv.URL + "/oauth2/authorize",
+			"token_endpoint":                        srv.URL + "/oauth2/token",
+			"jwks_uri":                              srv.URL + "/jwks",
+			"revocation_endpoint":                   srv.URL + "/oauth2/revoke",
+			"id_token_signing_alg_values_supported": []string{"EdDSA"},
+		})
+	})
+	mux.HandleFunc("/oauth2/revoke", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		gotForm = r.PostForm
+		w.WriteHeader(http.StatusOK)
+	})
+
+	oc := testOIDCClient(srv.URL)
+	if err := oc.RevokeRefreshToken(context.Background(), "rt-dead"); err != nil {
+		t.Fatalf("RevokeRefreshToken: %v", err)
+	}
+	if gotForm.Get("token") != "rt-dead" {
+		t.Errorf("token = %q, want rt-dead", gotForm.Get("token"))
+	}
+	if gotForm.Get("token_type_hint") != "refresh_token" {
+		t.Errorf("token_type_hint = %q", gotForm.Get("token_type_hint"))
+	}
+	if gotForm.Get("client_id") != "spanbarn-web" || gotForm.Get("client_secret") != "sek" {
+		t.Error("revocation must be client-authenticated")
+	}
+
+	// Empty token is a silent no-op — nothing to revoke.
+	gotForm = nil
+	if err := oc.RevokeRefreshToken(context.Background(), ""); err != nil {
+		t.Fatalf("RevokeRefreshToken(\"\"): %v", err)
+	}
+	if gotForm != nil {
+		t.Error("empty refresh token must not hit the revocation endpoint")
+	}
+}
+
+func TestEndSessionURLFallsBackToConventionalPath(t *testing.T) {
+	// The minimal discovery document has no end_session_endpoint, so the
+	// client must fall back to {issuer}/oauth2/end-session.
+	srv := newRefreshTestIssuer(t, nil)
+	oc := NewOIDCClient(OIDCConfig{
+		Issuer:                srv.URL,
+		ClientID:              "spanbarn-web",
+		ClientSecret:          "sek",
+		RedirectURL:           "https://spanbarn.example.com/api/v1/oidc/callback",
+		PostLogoutRedirectURI: "https://spanbarn.example.com/api/v1/oidc/logout-complete",
+	})
+
+	raw, err := oc.EndSessionURL("the-id-token")
+	if err != nil {
+		t.Fatalf("EndSessionURL: %v", err)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if u.Path != "/oauth2/end-session" {
+		t.Errorf("path = %q, want /oauth2/end-session", u.Path)
+	}
+	q := u.Query()
+	if q.Get("id_token_hint") != "the-id-token" {
+		t.Errorf("id_token_hint = %q", q.Get("id_token_hint"))
+	}
+	if q.Get("client_id") != "spanbarn-web" {
+		t.Errorf("client_id = %q", q.Get("client_id"))
+	}
+	if q.Get("post_logout_redirect_uri") != "https://spanbarn.example.com/api/v1/oidc/logout-complete" {
+		t.Errorf("post_logout_redirect_uri = %q", q.Get("post_logout_redirect_uri"))
 	}
 }
 

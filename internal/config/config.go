@@ -37,6 +37,11 @@ type OIDCConfig struct {
 	// client's post-logout allowlist. SPANBARN_OIDC_POST_LOGOUT_REDIRECT_URI;
 	// defaults to the RedirectURL origin + /api/v1/oidc/logout-complete.
 	PostLogoutRedirectURI string
+	// RefreshGraceSeconds bounds how long an OIDC session keeps being served
+	// with a stale access token while the IdP refresh fails TRANSIENTLY
+	// (network error / 5xx). invalid_grant never gets grace — it kills the
+	// session immediately. SPANBARN_OIDC_REFRESH_GRACE_SECONDS, default 3600.
+	RefreshGraceSeconds int
 }
 
 // SelfConfig groups self-instrumentation (SpanBarn reporting to itself/BugBarn).
@@ -101,6 +106,16 @@ type Config struct {
 	OIDC                     OIDCConfig
 	GRPCAddr                 string // SPANBARN_GRPC_ADDR — gRPC listener for OTLP; empty = disabled
 	TrustProxy               bool   // SPANBARN_TRUST_PROXY — trust X-Forwarded-For/X-Real-IP for client IP (rate limiting); defaults to true outside dev
+	// E2EEnabled explicitly opens the /api/v1/e2e/session endpoint (Playwright
+	// login bypass). Default false; production additionally hard-blocks it
+	// regardless of this flag. SPANBARN_E2E_ENABLED.
+	E2EEnabled bool
+	// TrustedProxies lists CIDRs (or bare IPs) whose X-Forwarded-Proto header
+	// is honoured when deciding whether the original request used HTTPS
+	// (Secure cookie flag + HSTS). When unset outside dev, requests are
+	// assumed HTTPS-terminated upstream (Secure defaults to on).
+	// SPANBARN_TRUSTED_PROXIES, comma-separated.
+	TrustedProxies []string
 }
 
 // Load reads configuration from SPANBARN_* environment variables with defaults.
@@ -171,8 +186,18 @@ func Load() Config {
 			RequiredGroup:         getenv("SPANBARN_OIDC_REQUIRED_GROUP", "spanbarn-users"),
 			CLIClientID:           os.Getenv("SPANBARN_OIDC_CLI_CLIENT_ID"),
 			PostLogoutRedirectURI: os.Getenv("SPANBARN_OIDC_POST_LOGOUT_REDIRECT_URI"),
+			RefreshGraceSeconds:   getenvInt("SPANBARN_OIDC_REFRESH_GRACE_SECONDS", 3600),
 		},
-		GRPCAddr: getenv("SPANBARN_GRPC_ADDR", ":4317"),
+		GRPCAddr:   getenv("SPANBARN_GRPC_ADDR", ":4317"),
+		E2EEnabled: getenvBool("SPANBARN_E2E_ENABLED", false),
+	}
+
+	if raw := os.Getenv("SPANBARN_TRUSTED_PROXIES"); raw != "" {
+		for _, p := range strings.Split(raw, ",") {
+			if trimmed := strings.TrimSpace(p); trimmed != "" {
+				cfg.TrustedProxies = append(cfg.TrustedProxies, trimmed)
+			}
+		}
 	}
 
 	if raw := os.Getenv("SPANBARN_ALLOWED_ORIGINS"); raw != "" {
@@ -228,8 +253,8 @@ func (c Config) IsDevEnvironment() bool {
 func (c Config) Validate() error {
 	if c.SessionSecret == "" && !c.IsDevEnvironment() {
 		return fmt.Errorf("SPANBARN_SESSION_SECRET must be set in the %q environment: "+
-			"it signs session tokens and derives per-project setup keys, so a missing "+
-			"secret makes both forgeable", c.Environment)
+			"it derives the per-project setup keys, so a missing secret makes them "+
+			"forgeable", c.Environment)
 	}
 	return nil
 }
