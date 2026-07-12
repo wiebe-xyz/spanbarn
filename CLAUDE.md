@@ -17,7 +17,9 @@ make dev      # docker compose up --build
 ## Architecture
 
 - **Go binary** (`cmd/spanbarn/main.go`) — single process, no external DB
-- **SQLite** with Litestream for optional S3 backup
+- **SQLite**, no continuous replication — disaster recovery is a periodic
+  settings-only snapshot shipped to S3, not full-DB WAL streaming (see
+  `deploy/docs/disaster-recovery.md`)
 - **Spool-based ingest** — in-memory queue → NDJSON WAL → background worker → SQLite
 - **React + Vite frontend** (`web/`) — served by Caddy/Nginx
 - **SDKs** (`sdks/`) — JavaScript, Go, Python

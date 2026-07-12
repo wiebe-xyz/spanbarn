@@ -216,7 +216,7 @@ func TestTraceDetailEndpointRespectsProjectID(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	token, _ := sm.Create("admin")
+	token, _, _ := sm.Create("admin", "local", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/trace-project-1?project_id=2", nil)
 	req.AddCookie(&http.Cookie{Name: "session", Value: token})
@@ -255,7 +255,7 @@ func TestDatabaseQueriesEndpointRespectsProjectID(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	token, _ := sm.Create("admin")
+	token, _, _ := sm.Create("admin", "local", nil)
 
 	from := now.Add(-time.Hour).UTC().Format(time.RFC3339)
 	to := now.Add(time.Hour).UTC().Format(time.RFC3339)
