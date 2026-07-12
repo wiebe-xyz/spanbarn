@@ -61,7 +61,7 @@ func (h *queryHandlers) handleOperations(w http.ResponseWriter, r *http.Request)
 
 	kind := r.URL.Query().Get("kind")
 
-	ops, err := h.svc.ListOperations(ctx, GetProjectID(ctx), svcName, from, to, kind)
+	ops, err := h.svc.ListOperations(ctx, parseInt64Param(r, "project_id", 0), svcName, from, to, kind)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -98,7 +98,7 @@ func (h *queryHandlers) handleTimeseries(w http.ResponseWriter, r *http.Request)
 
 	interval := parseInterval(r.URL.Query().Get("interval"))
 
-	ts, err := h.svc.GetTimeseries(ctx, GetProjectID(ctx), svcName, opName, from, to, interval)
+	ts, err := h.svc.GetTimeseries(ctx, parseInt64Param(r, "project_id", 0), svcName, opName, from, to, interval)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -189,7 +189,7 @@ func (h *queryHandlers) handleTraceDetail(w http.ResponseWriter, r *http.Request
 	}
 	span.SetAttributes(attribute.String("trace_id", traceID))
 
-	detail, err := h.svc.GetTrace(ctx, traceID, GetProjectID(ctx))
+	detail, err := h.svc.GetTrace(ctx, traceID, parseInt64Param(r, "project_id", 0))
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -213,7 +213,7 @@ func (h *queryHandlers) handleDependencies(w http.ResponseWriter, r *http.Reques
 
 	svcFilter := r.URL.Query().Get("service")
 
-	deps, err := h.svc.ListDependencies(ctx, GetProjectID(ctx), from, to, svcFilter)
+	deps, err := h.svc.ListDependencies(ctx, parseInt64Param(r, "project_id", 0), from, to, svcFilter)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -243,7 +243,7 @@ func (h *queryHandlers) handleDependencyTraces(w http.ResponseWriter, r *http.Re
 		limit = 100
 	}
 
-	traces, err := h.svc.GetDependencyTraces(ctx, GetProjectID(ctx), target, targetType, from, to, limit)
+	traces, err := h.svc.GetDependencyTraces(ctx, parseInt64Param(r, "project_id", 0), target, targetType, from, to, limit)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -263,7 +263,7 @@ func (h *queryHandlers) handleDatabaseQueries(w http.ResponseWriter, r *http.Req
 
 	svcFilter := r.URL.Query().Get("service")
 
-	queries, err := h.svc.ListDatabaseQueries(ctx, GetProjectID(ctx), from, to, svcFilter)
+	queries, err := h.svc.ListDatabaseQueries(ctx, parseInt64Param(r, "project_id", 0), from, to, svcFilter)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
@@ -288,7 +288,7 @@ func (h *queryHandlers) handleDatabaseQueryDetail(w http.ResponseWriter, r *http
 	}
 	svcFilter := r.URL.Query().Get("service")
 
-	spans, err := h.svc.GetDatabaseQuerySpans(ctx, GetProjectID(ctx), from, to, pattern, svcFilter)
+	spans, err := h.svc.GetDatabaseQuerySpans(ctx, parseInt64Param(r, "project_id", 0), from, to, pattern, svcFilter)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
