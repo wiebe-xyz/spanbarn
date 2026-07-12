@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { Activity, BarChart2, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut, ScrollText } from 'lucide-react'
-import { useIambarnSession, iambarnLogout, getIambarnProfile } from '../api/iambarnWidget'
+import { useIambarnSession, iambarnLogout, useIambarnProfile } from '../api/iambarnWidget'
 import { isOIDCSession } from '../api/clientConfig'
 import { IambarnProfileModal } from './IambarnProfileModal'
 
@@ -16,7 +16,7 @@ export function MobileTabBar(): ReactElement {
   const [moreOpen, setMoreOpen] = useState(false)
   const session = useIambarnSession()
   const oidc = isOIDCSession()
-  const profile = getIambarnProfile()
+  const profile = useIambarnProfile()
   const [profileOpen, setProfileOpen] = useState(false)
   const profileBtnRef = useRef<HTMLButtonElement>(null)
   const navigate = useNavigate()

@@ -7,14 +7,16 @@ import (
 	"strings"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
+	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
 type contextKey string
 
 const (
-	ctxProjectID contextKey = "projectID"
-	ctxScope     contextKey = "scope"
-	ctxUsername  contextKey = "username"
+	ctxProjectID  contextKey = "projectID"
+	ctxScope      contextKey = "scope"
+	ctxUsername   contextKey = "username"
+	ctxWebSession contextKey = "webSession"
 )
 
 // SetProjectID stores a project ID in the request context.
@@ -56,6 +58,18 @@ func GetUsername(ctx context.Context) string {
 	return ""
 }
 
+// SetWebSession stores the authenticated web session row in the request
+// context (session-cookie auth only; API-key and JWT paths have no row).
+func SetWebSession(ctx context.Context, ws repository.WebSession) context.Context {
+	return context.WithValue(ctx, ctxWebSession, ws)
+}
+
+// GetWebSession retrieves the web session row from the request context.
+func GetWebSession(ctx context.Context) (repository.WebSession, bool) {
+	ws, ok := ctx.Value(ctxWebSession).(repository.WebSession)
+	return ws, ok
+}
+
 // APIKeyMiddleware validates the X-SpanBarn-Api-Key header and sets the
 // project ID and scope in the request context.
 func APIKeyMiddleware(authorizer *auth.Authorizer) func(http.Handler) http.Handler {
@@ -84,15 +98,15 @@ func APIKeyMiddleware(authorizer *auth.Authorizer) func(http.Handler) http.Handl
 //   - an API key with the "read" or "full" scope (X-SpanBarn-Api-Key), or
 //   - an IamBarn access-token JWT (Authorization: Bearer <jwt>) when OIDC is
 //     configured, validated as a resource server and authorized by role/group, or
-//   - a SpanBarn session (cookie or Authorization: Bearer <hmac>).
+//   - a SpanBarn session (cookie or Authorization: Bearer <opaque handle>).
 //
 // When an API key is presented, the request is scoped to that key's project by
 // overwriting the project_id query parameter. Ingest-scoped keys are rejected
 // with 403. oidcFn is resolved at request time because the OIDC client is wired
 // after routes are registered; it may return nil. When authorizer is nil,
 // behaviour falls back to JWT/session.
-func SessionOrReadKey(sm *auth.SessionManager, authorizer *auth.Authorizer, oidcFn func() *auth.OIDCClient) func(http.Handler) http.Handler {
-	sessionMW := SessionMiddleware(sm)
+func SessionOrReadKey(sessions *SessionService, authorizer *auth.Authorizer, oidcFn func() *auth.OIDCClient) func(http.Handler) http.Handler {
+	sessionMW := SessionMiddleware(sessions)
 	return func(next http.Handler) http.Handler {
 		session := sessionMW(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,37 +191,47 @@ func bearerToken(r *http.Request) string {
 }
 
 // SessionMiddleware validates a session cookie or Authorization: Bearer token
-// and sets the username in the request context.
-func SessionMiddleware(sm *auth.SessionManager) func(http.Handler) http.Handler {
+// against the web_sessions table and sets the username + session row in the
+// request context. For OIDC sessions past their access-token validity it runs
+// the refresh_token grant first (singleflighted per session), so a request
+// only proceeds while the IamBarn session is still alive — central revocation
+// bites at the next refresh, worst-case one access-token lifetime (~15m).
+func SessionMiddleware(sessions *SessionService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var token string
-
-			// Try cookie first.
-			if cookie, err := r.Cookie("session"); err == nil {
-				token = cookie.Value
-			}
-
-			// Fall back to Authorization: Bearer header.
-			if token == "" {
-				if ah := r.Header.Get("Authorization"); strings.HasPrefix(ah, "Bearer ") {
-					token = strings.TrimPrefix(ah, "Bearer ")
-				}
-			}
-
+			token := sessionToken(r)
 			if token == "" {
 				writeError(w, http.StatusUnauthorized, "missing session", "")
 				return
 			}
-
-			username, err := sm.Validate(token)
-			if err != nil {
+			if sessions == nil {
 				writeError(w, http.StatusUnauthorized, "invalid or expired session", "")
 				return
 			}
 
-			ctx := SetUsername(r.Context(), username)
+			res, err := sessions.Authenticate(r.Context(), token)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "invalid or expired session", "")
+				return
+			}
+			if res.RefreshDue {
+				// Served stale from a read-only replica: ask the SPA to POST
+				// /api/v1/session/refresh (method-routed to the writer).
+				w.Header().Set("X-Session-Refresh-Due", "1")
+			}
+
+			ctx := SetUsername(r.Context(), res.Session.Username)
+			ctx = SetWebSession(ctx, res.Session)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// sessionToken extracts the opaque session handle from the session cookie or
+// the Authorization: Bearer header.
+func sessionToken(r *http.Request) string {
+	if cookie, err := r.Cookie("session"); err == nil && cookie.Value != "" {
+		return cookie.Value
+	}
+	return bearerToken(r)
 }

@@ -79,6 +79,11 @@ func run() error {
 	// client behind Caddy/Nginx instead of the shared proxy IP.
 	api.SetTrustProxy(cfg.TrustProxy)
 
+	// Honour X-Forwarded-Proto (Secure cookie flag + HSTS) only from trusted
+	// proxy peers; with no allowlist configured outside dev, assume HTTPS —
+	// every named deployment terminates TLS upstream.
+	api.SetSecurePolicy(cfg.TrustedProxies, !cfg.IsDevEnvironment())
+
 	switch cfg.Mode {
 	case "ingest":
 		return runIngestMode(cfg, logger)
@@ -94,13 +99,13 @@ func run() error {
 // registerAuthRoutes wires the login route (rate-limited with a per-account
 // throttle and a post-login cache warm) and the logout route onto mux. Shared
 // by every serving mode.
-func registerAuthRoutes(mux *http.ServeMux, cfg config.Config, userAuth *auth.UserAuthenticator, sessionMgr *auth.SessionManager, querySvc *service.QueryService, logger *slog.Logger) {
+func registerAuthRoutes(mux *http.ServeMux, cfg config.Config, userAuth *auth.UserAuthenticator, sessions *api.SessionService, querySvc *service.QueryService, logger *slog.Logger) {
 	loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
 	loginRL := api.RateLimitMiddleware(loginLimiter, "login")
-	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessionMgr, loginLimiter, func() {
+	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessions, loginLimiter, func() {
 		api.WarmLoginCaches(context.Background(), querySvc, logger)
 	})))
-	mux.Handle("/api/v1/logout", http.HandlerFunc(api.HandleLogout()))
+	mux.Handle("/api/v1/logout", api.HandleLogout(sessions))
 }
 
 // runStandalone is the all-in-one single-node mode (docker-compose, small
@@ -109,7 +114,7 @@ func registerAuthRoutes(mux *http.ServeMux, cfg config.Config, userAuth *auth.Us
 // dashboard queries.
 func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	if cfg.SessionSecret == "" {
-		slog.Warn("SPANBARN_SESSION_SECRET is not set; sessions will not persist across restarts")
+		slog.Warn("SPANBARN_SESSION_SECRET is not set; per-project setup keys will not be stable across restarts")
 	}
 
 	// Write DB — MaxOpenConns(1), used exclusively by worker/retention/aggregation/alerts.
@@ -236,7 +241,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	authorizer := auth.NewAuthorizer(apiKeyHash, &keyLookupAdapter{repo: repo}, logger)
 	_ = authorizer
 	userAuth := auth.NewUserAuthenticator(&userLookupAdapter{repo: repo}, logger)
-	sessionMgr := auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
+	sessions := newSessionService(repo, cfg, logger)
 
 	// Query service reads from the read-only DB, never contesting the write connection.
 	querySvc := service.NewQueryService(queryRepo, logger, ratioLookup)
@@ -265,7 +270,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	serverCfg := serverConfigFrom(cfg)
 	serverCfg.MetricsToken = cfg.MetricsToken
 	// Mutations (trace exclusions, alerts CRUD) still use the write repo.
-	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger,
+	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessions, logger,
 		api.WithRepository(repo),
 		api.WithAuthorizer(authorizer),
 		api.WithPaths(cfg.DBPath, cfg.SpoolDir),
@@ -289,7 +294,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	api.WarmCaches(ctx, queryRepo, querySvc.Cache(), logger)
 
 	mux := http.NewServeMux()
-	registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
+	registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
 	mux.Handle("/", apiServer.Handler())
 
 	httpServer := &http.Server{
@@ -391,7 +396,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		roRepo     *repository.Repository
 		keyLookup  auth.KeyLookup
 		querySvc   *service.QueryService
-		sessionMgr *auth.SessionManager
+		sessions   *api.SessionService
 		userAuth   *auth.UserAuthenticator
 		queryCache *cache.Cache
 	)
@@ -407,7 +412,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 			}
 			keyLookup = &readOnlyKeyLookupAdapter{keyLookupAdapter{repo: roRepo}}
 
-			sessionMgr = auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
+			sessions = newSessionService(roRepo, cfg, logger)
 			userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
 			querySvc = service.NewQueryService(roRepo, logger, ingest.NewCachedRatioLookup(roRepo, time.Minute))
 
@@ -462,7 +467,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	if roRepo != nil {
 		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
 	}
-	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, opts...)
+	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessions, logger, opts...)
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
 	}
@@ -496,8 +501,8 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	mux := http.NewServeMux()
-	if sessionMgr != nil && userAuth != nil {
-		registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
+	if sessions != nil && userAuth != nil {
+		registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
 	}
 	mux.Handle("/", apiServer.Handler())
 
@@ -557,7 +562,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	logger.Info("starting in writer mode", "redis_queue", cfg.RedisQueueURL)
 
 	if cfg.SessionSecret == "" {
-		slog.Warn("SPANBARN_SESSION_SECRET is not set; sessions will not persist across restarts")
+		slog.Warn("SPANBARN_SESSION_SECRET is not set; per-project setup keys will not be stable across restarts")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -625,7 +630,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	}
 	authorizer := auth.NewAuthorizer(apiKeyHash, &keyLookupAdapter{repo: repo}, logger)
 	userAuth := auth.NewUserAuthenticator(&userLookupAdapter{repo: repo}, logger)
-	sessionMgr := auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
+	sessions := newSessionService(repo, cfg, logger)
 
 	writerRatioLookup := ingest.NewCachedRatioLookup(queryRepo, time.Minute)
 	querySvc := service.NewQueryService(queryRepo, logger, writerRatioLookup)
@@ -651,7 +656,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	serverCfg := serverConfigFrom(cfg)
 	serverCfg.MetricsToken = cfg.MetricsToken
 	// No ingest handler — OTLP goes to the reader pod per ingress rules.
-	apiServer := api.NewServerWithQuery(serverCfg, nil, querySvc, sessionMgr, logger,
+	apiServer := api.NewServerWithQuery(serverCfg, nil, querySvc, sessions, logger,
 		api.WithRepository(repo),
 		api.WithAuthorizer(authorizer),
 		api.WithPaths(cfg.DBPath, cfg.SpoolDir),
@@ -660,7 +665,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
 	}
-	registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
+	registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
 	mux.Handle("/", apiServer.Handler())
 	logger.Info("writer API ready")
 
@@ -1105,12 +1110,12 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 
 	var (
 		querySvc   *service.QueryService
-		sessionMgr *auth.SessionManager
+		sessions   *api.SessionService
 		userAuth   *auth.UserAuthenticator
 		queryCache *cache.Cache
 	)
 	if roRepo != nil {
-		sessionMgr = auth.NewSessionManager(cfg.SessionSecret, int64(cfg.SessionTTLSeconds))
+		sessions = newSessionService(roRepo, cfg, logger)
 		userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
 		querySvc = service.NewQueryService(roRepo, logger, ingest.NewCachedRatioLookup(roRepo, time.Minute))
 		ttl := time.Duration(cfg.CacheTTLSeconds) * time.Second
@@ -1135,7 +1140,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	if roRepo != nil {
 		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
 	}
-	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessionMgr, logger, opts...)
+	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessions, logger, opts...)
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
 	}
@@ -1145,8 +1150,8 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	mux := http.NewServeMux()
-	if sessionMgr != nil && userAuth != nil {
-		registerAuthRoutes(mux, cfg, userAuth, sessionMgr, querySvc, logger)
+	if sessions != nil && userAuth != nil {
+		registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
 	}
 	mux.Handle("/", apiServer.Handler())
 

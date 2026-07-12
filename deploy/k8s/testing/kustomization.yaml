@@ -10,6 +10,10 @@ patches:
     target:
       kind: Deployment
       name: spanbarn
+  - path: configmap-e2e-patch.yaml
+    target:
+      kind: ConfigMap
+      name: spanbarn-config
 
 images:
   - name: ghcr.io/wiebe-xyz/spanbarn/service

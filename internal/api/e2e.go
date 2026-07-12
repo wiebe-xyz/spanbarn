@@ -10,7 +10,9 @@ import (
 )
 
 // handleE2ESession issues a browser session for an E2E test account without
-// requiring the OIDC flow. It is disabled entirely in production.
+// requiring the OIDC flow. It is disabled entirely in production AND requires
+// the explicit SPANBARN_E2E_ENABLED=true opt-in (only the testing/staging
+// deployments set it, for CI Playwright).
 //
 // Two modes of authentication are accepted:
 //
@@ -21,7 +23,8 @@ import (
 //     e2e_enabled flag. Intended for CI pipelines on non-production instances.
 //
 // The E2E account expires after repository.E2EAccountTTL (7 days) and is
-// deleted by the retention worker.
+// deleted by the retention worker. The session row uses auth_method "e2e" so
+// it shares the same middleware and revocation story as every other session.
 func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -31,7 +34,11 @@ func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "e2e sessions are disabled in production", "")
 		return
 	}
-	if s.sessionMgr == nil {
+	if !s.e2eEnabled {
+		writeError(w, http.StatusForbidden, "e2e sessions are not enabled (SPANBARN_E2E_ENABLED)", "")
+		return
+	}
+	if s.sessions == nil {
 		writeError(w, http.StatusServiceUnavailable, "session unavailable", "")
 		return
 	}
@@ -62,14 +69,13 @@ func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := s.sessionMgr.Create(username)
+	token, sessionExpires, err := s.sessions.Create(username, "e2e", nil)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "session unavailable", "")
 		return
 	}
 
 	secure := isSecureRequest(r)
-	sessionExpires := time.Now().Add(s.sessionMgr.TTL())
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
 		Value:    token,

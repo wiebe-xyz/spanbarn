@@ -24,24 +24,51 @@ export interface IambarnProfile {
   picture: string
 }
 
-// Read the profile snapshot (name/email/picture) the OIDC callback stored in the
-// non-HttpOnly `spanbarn_iam_profile` cookie. This lets the header render the
-// live avatar + name with zero runtime dependency on IamBarn — it never blanks
-// out when an access token expires. Returns null for non-OIDC sessions.
-export function getIambarnProfile(): IambarnProfile | null {
-  if (typeof document === 'undefined') return null
-  const raw = document.cookie
-    .split('; ')
-    .find((c) => c.startsWith('spanbarn_iam_profile='))
-    ?.slice('spanbarn_iam_profile='.length)
-  if (!raw) return null
+// The profile snapshot (name/email/picture) lives server-side on the session
+// row (claims_json) and is served by same-origin /api/v1/me — it replaced the
+// JS-readable spanbarn_iam_profile cookie of the pre-session-store design.
+// Fetched once per page load and cached module-wide.
+let profilePromise: Promise<IambarnProfile | null> | null = null
+let cachedProfile: IambarnProfile | null = null
+
+async function fetchIambarnProfile(): Promise<IambarnProfile | null> {
   try {
-    const json = atob(raw.replace(/-/g, '+').replace(/_/g, '/'))
-    const p = JSON.parse(json) as Partial<IambarnProfile>
-    return { name: p.name ?? '', email: p.email ?? '', picture: p.picture ?? '' }
+    const res = await fetch('/api/v1/me', { credentials: 'same-origin' })
+    if (!res.ok) return null
+    const body = (await res.json()) as {
+      display_name?: string
+      profile?: Partial<IambarnProfile>
+    }
+    if (!body.profile) return null
+    cachedProfile = {
+      name: body.profile.name ?? body.display_name ?? '',
+      email: body.profile.email ?? '',
+      picture: body.profile.picture ?? '',
+    }
+    return cachedProfile
   } catch {
     return null
   }
+}
+
+// useIambarnProfile resolves the header-chip profile for OIDC sessions.
+// Returns null for local/e2e sessions and while the first fetch is in flight.
+export function useIambarnProfile(): IambarnProfile | null {
+  const [profile, setProfile] = useState<IambarnProfile | null>(cachedProfile)
+
+  useEffect(() => {
+    if (!isOIDCSession()) return
+    if (!profilePromise) profilePromise = fetchIambarnProfile()
+    let cancelled = false
+    void profilePromise.then((p) => {
+      if (!cancelled && p) setProfile(p)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return profile
 }
 
 let scriptPromise: Promise<void> | null = null
@@ -111,28 +138,33 @@ export function endSessionUrl(
   return `${issuer}/oauth2/end-session${query ? `?${query}` : ''}`
 }
 
-// Log out. For an IAMBarn session this clears the local session first (best
-// effort) then navigates to the issuer's end-session endpoint; IAMBarn ends its
-// own session and redirects back to post_logout_redirect_uri (SpanBarn's
-// /api/v1/oidc/logout-complete, which re-clears the local cookies). For local
-// sessions — or if the issuer/client config is missing — it falls back to a
-// plain local logout. `fallback` runs the SPA-local navigation to /login.
+// Log out. POST /api/v1/logout destroys the server-side session row, revokes
+// the stored refresh token at IAMBarn (best effort) and — for OIDC sessions —
+// returns logout_url: the issuer's end-session URL with id_token_hint. The
+// SPA follows it so the IAMBarn session dies too; IAMBarn then redirects back
+// to post_logout_redirect_uri (SpanBarn's /api/v1/oidc/logout-complete). For
+// local sessions — or if the server produced no logout_url — it falls back to
+// the client-built end-session URL, else a plain local logout. `fallback`
+// runs the SPA-local navigation to /login.
 export async function iambarnLogout(
   session: IambarnSession | null,
   fallback: () => void,
 ): Promise<void> {
+  let logoutUrl = ''
   try {
-    await api.logout()
+    const res = await api.logout()
+    logoutUrl = res.logout_url ?? ''
   } catch {
     // ignore — end-session (or the fallback) still tears the session down.
   }
-  if (session?.issuer && session.clientId && session.postLogoutRedirectUri) {
-    window.location.assign(
-      endSessionUrl(session.issuer, {
-        clientId: session.clientId,
-        postLogoutRedirectUri: session.postLogoutRedirectUri,
-      }),
-    )
+  if (!logoutUrl && session?.issuer && session.clientId && session.postLogoutRedirectUri) {
+    logoutUrl = endSessionUrl(session.issuer, {
+      clientId: session.clientId,
+      postLogoutRedirectUri: session.postLogoutRedirectUri,
+    })
+  }
+  if (logoutUrl) {
+    window.location.assign(logoutUrl)
     return
   }
   fallback()

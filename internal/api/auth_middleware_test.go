@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 )
@@ -71,16 +72,16 @@ func TestAPIKeyMiddlewareInvalidKey(t *testing.T) {
 }
 
 func TestSessionMiddleware(t *testing.T) {
-	sm := auth.NewSessionManager("test-secret", 3600)
-	token, err := sm.Create("admin")
-	if err != nil {
-		t.Fatalf("failed to create session: %v", err)
-	}
+	svc, _ := newTestSessions(t)
+	token := mintSession(t, svc, "admin")
 
-	handler := SessionMiddleware(sm)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := SessionMiddleware(svc)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		username := GetUsername(r.Context())
 		if username != "admin" {
 			t.Errorf("expected username 'admin', got %q", username)
+		}
+		if ws, ok := GetWebSession(r.Context()); !ok || ws.AuthMethod != "local" {
+			t.Errorf("expected local web session on context, got %+v (ok=%v)", ws, ok)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -107,9 +108,9 @@ func TestSessionMiddleware(t *testing.T) {
 }
 
 func TestSessionMiddlewareNoSession(t *testing.T) {
-	sm := auth.NewSessionManager("test-secret", 3600)
+	svc, _ := newTestSessions(t)
 
-	handler := SessionMiddleware(sm)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := SessionMiddleware(svc)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -140,11 +141,8 @@ func (f *fakeKeyLookup) GetAPIKeyByHash(keyHash string) (auth.APIKeyRecord, erro
 func (f *fakeKeyLookup) TouchAPIKey(int64) error { return nil }
 
 func TestSessionOrReadKey(t *testing.T) {
-	sm := auth.NewSessionManager("test-secret", 3600)
-	token, err := sm.Create("admin")
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
+	sm, _ := newTestSessions(t)
+	token := mintSession(t, sm, "admin")
 
 	readKey := "read-key-raw"
 	ingestKey := "ingest-key-raw"
@@ -277,13 +275,12 @@ func TestSessionOrReadKey(t *testing.T) {
 }
 
 func TestSessionMiddlewareExpired(t *testing.T) {
-	// Create a token signed by one secret and validate with a different manager,
-	// or use an expired token. Since the now field is unexported, we use
-	// auth.NewExpiredToken helper to get a pre-expired token.
-	sm := auth.NewSessionManager("test-secret", 3600)
-	expiredToken := auth.MakeExpiredToken("test-secret", "admin")
+	// Mint a session, then move the service clock past its absolute cap.
+	svc, _ := newTestSessions(t)
+	expiredToken := mintSession(t, svc, "admin")
+	svc.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
 
-	handler := SessionMiddleware(sm)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := SessionMiddleware(svc)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -295,5 +292,24 @@ func TestSessionMiddlewareExpired(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 for expired session, got %d", rec.Code)
+	}
+}
+
+// TestSessionMiddlewareForgedToken: a syntactically fine but unknown opaque
+// handle has no row, so it must be rejected.
+func TestSessionMiddlewareForgedToken(t *testing.T) {
+	svc, _ := newTestSessions(t)
+	handler := SessionMiddleware(svc)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("handler should not be called")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: auth.NewSessionToken()})
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for forged token, got %d", rec.Code)
 	}
 }

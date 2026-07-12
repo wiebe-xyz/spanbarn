@@ -1,0 +1,9 @@
+# Opens POST /api/v1/e2e/session for the CI Playwright login bypass. E2E
+# session rows use auth_method 'e2e' and share the normal session middleware.
+# Never set in production (which also hard-blocks the endpoint by environment).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spanbarn-config
+data:
+  SPANBARN_E2E_ENABLED: "true"

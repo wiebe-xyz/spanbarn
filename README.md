@@ -235,8 +235,11 @@ project automatically.
 | `SPANBARN_API_KEY_SHA256` | | Pre-hashed API key |
 | `SPANBARN_ADMIN_USERNAME` | | Dashboard login username |
 | `SPANBARN_ADMIN_PASSWORD` | | Dashboard login password |
-| `SPANBARN_SESSION_SECRET` | | HMAC key for sessions |
-| `SPANBARN_SESSION_TTL_SECONDS` | `43200` | Session lifetime (12h) |
+| `SPANBARN_SESSION_SECRET` | | Secret deriving per-project setup keys |
+| `SPANBARN_SESSION_TTL_SECONDS` | `43200` | Absolute session cap (12h); OIDC sessions additionally track the ~15m access token via refresh |
+| `SPANBARN_OIDC_REFRESH_GRACE_SECONDS` | `3600` | Stale-serve ceiling while IamBarn refresh fails transiently |
+| `SPANBARN_E2E_ENABLED` | `false` | Open the e2e session endpoint (never in production) |
+| `SPANBARN_TRUSTED_PROXIES` | | CIDRs allowed to assert X-Forwarded-Proto; unset outside dev assumes upstream TLS |
 | `SPANBARN_MAX_BODY_BYTES` | `1048576` | Max ingest body (1 MiB) |
 | `SPANBARN_MAX_SPOOL_BYTES` | | Spool backpressure limit |
 | `SPANBARN_RETENTION_FULL_HOURS` | `72` | Hours to keep all spans |

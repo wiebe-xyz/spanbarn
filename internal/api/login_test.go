@@ -22,7 +22,7 @@ func (m *testUserLookup) GetUserByUsername(username string) (auth.UserRecord, er
 	return auth.UserRecord{}, auth.ErrInvalidCredentials
 }
 
-func setupLoginTest(t *testing.T) (*auth.UserAuthenticator, *auth.SessionManager) {
+func setupLoginTest(t *testing.T) (*auth.UserAuthenticator, *SessionService) {
 	t.Helper()
 
 	hash, err := auth.HashPassword("correct-pass")
@@ -37,7 +37,7 @@ func setupLoginTest(t *testing.T) (*auth.UserAuthenticator, *auth.SessionManager
 	}
 
 	userAuth := auth.NewUserAuthenticator(repo, nil)
-	sm := auth.NewSessionManager("test-secret", 3600)
+	sm, _ := newTestSessions(t)
 	return userAuth, sm
 }
 
@@ -173,9 +173,12 @@ func TestLoginMethodNotAllowed(t *testing.T) {
 }
 
 func TestLogout(t *testing.T) {
-	handler := HandleLogout()
+	svc, repo := newTestSessions(t)
+	token := mintSession(t, svc, "admin")
+	handler := HandleLogout(svc)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/logout", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: token})
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -197,5 +200,58 @@ func TestLogout(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected session cookie to be cleared")
+	}
+
+	// The server-side row must be gone: the cookie clearing is cosmetic, the
+	// row deletion is the actual revocation.
+	if _, err := repo.GetWebSessionByIDHash(auth.HashSessionToken(token)); err == nil {
+		t.Error("expected session row to be deleted on logout")
+	}
+
+	// No legacy raw-token cookie may be (re)issued with a value.
+	for _, c := range cookies {
+		if (c.Name == "spanbarn_iam_token" || c.Name == "spanbarn_iam_refresh") && c.Value != "" {
+			t.Errorf("legacy cookie %q must never carry a value, got %q", c.Name, c.Value)
+		}
+	}
+}
+
+// TestLoginCreatesServerSideRow: the login response cookie is only a handle;
+// the authoritative session lives in web_sessions with auth_method "local".
+func TestLoginCreatesServerSideRow(t *testing.T) {
+	hash, err := auth.HashPassword("correct-pass")
+	if err != nil {
+		t.Fatalf("HashPassword failed: %v", err)
+	}
+	userAuth := auth.NewUserAuthenticator(&testUserLookup{
+		users: map[string]auth.UserRecord{"admin": {ID: 1, Username: "admin", PasswordHash: hash}},
+	}, nil)
+	svc, repo := newTestSessions(t)
+	handler := HandleLogin(userAuth, svc, nil, nil)
+
+	body, _ := json.Marshal(loginRequest{Username: "admin", Password: "correct-pass"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var token string
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "session" {
+			token = c.Value
+		}
+	}
+	ws, err := repo.GetWebSessionByIDHash(auth.HashSessionToken(token))
+	if err != nil {
+		t.Fatalf("session row missing: %v", err)
+	}
+	if ws.AuthMethod != "local" || ws.Username != "admin" {
+		t.Errorf("unexpected row: %+v", ws)
+	}
+	if ws.AccessToken != "" || ws.RefreshToken != "" {
+		t.Errorf("local session must have no IdP tokens: %+v", ws)
 	}
 }

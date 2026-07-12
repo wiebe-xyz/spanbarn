@@ -10,8 +10,24 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/api"
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
+	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
+
+// newExtSessionService builds a SessionService over an in-memory repository
+// for tests living outside the api package.
+func newExtSessionService(t *testing.T) *api.SessionService {
+	t.Helper()
+	db, err := repository.NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := repository.Migrate(db.DB); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	return api.NewSessionService(repository.NewRepository(db.DB), 3600, 3600, nil)
+}
 
 func TestHealthEndpoint(t *testing.T) {
 	q := ingest.NewQueue(1024)
@@ -186,13 +202,13 @@ func TestOIDCLogoutComplete(t *testing.T) {
 }
 
 func TestMeEndpoint(t *testing.T) {
-	sm := auth.NewSessionManager("test-secret", 3600)
-	token, err := sm.Create("alice")
+	sessions := newExtSessionService(t)
+	token, _, err := sessions.Create("alice", "local", nil)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 
-	srv := newServerWithSession(t, sm)
+	srv := newServerWithSession(t, sessions)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
@@ -217,7 +233,7 @@ func TestMeEndpoint(t *testing.T) {
 	}
 }
 
-func newServerWithSession(t *testing.T, sm *auth.SessionManager) *api.Server {
+func newServerWithSession(t *testing.T, sessions *api.SessionService) *api.Server {
 	t.Helper()
 	q := ingest.NewQueue(1024)
 	sp, err := spool.NewSpool(t.TempDir(), 0)
@@ -228,7 +244,7 @@ func newServerWithSession(t *testing.T, sm *auth.SessionManager) *api.Server {
 	h := ingest.NewHandler(q, sp, 0, slog.Default())
 	h.Start(t.Context())
 	t.Cleanup(func() { h.Stop() })
-	return api.NewServerWithQuery(api.ServerConfig{APIKey: testAPIKey, Version: "1.0.0"}, h, nil, sm, slog.Default())
+	return api.NewServerWithQuery(api.ServerConfig{APIKey: testAPIKey, Version: "1.0.0"}, h, nil, sessions, slog.Default())
 }
 
 func newServer(t *testing.T, version string) *api.Server {

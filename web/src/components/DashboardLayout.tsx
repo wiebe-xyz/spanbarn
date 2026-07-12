@@ -1,7 +1,7 @@
 import { type ReactElement, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Activity, BarChart2, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe, ScrollText } from 'lucide-react'
-import { useIambarnSession, iambarnLogout, getIambarnProfile } from '../api/iambarnWidget'
+import { useIambarnSession, iambarnLogout, useIambarnProfile } from '../api/iambarnWidget'
 import { isOIDCSession } from '../api/clientConfig'
 import { IambarnProfileModal } from './IambarnProfileModal'
 import { MobileTabBar } from './MobileTabBar'
@@ -27,7 +27,7 @@ export function DashboardLayout(): ReactElement {
   const location = useLocation()
   const session = useIambarnSession()
   const oidc = isOIDCSession()
-  const profile = getIambarnProfile()
+  const profile = useIambarnProfile()
   const [profileOpen, setProfileOpen] = useState(false)
   const chipRef = useRef<HTMLButtonElement>(null)
 

@@ -19,12 +19,35 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // Only non-secret values that the browser is expected to send back upstream are
 // included. When an integration is not configured server-side, its block is
 // omitted so the SPA can no-op cleanly.
-// handleMe returns the display name for the currently authenticated session.
-// This is a lightweight same-origin endpoint so the frontend can show the
-// user's name without a cross-origin request to IamBarn.
+// handleMe returns the display name — and, for OIDC sessions, the profile
+// snapshot (name/email/picture) from the session row's claims — for the
+// currently authenticated session. This is a lightweight same-origin endpoint
+// so the frontend can render the header chip without a cross-origin request
+// to IamBarn (it replaced the JS-readable spanbarn_iam_profile cookie).
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	username := GetUsername(r.Context())
-	writeJSON(w, http.StatusOK, map[string]string{"display_name": username})
+	resp := map[string]any{"display_name": GetUsername(r.Context())}
+	if ws, ok := GetWebSession(r.Context()); ok {
+		resp["auth_method"] = ws.AuthMethod
+		if ws.ClaimsJSON != "" {
+			var claims struct {
+				Name    string `json:"name"`
+				Email   string `json:"email"`
+				Picture string `json:"picture"`
+			}
+			if err := json.Unmarshal([]byte(ws.ClaimsJSON), &claims); err == nil {
+				name := claims.Name
+				if name == "" {
+					name = ws.Username
+				}
+				resp["profile"] = map[string]string{
+					"name":    name,
+					"email":   claims.Email,
+					"picture": claims.Picture,
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleClientConfig(w http.ResponseWriter, _ *http.Request) {

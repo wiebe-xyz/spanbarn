@@ -5,7 +5,7 @@ Ingest: OTLP/HTTP (POST /v1/traces) and native JSON (POST /api/v1/spans).
 Pipeline: in-memory queue → NDJSON spool → background worker → SQLite.
 Retention: full spans for N hours, then aggregate to percentile timeseries.
 Error/slow spans sampled to error_samples table.
-Auth: bcrypt users + HMAC sessions + SHA256 API keys.
+Auth: bcrypt users + token-bound server-side sessions (web_sessions, OIDC refresh) + SHA256 API keys.
 SDKs: JavaScript, Go, Python.
 
 Key packages:

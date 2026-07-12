@@ -7,14 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 
 	_ "github.com/wiebe-xyz/spanbarn/internal/repository/migrations"
 )
 
-func setupQueryTestServer(t *testing.T) (*Server, *auth.SessionManager, *repository.Repository) {
+func setupQueryTestServer(t *testing.T) (*Server, *SessionService, *repository.Repository) {
 	t.Helper()
 
 	db, err := repository.NewDB(":memory:")
@@ -29,7 +28,7 @@ func setupQueryTestServer(t *testing.T) (*Server, *auth.SessionManager, *reposit
 
 	repo := repository.NewRepository(db.DB)
 	querySvc := service.NewQueryService(repo, nil, nil)
-	sm := auth.NewSessionManager("test-secret", 3600)
+	sm := NewSessionService(repo, 3600, 3600, nil)
 
 	srv := NewServerWithQuery(ServerConfig{
 		APIKey:  "test-key",
@@ -50,7 +49,7 @@ func TestServicesEndpoint(t *testing.T) {
 		P50Us: 500, P95Us: 2000, P99Us: 5000,
 	})
 
-	token, err := sm.Create("admin")
+	token, _, err := sm.Create("admin", "local", nil)
 	if err != nil {
 		t.Fatalf("Create session: %v", err)
 	}
@@ -113,7 +112,7 @@ func TestTracesEndpoint(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	token, _ := sm.Create("admin")
+	token, _, _ := sm.Create("admin", "local", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces?service=web&limit=10", nil)
 	req.AddCookie(&http.Cookie{Name: "session", Value: token})
@@ -154,7 +153,7 @@ func TestTraceDetailEndpoint(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	token, _ := sm.Create("admin")
+	token, _, _ := sm.Create("admin", "local", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/trace-xyz", nil)
 	req.AddCookie(&http.Cookie{Name: "session", Value: token})
@@ -184,7 +183,7 @@ func TestTraceDetailEndpoint(t *testing.T) {
 func TestTraceDetailEndpointNotFound(t *testing.T) {
 	srv, sm, _ := setupQueryTestServer(t)
 
-	token, _ := sm.Create("admin")
+	token, _, _ := sm.Create("admin", "local", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/traces/non-existent", nil)
 	req.AddCookie(&http.Cookie{Name: "session", Value: token})
