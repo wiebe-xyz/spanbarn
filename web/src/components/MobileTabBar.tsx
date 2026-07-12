@@ -24,7 +24,7 @@ export function MobileTabBar(): ReactElement {
   const handleLogout = async () => {
     setProfileOpen(false)
     setMoreOpen(false)
-    await iambarnLogout(session, () => navigate('/login', { replace: true }))
+    await iambarnLogout(session, () => navigate('/login?logged_out=1', { replace: true }))
   }
 
   return (

@@ -32,9 +32,14 @@ export function LoginPage(): ReactElement {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [redirecting, setRedirecting] = useState(true)
+  // Set by the post-logout landing (/login?logged_out=1): show a signed-out
+  // state instead of auto-restarting OIDC, which would bounce the just-signed-out
+  // user straight back to the IdP login.
+  const loggedOut = new URLSearchParams(window.location.search).has('logged_out')
+  const [redirecting, setRedirecting] = useState(!loggedOut)
 
   useEffect(() => {
+    if (loggedOut) return // signed-out landing — do not auto-restart OIDC
     let cancelled = false
     void maybeRedirectToOIDC().then((redirected) => {
       if (!cancelled && !redirected) setRedirecting(false)
@@ -42,7 +47,7 @@ export function LoginPage(): ReactElement {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [loggedOut])
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -75,6 +80,56 @@ export function LoginPage(): ReactElement {
         }}
       >
         Loading…
+      </div>
+    )
+  }
+
+  if (loggedOut) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1rem',
+        }}
+      >
+        <div
+          style={{
+            width: '100%',
+            maxWidth: 400,
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 16,
+            padding: '2.5rem',
+            textAlign: 'center',
+            boxShadow: '0 25px 60px rgba(0,0,0,0.5)',
+          }}
+        >
+          <Activity size={40} color="var(--accent)" style={{ marginBottom: 8 }} />
+          <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.5px' }}>
+            Span<span style={{ color: 'var(--accent)' }}>Barn</span>
+          </div>
+          <div style={{ fontSize: 15, color: 'var(--text-muted)', margin: '1.25rem 0 1.75rem' }}>
+            You've been signed out.
+          </div>
+          <a
+            href="/api/v1/oidc/login"
+            className="btn btn-primary"
+            style={{
+              display: 'inline-flex',
+              width: '100%',
+              justifyContent: 'center',
+              padding: '0.75rem',
+              fontSize: '0.9375rem',
+              fontWeight: 700,
+              textDecoration: 'none',
+            }}
+          >
+            Sign in
+          </a>
+        </div>
       </div>
     )
   }
