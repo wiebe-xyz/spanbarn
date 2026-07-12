@@ -124,6 +124,9 @@ export function LoginPage(): ReactElement {
               padding: '0.75rem',
               fontSize: '0.9375rem',
               fontWeight: 700,
+              // Explicit: as an <a>, the link color would otherwise override the
+              // button's white text, rendering it blue-on-blue (illegible).
+              color: '#fff',
               textDecoration: 'none',
             }}
           >
