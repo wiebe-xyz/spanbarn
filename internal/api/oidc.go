@@ -257,7 +257,10 @@ func (s *Server) handleOIDCLogoutComplete(w http.ResponseWriter, r *http.Request
 	}
 	// Never cache the teardown; a replayed 302 must not resurrect a cleared UI.
 	w.Header().Set("Cache-Control", "no-store")
-	http.Redirect(w, r, "/login", http.StatusFound)
+	// Land with ?logged_out=1 so the login page shows a signed-out state instead
+	// of auto-restarting OIDC — otherwise logout bounces straight back into the
+	// IdP's authorize/login and the user never sees they were signed out.
+	http.Redirect(w, r, "/login?logged_out=1", http.StatusFound)
 }
 
 // handleSessionRefresh (POST /api/v1/session/refresh) forces the refresh

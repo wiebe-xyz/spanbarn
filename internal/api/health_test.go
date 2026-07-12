@@ -185,8 +185,8 @@ func TestOIDCLogoutComplete(t *testing.T) {
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("expected 302, got %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "/login" {
-		t.Fatalf("expected redirect to /login, got %q", loc)
+	if loc := resp.Header.Get("Location"); loc != "/login?logged_out=1" {
+		t.Fatalf("expected redirect to /login?logged_out=1, got %q", loc)
 	}
 	cleared := map[string]bool{"session": false, "spanbarn_auth_method": false, "spanbarn_iam_token": false}
 	for _, c := range resp.Cookies() {
