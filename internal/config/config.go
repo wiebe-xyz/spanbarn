@@ -81,7 +81,6 @@ type Config struct {
 	MaxBodyBytes             int64
 	MaxSpoolBytes            int64
 	Retention                RetentionConfig
-	WALTruncateThresholdMB   int  // SPANBARN_WAL_TRUNCATE_THRESHOLD_MB — under Litestream the writer checkpoints PASSIVE (no forced re-snapshot) but escalates to one TRUNCATE when the WAL grows past this size, to bound it under sustained read load (default 256; 0 disables escalation)
 	SpanStagingEnabled       bool // SPANBARN_SPAN_STAGING_ENABLED — when true, the redis worker appends consumed spans to spans_staging (cheap) and a background flusher does accumulation+classification+indexed storage per complete trace off the hot path (default false)
 	TraceBufferWindowSeconds int  // SPANBARN_TRACE_BUFFER_WINDOW_SECONDS — how long a trace's spans buffer in spans_staging before the flusher treats the trace as complete (default 90)
 	StagingMaxAgeSeconds     int  // SPANBARN_STAGING_MAX_AGE_SECONDS — hard backstop: spans_staging rows older than this are dropped unconditionally so the table can never grow without bound (default 900)
@@ -115,7 +114,11 @@ type Config struct {
 	// (Secure cookie flag + HSTS). When unset outside dev, requests are
 	// assumed HTTPS-terminated upstream (Secure defaults to on).
 	// SPANBARN_TRUSTED_PROXIES, comma-separated.
-	TrustedProxies []string
+	TrustedProxies  []string
+	SQLiteCacheMB   int // SPANBARN_SQLITE_CACHE_MB — writer connection page cache size in MiB (default 256, matches historical production tuning); shrink for memory-constrained pods
+	SQLiteMmapMB    int // SPANBARN_SQLITE_MMAP_MB — writer connection mmap window in MiB (default 2048)
+	SQLiteROCacheMB int // SPANBARN_SQLITE_RO_CACHE_MB — read-only connection page cache size in MiB (default 32)
+	SQLiteROMmapMB  int // SPANBARN_SQLITE_RO_MMAP_MB — read-only connection mmap window in MiB (default 1024)
 }
 
 // Load reads configuration from SPANBARN_* environment variables with defaults.
@@ -145,7 +148,6 @@ func Load() Config {
 			ErrorLogDays:       getenvInt("SPANBARN_ERROR_LOG_RETENTION_DAYS", 30),
 			DeleteBatchYieldMS: getenvInt("SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS", 200),
 		},
-		WALTruncateThresholdMB:   getenvInt("SPANBARN_WAL_TRUNCATE_THRESHOLD_MB", 256),
 		SpanStagingEnabled:       getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
 		TraceBufferWindowSeconds: getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
 		StagingMaxAgeSeconds:     getenvInt("SPANBARN_STAGING_MAX_AGE_SECONDS", 900),
@@ -190,6 +192,13 @@ func Load() Config {
 		},
 		GRPCAddr:   getenv("SPANBARN_GRPC_ADDR", ":4317"),
 		E2EEnabled: getenvBool("SPANBARN_E2E_ENABLED", false),
+		// Defaults match internal/repository.DefaultWriterCacheMB etc — kept as
+		// literals here rather than importing internal/repository, which config
+		// otherwise has zero dependencies on.
+		SQLiteCacheMB:   getenvInt("SPANBARN_SQLITE_CACHE_MB", 256),
+		SQLiteMmapMB:    getenvInt("SPANBARN_SQLITE_MMAP_MB", 2048),
+		SQLiteROCacheMB: getenvInt("SPANBARN_SQLITE_RO_CACHE_MB", 32),
+		SQLiteROMmapMB:  getenvInt("SPANBARN_SQLITE_RO_MMAP_MB", 1024),
 	}
 
 	if raw := os.Getenv("SPANBARN_TRUSTED_PROXIES"); raw != "" {

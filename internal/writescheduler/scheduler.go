@@ -19,7 +19,7 @@
 // in-flight job (label + start time), traces each job, and — when a job runs
 // longer than stuckThreshold — logs the culprit and dumps all goroutine stacks so
 // we can see exactly what is holding the connection (a slow query, a checkpoint,
-// Litestream, a syscall).
+// a syscall).
 package writescheduler
 
 import (

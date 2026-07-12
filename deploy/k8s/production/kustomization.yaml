@@ -4,6 +4,7 @@ namespace: spanbarn-production
 resources:
   - namespace.yaml
   - ../base
+  - ../base/cronjob-settings-snapshot
   - ingress.yaml
   - ingress-forward-domains.yaml
   - middleware-sb-redirect.yaml

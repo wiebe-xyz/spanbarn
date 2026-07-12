@@ -14,3 +14,22 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
+          # GOMEMLIMIT was inheriting base's 1024MiB (tuned for the 2Gi
+          # production writer) against this 256Mi container limit — Go's GC
+          # never felt memory pressure before the kernel OOM-killed the pod
+          # (observed: 15 restarts/53min, exitCode 137). Set it to a soft
+          # target proportional to the real limit, with the SQLite page
+          # cache/mmap window shrunk to match — the base values (256MiB
+          # writer cache + 32MiB ro cache = 288MiB) alone exceeded this
+          # container's entire memory budget.
+          env:
+            - name: GOMEMLIMIT
+              value: "160MiB"
+            - name: SPANBARN_SQLITE_CACHE_MB
+              value: "24"
+            - name: SPANBARN_SQLITE_MMAP_MB
+              value: "64"
+            - name: SPANBARN_SQLITE_RO_CACHE_MB
+              value: "8"
+            - name: SPANBARN_SQLITE_RO_MMAP_MB
+              value: "32"

@@ -11,3 +11,23 @@ spec:
           resources:
             requests:
               cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          # Staging otherwise inherited base's production-sized 2Gi limit /
+          # 1024MiB GOMEMLIMIT unpatched — far more than a staging tier needs.
+          # Shrunk to 512Mi with GOMEMLIMIT and the SQLite page cache/mmap
+          # window sized proportionally (writer 64MiB cache + 16MiB ro cache
+          # = 80MiB static caches, leaving headroom under the 512Mi limit for
+          # a 320MiB Go heap target plus connection/HTTP/redis overhead).
+          env:
+            - name: GOMEMLIMIT
+              value: "320MiB"
+            - name: SPANBARN_SQLITE_CACHE_MB
+              value: "64"
+            - name: SPANBARN_SQLITE_MMAP_MB
+              value: "256"
+            - name: SPANBARN_SQLITE_RO_CACHE_MB
+              value: "16"
+            - name: SPANBARN_SQLITE_RO_MMAP_MB
+              value: "128"

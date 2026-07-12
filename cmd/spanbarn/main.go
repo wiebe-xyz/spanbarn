@@ -67,6 +67,8 @@ func run() error {
 			return runProjectCmd(cfg, os.Args[2:])
 		case "apikey":
 			return runAPIKeyCmd(cfg, os.Args[2:])
+		case "db":
+			return runDBCmd(cfg, os.Args[2:])
 		}
 	}
 
@@ -118,7 +120,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	// Write DB — MaxOpenConns(1), used exclusively by worker/retention/aggregation/alerts.
-	db, err := repository.NewDB(cfg.DBPath)
+	db, err := repository.NewDBWithCache(cfg.DBPath, cfg.SQLiteCacheMB, cfg.SQLiteMmapMB)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -136,7 +138,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 
 	// Read-only DB — used exclusively by the query service for dashboard reads.
 	// In WAL mode, readers and the single writer don't block each other.
-	roDB, err := repository.NewReadOnlyDB(cfg.DBPath)
+	roDB, err := repository.NewReadOnlyDBWithCache(cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
 	if err != nil {
 		return fmt.Errorf("open read-only database: %w", err)
 	}
@@ -195,24 +197,9 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	defer workerCancel()
 	safeGo("worker", &wg, func() { w.Run(workerCtx) })
 	// Run the app-side checkpoint on a fixed interval. Its busy_timeout(30000)
-	// lets it wait for a clear write window, which Litestream's own checkpoint
-	// (no busy_timeout, ~20 writes/s) rarely gets — so the writer stays the
-	// reliable WAL flush. When Litestream is attached we checkpoint in PASSIVE
-	// mode so we never reset its WAL generation (a TRUNCATE would force a full
-	// re-snapshot); Litestream itself owns WAL truncation of the same generation.
-	cpMode := checkpointMode()
-	// Under Litestream (PASSIVE) the WAL grows under sustained read load; escalate
-	// to a bounding TRUNCATE only once it exceeds the configured size (~256 WAL
-	// frames per MiB at the default 4 KiB page size). 0 = never (standalone TRUNCATE).
-	cpTruncateFrames := 0
-	if cpMode == repository.CheckpointPassive {
-		cpTruncateFrames = cfg.WALTruncateThresholdMB * 256
-	}
-	// Combined (spool) mode has no Redis write-queue backlog to gate on, so no busy skip.
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, cpTruncateFrames, logger) })
-	if litestreamActive() {
-		logger.Info("litestream active: writer runs PASSIVE WAL checkpoints; Litestream owns WAL truncation")
-	}
+	// lets it wait for a clear write window. Combined (spool) mode has no Redis
+	// write-queue backlog to gate on, so no busy skip.
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
 
 	retentionCfg := retentionConfigFrom(cfg)
 	repo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
@@ -342,7 +329,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	ingestHandler.Stop()
 	workerCancel()
 	wg.Wait()
-	db.FinalCheckpoint(checkpointMode(), logger)
+	db.FinalCheckpoint(logger)
 
 	logger.Info("shutdown complete")
 	return nil
@@ -401,7 +388,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		queryCache *cache.Cache
 	)
 	if cfg.DBPath != "" {
-		db, dbErr := repository.NewReadOnlyDB(cfg.DBPath)
+		db, dbErr := repository.NewReadOnlyDBWithCache(cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
 		if dbErr != nil {
 			logger.Warn("read-only DB unavailable, dashboard reads disabled", "error", dbErr)
 		} else {
@@ -590,7 +577,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	}()
 
 	// Step 2: write DB — MaxOpenConns(1), used by worker/retention/aggregation/alerts.
-	db, err := repository.NewDB(cfg.DBPath)
+	db, err := repository.NewDBWithCache(cfg.DBPath, cfg.SQLiteCacheMB, cfg.SQLiteMmapMB)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -613,7 +600,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	// Step 3: read-only DB for the query service — reads don't compete with writes.
-	roDB, err := repository.NewReadOnlyDB(cfg.DBPath)
+	roDB, err := repository.NewReadOnlyDBWithCache(cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
 	if err != nil {
 		return fmt.Errorf("open read-only database: %w", err)
 	}
@@ -786,18 +773,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 			}
 		}
 	})
-	cpMode := checkpointMode()
-	// Under Litestream (PASSIVE) the WAL grows under sustained read load; escalate
-	// to a bounding TRUNCATE only once it exceeds the configured size (~256 WAL
-	// frames per MiB at the default 4 KiB page size). 0 = never (standalone TRUNCATE).
-	cpTruncateFrames := 0
-	if cpMode == repository.CheckpointPassive {
-		cpTruncateFrames = cfg.WALTruncateThresholdMB * 256
-	}
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, cpMode, cpTruncateFrames, logger) })
-	if litestreamActive() {
-		logger.Info("litestream active: writer runs PASSIVE WAL checkpoints; Litestream owns WAL truncation")
-	}
+	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
 
 	// Retention queries (DELETE/SELECT on the full spans table) can take
 	// several minutes when the backlog is large. Give it a separate repo
@@ -849,7 +825,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionCancel()
 	workerCancel()
 	wg.Wait()
-	db.FinalCheckpoint(checkpointMode(), logger)
+	db.FinalCheckpoint(logger)
 
 	logger.Info("writer shutdown complete")
 	return nil
@@ -917,25 +893,6 @@ func safeGo(name string, wg *sync.WaitGroup, fn func()) {
 		}()
 		fn()
 	}()
-}
-
-// litestreamActive returns true when this process is running as the -exec child
-// of Litestream. In that case Litestream owns WAL generations and truncation as
-// part of its replication cycle, so the writer must checkpoint in PASSIVE mode
-// (see checkpointMode) — a TRUNCATE would reset the WAL header and force
-// Litestream into a costly full re-snapshot.
-func litestreamActive() bool {
-	return os.Getenv("LITESTREAM_ACCESS_KEY_ID") != ""
-}
-
-// checkpointMode picks the WAL checkpoint strategy for this process: PASSIVE when
-// a Litestream replica is attached (so we never reset its WAL generation), else
-// TRUNCATE for aggressive standalone WAL bounding.
-func checkpointMode() repository.CheckpointMode {
-	if litestreamActive() {
-		return repository.CheckpointPassive
-	}
-	return repository.CheckpointTruncate
 }
 
 // startSelfMetrics wires and launches the periodic self-metrics reporter, which
@@ -1089,7 +1046,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 		keyLookup auth.KeyLookup
 	)
 	if cfg.DBPath != "" {
-		db, dbErr := repository.NewReadOnlyDB(cfg.DBPath)
+		db, dbErr := repository.NewReadOnlyDBWithCache(cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
 		if dbErr != nil {
 			logger.Warn("read-only DB unavailable, API key validation limited to static key", "error", dbErr)
 		} else {

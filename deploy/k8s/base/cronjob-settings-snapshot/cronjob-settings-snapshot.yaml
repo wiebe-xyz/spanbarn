@@ -1,0 +1,124 @@
+# Periodic disaster-recovery snapshot: builds a settings-only SQLite database
+# (projects, users, API keys, alert rules, org settings, saved queries, trace
+# exclusions — no spans/traces/logs/metrics) and ships it off-node to the
+# shared "barn-backups" Cloudflare R2 bucket (also used by other barn
+# services), under a spanbarn-specific prefix — this job only ever lists or
+# deletes objects under that prefix, never touching the rest of the bucket.
+# Replaces continuous WAL replication: recovery is "grab the newest object,
+# drop it in as SPANBARN_DB_PATH, restart" — see deploy/docs/disaster-recovery.md.
+#
+# Applied only where the writer actually runs (production, testing), which
+# reference this directory directly (`../base/cronjob-settings-snapshot`) —
+# kept out of base/kustomization.yaml's shared resource list, which staging
+# also pulls in, so staging doesn't get DR infra it wasn't asked for. It's a
+# nested kustomization (not a loose file resource) because kustomize's
+# default security sandbox rejects referencing a bare file that lives outside
+# the referencing kustomization's own directory tree.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: spanbarn-settings-snapshot
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          imagePullSecrets:
+            - name: ghcr-secret
+          initContainers:
+            # Reads the live DB read-only (same pattern as the ingest pod's
+            # read-only mount) and writes the settings-only snapshot to the
+            # shared emptyDir for the upload container to pick up.
+            - name: snapshot
+              image: ghcr.io/wiebe-xyz/spanbarn/service:latest
+              imagePullPolicy: IfNotPresent
+              args: ["db", "snapshot-settings", "--out", "/shared/settings.db"]
+              env:
+                - name: SPANBARN_DB_PATH
+                  value: "/var/lib/spanbarn/spanbarn.db"
+              volumeMounts:
+                - name: spanbarn-data
+                  mountPath: /var/lib/spanbarn
+                  readOnly: true
+                - name: shared
+                  mountPath: /shared
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+          containers:
+            - name: upload
+              image: amazon/aws-cli:2.17.60
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  # "spanbarn/" isolates our writes within the shared backups
+                  # bucket — list/delete below is scoped to this prefix only,
+                  # so nothing belonging to another service is ever touched.
+                  PREFIX="spanbarn/settings-snapshots/${SPANBARN_ENVIRONMENT}"
+                  TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+                  aws --endpoint-url "$AWS_ENDPOINT_URL" s3 cp /shared/settings.db \
+                    "s3://${SPANBARN_SNAPSHOT_BUCKET}/${PREFIX}/${TIMESTAMP}.db"
+
+                  # Best-effort retention: keep only the newest 14 snapshots under
+                  # this prefix. Never fails the job — the upload above already
+                  # succeeded, so a pruning hiccup just leaves one extra object
+                  # until the next run.
+                  (
+                    KEYS=$(aws --endpoint-url "$AWS_ENDPOINT_URL" s3api list-objects-v2 \
+                      --bucket "$SPANBARN_SNAPSHOT_BUCKET" --prefix "${PREFIX}/" \
+                      --query "sort_by(Contents || \`[]\`, &LastModified)[:-14].Key" \
+                      --output text) || exit 0
+                    for old in $KEYS; do
+                      [ "$old" = "None" ] && continue
+                      aws --endpoint-url "$AWS_ENDPOINT_URL" s3 rm "s3://${SPANBARN_SNAPSHOT_BUCKET}/${old}"
+                    done
+                  ) || echo "prune step failed (non-fatal)" >&2
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: spanbarn-secrets
+                      key: SPANBARN_SNAPSHOT_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: spanbarn-secrets
+                      key: SPANBARN_SNAPSHOT_SECRET_ACCESS_KEY
+                - name: AWS_ENDPOINT_URL
+                  value: "https://354b481466ca4280c50f2fb8cf9e3d45.eu.r2.cloudflarestorage.com"
+                - name: AWS_DEFAULT_REGION
+                  value: "auto"
+                - name: SPANBARN_SNAPSHOT_BUCKET
+                  value: "barn-backups"
+                - name: SPANBARN_ENVIRONMENT
+                  valueFrom:
+                    secretKeyRef:
+                      name: spanbarn-secrets
+                      key: SPANBARN_ENVIRONMENT
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+          volumes:
+            - name: spanbarn-data
+              persistentVolumeClaim:
+                claimName: spanbarn-data
+            - name: shared
+              emptyDir: {}
