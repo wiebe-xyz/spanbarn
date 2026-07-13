@@ -97,7 +97,10 @@ func (rp *Reporter) flush(ctx context.Context) {
 		rp.logger.Warn("self-metrics export failed", "error", err)
 		return
 	}
-	_ = resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		rp.logger.Warn("self-metrics export rejected", "status", resp.StatusCode)
+	}
 }
 
 // buildRequest converts a snapshot into an OTLP ExportMetricsServiceRequest.
