@@ -44,6 +44,14 @@ func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error
 				return err
 			}
 		}
+
+		// Maintain trace_summaries in the same tx (staging-disabled path; the
+		// staging flush does the same for the normal path).
+		if sums := buildTraceSummaries(spans, time.Now().UTC()); len(sums) > 0 {
+			if err := upsertTraceSummariesTx(ctx, tx, sums); err != nil {
+				return err
+			}
+		}
 		return tx.Commit()
 	})
 }
@@ -255,29 +263,65 @@ type TraceSummaryRow struct {
 	PromptCount  int
 }
 
-// SearchTraceSummaries returns at most filter.Limit trace summaries matching
-// the filter, ordered by trace start time descending. The grouping happens
-// in SQL — old code fetched filter.Limit*5 raw spans and grouped in Go,
-// which was the dominant cost of the /traces page.
+// SearchTraceSummaries returns at most filter.Limit trace summaries matching the
+// filter, ordered by ingested_at descending (or errors-first). It reads the
+// pre-rolled trace_summaries table — one indexed row per trace — instead of
+// grouping every span in the window, which timed out on busy projects.
 //
-// minSpans (>0) filters out traces whose total span count falls below the
-// threshold; applied via HAVING so pagination respects it.
-//
-// Considers both `spans` and `error_samples` because old traces past span
-// retention may only have error_samples rows; without the UNION those
-// traces would disappear from search even though detail still works.
+// Filters map onto the summary's root/rollup columns: Service→root_service,
+// Operation/ExcludeOperations→root_name, Status(error/ok)→has_error,
+// MinDuration→root_duration_us (whole-trace duration), From/To→ingested_at,
+// minSpans→span_count. Error traces stay listed until the error cutoff because
+// their summaries are retained that long (see repo_trace_summaries.go), so
+// dropping the old spans∪error_samples UNION does not lose them.
 func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSummaryRow, error) {
 	var where []string
 	var args []any
-	where, args = f.appendCommonWhere(where, args)
+
+	if f.ProjectID != 0 {
+		where = append(where, "project_id = ?")
+		args = append(args, f.ProjectID)
+	}
+	if f.Service != "" {
+		where = append(where, "root_service = ?")
+		args = append(args, f.Service)
+	}
+	if f.Operation != "" {
+		where = append(where, "root_name = ?")
+		args = append(args, f.Operation)
+	}
+	if f.Status != "" {
+		if strings.EqualFold(f.Status, "error") {
+			where = append(where, "has_error = 1")
+		} else {
+			where = append(where, "has_error = 0")
+		}
+	}
+	if f.MinDuration > 0 {
+		where = append(where, "root_duration_us >= ?")
+		args = append(args, f.MinDuration)
+	}
+	if !f.From.IsZero() {
+		where = append(where, "ingested_at >= ?")
+		args = append(args, f.From)
+	}
+	if !f.To.IsZero() {
+		where = append(where, "ingested_at <= ?")
+		args = append(args, f.To)
+	}
 	if len(f.ExcludeOperations) > 0 {
 		placeholders := strings.Repeat("?,", len(f.ExcludeOperations))
 		placeholders = placeholders[:len(placeholders)-1]
-		where = append(where, "name NOT IN ("+placeholders+")")
+		where = append(where, "root_name NOT IN ("+placeholders+")")
 		for _, op := range f.ExcludeOperations {
 			args = append(args, op)
 		}
 	}
+	if minSpans > 0 {
+		where = append(where, "span_count >= ?")
+		args = append(args, minSpans)
+	}
+
 	whereSQL := ""
 	if len(where) > 0 {
 		whereSQL = " WHERE " + strings.Join(where, " AND ")
@@ -287,68 +331,36 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 	if limit <= 0 {
 		limit = 50
 	}
-	having := ""
-	if minSpans > 0 {
-		having = fmt.Sprintf(" HAVING COUNT(DISTINCT span_id) >= %d", minSpans)
-	}
-	if f.RootOnly {
-		rootCheck := "MAX(CASE WHEN COALESCE(parent_span_id,'') = '' THEN 1 ELSE 0 END) = 1"
-		if having == "" {
-			having = " HAVING " + rootCheck
-		} else {
-			having += " AND " + rootCheck
-		}
-	}
-
-	// Args are reused for the two UNIONed selects (spans + error_samples).
-	doubled := make([]any, 0, len(args)*2)
-	doubled = append(doubled, args...)
-	doubled = append(doubled, args...)
-
-	orderBy := "start_us DESC"
+	orderBy := "ingested_at DESC"
 	if f.SortErrorsFirst {
-		orderBy = "has_error DESC, start_us DESC"
+		orderBy = "has_error DESC, ingested_at DESC"
 	}
 
-	q := fmt.Sprintf(`
-		SELECT trace_id,
-		       MIN(start_time_us)                                                  AS start_us,
-		       COUNT(DISTINCT span_id)                                             AS span_count,
-		       MAX(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END) AS has_error
-		FROM (
-			SELECT trace_id, span_id, status, start_time_us, COALESCE(parent_span_id,'') AS parent_span_id FROM spans%s
-			UNION ALL
-			SELECT trace_id, span_id, status, start_time_us, COALESCE(parent_span_id,'') AS parent_span_id FROM error_samples%s
-		)
-		GROUP BY trace_id%s
-		ORDER BY `+orderBy+`
-		LIMIT %d OFFSET %d`,
-		whereSQL, whereSQL, having, limit, f.Offset)
+	q := fmt.Sprintf(`SELECT trace_id, start_time_us, span_count, has_error, root_name, root_service, root_duration_us
+		FROM trace_summaries%s
+		ORDER BY %s
+		LIMIT %d OFFSET %d`, whereSQL, orderBy, limit, f.Offset)
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
-	rows, err := r.db.QueryContext(ctx, q, doubled...)
+	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
-	type acc struct {
-		startUs   int64
-		spanCount int
-		hasError  bool
-	}
 	order := make([]string, 0, limit)
-	accs := make(map[string]*acc, limit)
+	byTrace := make(map[string]*TraceSummaryRow, limit)
 	for rows.Next() {
-		var traceID string
-		var startUs int64
-		var spanCount int
+		var tr TraceSummaryRow
 		var hasErrorInt int
-		if err := rows.Scan(&traceID, &startUs, &spanCount, &hasErrorInt); err != nil {
+		if err := rows.Scan(&tr.TraceID, &tr.StartTimeUs, &tr.SpanCount, &hasErrorInt,
+			&tr.RootName, &tr.RootService, &tr.RootDuration); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		order = append(order, traceID)
-		accs[traceID] = &acc{startUs: startUs, spanCount: spanCount, hasError: hasErrorInt == 1}
+		tr.HasError = hasErrorInt == 1
+		row := tr
+		order = append(order, tr.TraceID)
+		byTrace[tr.TraceID] = &row
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -358,106 +370,33 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 		return nil, nil
 	}
 
-	// Step 2: look up the root span (parent_span_id NULL/'') per trace.
-	// Limited to the page we just fetched, so this is cheap.
-	placeholders := strings.Repeat("?,", len(order))
-	placeholders = placeholders[:len(placeholders)-1]
-	rootArgs := make([]any, 0, len(order)*2)
-	for _, t := range order {
-		rootArgs = append(rootArgs, t)
+	// Enrich the page with model + prompt count from prompt_records.
+	prPlaceholders := strings.Repeat("?,", len(order))
+	prPlaceholders = prPlaceholders[:len(prPlaceholders)-1]
+	prArgs := make([]any, len(order))
+	for i, t := range order {
+		prArgs[i] = t
 	}
-	for _, t := range order {
-		rootArgs = append(rootArgs, t)
-	}
-	rootQ := fmt.Sprintf(`
-		SELECT trace_id, name, service, duration_us, start_time_us, COALESCE(parent_span_id,'') AS parent
-		FROM (
-			SELECT trace_id, name, service, duration_us, start_time_us, parent_span_id
-			FROM spans WHERE trace_id IN (%s)
-			UNION ALL
-			SELECT trace_id, name, service, duration_us, start_time_us, parent_span_id
-			FROM error_samples WHERE trace_id IN (%s)
-		)
-		ORDER BY (CASE WHEN COALESCE(parent_span_id,'') = '' THEN 0 ELSE 1 END), start_time_us`,
-		placeholders, placeholders)
-
-	rootCtx, rootCancel := r.queryContext()
-	defer rootCancel()
-	rrows, err := r.db.QueryContext(rootCtx, rootQ, rootArgs...)
-	if err != nil {
-		return nil, err
-	}
-	defer rrows.Close()
-
-	type rootInfo struct {
-		name     string
-		service  string
-		duration int64
-		isRoot   bool
-	}
-	roots := make(map[string]rootInfo, len(order))
-	for rrows.Next() {
-		var traceID, name, service, parent string
-		var dur, startUs int64
-		if err := rrows.Scan(&traceID, &name, &service, &dur, &startUs, &parent); err != nil {
-			return nil, err
-		}
-		existing, ok := roots[traceID]
-		// Prefer a real root (parent==""), else first-seen.
-		isRoot := parent == ""
-		if !ok || (isRoot && !existing.isRoot) {
-			roots[traceID] = rootInfo{name: name, service: service, duration: dur, isRoot: isRoot}
-		}
-	}
-	if err := rrows.Err(); err != nil {
-		return nil, err
-	}
-
-	// Step 3: fetch model and prompt count from prompt_records for each trace.
-	type promptInfo struct {
-		model string
-		count int
-	}
-	promptsByTrace := make(map[string]promptInfo, len(order))
-	if len(order) > 0 {
-		prPlaceholders := strings.Repeat("?,", len(order))
-		prPlaceholders = prPlaceholders[:len(prPlaceholders)-1]
-		prArgs := make([]any, len(order))
-		for i, t := range order {
-			prArgs[i] = t
-		}
-		prQ := fmt.Sprintf(`SELECT trace_id, MIN(model), COUNT(*) FROM prompt_records WHERE trace_id IN (%s) GROUP BY trace_id`, prPlaceholders)
-		prCtx, prCancel := r.queryContext()
-		defer prCancel()
-		prRows, err := r.db.QueryContext(prCtx, prQ, prArgs...)
-		if err == nil {
-			for prRows.Next() {
-				var tid, model string
-				var cnt int
-				if err := prRows.Scan(&tid, &model, &cnt); err == nil {
-					promptsByTrace[tid] = promptInfo{model: model, count: cnt}
+	prQ := fmt.Sprintf(`SELECT trace_id, MIN(model), COUNT(*) FROM prompt_records WHERE trace_id IN (%s) GROUP BY trace_id`, prPlaceholders)
+	prCtx, prCancel := r.queryContext()
+	defer prCancel()
+	if prRows, err := r.db.QueryContext(prCtx, prQ, prArgs...); err == nil {
+		for prRows.Next() {
+			var tid, model string
+			var cnt int
+			if err := prRows.Scan(&tid, &model, &cnt); err == nil {
+				if row := byTrace[tid]; row != nil {
+					row.RootModel = model
+					row.PromptCount = cnt
 				}
 			}
-			prRows.Close()
 		}
+		prRows.Close()
 	}
 
 	out := make([]TraceSummaryRow, 0, len(order))
-	for _, traceID := range order {
-		a := accs[traceID]
-		ri := roots[traceID]
-		pi := promptsByTrace[traceID]
-		out = append(out, TraceSummaryRow{
-			TraceID:      traceID,
-			StartTimeUs:  a.startUs,
-			SpanCount:    a.spanCount,
-			HasError:     a.hasError,
-			RootName:     ri.name,
-			RootService:  ri.service,
-			RootDuration: ri.duration,
-			RootModel:    pi.model,
-			PromptCount:  pi.count,
-		})
+	for _, t := range order {
+		out = append(out, *byTrace[t])
 	}
 	return out, nil
 }
