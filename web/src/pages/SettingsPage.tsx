@@ -384,6 +384,138 @@ function SamplingSettingsPanel() {
   )
 }
 
+// ─── Per-project retention caps ────────────────────────────────────────────
+
+type RetentionCapProject = {
+  id: number
+  slug: string
+  maxHours: string   // '' means no age cap
+  maxTraces: string  // '' means no count cap
+}
+
+function PerProjectRetentionPanel() {
+  const [projects, setProjects] = useState<RetentionCapProject[]>([])
+  const [saving, setSaving] = useState<string | null>(null)
+  const [savedKey, setSavedKey] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    Promise.all([
+      fetchJSON<{ id: number; slug: string; name: string; status: string; createdAt: string }[]>('/api/v1/projects'),
+      fetchJSON<Record<string, string>>('/api/v1/settings'),
+    ]).then(([projs, settings]) => {
+      if (projs) {
+        setProjects(
+          projs
+            .filter(p => p.status === 'active')
+            .sort((a, b) => a.slug.localeCompare(b.slug))
+            .map(p => ({
+              id: p.id,
+              slug: p.slug,
+              maxHours: settings?.[`retention.max_hours.project.${p.id}`] ?? '',
+              maxTraces: settings?.[`retention.max_traces.project.${p.id}`] ?? '',
+            }))
+        )
+      }
+    }).catch(() => {}).finally(() => setLoading(false))
+  }, [])
+
+  // One PUT carries both keys for the row; an empty value clears that cap.
+  const saveProject = async (p: RetentionCapProject) => {
+    const rowKey = `retention.project.${p.id}`
+    setSaving(rowKey)
+    try {
+      await fetchJSON('/api/v1/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          [`retention.max_hours.project.${p.id}`]: p.maxHours,
+          [`retention.max_traces.project.${p.id}`]: p.maxTraces,
+        }),
+      })
+      setSavedKey(rowKey)
+      setTimeout(() => setSavedKey(null), 1500)
+    } catch { /* ignore */ } finally {
+      setSaving(null)
+    }
+  }
+
+  if (loading) return <div className="skeleton" style={{ height: 120, marginBottom: '1.5rem' }} />
+
+  const inputStyle: React.CSSProperties = {
+    padding: '0.3rem 0.5rem',
+    fontSize: '0.8125rem',
+    width: 90,
+    textAlign: 'right',
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: '1.5rem' }}>
+      <div style={{ fontWeight: 700, fontSize: '0.875rem', marginBottom: '0.25rem' }}>
+        Per-project Retention Caps
+      </div>
+      <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+        Cap a project to a maximum age (hours) and/or a maximum number of traces; the
+        oldest non-error traces beyond the limit are dropped. Error traces and metrics
+        are always kept. Leave blank for no cap. Applies within a few minutes.
+      </div>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+              <th style={{ textAlign: 'left', padding: '0.375rem 0.5rem', fontWeight: 600, color: 'var(--text-muted)', fontSize: '0.75rem' }}>Project</th>
+              <th style={{ textAlign: 'right', padding: '0.375rem 0.5rem', fontWeight: 600, color: 'var(--text-muted)', fontSize: '0.75rem' }}>Max hours</th>
+              <th style={{ textAlign: 'right', padding: '0.375rem 0.5rem', fontWeight: 600, color: 'var(--text-muted)', fontSize: '0.75rem' }}>Max traces</th>
+              <th style={{ width: 60 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {projects.map(p => {
+              const rowKey = `retention.project.${p.id}`
+              return (
+                <tr key={p.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ padding: '0.375rem 0.5rem' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>{p.slug}</span>
+                  </td>
+                  <td style={{ padding: '0.375rem 0.5rem', textAlign: 'right' }}>
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="∞"
+                      value={p.maxHours}
+                      onChange={e => setProjects(ps => ps.map(x => x.id === p.id ? { ...x, maxHours: e.target.value } : x))}
+                      style={inputStyle}
+                    />
+                  </td>
+                  <td style={{ padding: '0.375rem 0.5rem', textAlign: 'right' }}>
+                    <input
+                      type="number"
+                      min="1"
+                      placeholder="∞"
+                      value={p.maxTraces}
+                      onChange={e => setProjects(ps => ps.map(x => x.id === p.id ? { ...x, maxTraces: e.target.value } : x))}
+                      style={inputStyle}
+                    />
+                  </td>
+                  <td style={{ padding: '0.375rem 0.5rem' }}>
+                    <button
+                      onClick={() => saveProject(p)}
+                      disabled={saving === rowKey}
+                      className="btn btn-sm"
+                    >
+                      {savedKey === rowKey ? '✓' : saving === rowKey ? '…' : 'Save'}
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ─── Projects ────────────────────────────────────────────────────────────────
 
 type Project = {
@@ -605,6 +737,7 @@ export function SettingsPage(): ReactElement {
       {/* System health + retention + sampling */}
       <SystemHealthPanel />
       <RetentionSettingsPanel />
+      <PerProjectRetentionPanel />
       <SamplingSettingsPanel />
 
       {/* LLM Setup reference */}

@@ -162,6 +162,8 @@ func serveSWR[T any](
 // Boring span keys: boring.sample_ratio, boring.sample_ratio.project.{id},
 // boring_retention_minutes, boring.verbose_until.project.{id},
 // boring.min_traces_per_minute, boring.min_traces_per_minute.project.{id}.
+// Per-project retention caps: retention.max_hours.project.{id},
+// retention.max_traces.project.{id}.
 func isAllowedSettingKey(k string) bool {
 	switch k {
 	case "retention_full_hours", "retention_interesting_hours",
@@ -174,7 +176,9 @@ func isAllowedSettingKey(k string) bool {
 	return strings.HasPrefix(k, "ingest.sample_ratio.") ||
 		strings.HasPrefix(k, "boring.sample_ratio.") ||
 		strings.HasPrefix(k, "boring.min_traces_per_minute.") ||
-		strings.HasPrefix(k, "boring.verbose_until.")
+		strings.HasPrefix(k, "boring.verbose_until.") ||
+		strings.HasPrefix(k, "retention.max_hours.project.") ||
+		strings.HasPrefix(k, "retention.max_traces.project.")
 }
 
 func (h *settingsHandlers) handleStatsDBSize(w http.ResponseWriter, r *http.Request) {
