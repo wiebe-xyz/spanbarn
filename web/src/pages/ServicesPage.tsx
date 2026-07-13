@@ -267,7 +267,7 @@ export function ServicesPage(): ReactElement {
                     <tr
                       key={svc.service}
                       style={{ cursor: 'pointer' }}
-                      onClick={() => navigate(`/services/${encodeURIComponent(svc.service)}`)}
+                      onClick={() => navigate(`/services/${encodeURIComponent(svc.service)}?kind=${serverOnly ? 'server' : 'all'}`)}
                     >
                       <td>
                         <span style={{ fontWeight: 600, color: 'var(--accent)' }}>{svc.service}</span>
