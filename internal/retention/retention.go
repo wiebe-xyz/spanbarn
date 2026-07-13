@@ -2,6 +2,7 @@ package retention
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"time"
@@ -52,6 +53,9 @@ type Repository interface {
 	DeleteMetricRollupsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error)
 	GetSetting(key string) (string, error)
+	ListProjectIDs() ([]int64, error)
+	EvictProjectTracesOlderThan(ctx context.Context, projectID int64, cutoff time.Time) (int64, error)
+	ProjectNonErrorTraceCountCutoff(ctx context.Context, projectID int64, keepN int) (time.Time, bool, error)
 }
 
 // Config controls the retention worker's behaviour.
@@ -376,6 +380,14 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		return err
 	}
 
+	// Enforce per-project retention caps (max age in hours and/or max non-error
+	// trace count). Only shortens retention; never touches errors, pinned traces,
+	// or metrics.
+	projectTracesEvicted, err := w.evictPerProjectCaps(ctx, now)
+	if err != nil {
+		return err
+	}
+
 	span.SetAttributes(
 		attribute.Int64("spans_aggregated", totalAggregated),
 		attribute.Int64("errors_sampled", totalSampled),
@@ -388,6 +400,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		attribute.Int64("logs_deleted", logsDeleted),
 		attribute.Int64("e2e_users_deleted", e2eUsersDeleted),
 		attribute.Int64("web_sessions_deleted", webSessionsDeleted),
+		attribute.Int64("project_traces_evicted", projectTracesEvicted),
 		attribute.Bool("backlog_remains", backlogRemains),
 	)
 	w.logger.Info("retention cycle complete",
@@ -402,7 +415,61 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		"logs_deleted", logsDeleted,
 		"e2e_users_deleted", e2eUsersDeleted,
 		"web_sessions_deleted", webSessionsDeleted,
+		"project_traces_evicted", projectTracesEvicted,
 		"backlog_remains", backlogRemains,
 	)
 	return nil
+}
+
+// evictPerProjectCaps enforces the per-project retention caps configured via the
+// settings table: retention.max_hours.project.{id} (delete non-error traces older
+// than that many hours) and retention.max_traces.project.{id} (keep only the
+// newest N non-error traces). Both only ever shorten retention; absent/≤0 keys
+// are skipped. Returns the total traces evicted across all projects.
+func (w *RetentionWorker) evictPerProjectCaps(ctx context.Context, now time.Time) (int64, error) {
+	pids, err := w.repo.ListProjectIDs()
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, pid := range pids {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		if h := w.settingInt(fmt.Sprintf("retention.max_hours.project.%d", pid)); h > 0 {
+			n, err := w.repo.EvictProjectTracesOlderThan(ctx, pid, now.Add(-time.Duration(h)*time.Hour))
+			if err != nil {
+				return total, err
+			}
+			total += n
+		}
+		if maxN := w.settingInt(fmt.Sprintf("retention.max_traces.project.%d", pid)); maxN > 0 {
+			cutoff, ok, err := w.repo.ProjectNonErrorTraceCountCutoff(ctx, pid, maxN)
+			if err != nil {
+				return total, err
+			}
+			if ok {
+				n, err := w.repo.EvictProjectTracesOlderThan(ctx, pid, cutoff)
+				if err != nil {
+					return total, err
+				}
+				total += n
+			}
+		}
+	}
+	return total, nil
+}
+
+// settingInt reads a positive int from the settings table, returning 0 when the
+// key is absent, empty, unparseable, or non-positive.
+func (w *RetentionWorker) settingInt(key string) int {
+	v, err := w.repo.GetSetting(key)
+	if err != nil || v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return n
 }
