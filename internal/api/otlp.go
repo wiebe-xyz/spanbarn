@@ -146,6 +146,8 @@ func otlpToSpanRecords(req *collectorpb.ExportTraceServiceRequest, projectID int
 					rec.Resource = extractResource(raw)
 				}
 
+				collapseSpanParams(&rec)
+
 				records = append(records, rec)
 			}
 		}

@@ -84,6 +84,46 @@ func TestListDatabaseQueries(t *testing.T) {
 	}
 }
 
+func TestListDatabaseQueriesCollapsesParamLists(t *testing.T) {
+	repo := setupTestRepo(t)
+	svc := NewQueryService(repo, nil, nil)
+	now := time.Now()
+
+	// Two executions of the same DELETE differing only in IN-list length must
+	// fold into a single normalized pattern rather than two rows.
+	spans := []repository.Span{
+		{
+			ProjectID: 1, TraceID: "t1", SpanID: "s1", Name: "db.query", Service: "web",
+			Kind: "client", Status: "ok", StartTimeUs: now.UnixMicro(), DurationUs: 100,
+			Attributes: `{"db.system":"sqlite","db.statement":"DELETE FROM spans_staging WHERE trace_id IN (?,?,?)"}`,
+			Events:     "[]", IngestedAt: now,
+		},
+		{
+			ProjectID: 1, TraceID: "t2", SpanID: "s2", Name: "db.query", Service: "web",
+			Kind: "client", Status: "ok", StartTimeUs: now.UnixMicro() + 10, DurationUs: 120,
+			Attributes: `{"db.system":"sqlite","db.statement":"DELETE FROM spans_staging WHERE trace_id IN (?,?,?,?,?,?,?)"}`,
+			Events:     "[]", IngestedAt: now,
+		},
+	}
+	if err := repo.InsertSpans(spans); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+
+	out, err := svc.ListDatabaseQueries(context.Background(), 1, time.Time{}, time.Time{}, "")
+	if err != nil {
+		t.Fatalf("ListDatabaseQueries: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("want 1 collapsed query pattern, got %d: %+v", len(out), out)
+	}
+	if out[0].CallCount != 2 {
+		t.Errorf("CallCount = %d, want 2 (both placeholder-count variants folded)", out[0].CallCount)
+	}
+	if want := "delete from spans_staging where trace_id in (?, …)"; out[0].Pattern != want {
+		t.Errorf("Pattern = %q, want %q", out[0].Pattern, want)
+	}
+}
+
 func TestGetDatabaseQuerySpans(t *testing.T) {
 	repo := setupTestRepo(t)
 	svc := NewQueryService(repo, nil, nil)

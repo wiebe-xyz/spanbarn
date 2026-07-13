@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +67,8 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		if rec.Resource == "" && len(sp.Attributes) > 0 {
 			rec.Resource = extractResource(sp.Attributes)
 		}
+
+		collapseSpanParams(&rec)
 
 		records = append(records, rec)
 	}
@@ -124,6 +127,14 @@ func normalizeStatus(status string) string {
 		return "unset"
 	}
 	return status
+}
+
+// collapseSpanParams collapses variable-length bind-placeholder lists (e.g.
+// `IN (?,?,?)`) in a span's name and resource so parameterized SQL statements
+// group as a single operation instead of one per placeholder count.
+func collapseSpanParams(rec *model.SpanRecord) {
+	rec.Name = service.CollapseParamLists(rec.Name)
+	rec.Resource = service.CollapseParamLists(rec.Resource)
 }
 
 // extractResource tries to derive a resource name from span attributes.
