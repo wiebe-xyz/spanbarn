@@ -41,6 +41,8 @@ type Repository interface {
 	DeleteSpansByMaxID(maxID int64) (int64, error)
 	DeleteSpansOlderThan(cutoff time.Time) (int64, error)
 	DeleteExpiredBoringSpans(ctx context.Context, now time.Time) (int64, error)
+	DeleteExpiredTraceSummaries(ctx context.Context, now time.Time) (int64, error)
+	DeleteTraceSummariesOlderThan(ctx context.Context, interestingCutoff, errorCutoff time.Time) (int64, error)
 	InsertErrorSamples(spans []repository.Span) error
 	DeleteErrorSamplesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteAggregatesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
@@ -329,6 +331,17 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	// status/duration_us (which had wedged the writer for 30s+).
 	boringDeleted, err := w.repo.DeleteExpiredBoringSpans(ctx, now)
 	if err != nil {
+		return err
+	}
+
+	// Clean up trace_summaries in lockstep with the spans they describe: early
+	// for boring-sampled traces (stamped expires_at), then non-error at the
+	// interesting cutoff and error traces at the error cutoff (matching
+	// error_samples), so the trace list drops rows exactly when its spans go.
+	if _, err := w.repo.DeleteExpiredTraceSummaries(ctx, now); err != nil {
+		return err
+	}
+	if _, err := w.repo.DeleteTraceSummariesOlderThan(ctx, interestingCutoff, errorCutoff); err != nil {
 		return err
 	}
 

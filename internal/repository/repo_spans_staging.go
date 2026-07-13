@@ -133,6 +133,14 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 			stmt.Close()
 		}
 
+		// Roll up the persisted spans into trace_summaries in the same tx so the
+		// trace list has a pre-grouped, indexed row instead of scanning spans.
+		if sums := buildTraceSummaries(interesting, time.Now().UTC()); len(sums) > 0 {
+			if err := upsertTraceSummariesTx(ctx, tx, sums); err != nil {
+				return err
+			}
+		}
+
 		placeholders := strings.Repeat("?,", len(traceIDs))
 		placeholders = placeholders[:len(placeholders)-1]
 		args := make([]any, len(traceIDs))
