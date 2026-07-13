@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type ReactElement } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { ChevronRight, Search } from 'lucide-react'
 import {
   AreaChart,
@@ -21,14 +21,21 @@ import { useTimeRange } from '../contexts/useTimeRange'
 export function OperationsPage(): ReactElement {
   const { service } = useParams<{ service: string }>()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { range, setRange } = useTimeRange()
   const [refreshInterval, setRefreshInterval] = useState(0)
   const [operations, setOperations] = useState<OperationSummary[]>([])
   const [_timeseries, setTimeseries] = useState<TimeseriesBucket[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  // 'server' by default surfaces entry-point operations; '' means all kinds.
-  const [kindFilter, setKindFilter] = useState('server')
+  // Initialize from the `kind` URL param so navigation from the Services page
+  // carries its "Entry points / All spans" toggle. 'all' maps to '' (all kinds);
+  // absent means a direct/breadcrumb visit and keeps the 'server' default that
+  // surfaces entry-point operations.
+  const initialKind = searchParams.get('kind')
+  const [kindFilter, setKindFilter] = useState(
+    initialKind === null ? 'server' : initialKind === 'all' ? '' : initialKind,
+  )
   const [sortKey, setSortKey] = useState<string>('score')
   const [sortAsc, setSortAsc] = useState(false)
   const fetchIdRef = useRef(0)
@@ -154,7 +161,10 @@ export function OperationsPage(): ReactElement {
           </div>
           <select
             value={kindFilter}
-            onChange={(e) => setKindFilter(e.target.value)}
+            onChange={(e) => {
+              setKindFilter(e.target.value)
+              setSearchParams({ kind: e.target.value || 'all' }, { replace: true })
+            }}
             style={{
               background: 'var(--surface)',
               border: '1px solid var(--border)',

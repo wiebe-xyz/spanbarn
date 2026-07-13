@@ -254,7 +254,7 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 			for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
 				ProjectID: projectID, Service: service, Kind: kind, From: fbFrom, To: to,
 			}) {
-				k := opKey{a.Operation, a.Resource, a.Kind}
+				k := opKey{CollapseParamLists(a.Operation), CollapseParamLists(a.Resource), a.Kind}
 				st := byOp[k]
 				if st == nil {
 					st = &aggStats{}
@@ -268,7 +268,7 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 				s.logger.Warn("failed to query operation stats from spans", "error", err)
 			}
 			for _, ss := range spanStats {
-				k := opKey{ss.Operation, ss.Resource, ss.Kind}
+				k := opKey{CollapseParamLists(ss.Operation), CollapseParamLists(ss.Resource), ss.Kind}
 				st := byOp[k]
 				if st == nil {
 					st = &aggStats{}

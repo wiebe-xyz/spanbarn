@@ -38,7 +38,102 @@ func NormalizeSQL(sql string) string {
 		}
 	}
 
-	return strings.TrimSpace(b.String())
+	return CollapseParamLists(strings.TrimSpace(b.String()))
+}
+
+// CollapseParamLists collapses a run of two-or-more consecutive bind
+// placeholders ("?" or "$N") separated only by commas/whitespace into a single
+// canonical "?, …", so `IN (?,?,?)` and `IN (?,?,?,?,?)` group together. A lone
+// placeholder is left untouched. Non-placeholder text is preserved verbatim
+// (case and literals included), so it is safe to run on any span name/resource.
+func CollapseParamLists(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.Grow(len(s))
+	i, n := 0, len(s)
+	var prevNonSpace byte
+
+	for i < n {
+		// Only collapse a placeholder run that sits directly inside parentheses
+		// (`IN (?,?,?)`, `VALUES (?,?,?)`) — the variable-length list shape. Bare
+		// projections like `SELECT ?, ?` keep their exact arity.
+		if prevNonSpace == '(' && isPlaceholderStart(s, i) {
+			i = scanPlaceholderRun(s, i, &b)
+			prevNonSpace = '?'
+			continue
+		}
+		ch := s[i]
+		b.WriteByte(ch)
+		if !isSpace(ch) {
+			prevNonSpace = ch
+		}
+		i++
+	}
+
+	return b.String()
+}
+
+// isPlaceholderStart reports whether a bind placeholder ("?" or "$N") begins at i.
+func isPlaceholderStart(s string, i int) bool {
+	if s[i] == '?' {
+		return true
+	}
+	return s[i] == '$' && i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9'
+}
+
+// scanPlaceholderRun consumes a maximal run of placeholders separated only by
+// commas/whitespace starting at i. It writes "?, …" when the run holds two or
+// more placeholders, otherwise the lone placeholder verbatim, and returns the
+// index just past the run.
+func scanPlaceholderRun(s string, i int, b *strings.Builder) int {
+	n := len(s)
+	start := i
+	count := 0
+	j := i
+	for {
+		j = skipPlaceholder(s, j)
+		count++
+		// Look past an optional "whitespace* , whitespace*" separator for the
+		// next placeholder; if absent, the run ends here.
+		k := j
+		for k < n && isSpace(s[k]) {
+			k++
+		}
+		if k < n && s[k] == ',' {
+			k++
+			for k < n && isSpace(s[k]) {
+				k++
+			}
+			if k < n && isPlaceholderStart(s, k) {
+				j = k
+				continue
+			}
+		}
+		break
+	}
+
+	if count >= 2 {
+		b.WriteString("?, …")
+	} else {
+		b.WriteString(s[start:j])
+	}
+	return j
+}
+
+// skipPlaceholder returns the index just past a single placeholder at i.
+func skipPlaceholder(s string, i int) int {
+	n := len(s)
+	if s[i] == '?' {
+		return i + 1
+	}
+	i++ // '$'
+	for i < n && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	return i
 }
 
 // Each scanXxx consumes one token starting at i, writes its canonical form to b,
