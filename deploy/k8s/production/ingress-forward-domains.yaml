@@ -17,6 +17,22 @@ spec:
       services:
         - name: spanbarn-ingest
           port: 8080
+    # OTLP metrics + logs share the same writer (spanbarn-ingest registers all
+    # three OTLP handlers). Without these rules the POSTs fall through to the
+    # priority-1 redirect and hit spanbarn-web, which answers 405 — so forwarded
+    # sb.* domains could ship traces but never metrics or logs.
+    - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/v1/metrics`)
+      kind: Rule
+      priority: 101
+      services:
+        - name: spanbarn-ingest
+          port: 8080
+    - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/v1/logs`)
+      kind: Rule
+      priority: 101
+      services:
+        - name: spanbarn-ingest
+          port: 8080
     - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/api/v1/spans`)
       kind: Rule
       priority: 101
