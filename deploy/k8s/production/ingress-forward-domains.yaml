@@ -10,10 +10,20 @@ spec:
     # sb.<their-domain> at the cluster (proxied via Cloudflare) and OTLP/RUM
     # ingest works with no ingress change. HostRegexp is Traefik v3 Go-regexp
     # syntax. "spanbarn." does not match "^sb\." so the apex host is unaffected.
-    # priority: 101 ensures these beat the catch-all redirect (priority 1).
+    #
+    # priority: 200 — the "sb." label is RESERVED for SpanBarn ingest, so these
+    # must win even when the consuming app is co-located on this SAME cluster and
+    # greedily claims all of its own subdomains. profotograaf's app does exactly
+    # that: profotograaf-production/profotograaf-profotograaf-subdomain matches
+    # HostRegexp(^…\.profotograaf\.nl$) (i.e. ALL of *.profotograaf.nl, including
+    # sb.profotograaf.nl) at priority up to 115 on /api. The old priority: 101
+    # lost that race, so sb.profotograaf.nl/api/v1/spans 404'd into the profotograaf
+    # app. 200 matches the ecosystem convention (BugBarn's bb.* and FunnelBarn's
+    # f.* forward routes both run at 200). Still beats the catch-all redirect
+    # (priority 1) as before.
     - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/v1/traces`)
       kind: Rule
-      priority: 101
+      priority: 200
       services:
         - name: spanbarn-ingest
           port: 8080
@@ -23,31 +33,31 @@ spec:
     # sb.* domains could ship traces but never metrics or logs.
     - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/v1/metrics`)
       kind: Rule
-      priority: 101
+      priority: 200
       services:
         - name: spanbarn-ingest
           port: 8080
     - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/v1/logs`)
       kind: Rule
-      priority: 101
+      priority: 200
       services:
         - name: spanbarn-ingest
           port: 8080
     - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/api/v1/spans`)
       kind: Rule
-      priority: 101
+      priority: 200
       services:
         - name: spanbarn-ingest
           port: 8080
     - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/api/v1/telemetry`)
       kind: Rule
-      priority: 101
+      priority: 200
       services:
         - name: spanbarn-ingest
           port: 8080
     - match: HostRegexp(`^sb\..+$`) && PathPrefix(`/api/v1/client-errors`)
       kind: Rule
-      priority: 101
+      priority: 200
       services:
         - name: spanbarn-ingest
           port: 8080
@@ -59,7 +69,7 @@ spec:
     # batch. Method-scoped so GET / still falls through to the redirect below.
     - match: HostRegexp(`^sb\..+$`) && Path(`/`) && (Method(`POST`) || Method(`OPTIONS`))
       kind: Rule
-      priority: 101
+      priority: 200
       middlewares:
         - name: otlp-root-to-traces
       services:
