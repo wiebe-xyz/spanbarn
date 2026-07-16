@@ -2,10 +2,12 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,5 +141,73 @@ func TestNonSelfSpansStillSampled(t *testing.T) {
 	case <-tb.Out:
 		t.Fatal("unsampled tenant trace was kept")
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+// warnSpy counts WARN records and keeps their messages.
+type warnSpy struct {
+	warns *int
+	msgs  *[]string
+}
+
+func (h warnSpy) Enabled(context.Context, slog.Level) bool { return true }
+func (h warnSpy) Handle(_ context.Context, r slog.Record) error {
+	if r.Level == slog.LevelWarn {
+		*h.warns++
+		*h.msgs = append(*h.msgs, r.Message)
+	}
+	return nil
+}
+func (h warnSpy) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h warnSpy) WithGroup(string) slog.Handler      { return h }
+
+func newTestIngestHandler(t *testing.T) *ingest.Handler {
+	t.Helper()
+	sp, err := spool.NewSpool(t.TempDir(), 0)
+	if err != nil {
+		t.Fatalf("spool: %v", err)
+	}
+	t.Cleanup(func() { sp.Close() })
+	return ingest.NewHandler(ingest.NewQueue(16), sp, 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// TestServerWarnsWhenIngestHasNoSampler is the runtime half of the guard (the
+// compile-time half is TestEveryOTLPModeWiresTheSampler in cmd/spanbarn). A
+// server that accepts spans with no TraceBuffer ingests everything unsampled and
+// ignores every ingest.sample_ratio setting — silently, which is how
+// runStandalone shipped for months.
+func TestServerWarnsWhenIngestHasNoSampler(t *testing.T) {
+	warns := 0
+	var msgs []string
+	logger := slog.New(warnSpy{warns: &warns, msgs: &msgs})
+
+	api.NewServerWithQuery(api.ServerConfig{APIKey: testAPIKey, MaxBodyBytes: 1 << 20},
+		newTestIngestHandler(t), nil, nil, logger)
+
+	if warns == 0 {
+		t.Fatal("a server accepting spans with no trace buffer did not warn — sampling is off and nothing says so")
+	}
+	joined := strings.Join(msgs, " ")
+	if !strings.Contains(joined, "sampling is DISABLED") {
+		t.Fatalf("warning does not say sampling is disabled: %v", msgs)
+	}
+}
+
+// TestServerSilentWhenSamplerWired ensures the guard doesn't cry wolf on a
+// correctly wired server.
+func TestServerSilentWhenSamplerWired(t *testing.T) {
+	warns := 0
+	var msgs []string
+	logger := slog.New(warnSpy{warns: &warns, msgs: &msgs})
+	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	tb := ingest.NewTraceBuffer(time.Hour, ingest.NewStaticRatioLookup(1), discard)
+	api.NewServerWithQuery(api.ServerConfig{APIKey: testAPIKey, MaxBodyBytes: 1 << 20},
+		newTestIngestHandler(t), nil, nil, logger, api.WithTraceBuffer(tb))
+
+	for _, m := range msgs {
+		if strings.Contains(m, "sampling is DISABLED") {
+			t.Fatalf("correctly wired server warned about sampling: %v", msgs)
+		}
 	}
 }

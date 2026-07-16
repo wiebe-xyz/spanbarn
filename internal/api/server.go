@@ -190,6 +190,15 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		opt(s)
 	}
 
+	// A server that accepts spans but has no TraceBuffer silently ingests
+	// everything unsampled: handleOTLP falls through to Enqueue, and every
+	// ingest.sample_ratio.* setting reads back fine while doing nothing. That is
+	// exactly how runStandalone shipped for months, so say it out loud rather
+	// than leaving it to be discovered by a full disk.
+	if s.ingest != nil && s.traceBuffer == nil {
+		logger.Warn("ingest is enabled without a trace buffer: span sampling is DISABLED and every ingest.sample_ratio setting will be ignored")
+	}
+
 	// The session service refreshes OIDC sessions through the same client the
 	// server proxies with; resolve at request time because SetOIDCClient runs
 	// after construction.
