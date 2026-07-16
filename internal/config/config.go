@@ -143,7 +143,7 @@ func Load() Config {
 			ErrorDays:          getenvInt("SPANBARN_RETENTION_ERROR_DAYS", 90),
 			InterestingHours:   getenvInt("SPANBARN_RETENTION_INTERESTING_HOURS", 48),
 			BoringMinutes:      getenvInt("SPANBARN_BORING_RETENTION_MINUTES", 30),
-			MetricsDays:        getenvInt("SPANBARN_METRICS_RETENTION_DAYS", 90),
+			MetricsDays:        getenvInt("SPANBARN_METRICS_RETENTION_DAYS", 7),
 			LogHours:           getenvInt("SPANBARN_LOG_RETENTION_HOURS", 24),
 			ErrorLogDays:       getenvInt("SPANBARN_ERROR_LOG_RETENTION_DAYS", 30),
 			DeleteBatchYieldMS: getenvInt("SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS", 200),

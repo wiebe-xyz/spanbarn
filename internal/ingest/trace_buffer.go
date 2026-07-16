@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -20,6 +21,15 @@ const (
 	DefaultSampleRatio = 1000
 
 	gcInterval = 30 * time.Second
+
+	// DefaultMaxBufferedSpans bounds how many spans are held across all in-flight
+	// traces. Every span waits out the full TTL before a sampling decision is
+	// made, so the buffer holds TTL-worth of *unsampled* traffic — including
+	// self-instrument spans, whose volume scales with writer load. An unbounded
+	// map therefore grows fastest exactly when the pod is already struggling, so
+	// it is capped: the reader runs under a 448MiB GOMEMLIMIT and this map is
+	// live data the GC cannot reclaim.
+	DefaultMaxBufferedSpans = 50_000
 )
 
 // SampleRatioLookup returns the configured ratio for a (projectID, operation)
@@ -42,6 +52,14 @@ type TraceBuffer struct {
 	traces map[string]*bufferedTrace
 	ttl    time.Duration
 	lookup SampleRatioLookup
+	logger *slog.Logger
+
+	// maxSpans caps spanCount, the number of spans buffered across all traces.
+	// 0 disables the cap. spanCount may overshoot slightly: spans on traces
+	// already known to contain an error are always accepted (see Add).
+	maxSpans  int
+	spanCount int
+	dropped   int64
 
 	// Accepted spans are sent to this channel for the caller to drain.
 	Out <-chan []model.SpanRecord
@@ -57,15 +75,21 @@ type bufferedTrace struct {
 	firstSeen time.Time
 }
 
-// NewTraceBuffer creates a buffer with the given TTL and ratio lookup.
-func NewTraceBuffer(ttl time.Duration, lookup SampleRatioLookup) *TraceBuffer {
+// NewTraceBuffer creates a buffer with the given TTL and ratio lookup, capped at
+// DefaultMaxBufferedSpans.
+func NewTraceBuffer(ttl time.Duration, lookup SampleRatioLookup, logger *slog.Logger) *TraceBuffer {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	ch := make(chan []model.SpanRecord, 256)
 	tb := &TraceBuffer{
-		traces: make(map[string]*bufferedTrace),
-		ttl:    ttl,
-		lookup: lookup,
-		out:    ch,
-		Out:    ch,
+		traces:   make(map[string]*bufferedTrace),
+		ttl:      ttl,
+		lookup:   lookup,
+		logger:   logger,
+		maxSpans: DefaultMaxBufferedSpans,
+		out:      ch,
+		Out:      ch,
 	}
 	go tb.gcLoop()
 	return tb
@@ -77,19 +101,37 @@ func (tb *TraceBuffer) Add(rec model.SpanRecord) {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 
+	atCap := tb.maxSpans > 0 && tb.spanCount >= tb.maxSpans
+
 	tr := tb.traces[rec.TraceID]
 	if tr == nil {
+		if atCap {
+			tb.dropped++
+			return
+		}
 		tr = &bufferedTrace{
 			projectID: rec.ProjectID,
 			firstSeen: time.Now(),
 		}
 		tb.traces[rec.TraceID] = tr
 	}
-	tr.spans = append(tr.spans, rec)
 
+	// Latch the error status before the cap check: even when the span's payload
+	// is dropped, the trace must still be recognised as an error trace so keep()
+	// passes whatever spans of it we did retain.
 	if isErrorStatus(rec.Status) {
 		tr.hasError = true
 	}
+
+	// Over capacity, keep collecting error traces — they bypass sampling and are
+	// the traces worth protecting — but stop growing everything else.
+	if atCap && !tr.hasError {
+		tb.dropped++
+		return
+	}
+
+	tr.spans = append(tr.spans, rec)
+	tb.spanCount++
 
 	// The root span has no parent; use its name as the representative operation
 	// for the ratio lookup. If we see it, latch it.
@@ -108,13 +150,30 @@ func (tb *TraceBuffer) Flush(now time.Time) {
 			expired = append(expired, id)
 		}
 	}
-	// Move expired traces out of the map before releasing the lock.
+	// Move expired traces out of the map before releasing the lock, releasing
+	// their span budget back to the cap as they go.
 	toDecide := make([]*bufferedTrace, 0, len(expired))
 	for _, id := range expired {
-		toDecide = append(toDecide, tb.traces[id])
+		tr := tb.traces[id]
+		toDecide = append(toDecide, tr)
+		tb.spanCount -= len(tr.spans)
 		delete(tb.traces, id)
 	}
+	if tb.spanCount < 0 {
+		tb.spanCount = 0
+	}
+	dropped := tb.dropped
+	tb.dropped = 0
+	buffered, tracesHeld := tb.spanCount, len(tb.traces)
 	tb.mu.Unlock()
+
+	if dropped > 0 {
+		tb.logger.Warn("trace buffer over capacity, spans dropped",
+			"dropped", dropped,
+			"max_spans", tb.maxSpans,
+			"buffered_spans", buffered,
+			"buffered_traces", tracesHeld)
+	}
 
 	for _, tr := range toDecide {
 		if tb.keep(tr) {
