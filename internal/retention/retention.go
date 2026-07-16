@@ -61,7 +61,7 @@ type Repository interface {
 // Config controls the retention worker's behaviour.
 type Config struct {
 	FullRetentionHours        int           // hours to keep ALL spans (default 4)
-	InterestingRetentionHours int           // hours to keep error/slow spans after full retention expires (default 168 = 7d)
+	InterestingRetentionHours int           // hours to keep error/slow spans after full retention expires (default 48 = 2d); this is the cutoff RunOnce deletes spans on
 	BoringRetentionMinutes    int           // minutes to keep sampled boring spans (default 30); 0 disables boring cleanup
 	ErrorRetentionDays        int           // days to keep error samples (default 30)
 	AggregateRetentionDays    int           // days to keep aggregates (default 365)
@@ -82,7 +82,7 @@ func (c Config) withDefaults() Config {
 		c.FullRetentionHours = 4
 	}
 	if c.InterestingRetentionHours <= 0 {
-		c.InterestingRetentionHours = 168
+		c.InterestingRetentionHours = 48
 	}
 	if c.BoringRetentionMinutes <= 0 {
 		c.BoringRetentionMinutes = 30

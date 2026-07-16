@@ -8,7 +8,7 @@ Self-hosted telemetry aggregator. Lightweight OTLP-compatible tracing with intel
 
 SpanBarn collects distributed traces from your applications and gives you performance visibility without the operational overhead of Jaeger, Tempo, or Datadog.
 
-**Smart retention**: full-fidelity spans are kept for a configurable window (default: 72 hours). Error and slow spans get extended retention (default: 7 days). After that, SpanBarn aggregates into per-route/per-operation latency percentiles (p50, p95, p99), throughput, and error rates — kept for 30 days. Uneventful spans are dropped first; interesting spans are preserved longer.
+**Smart retention**: full-fidelity spans are kept for a configurable window (default: 72 hours). Error and slow spans get extended retention (default: 2 days). After that, SpanBarn aggregates into per-route/per-operation latency percentiles (p50, p95, p99), throughput, and error rates — kept for 30 days. Uneventful spans are dropped first; interesting spans are preserved longer.
 
 This gives you:
 - **Recent debugging**: full traces for the last 72 hours to investigate live issues
@@ -243,7 +243,7 @@ project automatically.
 | `SPANBARN_MAX_BODY_BYTES` | `1048576` | Max ingest body (1 MiB) |
 | `SPANBARN_MAX_SPOOL_BYTES` | | Spool backpressure limit |
 | `SPANBARN_RETENTION_FULL_HOURS` | `72` | Hours to keep all spans |
-| `SPANBARN_RETENTION_INTERESTING_HOURS` | `168` | Hours to keep error/slow spans (7 days) |
+| `SPANBARN_RETENTION_INTERESTING_HOURS` | `48` | Hours to keep error/slow spans (2 days). This is the window spans are actually deleted on, so it sizes the database. |
 | `SPANBARN_RETENTION_AGGREGATED_DAYS` | `30` | Days to keep aggregates |
 | `SPANBARN_RETENTION_ERROR_DAYS` | `90` | Days to keep error samples |
 | `SPANBARN_INGEST_SAMPLE_RATE` | `1.0` | Fraction of normal spans to keep (0-1, 1=keep all) |

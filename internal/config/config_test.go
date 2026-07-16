@@ -63,3 +63,16 @@ func TestIsDevEnvironment(t *testing.T) {
 		}
 	}
 }
+
+func TestRetentionInterestingHoursDefault(t *testing.T) {
+	if got := Load().Retention.InterestingHours; got != 48 {
+		t.Fatalf("default Retention.InterestingHours = %d, want 48", got)
+	}
+}
+
+func TestRetentionInterestingHoursEnvOverride(t *testing.T) {
+	t.Setenv("SPANBARN_RETENTION_INTERESTING_HOURS", "12")
+	if got := Load().Retention.InterestingHours; got != 12 {
+		t.Fatalf("Retention.InterestingHours = %d, want 12", got)
+	}
+}
