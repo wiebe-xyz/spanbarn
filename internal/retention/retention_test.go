@@ -492,3 +492,17 @@ func TestRunOnceDeletesBoringSpans(t *testing.T) {
 		}
 	}
 }
+
+// TestWithDefaultsInterestingRetentionHours pins the span-deletion window.
+// InterestingRetentionHours is the cutoff RunOnce actually deletes spans on, so
+// its default sizes the database. It previously defaulted to 168h (7d), which
+// outgrew production's disk before retention was ever due to delete anything.
+func TestWithDefaultsInterestingRetentionHours(t *testing.T) {
+	if got := (Config{}).withDefaults().InterestingRetentionHours; got != 48 {
+		t.Fatalf("default InterestingRetentionHours = %d, want 48", got)
+	}
+	// An explicit value must still win over the default.
+	if got := (Config{InterestingRetentionHours: 12}).withDefaults().InterestingRetentionHours; got != 12 {
+		t.Fatalf("explicit InterestingRetentionHours = %d, want 12", got)
+	}
+}
