@@ -8,8 +8,10 @@ import (
 )
 
 func (r *Repository) UpsertAggregate(agg Aggregate) error {
+	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
+	ctx := WithoutSpanTracing(context.Background())
 	return r.execLow(func() error {
-		_, err := r.db.Exec(`INSERT INTO aggregates
+		_, err := r.db.ExecContext(ctx, `INSERT INTO aggregates
 			(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(project_id, service, operation, resource, kind, bucket)
@@ -33,14 +35,16 @@ func (r *Repository) UpsertAggregates(aggs []Aggregate) error {
 	if len(aggs) == 0 {
 		return nil
 	}
+	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
+	ctx := WithoutSpanTracing(context.Background())
 	return r.execLow(func() error {
-		tx, err := r.db.Begin()
+		tx, err := r.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback()
 
-		stmt, err := tx.Prepare(`INSERT INTO aggregates
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO aggregates
 			(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(project_id, service, operation, resource, kind, bucket)
@@ -58,7 +62,7 @@ func (r *Repository) UpsertAggregates(aggs []Aggregate) error {
 		defer stmt.Close()
 
 		for _, agg := range aggs {
-			if _, err := stmt.Exec(
+			if _, err := stmt.ExecContext(ctx,
 				agg.ProjectID, agg.Service, agg.Operation, agg.Resource, agg.Kind,
 				agg.Bucket, agg.Count, agg.ErrorCount,
 				agg.P50Us, agg.P95Us, agg.P99Us, agg.MaxUs, agg.SumDurationUs,

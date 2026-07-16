@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -10,14 +11,16 @@ func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
 	if len(records) == 0 {
 		return nil
 	}
+	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
+	ctx := WithoutSpanTracing(context.Background())
 	return r.execLow(func() error {
-		tx, err := r.db.Begin()
+		tx, err := r.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback()
 
-		stmt, err := tx.Prepare(`INSERT INTO prompt_records
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO prompt_records
 			(project_id, trace_id, span_id, parent_span_id, service, name,
 			 gen_ai_system, model, temperature, max_tokens,
 			 prompt_body, response_body,
@@ -46,7 +49,7 @@ func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
 			if rec.ParentSpanID != "" {
 				parentID = &rec.ParentSpanID
 			}
-			if _, err := stmt.Exec(
+			if _, err := stmt.ExecContext(ctx,
 				rec.ProjectID, rec.TraceID, rec.SpanID, parentID, rec.Service, rec.Name,
 				rec.GenAISystem, rec.Model, rec.Temperature, rec.MaxTokens,
 				rec.PromptBody, rec.ResponseBody,

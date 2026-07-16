@@ -46,14 +46,16 @@ func (r *Repository) UpsertMetricRollups(rollups []MetricRollup) error {
 	if len(rollups) == 0 {
 		return nil
 	}
+	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
+	ctx := WithoutSpanTracing(context.Background())
 	return r.execLow(func() error {
-		tx, err := r.db.Begin()
+		tx, err := r.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback()
 
-		stmt, err := tx.Prepare(`INSERT INTO metric_rollups
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO metric_rollups
 			(project_id, name, type, unit, attr_fingerprint, attributes, bucket,
 			 count, sum, min, max, last, obs_count, extra)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -80,7 +82,7 @@ func (r *Repository) UpsertMetricRollups(rollups []MetricRollup) error {
 			if m.Extra != "" {
 				extra = &m.Extra
 			}
-			if _, err := stmt.Exec(
+			if _, err := stmt.ExecContext(ctx,
 				m.ProjectID, m.Name, m.Type, m.Unit, m.AttrFingerprint, attrs, m.Bucket,
 				m.Count, m.Sum, m.Min, m.Max, m.Last, m.ObsCount, extra,
 			); err != nil {

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -28,9 +29,37 @@ func sqliteSpanName(_ context.Context, _ otelsql.Method, query string) string {
 	return "sqlite.exec"
 }
 
+// suppressTracingKey marks a context as telemetry-storage work.
+type suppressTracingKey struct{}
+
+// WithoutSpanTracing marks ctx so no otelsql span is created for queries run
+// under it.
+//
+// Storing telemetry must not itself emit telemetry. Every span the writer
+// inserts would otherwise emit its own sqlite.insert span, which must then be
+// inserted, emitting another — a feedback loop whose volume grows with writer
+// load. In production that recursion made sqlite.insert alone 876k spans (96%
+// of SpanBarn's self-telemetry) and helped fill the disk.
+//
+// This is deliberately scoped to the telemetry write paths: reads and
+// user-facing queries stay instrumented, since they cannot feed themselves.
+func WithoutSpanTracing(ctx context.Context) context.Context {
+	return context.WithValue(ctx, suppressTracingKey{}, true)
+}
+
+func spanTracingSuppressed(ctx context.Context) bool {
+	v, _ := ctx.Value(suppressTracingKey{}).(bool)
+	return v
+}
+
 var otelOpts = []otelsql.Option{
 	otelsql.WithAttributes(semconv.DBSystemSqlite),
 	otelsql.WithSpanNameFormatter(sqliteSpanName),
+	otelsql.WithSpanOptions(otelsql.SpanOptions{
+		SpanFilter: func(ctx context.Context, _ otelsql.Method, _ string, _ []driver.NamedValue) bool {
+			return !spanTracingSuppressed(ctx)
+		},
+	}),
 }
 
 // Default page cache / mmap sizes, in MiB, for the writer and read-only
