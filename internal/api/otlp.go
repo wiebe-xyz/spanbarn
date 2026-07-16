@@ -49,13 +49,20 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 
 	projectID := GetProjectID(r.Context())
 
-	// Guardrail: external OTLP arriving on the global/admin key authenticates as
-	// projectID 0, so its spans are stamped project 0 and stay invisible in every
+	// Guardrail: OTLP arriving on the global/admin key authenticates as projectID
+	// 0, so its spans are stamped project 0 and stay invisible in every
 	// per-project view. In single-tenant deployments project 0 is the legitimate
-	// default, and self-instrument spans ride the internal path with projectID 0
-	// by design — so we warn (throttled) rather than reject, surfacing a likely
+	// default, so we warn (throttled) rather than reject — surfacing a likely
 	// misconfigured client without dropping data or breaking single-tenant setups.
-	if !selfExport && projectID == 0 {
+	//
+	// Self-instrument exports used to be exempt from this warning, on the grounds
+	// that they ride the internal path with projectID 0 "by design". They are not
+	// exempt any more: SPANBARN_SELF_API_KEY falls back to the global
+	// SPANBARN_API_KEY when unset, and that fallback silently dumps SpanBarn's own
+	// telemetry into project 0 — 911k unattributed spans in production, invisible
+	// precisely because this warning skipped them. Set SPANBARN_SELF_API_KEY to a
+	// project-scoped key.
+	if projectID == 0 {
 		warnOrphanedIngest(s.logger, extractRequestService(&req))
 	}
 

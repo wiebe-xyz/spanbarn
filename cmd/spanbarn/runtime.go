@@ -46,12 +46,29 @@ func newSessionService(repo *repository.Repository, cfg config.Config, logger *s
 	return api.NewSessionService(repo, cfg.SessionTTLSeconds, cfg.OIDC.RefreshGraceSeconds, logger)
 }
 
+// warnObsoleteRetentionEnv reports SPANBARN_RETENTION_FULL_HOURS still being set.
+// It named a window that no longer exists — uninteresting spans now expire via
+// SPANBARN_BORING_RETENTION_MINUTES, and the span window is
+// SPANBARN_RETENTION_INTERESTING_HOURS. It was silently ignored, which let an
+// operator believe span retention was capped when it was not; that is how
+// production's disk filled.
+func warnObsoleteRetentionEnv(cfg config.Config, logger *slog.Logger) {
+	if cfg.Retention.FullHours <= 0 {
+		return
+	}
+	logger.Warn("SPANBARN_RETENTION_FULL_HOURS is obsolete and ignored — "+
+		"span retention is SPANBARN_RETENTION_INTERESTING_HOURS; uninteresting spans expire via "+
+		"SPANBARN_BORING_RETENTION_MINUTES. Unset it.",
+		"ignored_value", cfg.Retention.FullHours,
+		"retention_interesting_hours", cfg.Retention.InterestingHours,
+		"boring_retention_minutes", cfg.Retention.BoringMinutes)
+}
+
 // retentionConfigFrom maps the app config's retention windows onto the retention
 // worker's config. Shared by the standalone and writer bootstraps so the mapping
 // lives in one place.
 func retentionConfigFrom(cfg config.Config) retention.Config {
 	return retention.Config{
-		FullRetentionHours:        cfg.Retention.FullHours,
 		InterestingRetentionHours: cfg.Retention.InterestingHours,
 		BoringRetentionMinutes:    cfg.Retention.BoringMinutes,
 		ErrorRetentionDays:        cfg.Retention.ErrorDays,

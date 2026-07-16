@@ -69,3 +69,21 @@ func TestExtractRequestService(t *testing.T) {
 		t.Fatalf("want empty, got %q", got)
 	}
 }
+
+// TestWarnOrphanedIngestCoversSelfExport pins that self-instrument spans landing
+// in project 0 are reported. SPANBARN_SELF_API_KEY falls back to the global
+// SPANBARN_API_KEY when unset, which authenticates as projectID 0 and dumps
+// SpanBarn's own telemetry into the unattributed bucket — 911k spans in
+// production, invisible because this warning used to skip selfExport.
+func TestWarnOrphanedIngestCoversSelfExport(t *testing.T) {
+	warns := 0
+	logger := slog.New(countingHandler{warns: &warns})
+	lastOrphanWarnMinute.Store(0)
+
+	// The handler calls warnOrphanedIngest for ANY projectID 0 now, self or not.
+	warnOrphanedIngest(logger, "spanbarn")
+
+	if warns != 1 {
+		t.Fatalf("expected the orphaned self-export to warn, got %d warnings", warns)
+	}
+}

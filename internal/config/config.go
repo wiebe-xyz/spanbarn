@@ -10,7 +10,11 @@ import (
 
 // RetentionConfig groups the data-retention windows.
 type RetentionConfig struct {
-	FullHours          int // SPANBARN_RETENTION_FULL_HOURS
+	// FullHours is retained only to detect SPANBARN_RETENTION_FULL_HOURS still
+	// being set: the window it named is now the boring-span classifier
+	// (BoringMinutes). Nothing reads it for behaviour — see
+	// ObsoleteRetentionFullHoursSet.
+	FullHours          int // SPANBARN_RETENTION_FULL_HOURS (obsolete, ignored)
 	AggregatedDays     int // SPANBARN_RETENTION_AGGREGATED_DAYS
 	ErrorDays          int // SPANBARN_RETENTION_ERROR_DAYS
 	InterestingHours   int // SPANBARN_RETENTION_INTERESTING_HOURS
@@ -138,7 +142,7 @@ func Load() Config {
 		MaxBodyBytes:        getenvInt64("SPANBARN_MAX_BODY_BYTES", 1<<20),
 		MaxSpoolBytes:       getenvInt64("SPANBARN_MAX_SPOOL_BYTES", 0),
 		Retention: RetentionConfig{
-			FullHours:          getenvInt("SPANBARN_RETENTION_FULL_HOURS", 72),
+			FullHours:          getenvInt("SPANBARN_RETENTION_FULL_HOURS", 0),
 			AggregatedDays:     getenvInt("SPANBARN_RETENTION_AGGREGATED_DAYS", 30),
 			ErrorDays:          getenvInt("SPANBARN_RETENTION_ERROR_DAYS", 90),
 			InterestingHours:   getenvInt("SPANBARN_RETENTION_INTERESTING_HOURS", 48),

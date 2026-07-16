@@ -175,3 +175,45 @@ func TestTraceBuffer_FlushReleasesCapBudget(t *testing.T) {
 		t.Fatalf("after flush: traces=%d dropped=%d, want 1 and 0", held, dropped)
 	}
 }
+
+// TestTraceBuffer_OutBlockedIsReportedNotSilent pins that a stalled drain cannot
+// silently swallow traces that survived sampling. The buffer's one guarantee is
+// that error traces always pass; a bare `default:` drop broke that invisibly.
+func TestTraceBuffer_OutBlockedIsReportedNotSilent(t *testing.T) {
+	warns := 0
+	logger := slog.New(warnCollector{warns: &warns})
+
+	tb := NewTraceBuffer(10*time.Millisecond, NewStaticRatioLookup(1), logger)
+	// Fill the out channel so delivery cannot succeed.
+	for i := 0; i < cap(tb.out); i++ {
+		tb.out <- nil
+	}
+
+	tb.Add(span("t1", "s1", "", "op", "ERROR"))
+
+	done := make(chan struct{})
+	go func() { tb.Flush(time.Now().Add(time.Second)); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Flush wedged behind a stalled drain — the gc loop must stay bounded")
+	}
+
+	if warns == 0 {
+		t.Fatal("a kept trace was dropped with no warning — this is the silent loss we are fixing")
+	}
+}
+
+// warnCollector counts WARN records.
+type warnCollector struct{ warns *int }
+
+func (h warnCollector) Enabled(context.Context, slog.Level) bool { return true }
+func (h warnCollector) Handle(_ context.Context, r slog.Record) error {
+	if r.Level == slog.LevelWarn {
+		*h.warns++
+	}
+	return nil
+}
+func (h warnCollector) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h warnCollector) WithGroup(string) slog.Handler      { return h }

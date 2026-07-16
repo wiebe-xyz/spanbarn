@@ -201,6 +201,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	// write-queue backlog to gate on, so no busy skip.
 	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
 
+	warnObsoleteRetentionEnv(cfg, logger)
 	retentionCfg := retentionConfigFrom(cfg)
 	repo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
 	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
@@ -256,10 +257,27 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 
 	serverCfg := serverConfigFrom(cfg)
 	serverCfg.MetricsToken = cfg.MetricsToken
+	// Trace buffer: same tail-based sampling the reader applies. Without it,
+	// single-node installs silently ingest everything unsampled and every
+	// ingest.sample_ratio.* setting reads back fine while doing nothing.
+	standaloneBuffer := ingest.NewTraceBuffer(ingest.DefaultTraceBufferTTL, ingest.NewCachedRatioLookup(queryRepo, time.Minute), logger)
+	safeGo("trace-buffer-drain", &wg, func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case spans := <-standaloneBuffer.Out:
+				for _, rec := range spans {
+					ingestHandler.Enqueue(rec)
+				}
+			}
+		}
+	})
 	// Mutations (trace exclusions, alerts CRUD) still use the write repo.
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessions, logger,
 		api.WithRepository(repo),
 		api.WithAuthorizer(authorizer),
+		api.WithTraceBuffer(standaloneBuffer),
 		api.WithPaths(cfg.DBPath, cfg.SpoolDir),
 		api.WithCache(querySvc.Cache()),
 		api.WithMetricsHandler(metricsHandler),
@@ -785,6 +803,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionRepo.SetWriteScheduler(scheduler)
 	retentionRepo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
 
+	warnObsoleteRetentionEnv(cfg, logger)
 	retentionCfg := retentionConfigFrom(cfg)
 	retentionWorker := retention.NewRetentionWorker(retentionRepo, accumulator, retentionCfg, logger)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
@@ -1093,7 +1112,29 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	serverCfg := serverConfigFrom(cfg)
-	opts := []api.ServerOption{api.WithAuthorizer(authorizer)}
+	// Trace buffer: same tail-based sampling the reader applies. Without it this
+	// mode silently ingests everything unsampled, ignoring every
+	// ingest.sample_ratio.* setting — the mode is documented in the README, so
+	// it must not quietly behave differently from reader mode.
+	var ingestRatioLookup ingest.SampleRatioLookup
+	if roRepo != nil {
+		ingestRatioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
+	}
+	traceBuffer := ingest.NewTraceBuffer(ingest.DefaultTraceBufferTTL, ingestRatioLookup, logger)
+	safeGo("trace-buffer-drain", &wg, func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case spans := <-traceBuffer.Out:
+				for _, rec := range spans {
+					ingestHandler.Enqueue(rec)
+				}
+			}
+		}
+	})
+
+	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer)}
 	if roRepo != nil {
 		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache))
 	}

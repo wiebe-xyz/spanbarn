@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -60,8 +61,7 @@ type Repository interface {
 
 // Config controls the retention worker's behaviour.
 type Config struct {
-	FullRetentionHours        int           // hours to keep ALL spans (default 4)
-	InterestingRetentionHours int           // hours to keep error/slow spans after full retention expires (default 48 = 2d); this is the cutoff RunOnce deletes spans on
+	InterestingRetentionHours int           // hours to keep spans (default 48 = 2d); this is the cutoff RunOnce deletes spans on, so it sizes the database
 	BoringRetentionMinutes    int           // minutes to keep sampled boring spans (default 30); 0 disables boring cleanup
 	ErrorRetentionDays        int           // days to keep error samples (default 30)
 	AggregateRetentionDays    int           // days to keep aggregates (default 365)
@@ -78,9 +78,6 @@ type Config struct {
 }
 
 func (c Config) withDefaults() Config {
-	if c.FullRetentionHours <= 0 {
-		c.FullRetentionHours = 4
-	}
 	if c.InterestingRetentionHours <= 0 {
 		c.InterestingRetentionHours = 48
 	}
@@ -124,6 +121,10 @@ type RetentionWorker struct {
 	aggregator Aggregator
 	cfg        Config
 	logger     *slog.Logger
+
+	// warnObsoleteFullHours keeps the retention_full_hours deprecation notice to
+	// one line per process instead of one per cycle.
+	warnObsoleteFullHours sync.Once
 }
 
 // NewRetentionWorker creates a new retention worker.
@@ -177,8 +178,21 @@ func (w *RetentionWorker) effectiveConfig() Config {
 		}
 		return n, true
 	}
-	if n, ok := readInt("retention_full_hours"); ok {
-		cfg.FullRetentionHours = n
+	// retention_full_hours is obsolete: the "drop uninteresting spans early" tier
+	// it used to name is now the boring-span classifier (expires_at +
+	// boring_retention_minutes). It was still readable but wired to nothing, and
+	// the README advertised it as "hours to keep all spans" — so it read back
+	// fine while doing nothing, and an operator who set it believed spans were
+	// capped when they were not. That is what filled production's disk. Say so
+	// rather than ignoring it silently.
+	if _, ok := readInt("retention_full_hours"); ok {
+		w.warnObsoleteFullHours.Do(func() {
+			w.logger.Warn("setting 'retention_full_hours' is obsolete and does nothing — "+
+				"span retention is governed by 'retention_interesting_hours'; uninteresting spans "+
+				"expire via 'boring_retention_minutes'. Remove the setting.",
+				"retention_interesting_hours", cfg.InterestingRetentionHours,
+				"boring_retention_minutes", cfg.BoringRetentionMinutes)
+		})
 	}
 	if n, ok := readInt("retention_interesting_hours"); ok {
 		cfg.InterestingRetentionHours = n

@@ -22,6 +22,12 @@ const (
 
 	gcInterval = 30 * time.Second
 
+	// outDeliverTimeout is how long Flush will wait for the drain goroutine to
+	// accept a kept trace before giving up on it. Bounded so the gc loop cannot
+	// wedge behind a stalled consumer, but long enough that a brief drain hiccup
+	// doesn't cost us error traces.
+	outDeliverTimeout = 2 * time.Second
+
 	// DefaultMaxBufferedSpans bounds how many spans are held across all in-flight
 	// traces. Every span waits out the full TTL before a sampling decision is
 	// made, so the buffer holds TTL-worth of *unsampled* traffic — including
@@ -175,14 +181,31 @@ func (tb *TraceBuffer) Flush(now time.Time) {
 			"buffered_traces", tracesHeld)
 	}
 
+	var undelivered int64
 	for _, tr := range toDecide {
-		if tb.keep(tr) {
+		if !tb.keep(tr) {
+			continue
+		}
+		// A trace that survived sampling has already been paid for; dropping it
+		// here silently would discard error traces too — the one guarantee the
+		// buffer makes. Give the drain a bounded chance to catch up, then count
+		// and report what we lose instead of losing it invisibly.
+		select {
+		case tb.out <- tr.spans:
+		default:
+			timer := time.NewTimer(outDeliverTimeout)
 			select {
 			case tb.out <- tr.spans:
-			default:
-				// Channel full — drop to avoid blocking the gc goroutine.
+			case <-timer.C:
+				undelivered += int64(len(tr.spans))
 			}
+			timer.Stop()
 		}
+	}
+	if undelivered > 0 {
+		tb.logger.Warn("trace buffer output blocked, sampled spans lost",
+			"spans", undelivered,
+			"hint", "the drain goroutine is not keeping up with kept traces")
 	}
 }
 
