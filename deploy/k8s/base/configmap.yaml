@@ -6,7 +6,12 @@ data:
   SPANBARN_ADDR: ":8080"
   SPANBARN_DB_PATH: "/var/lib/spanbarn/spanbarn.db"
   SPANBARN_SPOOL_DIR: "/var/lib/spanbarn/spool"
-  SPANBARN_RETENTION_FULL_HOURS: "4"
+  # SPANBARN_RETENTION_FULL_HOURS is deliberately absent: it was obsolete and
+  # wired to nothing, so every environment ran with "4" here believing spans were
+  # kept 4 hours while they were actually kept for the interesting window. The
+  # app now warns if it is set. Span retention is
+  # SPANBARN_RETENTION_INTERESTING_HOURS; uninteresting spans expire via
+  # SPANBARN_BORING_RETENTION_MINUTES.
   SPANBARN_RETENTION_ERROR_DAYS: "30"
   SPANBARN_RETENTION_AGGREGATED_DAYS: "90"
   SPANBARN_AGGREGATION_INTERVAL: "5m"
