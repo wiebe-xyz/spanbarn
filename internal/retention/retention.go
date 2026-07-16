@@ -65,7 +65,7 @@ type Config struct {
 	BoringRetentionMinutes    int           // minutes to keep sampled boring spans (default 30); 0 disables boring cleanup
 	ErrorRetentionDays        int           // days to keep error samples (default 30)
 	AggregateRetentionDays    int           // days to keep aggregates (default 365)
-	MetricsRetentionDays      int           // days to keep raw metric data points (default 90)
+	MetricsRetentionDays      int           // days to keep raw metric data points (default 7). Raw points are only ever read for ranges <= rollupQueryThreshold (6h); longer ranges read metric_rollups, which have their own (much longer) window.
 	MetricRollupRetentionDays int           // days to keep downsampled metric rollups (default 365)
 	LogRetentionHours         int           // hours to keep log records (default 24)
 	ErrorLogRetentionDays     int           // days to keep logs for error-sampled traces (default 30)
@@ -94,7 +94,7 @@ func (c Config) withDefaults() Config {
 		c.AggregateRetentionDays = 365
 	}
 	if c.MetricsRetentionDays <= 0 {
-		c.MetricsRetentionDays = 90
+		c.MetricsRetentionDays = 7
 	}
 	if c.MetricRollupRetentionDays <= 0 {
 		c.MetricRollupRetentionDays = 365

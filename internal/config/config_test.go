@@ -76,3 +76,16 @@ func TestRetentionInterestingHoursEnvOverride(t *testing.T) {
 		t.Fatalf("Retention.InterestingHours = %d, want 12", got)
 	}
 }
+
+func TestMetricsRetentionDaysDefault(t *testing.T) {
+	if got := Load().Retention.MetricsDays; got != 7 {
+		t.Fatalf("default Retention.MetricsDays = %d, want 7", got)
+	}
+}
+
+func TestMetricsRetentionDaysEnvOverride(t *testing.T) {
+	t.Setenv("SPANBARN_METRICS_RETENTION_DAYS", "30")
+	if got := Load().Retention.MetricsDays; got != 30 {
+		t.Fatalf("Retention.MetricsDays = %d, want 30", got)
+	}
+}

@@ -65,16 +65,16 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 		span.SetAttributes(attribute.Int("span_count", len(records)))
 	}
 
-	if selfExport {
-		// Self-instrument spans bypass the TraceBuffer so they are never
-		// dropped by project-level sampling — the pod's own traces must
-		// always reach the writer.
-		for _, rec := range records {
-			s.ingest.Enqueue(rec)
-		}
-	} else if s.traceBuffer != nil {
+	if s.traceBuffer != nil {
 		// Tail-based sampling: add to the trace buffer and let it decide
 		// per-trace after the configured TTL. Error traces always pass.
+		//
+		// Self-instrument spans go through the buffer like any other project.
+		// They used to bypass it so the pod's own traces "always reached the
+		// writer", but self-telemetry is by far the largest span producer, so
+		// exempting it made its sample ratio unenforceable and let it fill the
+		// disk. keep() still passes every error trace, so the traces that
+		// matter are unaffected.
 		for _, rec := range records {
 			s.traceBuffer.Add(rec)
 		}

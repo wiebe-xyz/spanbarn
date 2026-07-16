@@ -436,7 +436,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	if roRepo != nil {
 		ratioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
 	}
-	traceBuffer := ingest.NewTraceBuffer(ingest.DefaultTraceBufferTTL, ratioLookup)
+	traceBuffer := ingest.NewTraceBuffer(ingest.DefaultTraceBufferTTL, ratioLookup, logger)
 	safeGo("trace-buffer-drain", &wg, func() {
 		for {
 			select {

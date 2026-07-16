@@ -506,3 +506,16 @@ func TestWithDefaultsInterestingRetentionHours(t *testing.T) {
 		t.Fatalf("explicit InterestingRetentionHours = %d, want 12", got)
 	}
 }
+
+// TestWithDefaultsMetricsRetentionDays pins the raw-metric window. Raw points are
+// only ever queried for ranges <= 6h (api.rollupQueryThreshold); anything longer
+// reads metric_rollups. The old 90-day default therefore retained GBs of raw
+// points no query could reach.
+func TestWithDefaultsMetricsRetentionDays(t *testing.T) {
+	if got := (Config{}).withDefaults().MetricsRetentionDays; got != 7 {
+		t.Fatalf("default MetricsRetentionDays = %d, want 7", got)
+	}
+	if got := (Config{MetricsRetentionDays: 30}).withDefaults().MetricsRetentionDays; got != 30 {
+		t.Fatalf("explicit MetricsRetentionDays = %d, want 30", got)
+	}
+}
