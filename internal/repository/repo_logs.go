@@ -51,6 +51,8 @@ func (r *Repository) InsertLogs(ctx context.Context, recs []model.LogRecord) err
 	if len(recs) == 0 {
 		return nil
 	}
+	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
+	ctx = WithoutSpanTracing(ctx)
 	return r.execLow(func() error {
 		tx, err := r.db.BeginTx(ctx, nil)
 		if err != nil {

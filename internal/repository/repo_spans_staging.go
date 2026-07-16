@@ -20,6 +20,8 @@ func (r *Repository) InsertSpansStaging(ctx context.Context, spans []Span) error
 	if len(spans) == 0 {
 		return nil
 	}
+	// Writing spans must not emit spans. See WithoutSpanTracing.
+	ctx = WithoutSpanTracing(ctx)
 	return r.execLow(func() error {
 		tx, err := r.db.BeginTx(ctx, nil)
 		if err != nil {

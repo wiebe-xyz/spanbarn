@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,7 +78,6 @@ func insertTestSpans(t *testing.T, repo *repository.Repository, count int, statu
 
 func TestRunOnceAggregatesOldSpans(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:        1,
 		InterestingRetentionHours: 1,
 		ErrorRetentionDays:        30,
 		AggregateRetentionDays:    365,
@@ -120,7 +120,6 @@ func TestRunOnceAggregatesOldSpans(t *testing.T) {
 
 func TestRunOnceSamplesErrors(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:        1,
 		InterestingRetentionHours: 1,
 		ErrorRetentionDays:        30,
 		AggregateRetentionDays:    365,
@@ -152,7 +151,6 @@ func TestRunOnceSamplesErrors(t *testing.T) {
 
 func TestRunOnceSamplesSlowSpans(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:        1,
 		InterestingRetentionHours: 1,
 		ErrorRetentionDays:        30,
 		AggregateRetentionDays:    365,
@@ -184,7 +182,6 @@ func TestRunOnceSamplesSlowSpans(t *testing.T) {
 
 func TestRunOncePreservesRecentSpans(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:        1,
 		InterestingRetentionHours: 1,
 		ErrorRetentionDays:        30,
 		AggregateRetentionDays:    365,
@@ -235,7 +232,6 @@ func TestRunOncePreservesRecentSpans(t *testing.T) {
 
 func TestRunOnceDeletesOldErrorSamples(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:        1,
 		InterestingRetentionHours: 1,
 		ErrorRetentionDays:        30,
 		AggregateRetentionDays:    365,
@@ -277,7 +273,6 @@ func TestRunOnceDeletesOldErrorSamples(t *testing.T) {
 
 func TestRunOnceDeletesOldAggregates(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:        1,
 		InterestingRetentionHours: 1,
 		ErrorRetentionDays:        30,
 		AggregateRetentionDays:    365,
@@ -324,7 +319,6 @@ func TestRunOnceDeletesOldAggregates(t *testing.T) {
 
 func TestRunOnceEmptyDatabase(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:        1,
 		InterestingRetentionHours: 1,
 		ErrorRetentionDays:        30,
 		AggregateRetentionDays:    365,
@@ -339,7 +333,6 @@ func TestRunOnceEmptyDatabase(t *testing.T) {
 
 func TestRunOnceMultipleBatches(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:        1,
 		InterestingRetentionHours: 1,
 		ErrorRetentionDays:        30,
 		AggregateRetentionDays:    365,
@@ -425,7 +418,6 @@ func TestRunOnceMultipleBatches(t *testing.T) {
 
 func TestRunOnceDeletesBoringSpans(t *testing.T) {
 	cfg := Config{
-		FullRetentionHours:        24,
 		InterestingRetentionHours: 168,
 		BoringRetentionMinutes:    30,
 		ErrorRetentionDays:        30,
@@ -517,5 +509,65 @@ func TestWithDefaultsMetricsRetentionDays(t *testing.T) {
 	}
 	if got := (Config{MetricsRetentionDays: 30}).withDefaults().MetricsRetentionDays; got != 30 {
 		t.Fatalf("explicit MetricsRetentionDays = %d, want 30", got)
+	}
+}
+
+// warnCountHandler counts WARN records.
+type warnCountHandler struct {
+	warns *int
+	msgs  *[]string
+}
+
+func (h warnCountHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h warnCountHandler) Handle(_ context.Context, r slog.Record) error {
+	if r.Level == slog.LevelWarn {
+		*h.warns++
+		*h.msgs = append(*h.msgs, r.Message)
+	}
+	return nil
+}
+func (h warnCountHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h warnCountHandler) WithGroup(string) slog.Handler      { return h }
+
+// TestObsoleteRetentionFullHoursWarns pins that the setting which caused the
+// 28h production outage can no longer fail silently. retention_full_hours read
+// back fine while being wired to nothing, so an operator who set it believed
+// span retention was capped when it was not.
+func TestObsoleteRetentionFullHoursWarns(t *testing.T) {
+	warns := 0
+	var msgs []string
+	logger := slog.New(warnCountHandler{warns: &warns, msgs: &msgs})
+
+	worker, repo := setupTestWorker(t, Config{InterestingRetentionHours: 48})
+	worker.logger = logger
+	if err := repo.SetSetting("retention_full_hours", "72"); err != nil {
+		t.Fatalf("SetSetting: %v", err)
+	}
+
+	// Two cycles: the operator must be told, but only once per process.
+	worker.effectiveConfig()
+	worker.effectiveConfig()
+
+	if warns != 1 {
+		t.Fatalf("warns = %d, want exactly 1 (once per process); msgs=%v", warns, msgs)
+	}
+	if !strings.Contains(msgs[0], "retention_full_hours") || !strings.Contains(msgs[0], "does nothing") {
+		t.Fatalf("warning does not name the obsolete setting or say it is ignored: %q", msgs[0])
+	}
+}
+
+// TestObsoleteRetentionFullHoursSilentWhenUnset ensures we don't nag operators
+// who never set it.
+func TestObsoleteRetentionFullHoursSilentWhenUnset(t *testing.T) {
+	warns := 0
+	var msgs []string
+	logger := slog.New(warnCountHandler{warns: &warns, msgs: &msgs})
+
+	worker, _ := setupTestWorker(t, Config{InterestingRetentionHours: 48})
+	worker.logger = logger
+	worker.effectiveConfig()
+
+	if warns != 0 {
+		t.Fatalf("warns = %d, want 0 when retention_full_hours is unset; msgs=%v", warns, msgs)
 	}
 }
