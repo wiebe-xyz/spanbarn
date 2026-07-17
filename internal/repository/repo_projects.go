@@ -88,6 +88,28 @@ func (r *Repository) ListProjectIDs() ([]int64, error) {
 	return ids, rows.Err()
 }
 
+// EnsureProject creates an active project if the slug is free and returns it
+// either way. Unlike EnsureProjectPending it needs no approval step: it backs
+// declarative seeding, where the operator has already vouched for the project
+// by putting it in the deployment config.
+//
+// Idempotent via the UNIQUE constraint on projects(slug). An existing project
+// is left untouched — seeding never renames or re-activates a project an
+// operator has since edited or suspended.
+func (r *Repository) EnsureProject(slug, name string) (Project, error) {
+	err := r.execHigh(func() error {
+		_, e := r.db.Exec(
+			"INSERT OR IGNORE INTO projects (slug, name, status) VALUES (?, ?, 'active')",
+			slug, name,
+		)
+		return e
+	})
+	if err != nil {
+		return Project{}, err
+	}
+	return r.GetProjectBySlug(slug)
+}
+
 func (r *Repository) EnsureProjectPending(slug, name string) (Project, error) {
 	// With the write scheduler serialising all writes, SQLITE_BUSY cannot occur
 	// here, so the retry loop is no longer needed.

@@ -77,6 +77,7 @@ type Config struct {
 	SpoolDir                 string
 	APIKey                   string
 	APIKeySHA256             string
+	SeedKeys                 string
 	AdminUsername            string
 	AdminPassword            string
 	AdminPasswordBcrypt      string
@@ -128,12 +129,15 @@ type Config struct {
 // Load reads configuration from SPANBARN_* environment variables with defaults.
 func Load() Config {
 	cfg := Config{
-		Addr:                getenv("SPANBARN_ADDR", ":8080"),
-		PublicURL:           os.Getenv("SPANBARN_PUBLIC_URL"),
-		DBPath:              getenv("SPANBARN_DB_PATH", ".data/spanbarn.db"),
-		SpoolDir:            getenv("SPANBARN_SPOOL_DIR", ".data/spool"),
-		APIKey:              os.Getenv("SPANBARN_API_KEY"),
-		APIKeySHA256:        os.Getenv("SPANBARN_API_KEY_SHA256"),
+		Addr:         getenv("SPANBARN_ADDR", ":8080"),
+		PublicURL:    os.Getenv("SPANBARN_PUBLIC_URL"),
+		DBPath:       getenv("SPANBARN_DB_PATH", ".data/spanbarn.db"),
+		SpoolDir:     getenv("SPANBARN_SPOOL_DIR", ".data/spool"),
+		APIKey:       os.Getenv("SPANBARN_API_KEY"),
+		APIKeySHA256: os.Getenv("SPANBARN_API_KEY_SHA256"),
+		// SPANBARN_SEED_KEYS: JSON array of projects + API key hashes to
+		// register on boot. Hashes, not keys — see internal/seed.
+		SeedKeys:            os.Getenv("SPANBARN_SEED_KEYS"),
 		AdminUsername:       os.Getenv("SPANBARN_ADMIN_USERNAME"),
 		AdminPassword:       os.Getenv("SPANBARN_ADMIN_PASSWORD"),
 		AdminPasswordBcrypt: os.Getenv("SPANBARN_ADMIN_PASSWORD_BCRYPT"),

@@ -136,6 +136,10 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		repo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 	}
 
+	if err := applySeedKeys(repo, cfg, logger); err != nil {
+		return err
+	}
+
 	// Read-only DB — used exclusively by the query service for dashboard reads.
 	// In WAL mode, readers and the single writer don't block each other.
 	roDB, err := repository.NewReadOnlyDBWithCache(cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
@@ -609,6 +613,10 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	repo := repository.NewRepository(db.DB)
 	if cfg.QueryTimeoutSeconds > 0 {
 		repo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
+	}
+
+	if err := applySeedKeys(repo, cfg, logger); err != nil {
+		return err
 	}
 
 	if cfg.AdminUsername != "" && cfg.AdminPassword != "" {
