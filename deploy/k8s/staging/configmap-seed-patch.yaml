@@ -1,0 +1,26 @@
+# Projects + API keys registered on writer boot, so a rebuilt database
+# re-authenticates its clients instead of silently rejecting them.
+#
+# On 2026-07-13 this database was rebuilt and only the spanbarn self-project was
+# re-seeded. Every client key below ceased to exist, so bugbarn, iambarn,
+# brandtrace and funnelbarn all failed OTLP export with 401 — invisibly, since
+# an exporter has nowhere to report when the telemetry backend is what's
+# rejecting it. It went unnoticed until someone asked why traces were missing.
+#
+# These are SHA-256 hashes, not keys. A hash cannot authenticate anything
+# (Authorize hashes the presented key and compares), so this is safe to keep in
+# the repo; the key itself lives in each client's own SOPS secret. To rotate:
+# mint the new key, add its hash here, and drop the old entry once the client
+# has moved — seeding adds alongside, it never revokes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spanbarn-config
+data:
+  SPANBARN_SEED_KEYS: |
+    [
+      {"project":"bugbarn",   "name":"bugbarn-otlp",    "scope":"ingest", "key_sha256":"c2eeb72595a863c5abeb9097a51952738cf07862a2648069f9766bb167ec72e1"},
+      {"project":"iambarn",   "name":"iambarn-otlp",    "scope":"ingest", "key_sha256":"c0d55965413c5b9748c10138ed5c4c6b4b94553a6500a5d6f59b21f9fd2cf425"},
+      {"project":"brandtrace","name":"brandtrace-otlp", "scope":"ingest", "key_sha256":"abe01509b81c023c619fdfc7847b96d16adf00c6bbf0e61c63b7e361c3bb662f"},
+      {"project":"funnelbarn","name":"funnelbarn-otlp", "scope":"ingest", "key_sha256":"0c61684470d7a00a411062be61825df0af8aed45973823bd20bf4c93786814ea"}
+    ]

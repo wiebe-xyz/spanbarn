@@ -16,6 +16,29 @@ func (r *Repository) CreateAPIKey(projectID int64, name, keyHash, scope string) 
 	return id, err
 }
 
+// EnsureAPIKey registers a key by its SHA-256 hash if no key with that hash
+// exists yet, and reports whether it inserted one. It is idempotent via the
+// UNIQUE index on api_keys(key_hash), so seeding can run on every boot.
+//
+// Rotating a key seeds a new row rather than replacing the old one: the
+// previous key keeps working until it is explicitly revoked, so a rotation
+// cannot lock out a client that has not picked up the new value yet.
+func (r *Repository) EnsureAPIKey(projectID int64, name, keyHash, scope string) (inserted bool, err error) {
+	err = r.execHigh(func() error {
+		res, e := r.db.Exec(
+			"INSERT OR IGNORE INTO api_keys (project_id, name, key_hash, scope) VALUES (?, ?, ?, ?)",
+			projectID, name, keyHash, scope,
+		)
+		if e != nil {
+			return e
+		}
+		n, e := res.RowsAffected()
+		inserted = n > 0
+		return e
+	})
+	return inserted, err
+}
+
 func (r *Repository) GetAPIKeyByHash(keyHash string) (APIKey, error) {
 	var k APIKey
 	err := r.db.QueryRow(

@@ -814,3 +814,78 @@ func TestBatchedDeleteRespectsContextCancellation(t *testing.T) {
 		t.Fatalf("expected %d spans intact after cancel, got %d", total, remaining)
 	}
 }
+
+func TestEnsureProjectIsIdempotent(t *testing.T) {
+	repo := setupTestDB(t)
+
+	p1, err := repo.EnsureProject("bugbarn", "bugbarn")
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if p1.Status != "active" {
+		t.Errorf("status = %q, want active", p1.Status)
+	}
+
+	p2, err := repo.EnsureProject("bugbarn", "different name")
+	if err != nil {
+		t.Fatalf("EnsureProject (second): %v", err)
+	}
+	if p2.ID != p1.ID {
+		t.Errorf("ID = %d, want the existing %d", p2.ID, p1.ID)
+	}
+	if p2.Name != "bugbarn" {
+		t.Errorf("name = %q, want the existing project left untouched", p2.Name)
+	}
+	all, err := repo.ListProjects()
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	if len(all) != 1 {
+		t.Errorf("got %d projects, want 1", len(all))
+	}
+}
+
+func TestEnsureAPIKeyIsIdempotent(t *testing.T) {
+	repo := setupTestDB(t)
+	p, err := repo.EnsureProject("proj", "Proj")
+	if err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+
+	inserted, err := repo.EnsureAPIKey(p.ID, "otlp", "hash-1", "ingest")
+	if err != nil {
+		t.Fatalf("EnsureAPIKey: %v", err)
+	}
+	if !inserted {
+		t.Error("inserted = false, want true on first call")
+	}
+
+	inserted, err = repo.EnsureAPIKey(p.ID, "otlp", "hash-1", "ingest")
+	if err != nil {
+		t.Fatalf("EnsureAPIKey (second): %v", err)
+	}
+	if inserted {
+		t.Error("inserted = true, want false when the hash already exists")
+	}
+
+	got, err := repo.GetAPIKeyByHash("hash-1")
+	if err != nil {
+		t.Fatalf("GetAPIKeyByHash: %v", err)
+	}
+	if got.ProjectID != p.ID || got.Scope != "ingest" || got.Name != "otlp" {
+		t.Errorf("got %+v, want project=%d scope=ingest name=otlp", got, p.ID)
+	}
+
+	// A rotated key is added alongside the old one: the previous key must keep
+	// working until it is explicitly revoked.
+	if _, err := repo.EnsureAPIKey(p.ID, "otlp", "hash-2", "ingest"); err != nil {
+		t.Fatalf("EnsureAPIKey (rotate): %v", err)
+	}
+	keys, err := repo.ListAPIKeys(p.ID)
+	if err != nil {
+		t.Fatalf("ListAPIKeys: %v", err)
+	}
+	if len(keys) != 2 {
+		t.Errorf("got %d keys after rotation, want 2", len(keys))
+	}
+}

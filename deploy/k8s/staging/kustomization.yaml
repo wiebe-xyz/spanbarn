@@ -15,6 +15,10 @@ patches:
     target:
       kind: ConfigMap
       name: spanbarn-config
+  - path: configmap-seed-patch.yaml
+    target:
+      kind: ConfigMap
+      name: spanbarn-config
   - path: patch-ingest-strategy.yaml
     target:
       kind: Deployment
