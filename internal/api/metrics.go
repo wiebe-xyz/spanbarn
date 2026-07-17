@@ -14,6 +14,7 @@ import (
 type Metrics struct {
 	SpansIngested  prometheus.Counter
 	SpansProcessed prometheus.Counter
+	OrphanedIngest *prometheus.CounterVec
 	HTTPRequests   *prometheus.CounterVec
 	HTTPDuration   *prometheus.HistogramVec
 	registry       *prometheus.Registry
@@ -33,6 +34,15 @@ func NewMetrics() *Metrics {
 			Name: "spans_processed_total",
 			Help: "Total number of spans processed.",
 		}),
+		// Labelled by signal only (traces|metrics|logs). Deliberately not by
+		// service.name: that is client-supplied and unbounded, and this counter
+		// fires exactly when a client is misconfigured — the worst moment to
+		// hand it control of label cardinality. The service name is in the
+		// throttled warn log instead.
+		OrphanedIngest: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "orphaned_ingest_total",
+			Help: "Telemetry accepted on the global/admin key and stamped project 0, making it invisible in every per-project view. Non-zero means a client is authenticating with the wrong key (or, on a single-tenant install, that project 0 is simply in use).",
+		}, []string{"signal"}),
 		HTTPRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "http_requests_total",
 			Help: "Total number of HTTP requests by route, method, and status.",
@@ -47,6 +57,7 @@ func NewMetrics() *Metrics {
 
 	reg.MustRegister(m.SpansIngested)
 	reg.MustRegister(m.SpansProcessed)
+	reg.MustRegister(m.OrphanedIngest)
 	reg.MustRegister(m.HTTPRequests)
 	reg.MustRegister(m.HTTPDuration)
 

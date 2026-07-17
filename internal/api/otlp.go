@@ -62,11 +62,12 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 	// telemetry into project 0 — 911k unattributed spans in production, invisible
 	// precisely because this warning skipped them. Set SPANBARN_SELF_API_KEY to a
 	// project-scoped key.
+	records := otlpToSpanRecords(&req, projectID)
+
 	if projectID == 0 {
+		s.countOrphanedIngest("traces", len(records))
 		warnOrphanedIngest(s.logger, extractRequestService(&req))
 	}
-
-	records := otlpToSpanRecords(&req, projectID)
 
 	if span != nil {
 		span.SetAttributes(attribute.Int("span_count", len(records)))
@@ -160,6 +161,22 @@ func otlpToSpanRecords(req *collectorpb.ExportTraceServiceRequest, projectID int
 		}
 	}
 	return records
+}
+
+// countOrphanedIngest records n orphaned data points for signal. Counting is
+// unthrottled — a counter is cheap, and rate() needs every increment to be
+// meaningful. Only the accompanying log is throttled.
+//
+// The warn alone was never enough: it is only visible to someone reading
+// SpanBarn's own logs, which is nobody, because the symptom presents as
+// "my telemetry is missing" and points at the client. That blind spot cost
+// 911k unattributed spans in production (#148) and ~62k orphaned metric rows
+// still sitting in testing and staging. A counter is scrapeable and alertable.
+func (s *Server) countOrphanedIngest(signal string, n int) {
+	if s.metrics == nil || n == 0 {
+		return
+	}
+	s.metrics.OrphanedIngest.WithLabelValues(signal).Add(float64(n))
 }
 
 // lastOrphanWarnMinute throttles the orphaned-ingest warning to at most once per

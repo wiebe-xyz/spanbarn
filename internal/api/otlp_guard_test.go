@@ -5,6 +5,9 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
+
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -86,4 +89,55 @@ func TestWarnOrphanedIngestCoversSelfExport(t *testing.T) {
 	if warns != 1 {
 		t.Fatalf("expected the orphaned self-export to warn, got %d warnings", warns)
 	}
+}
+
+// orphanCount reads the orphaned_ingest_total counter for one signal.
+func orphanCount(t *testing.T, m *Metrics, signal string) float64 {
+	t.Helper()
+	var out dto.Metric
+	c, err := m.OrphanedIngest.GetMetricWithLabelValues(signal)
+	if err != nil {
+		t.Fatalf("GetMetricWithLabelValues: %v", err)
+	}
+	if err := c.(prometheus.Metric).Write(&out); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	return out.GetCounter().GetValue()
+}
+
+// Project-0 ingest is accepted with a 200 and then hidden from every
+// per-project view, so this counter is the only scrapeable evidence of the
+// loss. The warn is only visible to someone reading SpanBarn's own logs.
+func TestCountOrphanedIngest(t *testing.T) {
+	s := &Server{metrics: NewMetrics()}
+
+	s.countOrphanedIngest("traces", 3)
+	s.countOrphanedIngest("traces", 2)
+	s.countOrphanedIngest("metrics", 7)
+
+	if got := orphanCount(t, s.metrics, "traces"); got != 5 {
+		t.Errorf("traces = %v, want 5", got)
+	}
+	if got := orphanCount(t, s.metrics, "metrics"); got != 7 {
+		t.Errorf("metrics = %v, want 7", got)
+	}
+	if got := orphanCount(t, s.metrics, "logs"); got != 0 {
+		t.Errorf("logs = %v, want 0", got)
+	}
+}
+
+// An empty batch is not evidence of orphaning; counting it would make
+// rate(orphaned_ingest_total) fire on healthy no-op exports.
+func TestCountOrphanedIngestIgnoresEmpty(t *testing.T) {
+	s := &Server{metrics: NewMetrics()}
+	s.countOrphanedIngest("traces", 0)
+	if got := orphanCount(t, s.metrics, "traces"); got != 0 {
+		t.Errorf("traces = %v, want 0", got)
+	}
+}
+
+// Metrics are optional in several server modes; the guard must not panic.
+func TestCountOrphanedIngestNilMetrics(t *testing.T) {
+	s := &Server{}
+	s.countOrphanedIngest("traces", 1)
 }
