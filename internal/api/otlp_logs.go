@@ -27,7 +27,13 @@ func (s *Server) handleOTLPLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectID := GetProjectID(r.Context())
-	s.logsIngest.Enqueue(otlpToLogRecords(&req, projectID))
+	records := otlpToLogRecords(&req, projectID)
+	// Same guardrail as the trace path, and deliberately without a
+	// self-instrument exemption — see handleOTLPMetrics.
+	if projectID == 0 {
+		s.countOrphanedIngest("logs", len(records))
+	}
+	s.logsIngest.Enqueue(records)
 
 	writeOTLPResponse(w, r, &collectorlogspb.ExportLogsServiceResponse{})
 }

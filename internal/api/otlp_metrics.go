@@ -27,7 +27,16 @@ func (s *Server) handleOTLPMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectID := GetProjectID(r.Context())
-	s.metricsIngest.Enqueue(otlpToMetricRecords(&req, projectID))
+	records := otlpToMetricRecords(&req, projectID)
+	// Same guardrail as the trace path, and deliberately without a
+	// self-instrument exemption: SPANBARN_SELF_API_KEY falls back to the global
+	// key, and exempting self-telemetry is exactly what hid 911k unattributed
+	// spans (#148). ~62k orphaned metric rows are still sitting in testing and
+	// staging from that fallback.
+	if projectID == 0 {
+		s.countOrphanedIngest("metrics", len(records))
+	}
+	s.metricsIngest.Enqueue(records)
 
 	writeOTLPResponse(w, r, &collectormetricspb.ExportMetricsServiceResponse{})
 }
