@@ -419,7 +419,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 			if cfg.QueryTimeoutSeconds > 0 {
 				roRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 			}
-			keyLookup = &readOnlyKeyLookupAdapter{keyLookupAdapter{repo: roRepo}}
+			keyLookup = newReadOnlyKeyLookup(roRepo, writeQueue, logger)
 
 			sessions = newSessionService(roRepo, cfg, logger)
 			userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
@@ -799,6 +799,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 			}
 		}
 	})
+	safeGo("apikey-touch-consumer", &wg, func() { runTouchConsumer(workerCtx, writeQueue, repo, logger) })
 	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
 
 	// Retention queries (DELETE/SELECT on the full spans table) can take
@@ -1010,10 +1011,15 @@ func (a *keyLookupAdapter) TouchAPIKey(id int64) error {
 	return a.repo.TouchAPIKey(id)
 }
 
-// readOnlyKeyLookupAdapter is used by the ingest pod which opens the database
-// in read-only mode. It reuses keyLookupAdapter's GetAPIKeyByHash and overrides
-// TouchAPIKey to a no-op, because last_used_at can be inferred from the presence
-// of spans in the writer's database.
+// readOnlyKeyLookupAdapter serves pods that open the database read-only and
+// have no write queue to forward touches over. It reuses keyLookupAdapter's
+// GetAPIKeyByHash and drops TouchAPIKey.
+//
+// Dropping the touch used to be the behaviour everywhere read-only, on the
+// grounds that last_used_at was inferable from the spans a key produced. Tail
+// sampling keeps 1 trace in 1000 by default, so a perfectly healthy key can
+// produce no spans and look identical to a dead one — see newReadOnlyKeyLookup,
+// which routes touches through the write queue wherever one exists.
 type readOnlyKeyLookupAdapter struct {
 	keyLookupAdapter
 }
@@ -1082,7 +1088,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 			if cfg.QueryTimeoutSeconds > 0 {
 				roRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 			}
-			keyLookup = &readOnlyKeyLookupAdapter{keyLookupAdapter{repo: roRepo}}
+			keyLookup = newReadOnlyKeyLookup(roRepo, nil, logger)
 			logger.Info("read-only DB attached for failover reads", "path", cfg.DBPath)
 		}
 	}
