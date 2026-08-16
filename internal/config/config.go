@@ -79,20 +79,25 @@ type FunnelBarnConfig struct {
 
 // Config holds all SPANBARN_* environment variables with sensible defaults.
 type Config struct {
-	Addr                     string
-	PublicURL                string
-	DBPath                   string
-	SpoolDir                 string
-	APIKey                   string
-	APIKeySHA256             string
-	SeedKeys                 string
-	AdminUsername            string
-	AdminPassword            string
-	AdminPasswordBcrypt      string
-	SessionSecret            string
-	SessionTTLSeconds        int
-	MaxBodyBytes             int64
-	MaxSpoolBytes            int64
+	Addr                string
+	PublicURL           string
+	DBPath              string
+	SpoolDir            string
+	APIKey              string
+	APIKeySHA256        string
+	SeedKeys            string
+	AdminUsername       string
+	AdminPassword       string
+	AdminPasswordBcrypt string
+	SessionSecret       string
+	SessionTTLSeconds   int
+	MaxBodyBytes        int64
+	MaxSpoolBytes       int64
+	// IngestRejectDiskPct is the percentage of the database volume in use at
+	// which telemetry ingest starts returning 503. Set above the retention
+	// disk watermarks so retention gets a chance to reclaim first; 0 or 100
+	// disables shedding.
+	IngestRejectDiskPct      int // SPANBARN_INGEST_REJECT_DISK_PCT
 	Retention                RetentionConfig
 	SpanStagingEnabled       bool // SPANBARN_SPAN_STAGING_ENABLED — when true, the redis worker appends consumed spans to spans_staging (cheap) and a background flusher does accumulation+classification+indexed storage per complete trace off the hot path (default false)
 	TraceBufferWindowSeconds int  // SPANBARN_TRACE_BUFFER_WINDOW_SECONDS — how long a trace's spans buffer in spans_staging before the flusher treats the trace as complete (default 90)
@@ -153,6 +158,7 @@ func Load() Config {
 		SessionTTLSeconds:   getenvInt("SPANBARN_SESSION_TTL_SECONDS", 43200),
 		MaxBodyBytes:        getenvInt64("SPANBARN_MAX_BODY_BYTES", 1<<20),
 		MaxSpoolBytes:       getenvInt64("SPANBARN_MAX_SPOOL_BYTES", 0),
+		IngestRejectDiskPct: getenvInt("SPANBARN_INGEST_REJECT_DISK_PCT", 95),
 		Retention: RetentionConfig{
 			FullHours:          getenvInt("SPANBARN_RETENTION_FULL_HOURS", 0),
 			AggregatedDays:     getenvInt("SPANBARN_RETENTION_AGGREGATED_DAYS", 30),

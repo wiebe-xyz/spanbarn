@@ -54,6 +54,7 @@ type Server struct {
 	ingest         *ingest.Handler
 	metricsIngest  *ingest.MetricsHandler
 	logsIngest     *ingest.LogsHandler
+	admission      *Admission
 	traceBuffer    *ingest.TraceBuffer
 	querySvc       *service.QueryService
 	sessions       *SessionService
@@ -143,6 +144,15 @@ func WithMetricsHandler(h *ingest.MetricsHandler) ServerOption {
 func WithLogsHandler(h *ingest.LogsHandler) ServerOption {
 	return func(s *Server) {
 		s.logsIngest = h
+	}
+}
+
+// WithAdmission attaches a disk-pressure admission controller, which refuses
+// telemetry once the storage volume is nearly full so that control-plane
+// writes (notably the session insert that login depends on) keep working.
+func WithAdmission(a *Admission) ServerOption {
+	return func(s *Server) {
+		s.admission = a
 	}
 }
 
