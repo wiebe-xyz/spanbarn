@@ -2,7 +2,6 @@ package retention
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -75,6 +74,12 @@ type Config struct {
 	// between deletion batches so the span-insert worker can drain the Redis
 	// queue. 0 disables yielding (old behaviour). Default 30s.
 	BatchYield time.Duration
+	// DBPath is the on-disk database file, used to measure how full the volume
+	// is. Empty disables disk-pressure tiering (windows stay purely time-based).
+	DBPath string
+	// Watermarks are the volume-used fractions at which retention starts
+	// shortening its raw-telemetry windows. Zero values take the defaults.
+	Watermarks Watermarks
 }
 
 func (c Config) withDefaults() Config {
@@ -125,6 +130,8 @@ type RetentionWorker struct {
 	// warnObsoleteFullHours keeps the retention_full_hours deprecation notice to
 	// one line per process instead of one per cycle.
 	warnObsoleteFullHours sync.Once
+	// warnNoAutoVacuum likewise keeps the auto_vacuum=NONE warning to one line.
+	warnNoAutoVacuum sync.Once
 }
 
 // NewRetentionWorker creates a new retention worker.
@@ -241,7 +248,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "retention.cycle")
 	defer span.End()
 
-	cfg := w.effectiveConfig()
+	cfg := w.applyDiskPressure(ctx, w.effectiveConfig())
 
 	now := time.Now().UTC()
 	interestingCutoff := now.Add(-time.Duration(cfg.InterestingRetentionHours) * time.Hour)
@@ -435,55 +442,5 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	return nil
 }
 
-// evictPerProjectCaps enforces the per-project retention caps configured via the
-// settings table: retention.max_hours.project.{id} (delete non-error traces older
-// than that many hours) and retention.max_traces.project.{id} (keep only the
-// newest N non-error traces). Both only ever shorten retention; absent/≤0 keys
-// are skipped. Returns the total traces evicted across all projects.
-func (w *RetentionWorker) evictPerProjectCaps(ctx context.Context, now time.Time) (int64, error) {
-	pids, err := w.repo.ListProjectIDs()
-	if err != nil {
-		return 0, err
-	}
-	var total int64
-	for _, pid := range pids {
-		if err := ctx.Err(); err != nil {
-			return total, err
-		}
-		if h := w.settingInt(fmt.Sprintf("retention.max_hours.project.%d", pid)); h > 0 {
-			n, err := w.repo.EvictProjectTracesOlderThan(ctx, pid, now.Add(-time.Duration(h)*time.Hour))
-			if err != nil {
-				return total, err
-			}
-			total += n
-		}
-		if maxN := w.settingInt(fmt.Sprintf("retention.max_traces.project.%d", pid)); maxN > 0 {
-			cutoff, ok, err := w.repo.ProjectNonErrorTraceCountCutoff(ctx, pid, maxN)
-			if err != nil {
-				return total, err
-			}
-			if ok {
-				n, err := w.repo.EvictProjectTracesOlderThan(ctx, pid, cutoff)
-				if err != nil {
-					return total, err
-				}
-				total += n
-			}
-		}
-	}
-	return total, nil
-}
-
-// settingInt reads a positive int from the settings table, returning 0 when the
-// key is absent, empty, unparseable, or non-positive.
-func (w *RetentionWorker) settingInt(key string) int {
-	v, err := w.repo.GetSetting(key)
-	if err != nil || v == "" {
-		return 0
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return 0
-	}
-	return n
-}
+// Per-project retention caps live in project_caps.go; disk-pressure tiering
+// lives in pressure.go.

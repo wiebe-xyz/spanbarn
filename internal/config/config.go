@@ -23,6 +23,14 @@ type RetentionConfig struct {
 	LogHours           int // SPANBARN_LOG_RETENTION_HOURS — how long to keep log records (default 24)
 	ErrorLogDays       int // SPANBARN_ERROR_LOG_RETENTION_DAYS — how long to keep logs for error traces (default 30)
 	DeleteBatchYieldMS int // SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS — pause between batched retention deletes so the WAL checkpoint and reads aren't starved (default 200)
+	// DiskElevatedPct / DiskCriticalPct are the percentages of the database
+	// volume in use at which retention starts shortening its raw-telemetry
+	// windows. Time-based retention alone cannot bound the database — when
+	// ingest volume rises, a fixed window stops fitting on the disk — and a
+	// volume that reaches 100% cannot recover in place, because freeing rows
+	// itself needs space to commit. These make retention react to size.
+	DiskElevatedPct int // SPANBARN_RETENTION_DISK_ELEVATED_PCT (default 75)
+	DiskCriticalPct int // SPANBARN_RETENTION_DISK_CRITICAL_PCT (default 90)
 }
 
 // OIDCConfig groups the IamBarn OIDC integration settings. When Issuer,
@@ -155,6 +163,8 @@ func Load() Config {
 			LogHours:           getenvInt("SPANBARN_LOG_RETENTION_HOURS", 24),
 			ErrorLogDays:       getenvInt("SPANBARN_ERROR_LOG_RETENTION_DAYS", 30),
 			DeleteBatchYieldMS: getenvInt("SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS", 200),
+			DiskElevatedPct:    getenvInt("SPANBARN_RETENTION_DISK_ELEVATED_PCT", 75),
+			DiskCriticalPct:    getenvInt("SPANBARN_RETENTION_DISK_CRITICAL_PCT", 90),
 		},
 		SpanStagingEnabled:       getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
 		TraceBufferWindowSeconds: getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
