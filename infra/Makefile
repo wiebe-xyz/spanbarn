@@ -3,16 +3,19 @@ SHELL := /bin/bash
 ANSIBLE_ROLES_PATH ?= roles:../rapid-root/infra/roles
 INVENTORY ?= inventory.ini
 
-# Each Mac is now addressed over ssh (see host_vars/), so a host that does not
-# accept ssh — Remote Login off — is UNREACHABLE rather than silently treated as
-# localhost. Use LIMIT to work on one machine:
+# Each Mac is addressed by name (see host_vars/) and connects locally when it IS
+# the machine you are running from, over ssh otherwise — so this works from
+# either Mac with no flags, and does not need Remote Login on the control
+# machine. See group_vars/macos_runners.yml.
+#
+# Use LIMIT to work on one machine:
 #
 #   make setup-runners-macos   LIMIT=mac-mini
 #   make restart-runners-macos LIMIT=mac-mini RUNNER=spanbarn-mac-2
 #
-# To manage the laptop remotely, enable System Settings > General > Sharing >
-# Remote Login on it. To run against the machine you are sitting at instead,
-# add: ANSIBLE_EXTRA='-e ansible_connection=local'
+# The remote host does need Remote Login enabled (System Settings > General >
+# Sharing). ANSIBLE_EXTRA passes anything else straight through to
+# ansible-playbook.
 ifdef LIMIT
 ANSIBLE_LIMIT = --limit $(LIMIT)
 endif
@@ -56,4 +59,4 @@ help:
 	@echo "  restart-runners-macos   Recover wedged/stale runners (RUNNER=<name>, RECONFIGURE=1)"
 	@echo "  ping                    Test runner host connectivity"
 	@echo ""
-	@echo "Common modifiers: LIMIT=<host>  ANSIBLE_EXTRA='-e ansible_connection=local'"
+	@echo "Common modifiers: LIMIT=<host>  ANSIBLE_EXTRA='<extra ansible-playbook args>'"

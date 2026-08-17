@@ -1,0 +1,23 @@
+---
+# Connect locally to the Mac you are sitting at, over ssh to the other one.
+#
+# Two failure modes to avoid, and this sits between them:
+#
+#   - ansible_connection=local for EVERY host (what inventory.ini used to do)
+#     never targets the machine it names: running the playbook anywhere applied
+#     every host's github_runners list to that one machine. That is how all four
+#     spanbarn runners ended up on the mini, two of them named mac-laptop-*.
+#
+#   - ansible_connection=ssh for every host is honest about identity but makes
+#     the control machine unreachable to itself whenever Remote Login is off,
+#     which it is on the laptop. Provisioning the machine you are sitting at
+#     should not require enabling sshd on it.
+#
+# So each host declares its LocalHostName (`scutil --get LocalHostName`) and we
+# compare it to the control machine's. Same box -> local; anything else -> ssh.
+# Running from the laptop: laptop local, mini over ssh. Running from the mini:
+# the reverse. No flags either way.
+control_local_host_name: "{{ lookup('pipe', 'scutil --get LocalHostName 2>/dev/null || hostname -s') | trim }}"
+
+ansible_connection: "{{ 'local' if (mac_local_host_name | default('') | trim) == control_local_host_name else 'ssh' }}"
+ansible_python_interpreter: /usr/bin/python3

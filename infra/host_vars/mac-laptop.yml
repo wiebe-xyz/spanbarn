@@ -3,10 +3,11 @@
 
 # Connection — see the note in mac-mini.yml. Override the address per machine
 # with SPANBARN_MAC_LAPTOP_HOST if the mDNS name differs.
+# mac_local_host_name is this machine's `scutil --get LocalHostName`. It is how
+# group_vars/macos_runners.yml decides local-vs-ssh; see the note there.
+mac_local_host_name: MacBook-Pro-2
 ansible_host: "{{ lookup('env', 'SPANBARN_MAC_LAPTOP_HOST') | default('MacBook-Pro-2.local', true) }}"
 ansible_user: "{{ lookup('env', 'SPANBARN_MAC_LAPTOP_USER') | default('wiebe', true) }}"
-ansible_connection: ssh
-ansible_python_interpreter: /usr/bin/python3
 
 github_runner_enabled: true
 github_runner_version: "2.334.0"
