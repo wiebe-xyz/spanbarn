@@ -35,6 +35,61 @@
       Restarting {{ _runners_to_restart | map(attribute='name') | list | join(', ') }}
       (battery_aware={{ github_runner_battery_aware | default(false) }})
 
+# ── Repair the actual corruption before bouncing anything ────────────────────
+# The runner self-updates by extracting bin.<new>/externals.<new>, repointing
+# the bin/externals symlinks, and deleting the old version directories. When
+# that sequence half-completes, the symlinks are left pointing at directories
+# that no longer exist. The listener keeps running from the already-unlinked
+# binary — so GitHub still sees the runner online, and it still ACCEPTS jobs —
+# but it can never spawn Runner.Worker, and every job it takes hangs until it
+# times out.
+#
+# Found on six runners at once (spanbarn-mac-2, spanbarn-laptop-1/2, bugbarn-1,
+# funnelbarn-1, brandtrace-laptop-1), which is what made CI across the barn
+# repos look randomly flaky. Restarting alone does NOT fix this: run.sh would
+# just fail on the missing binary. Repoint first, then restart.
+- name: Detect runners whose bin symlink is dangling
+  shell: |
+    d="{{ github_runner_base_dir }}/{{ item.name }}"
+    if [ -L "$d/bin" ] && [ ! -e "$d/bin" ]; then echo DANGLING; fi
+  become: true
+  loop: "{{ _runners_to_restart }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _dangling_check
+  changed_when: false
+
+- name: Repoint dangling bin/externals at the newest installed version
+  shell: |
+    set -eu
+    d="{{ github_runner_base_dir }}/{{ item.item.name }}"
+    newest_bin=$(ls -d "$d"/bin.* 2>/dev/null | sort -V | tail -1)
+    if [ -z "$newest_bin" ]; then
+      echo "no bin.<version> directory to point at" >&2
+      exit 1
+    fi
+    ln -sfn "$newest_bin" "$d/bin"
+    newest_ext=$(ls -d "$d"/externals.* 2>/dev/null | sort -V | tail -1)
+    if [ -n "$newest_ext" ]; then
+      ln -sfn "$newest_ext" "$d/externals"
+    fi
+    echo "repointed to $(basename "$newest_bin")"
+  become: true
+  loop: "{{ _dangling_check.results }}"
+  when: "'DANGLING' in (item.stdout | default(''))"
+  loop_control:
+    label: "{{ item.item.name }}"
+  register: _symlink_repair
+  changed_when: true
+
+- name: Report repaired symlinks
+  debug:
+    msg: "{{ item.item.item.name }}: {{ item.stdout }}"
+  loop: "{{ _symlink_repair.results | default([]) }}"
+  when: item.stdout is defined and item.stdout | length > 0
+  loop_control:
+    label: "{{ item.item.item.name }}"
+
 - name: Tear down runner services unconditionally
   # No "when: running" guard — a wedged listener is running, and that is the
   # exact case we need to kill. bootout removes the launchd job; pkill catches
