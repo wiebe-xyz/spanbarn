@@ -98,6 +98,21 @@
       loop_control:
         label: "{{ item.item.name }}"
 
+    # A runner whose GitHub-side registration was deleted (auto-removed after
+    # ~30 days idle) still has its local .runner file, so the stat check above
+    # considers it configured and never repairs it — it just crash-loops on
+    # "Registration was not found". config.sh --replace re-registers it.
+    - name: Force-reconfigure runners (github_runner_force_reconfigure=true)
+      include_tasks: configure-runner.yml
+      vars:
+        runner_name: "{{ item.name }}"
+        runner_repo: "{{ item.repo }}"
+        runner_labels: "{{ item.labels | default(github_runner_default_labels | default('')) }}"
+      loop: "{{ github_runners if not (github_runner_restart_names | default([])) else github_runners | selectattr('name', 'in', github_runner_restart_names) | list }}"
+      when: github_runner_force_reconfigure | default(false)
+      loop_control:
+        label: "{{ item.name }}"
+
     - name: Create LaunchAgents directory for runner user
       file:
         path: /Users/{{ github_runner_user }}/Library/LaunchAgents
@@ -313,6 +328,14 @@
         - github_runner_battery_aware | default(false)
         - power_monitor_plist.changed
       changed_when: false
+
+    # Recovery path for runners that are registered but not doing work (wedged
+    # listener, or stale registration). Opt-in because it bounces the service:
+    #   make restart-runners-macos                 # all runners on this host
+    #   make restart-runners-macos RUNNER=spanbarn-mac-2
+    - name: Restart runners (github_runner_force_restart=true)
+      include_tasks: restart-runners.yml
+      when: github_runner_force_restart | default(false)
 
     # Unload unconfigured runner services
     - name: Stop unconfigured runners
