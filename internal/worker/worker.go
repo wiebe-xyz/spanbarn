@@ -24,7 +24,16 @@ const (
 	DefaultBatchSize    = 1000
 	DefaultTickInterval = 1 * time.Second
 	maxRetries          = 5
+	// diskFullBackoff is how long the worker pauses after requeueing a batch
+	// the disk had no room for, so it does not spin against a full volume
+	// while retention's emergency eviction reclaims space.
+	diskFullBackoff = 5 * time.Second
 )
+
+// insertRetryBackoff is the base unit of the quadratic backoff between insert
+// attempts. A variable rather than a constant so tests can exercise the full
+// retry budget without spending ~27s of real sleeping.
+var insertRetryBackoff = 500 * time.Millisecond
 
 // Repository is the interface the worker needs to persist spans.
 type Repository interface {
@@ -326,6 +335,59 @@ func (w *RedisWorker) Run(ctx context.Context) {
 	}
 }
 
+// insertWithRetry writes the batch, retrying transient failures with quadratic
+// backoff. It returns the last error and whether that error was a full disk.
+//
+// A full disk short-circuits the loop: it is not transient, so retrying it
+// maxRetries times with backoff spends seconds failing and then dead-letters
+// the batch — discarding the very data that would have been written a moment
+// later, once retention frees space. The caller requeues it instead.
+func (w *RedisWorker) insertWithRetry(ctx context.Context, spans []repository.Span) (err error, diskFull bool) {
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err = w.repo.InsertSpans(ctx, spans)
+		if err == nil {
+			return nil, false
+		}
+		if repository.IsDiskFull(err) {
+			return err, true
+		}
+		w.logger.Info("redis worker: insert attempt failed",
+			"attempt", attempt, "count", len(spans), "error", err)
+
+		select {
+		case <-ctx.Done():
+			return err, false
+		case <-time.After(time.Duration(attempt*attempt) * insertRetryBackoff):
+		}
+	}
+	return err, false
+}
+
+// requeueAfterDiskFull puts a batch back on the queue instead of dropping it,
+// then backs off while retention's emergency eviction reclaims space.
+//
+// Retention frees space within a cycle and Redis is bounded by its own
+// maxmemory, so the backlog is capped either way — but data that sat in the
+// queue for a minute is infinitely better than data deleted because the disk
+// was briefly full.
+func (w *RedisWorker) requeueAfterDiskFull(ctx context.Context, records []model.SpanRecord, count int, cause error) {
+	w.logger.Error("redis worker: disk full, returning batch to queue",
+		"count", count, "error", cause)
+
+	if err := w.queue.Publish(ctx, records); err != nil {
+		w.logger.Error("redis worker: requeue after disk-full failed, batch lost",
+			"count", count, "error", err)
+		w.metrics.mu.Lock()
+		w.metrics.ErrorCount += int64(count)
+		w.metrics.mu.Unlock()
+	}
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(diskFullBackoff):
+	}
+}
+
 func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanRecord) {
 	ctx, span := tracer.Start(ctx, "redis_worker.process_batch")
 	defer span.End()
@@ -363,32 +425,18 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 	}
 
 	_, insertSpan := tracer.Start(ctx, "redis_worker.insert_spans")
-	var lastErr error
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if err := w.repo.InsertSpans(ctx, interesting); err != nil {
-			lastErr = err
-			w.logger.Info("redis worker: insert attempt failed",
-				"attempt", attempt,
-				"count", len(interesting),
-				"error", err,
-			)
-			backoff := time.Duration(attempt*attempt) * 500 * time.Millisecond
-			select {
-			case <-ctx.Done():
-				insertSpan.End()
-				return
-			case <-time.After(backoff):
-			}
-			continue
-		}
-		lastErr = nil
-		break
-	}
+	lastErr, diskFull := w.insertWithRetry(ctx, interesting)
 	if lastErr != nil {
 		insertSpan.RecordError(lastErr)
 		insertSpan.SetStatus(codes.Error, lastErr.Error())
 	}
 	insertSpan.End()
+
+	if lastErr != nil && diskFull && w.queue != nil {
+		span.SetAttributes(attribute.Int("requeued_disk_full", len(interesting)))
+		w.requeueAfterDiskFull(ctx, records, len(interesting), lastErr)
+		return
+	}
 
 	if lastErr != nil {
 		span.SetAttributes(attribute.Int("dead_lettered", len(interesting)))

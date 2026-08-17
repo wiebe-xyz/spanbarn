@@ -178,8 +178,11 @@ func TestApplyDiskPressure(t *testing.T) {
 
 	t.Run("critical pressure shortens the windows", func(t *testing.T) {
 		// Any real volume is more than 0.02% used, so this forces critical.
+		// TargetFraction is set above any real usage so the emergency eviction
+		// loop stays out of the way and this asserts only the tiering.
 		cfg := base
 		cfg.Watermarks = Watermarks{Elevated: 0.0001, Critical: 0.0002}
+		cfg.TargetFraction = 0.999
 		worker, _ := setupDiskWorker(t, cfg)
 
 		got := worker.applyDiskPressure(context.Background(), worker.cfg)
@@ -220,6 +223,10 @@ func TestRunOnceDropsSpansEarlierUnderDiskPressure(t *testing.T) {
 		SlowThresholdUS:           1_000_000,
 		// Force critical: any real volume exceeds 0.02% used.
 		Watermarks: Watermarks{Elevated: 0.0001, Critical: 0.0002},
+		// Already at/under target, so the emergency eviction loop is a no-op
+		// and this test isolates the window-shortening behaviour. Emergency
+		// reclaim is covered by TestReclaimToTarget* below.
+		TargetFraction: 0.999,
 	}
 	worker, repo := setupDiskWorker(t, cfg)
 

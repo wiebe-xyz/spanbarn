@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -80,6 +81,13 @@ type Config struct {
 	// Watermarks are the volume-used fractions at which retention starts
 	// shortening its raw-telemetry windows. Zero values take the defaults.
 	Watermarks Watermarks
+	// TargetFraction is the volume-used level the emergency loop evicts back
+	// down to once the critical watermark is crossed. Default 0.70.
+	TargetFraction float64
+	// BallastBytes is the reserved space held so that a full volume can always
+	// delete its way out. 0 disables the reserve — which means a volume that
+	// does reach 100% stays wedged until a human intervenes.
+	BallastBytes int64
 }
 
 func (c Config) withDefaults() Config {
@@ -132,6 +140,14 @@ type RetentionWorker struct {
 	warnObsoleteFullHours sync.Once
 	// warnNoAutoVacuum likewise keeps the auto_vacuum=NONE warning to one line.
 	warnNoAutoVacuum sync.Once
+
+	// ballast is the reserved space surrendered during emergency eviction.
+	ballast     *repository.Ballast
+	ballastOnce sync.Once
+
+	// pressured is set when the last cycle found the volume critical, so Run
+	// tightens its interval instead of waiting a full period to look again.
+	pressured atomic.Bool
 }
 
 // NewRetentionWorker creates a new retention worker.
@@ -144,17 +160,32 @@ func NewRetentionWorker(repo Repository, aggregator Aggregator, cfg Config, logg
 	}
 }
 
+// pressuredInterval is how often retention re-checks while the volume is
+// critical. A five-minute wait is fine when there is room; when the disk is
+// filling it is most of the margin.
+const pressuredInterval = 30 * time.Second
+
+// nextInterval returns how long to wait before the next cycle: the configured
+// period normally, a much shorter one while the volume is under pressure.
+func (w *RetentionWorker) nextInterval() time.Duration {
+	if w.pressured.Load() && w.cfg.Interval > pressuredInterval {
+		return pressuredInterval
+	}
+	return w.cfg.Interval
+}
+
 // Run starts the retention loop, ticking at cfg.Interval until ctx is cancelled.
+// Under disk pressure it ticks considerably faster — see nextInterval.
 func (w *RetentionWorker) Run(ctx context.Context) {
-	ticker := time.NewTicker(w.cfg.Interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(w.cfg.Interval)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			w.logger.Info("retention worker stopped")
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			var lastErr error
 			for attempt := 1; attempt <= 5; attempt++ {
 				if lastErr = w.RunOnce(ctx); lastErr == nil {
@@ -167,6 +198,7 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 			if lastErr != nil {
 				w.logger.Info("retention cycle failed, will retry next tick", "error", lastErr)
 			}
+			timer.Reset(w.nextInterval())
 		}
 	}
 }
