@@ -19,7 +19,7 @@
     mode: '0755'
     owner: "{{ github_runner_user | default('deployer') }}"
     group: staff
-  become: true
+  become: "{{ not runner_user_is_self }}"
   loop: "{{ safe_sleep_files.files }}"
   loop_control:
     label: "{{ item.path }}"

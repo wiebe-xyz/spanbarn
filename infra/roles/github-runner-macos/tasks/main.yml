@@ -27,6 +27,22 @@
         - curl
         - jq
 
+    # A runner installed as a per-user LaunchAgent needs no root: the runner
+    # directory, the LaunchAgent plist and the crontab all live under the
+    # runner user's own home. So when the playbook is already running as that
+    # user — the normal case on these Macs — skip privilege escalation entirely
+    # rather than demanding a sudo password for work that never needed one.
+    - name: Determine whether we are already the runner user
+      set_fact:
+        runner_user_is_self: "{{ (ansible_user_id | default(lookup('env', 'USER'))) == (github_runner_user | default('deployer')) }}"
+
+    - name: Report privilege mode
+      debug:
+        msg: >-
+          Running as {{ ansible_user_id | default(lookup('env', 'USER')) }};
+          runner user is {{ github_runner_user | default('deployer') }} —
+          {{ 'no escalation needed' if runner_user_is_self else 'will escalate via sudo' }}
+
     - name: Set default values for runners if not specified
       set_fact:
         github_runners: "{{ github_runners | default([{'name': 'runner-1'}]) }}"
@@ -38,7 +54,7 @@
         owner: "{{ github_runner_user | default('deployer') }}"
         group: staff
         mode: '0755'
-      become: true
+      become: "{{ not runner_user_is_self }}"
 
     - name: Create directories for GitHub runners
       file:
@@ -47,7 +63,7 @@
         owner: "{{ github_runner_user | default('deployer') }}"
         group: staff
         mode: '0755'
-      become: true
+      become: "{{ not runner_user_is_self }}"
       loop: "{{ github_runners }}"
       loop_control:
         label: "{{ item.name }}"
@@ -62,7 +78,7 @@
       shell: |
         rm -rf {{ github_runner_base_dir }}/{{ item.name }}/bin {{ github_runner_base_dir }}/{{ item.name }}/externals
         tar -xzf /tmp/actions-runner-osx-arm64-{{ github_runner_version }}.tar.gz -C {{ github_runner_base_dir }}/{{ item.name }}
-      become: true
+      become: "{{ not runner_user_is_self }}"
       loop: "{{ github_runners }}"
       loop_control:
         label: "{{ item.name }}"
@@ -74,7 +90,7 @@
         owner: "{{ github_runner_user | default('deployer') }}"
         group: staff
         recurse: yes
-      become: true
+      become: "{{ not runner_user_is_self }}"
       loop: "{{ github_runners }}"
       loop_control:
         label: "{{ item.name }}"
@@ -120,7 +136,7 @@
         owner: "{{ github_runner_user }}"
         group: staff
         mode: '0755'
-      become: true
+      become: "{{ not runner_user_is_self }}"
 
     - name: Create GitHub Actions runner launchd plist files
       copy:
@@ -162,7 +178,7 @@
               </dict>
           </dict>
           </plist>
-      become: true
+      become: "{{ not runner_user_is_self }}"
       loop: "{{ github_runners }}"
       loop_control:
         label: "{{ item.name }}"
@@ -187,7 +203,7 @@
         launchctl bootout gui/{{ runner_uid.stdout }}/com.github.actions.{{ item.item.name }} 2>/dev/null || true
         launchctl bootstrap gui/{{ runner_uid.stdout }} /Users/{{ github_runner_user }}/Library/LaunchAgents/com.github.actions.{{ item.item.name }}.plist 2>/dev/null || \
         launchctl enable gui/{{ runner_uid.stdout }}/com.github.actions.{{ item.item.name }} 2>/dev/null || true
-      become: true
+      become: "{{ not runner_user_is_self }}"
       loop: "{{ runner_config_final.results }}"
       when:
         - item.stat.exists
@@ -220,7 +236,7 @@
           {% endfor %}
 
           echo "All runners started. Check status with: pgrep -f Runner.Listener"
-      become: true
+      become: "{{ not runner_user_is_self }}"
 
     - name: Start runners directly
       shell: |
@@ -228,7 +244,11 @@
           echo "{{ item.item.name }} already running"
         else
           cd {{ github_runner_base_dir }}/{{ item.item.name }}
+          {% if runner_user_is_self %}
+          ./run.sh > stdout.log 2> stderr.log &
+          {% else %}
           sudo -u {{ github_runner_user | default('deployer') }} ./run.sh > stdout.log 2> stderr.log &
+          {% endif %}
           sleep 3
           if pgrep -f "{{ item.item.name }}/bin/Runner.Listener" > /dev/null 2>&1; then
             echo "Started {{ item.item.name }}"
@@ -236,7 +256,7 @@
             echo "Failed to start {{ item.item.name }}"
           fi
         fi
-      become: true
+      become: "{{ not runner_user_is_self }}"
       loop: "{{ runner_config_final.results }}"
       when:
         - item.stat.exists
@@ -277,7 +297,7 @@
             fi
           fi
           {% endfor %}
-      become: true
+      become: "{{ not runner_user_is_self }}"
       when: github_runner_battery_aware | default(false)
 
     - name: Create power monitor launchd plist
@@ -314,7 +334,7 @@
               </dict>
           </dict>
           </plist>
-      become: true
+      become: "{{ not runner_user_is_self }}"
       when: github_runner_battery_aware | default(false)
       register: power_monitor_plist
 
@@ -323,7 +343,7 @@
         launchctl bootout gui/{{ runner_uid.stdout }}/com.github.actions.runner-power-monitor 2>/dev/null || true
         launchctl bootstrap gui/{{ runner_uid.stdout }} \
           /Users/{{ github_runner_user }}/Library/LaunchAgents/com.github.actions.runner-power-monitor.plist 2>/dev/null || true
-      become: true
+      become: "{{ not runner_user_is_self }}"
       when:
         - github_runner_battery_aware | default(false)
         - power_monitor_plist.changed
@@ -342,7 +362,7 @@
       shell: |
         pkill -f "{{ item.item.name }}/run.sh" || true
         launchctl bootout gui/{{ runner_uid.stdout }}/com.github.actions.{{ item.item.name }} 2>/dev/null || true
-      become: true
+      become: "{{ not runner_user_is_self }}"
       loop: "{{ runner_config_final.results }}"
       when: not item.stat.exists
       loop_control:
@@ -361,7 +381,7 @@
         mode: '0755'
         owner: "{{ github_runner_user | default('deployer') }}"
         group: staff
-      become: true
+      become: "{{ not runner_user_is_self }}"
 
     - name: Install runner cleanup cron job
       cron:
@@ -370,6 +390,6 @@
         hour: "*"
         job: "{{ github_runner_base_dir }}/cleanup.sh"
         user: "{{ github_runner_user | default('deployer') }}"
-      become: true
+      become: "{{ not runner_user_is_self }}"
 
   when: github_runner_enabled | default(false)
