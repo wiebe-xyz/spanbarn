@@ -1,6 +1,13 @@
 # Mac Laptop - GitHub Actions runner configuration for SpanBarn
 # Battery-aware runners should only run when on AC power.
 
+# Connection — see the note in mac-mini.yml. Override the address per machine
+# with SPANBARN_MAC_LAPTOP_HOST if the mDNS name differs.
+ansible_host: "{{ lookup('env', 'SPANBARN_MAC_LAPTOP_HOST') | default('MacBook-Pro-2.local', true) }}"
+ansible_user: "{{ lookup('env', 'SPANBARN_MAC_LAPTOP_USER') | default('wiebe', true) }}"
+ansible_connection: ssh
+ansible_python_interpreter: /usr/bin/python3
+
 github_runner_enabled: true
 github_runner_version: "2.334.0"
 github_runner_base_dir: /Users/wiebe/github-runners
