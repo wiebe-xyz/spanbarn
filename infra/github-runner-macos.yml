@@ -3,7 +3,11 @@
 # Run with: GITHUB_TOKEN=<token> make setup-runners-macos
 
 - hosts: macos_runners
-  become: yes
+  # No play-level become. Each task decides for itself, and skips escalation
+  # entirely when the playbook already runs as the runner user (the normal case
+  # on these Macs — everything a per-user LaunchAgent runner touches lives in
+  # that user's home). A play-level become: yes also applies to fact gathering,
+  # so it demanded a sudo password before any of that logic could run.
   serial: 1
 
   vars:

@@ -11,7 +11,26 @@
     status_code: 201
   register: registration_token_response
 
-- name: Configure GitHub Actions runner
+# Run config.sh as the runner user — but do not escalate to get there when we
+# already ARE that user. A GitHub Actions runner installed as a per-user
+# LaunchAgent needs no root at all: every path involved lives under the user's
+# own home. Wrapping it in `sudo -u <self>` bought nothing and made the whole
+# playbook require a sudo password on machines where nothing else did.
+- name: Configure GitHub Actions runner (as the runner user)
+  shell: |
+    cd {{ github_runner_base_dir }}/{{ runner_name }}
+    ./config.sh \
+      --url https://github.com/{{ runner_repo }} \
+      --token {{ registration_token_response.json.token }} \
+      --unattended \
+      --replace \
+      --name {{ inventory_hostname }}-{{ runner_name }} \
+      --labels {{ runner_labels }}
+  become: false
+  when: runner_user_is_self
+  register: runner_config_self
+
+- name: Configure GitHub Actions runner (escalating to the runner user)
   shell: |
     cd {{ github_runner_base_dir }}/{{ runner_name }}
     sudo -u {{ github_runner_user | default('deployer') }} ./config.sh \
@@ -22,5 +41,18 @@
       --name {{ inventory_hostname }}-{{ runner_name }} \
       --labels {{ runner_labels }}
   become: true
-  register: runner_config_result
-  failed_when: runner_config_result.rc != 0 and "already configured" not in runner_config_result.stderr | default('')
+  when: not runner_user_is_self
+  register: runner_config_escalated
+
+- name: Collect runner configuration result
+  set_fact:
+    runner_config_result: "{{ runner_config_self if runner_user_is_self else runner_config_escalated }}"
+
+# "already configured" is not a failure: the runner was registered by a previous
+# run and --replace handles it.
+- name: Fail if configuring the runner did not succeed
+  fail:
+    msg: "config.sh failed for {{ runner_name }}: {{ runner_config_result.stderr | default(runner_config_result.stdout) | default('no output') }}"
+  when:
+    - runner_config_result.rc | default(0) != 0
+    - "'already configured' not in (runner_config_result.stderr | default(''))"

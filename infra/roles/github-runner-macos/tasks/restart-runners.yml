@@ -52,7 +52,7 @@
   shell: |
     d="{{ github_runner_base_dir }}/{{ item.name }}"
     if [ -L "$d/bin" ] && [ ! -e "$d/bin" ]; then echo DANGLING; fi
-  become: true
+  become: "{{ not runner_user_is_self }}"
   loop: "{{ _runners_to_restart }}"
   loop_control:
     label: "{{ item.name }}"
@@ -74,7 +74,7 @@
       ln -sfn "$newest_ext" "$d/externals"
     fi
     echo "repointed to $(basename "$newest_bin")"
-  become: true
+  become: "{{ not runner_user_is_self }}"
   loop: "{{ _dangling_check.results }}"
   when: "'DANGLING' in (item.stdout | default(''))"
   loop_control:
@@ -98,7 +98,7 @@
     launchctl bootout gui/{{ runner_uid.stdout }}/com.github.actions.{{ item.name }} 2>/dev/null || true
     pkill -f "{{ item.name }}/bin/Runner.Listener" 2>/dev/null || true
     pkill -f "{{ item.name }}/run.sh" 2>/dev/null || true
-  become: true
+  become: "{{ not runner_user_is_self }}"
   loop: "{{ _runners_to_restart }}"
   loop_control:
     label: "{{ item.name }}"
@@ -112,7 +112,7 @@
 
 - name: Verify listeners are gone
   shell: pgrep -f "{{ item.name }}/bin/Runner.Listener" || true
-  become: true
+  become: "{{ not runner_user_is_self }}"
   loop: "{{ _runners_to_restart }}"
   loop_control:
     label: "{{ item.name }}"
@@ -121,7 +121,7 @@
 
 - name: Force-kill any listener that survived
   shell: pkill -9 -f "{{ item.item.name }}/bin/Runner.Listener" 2>/dev/null || true
-  become: true
+  become: "{{ not runner_user_is_self }}"
   loop: "{{ _leftover_listeners.results }}"
   when: item.stdout | default('') | trim | length > 0
   loop_control:
@@ -136,7 +136,7 @@
     launchctl bootstrap gui/{{ runner_uid.stdout }} \
       /Users/{{ github_runner_user }}/Library/LaunchAgents/com.github.actions.{{ item.name }}.plist 2>/dev/null || \
     launchctl enable gui/{{ runner_uid.stdout }}/com.github.actions.{{ item.name }} 2>/dev/null || true
-  become: true
+  become: "{{ not runner_user_is_self }}"
   loop: "{{ _runners_to_restart }}"
   when: not (github_runner_battery_aware | default(false))
   loop_control:
@@ -145,7 +145,7 @@
 
 - name: Confirm runners came back
   shell: pgrep -f "{{ item.name }}/bin/Runner.Listener" || true
-  become: true
+  become: "{{ not runner_user_is_self }}"
   loop: "{{ _runners_to_restart }}"
   when: not (github_runner_battery_aware | default(false))
   loop_control:
