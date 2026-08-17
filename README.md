@@ -248,6 +248,8 @@ project automatically.
 | `SPANBARN_RETENTION_AGGREGATED_DAYS` | `30` | Days to keep aggregates |
 | `SPANBARN_RETENTION_ERROR_DAYS` | `90` | Days to keep error samples |
 | `SPANBARN_METRICS_RETENTION_DAYS` | `7` | Days to keep raw metric points. Raw points are only read for ranges ≤ 6h; longer ranges read rollups. |
+| `SPANBARN_RETENTION_DISK_ELEVATED_PCT` | `75` | Volume-used % at which retention halves its raw-telemetry windows (see [Disk-headroom guard](#disk-headroom-guard)) |
+| `SPANBARN_RETENTION_DISK_CRITICAL_PCT` | `90` | Volume-used % at which retention quarters its raw-telemetry windows |
 | `SPANBARN_INGEST_SAMPLE_RATE` | `1.0` | Fraction of normal spans to keep (0-1, 1=keep all) |
 | `SPANBARN_SLOW_THRESHOLD_MS` | `500` | Slow span threshold (ms) |
 | `SPANBARN_QUERY_TIMEOUT_SECONDS` | `30` | Query timeout for dashboard queries |
@@ -270,6 +272,34 @@ project automatically.
 | `SPANBARN_FUNNELBARN_ENDPOINT` | | FunnelBarn endpoint for analytics forwarding |
 | `SPANBARN_FUNNELBARN_API_KEY` | | FunnelBarn API key |
 | `SPANBARN_FUNNELBARN_PROJECT` | | FunnelBarn project slug |
+
+### Disk-headroom guard
+
+Retention windows are a clock, but a disk is a budget. When ingest volume rises,
+a fixed window silently stops fitting on the volume — and once SQLite reports
+`database or disk is full`, *every* write fails at once, including the
+`web_sessions` insert that logging in depends on. Worse, that state cannot
+recover in place: freeing rows needs space to commit the delete.
+
+So retention also watches size. Each cycle it samples how full the database's
+volume is and, past the watermarks above, shortens its **raw telemetry** windows
+— spans, boring spans, metrics and logs — to 1/2 (elevated) or 1/4 (critical) of
+their configured values, with floors so no window ever collapses to zero.
+Aggregates, error samples and error logs are deliberately never shortened: they
+are what the product is for, they are small per unit time, and an operator
+investigating the incident that caused the pressure must still find the evidence.
+
+Two properties worth knowing:
+
+- **Freelist pages count as free.** Pages on SQLite's freelist are used bytes on
+  the filesystem but writable space to the database. A 5 GB file that is 4 GB
+  freelist has plenty of room; counting it as full would pin the guard on
+  permanently.
+- **`auto_vacuum` must be `INCREMENTAL`.** With `auto_vacuum=NONE`, deleted
+  pages are never returned to the filesystem, so retention frees rows but never
+  frees disk — the failure mode this guard exists to prevent. The worker logs a
+  warning once per process if it finds `NONE`; fix it with
+  `PRAGMA auto_vacuum=INCREMENTAL; VACUUM;`.
 
 ## Architecture
 

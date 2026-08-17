@@ -77,5 +77,10 @@ func retentionConfigFrom(cfg config.Config) retention.Config {
 		LogRetentionHours:         cfg.Retention.LogHours,
 		ErrorLogRetentionDays:     cfg.Retention.ErrorLogDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
+		DBPath:                    cfg.DBPath,
+		Watermarks: retention.Watermarks{
+			Elevated: float64(cfg.Retention.DiskElevatedPct) / 100,
+			Critical: float64(cfg.Retention.DiskCriticalPct) / 100,
+		},
 	}
 }
