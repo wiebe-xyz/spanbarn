@@ -244,7 +244,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		if cfg.RedisURL != "" {
 			rs, cacheErr := cache.NewRedisStore(cfg.RedisURL)
 			if cacheErr != nil {
-				logger.Warn("redis unavailable, falling back to in-memory cache", "error", cacheErr)
+				logger.Info("redis cache unavailable, using in-memory cache", "error", cacheErr)
 				store = cache.NewMemoryStore()
 			} else {
 				store = rs
@@ -429,7 +429,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 			var store cache.Store
 			if cfg.RedisURL != "" {
 				if rs, cacheErr := cache.NewRedisStore(cfg.RedisURL); cacheErr != nil {
-					logger.Warn("redis cache unavailable, falling back to in-memory", "error", cacheErr)
+					logger.Info("redis cache unavailable, using in-memory cache", "error", cacheErr)
 					store = cache.NewMemoryStore()
 				} else {
 					store = rs
@@ -654,7 +654,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		if cfg.RedisURL != "" {
 			rs, cacheErr := cache.NewRedisStore(cfg.RedisURL)
 			if cacheErr != nil {
-				logger.Warn("redis cache unavailable, falling back to in-memory", "error", cacheErr)
+				logger.Info("redis cache unavailable, using in-memory cache", "error", cacheErr)
 				store = cache.NewMemoryStore()
 			} else {
 				store = rs
@@ -766,7 +766,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 			}
 			recs, err := writeQueue.ConsumeMetrics(workerCtx)
 			if err != nil {
-				logger.Error("metrics consumer error", "error", err)
+				if !backoffAfterConsumeError(workerCtx, logger, "metrics", err) {
+					return
+				}
 				continue
 			}
 			if len(recs) == 0 {
@@ -789,7 +791,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 			}
 			recs, err := writeQueue.ConsumeLogs(workerCtx)
 			if err != nil {
-				logger.Error("logs consumer error", "error", err)
+				if !backoffAfterConsumeError(workerCtx, logger, "logs", err) {
+					return
+				}
 				continue
 			}
 			if len(recs) == 0 {
@@ -1078,7 +1082,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 		var store cache.Store
 		if cfg.RedisURL != "" {
 			if rs, cacheErr := cache.NewRedisStore(cfg.RedisURL); cacheErr != nil {
-				logger.Warn("redis unavailable, falling back to in-memory cache", "error", cacheErr)
+				logger.Info("redis cache unavailable, using in-memory cache", "error", cacheErr)
 				store = cache.NewMemoryStore()
 			} else {
 				store = rs

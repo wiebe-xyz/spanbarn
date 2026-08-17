@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/api"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
@@ -63,6 +64,36 @@ func warnObsoleteRetentionEnv(cfg config.Config, logger *slog.Logger) {
 		"ignored_value", cfg.Retention.FullHours,
 		"retention_interesting_hours", cfg.Retention.InterestingHours,
 		"boring_retention_minutes", cfg.Retention.BoringMinutes)
+}
+
+// consumeErrorBackoff is how long a queue consumer waits after a failed read
+// before trying again.
+const consumeErrorBackoff = time.Second
+
+// backoffAfterConsumeError handles a failed queue consume. It returns false
+// when the context is done and the caller should stop looping.
+//
+// It fixes two things the metrics and logs consumers got wrong. They logged at
+// ERROR and `continue`d immediately, so a Redis outage became a hot loop:
+// hammering the queue, burning CPU, and emitting one error per iteration — each
+// captured to BugBarn, meaning the service amplified its own outage. That is
+// the shape that buried the July outage under 1.8M events. They also had no
+// context check, so a cancelled context on graceful shutdown surfaced as an
+// ERROR and filed an issue for a clean stop.
+//
+// A dropped Redis connection is transient and self-healing, so it warns rather
+// than errors: ERROR is for something that was lost and needs a human.
+func backoffAfterConsumeError(ctx context.Context, logger *slog.Logger, what string, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	logger.Warn(what+" consumer: consume failed, retrying", "error", err)
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(consumeErrorBackoff):
+	}
+	return true
 }
 
 // newAdmission builds the disk-pressure admission controller for the pods that
