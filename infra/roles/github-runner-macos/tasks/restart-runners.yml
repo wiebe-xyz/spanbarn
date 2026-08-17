@@ -1,0 +1,179 @@
+---
+# Recover runners that are registered but not doing useful work.
+#
+# Two failure modes seen in production, NEITHER of which the normal
+# provisioning path repairs — which is why this file exists rather than
+# "just run the playbook again":
+#
+#   1. WEDGED. The Runner.Listener process is alive and GitHub reports the
+#      runner online and busy, but it never executes the job it accepted.
+#      Jobs sit in_progress until they time out (hours), and `gh run cancel`
+#      does not take, because cancellation needs the runner to acknowledge it.
+#      The "Start runners directly" task skips this runner *precisely because*
+#      pgrep finds a live listener, so re-running the playbook is a no-op.
+#
+#   2. STALE REGISTRATION. .runner exists locally but GitHub deleted the
+#      registration (runners are auto-removed after ~30 days idle). The
+#      listener then crash-loops on "Registration was not found or is not
+#      medium trust", respawning every ~10s indefinitely. The "Check if runner
+#      is already configured" stat only looks for the .runner file, which is
+#      still there, so the runner is never reconfigured.
+#
+# Both are repaired by tearing the service down unconditionally and bringing
+# it back, rather than by asking "is it running?".
+
+- name: Select runners to restart
+  set_fact:
+    _runners_to_restart: >-
+      {{ github_runners
+         if not (github_runner_restart_names | default([]))
+         else github_runners | selectattr('name', 'in', github_runner_restart_names) | list }}
+
+- name: Report which runners will be restarted
+  debug:
+    msg: >-
+      Restarting {{ _runners_to_restart | map(attribute='name') | list | join(', ') }}
+      (battery_aware={{ github_runner_battery_aware | default(false) }})
+
+# ── Repair the actual corruption before bouncing anything ────────────────────
+# The runner self-updates by extracting bin.<new>/externals.<new>, repointing
+# the bin/externals symlinks, and deleting the old version directories. When
+# that sequence half-completes, the symlinks are left pointing at directories
+# that no longer exist. The listener keeps running from the already-unlinked
+# binary — so GitHub still sees the runner online, and it still ACCEPTS jobs —
+# but it can never spawn Runner.Worker, and every job it takes hangs until it
+# times out.
+#
+# Found on six runners at once (spanbarn-mac-2, spanbarn-laptop-1/2, bugbarn-1,
+# funnelbarn-1, brandtrace-laptop-1), which is what made CI across the barn
+# repos look randomly flaky. Restarting alone does NOT fix this: run.sh would
+# just fail on the missing binary. Repoint first, then restart.
+- name: Detect runners whose bin symlink is dangling
+  shell: |
+    d="{{ github_runner_base_dir }}/{{ item.name }}"
+    if [ -L "$d/bin" ] && [ ! -e "$d/bin" ]; then echo DANGLING; fi
+  become: true
+  loop: "{{ _runners_to_restart }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _dangling_check
+  changed_when: false
+
+- name: Repoint dangling bin/externals at the newest installed version
+  shell: |
+    set -eu
+    d="{{ github_runner_base_dir }}/{{ item.item.name }}"
+    newest_bin=$(ls -d "$d"/bin.* 2>/dev/null | sort -V | tail -1)
+    if [ -z "$newest_bin" ]; then
+      echo "no bin.<version> directory to point at" >&2
+      exit 1
+    fi
+    ln -sfn "$newest_bin" "$d/bin"
+    newest_ext=$(ls -d "$d"/externals.* 2>/dev/null | sort -V | tail -1)
+    if [ -n "$newest_ext" ]; then
+      ln -sfn "$newest_ext" "$d/externals"
+    fi
+    echo "repointed to $(basename "$newest_bin")"
+  become: true
+  loop: "{{ _dangling_check.results }}"
+  when: "'DANGLING' in (item.stdout | default(''))"
+  loop_control:
+    label: "{{ item.item.name }}"
+  register: _symlink_repair
+  changed_when: true
+
+- name: Report repaired symlinks
+  debug:
+    msg: "{{ item.item.item.name }}: {{ item.stdout }}"
+  loop: "{{ _symlink_repair.results | default([]) }}"
+  when: item.stdout is defined and item.stdout | length > 0
+  loop_control:
+    label: "{{ item.item.item.name }}"
+
+- name: Tear down runner services unconditionally
+  # No "when: running" guard — a wedged listener is running, and that is the
+  # exact case we need to kill. bootout removes the launchd job; pkill catches
+  # listeners started outside launchd by start-all-runners.sh.
+  shell: |
+    launchctl bootout gui/{{ runner_uid.stdout }}/com.github.actions.{{ item.name }} 2>/dev/null || true
+    pkill -f "{{ item.name }}/bin/Runner.Listener" 2>/dev/null || true
+    pkill -f "{{ item.name }}/run.sh" 2>/dev/null || true
+  become: true
+  loop: "{{ _runners_to_restart }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
+
+- name: Wait for listeners to exit
+  # launchd KeepAlive means a bootout race can otherwise re-bootstrap onto a
+  # still-dying process and leave the runner in the same wedged state.
+  pause:
+    seconds: 5
+
+- name: Verify listeners are gone
+  shell: pgrep -f "{{ item.name }}/bin/Runner.Listener" || true
+  become: true
+  loop: "{{ _runners_to_restart }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _leftover_listeners
+  changed_when: false
+
+- name: Force-kill any listener that survived
+  shell: pkill -9 -f "{{ item.item.name }}/bin/Runner.Listener" 2>/dev/null || true
+  become: true
+  loop: "{{ _leftover_listeners.results }}"
+  when: item.stdout | default('') | trim | length > 0
+  loop_control:
+    label: "{{ item.item.name }}"
+  changed_when: true
+
+# On non-battery-aware hosts (mac-mini) we bring the service back ourselves.
+# On battery-aware hosts (laptops) the power monitor bootstraps it within 60s
+# when on AC — starting it here would fight that logic on battery.
+- name: Bring runner services back up
+  shell: |
+    launchctl bootstrap gui/{{ runner_uid.stdout }} \
+      /Users/{{ github_runner_user }}/Library/LaunchAgents/com.github.actions.{{ item.name }}.plist 2>/dev/null || \
+    launchctl enable gui/{{ runner_uid.stdout }}/com.github.actions.{{ item.name }} 2>/dev/null || true
+  become: true
+  loop: "{{ _runners_to_restart }}"
+  when: not (github_runner_battery_aware | default(false))
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
+
+- name: Confirm runners came back
+  shell: pgrep -f "{{ item.name }}/bin/Runner.Listener" || true
+  become: true
+  loop: "{{ _runners_to_restart }}"
+  when: not (github_runner_battery_aware | default(false))
+  loop_control:
+    label: "{{ item.name }}"
+  register: _restarted_listeners
+  retries: 6
+  delay: 5
+  until: _restarted_listeners.stdout | default('') | trim | length > 0
+  changed_when: false
+  ignore_errors: true
+
+- name: Report runners that did not come back
+  # Loud rather than silent: a runner that fails to restart still holds its
+  # slot in the pool and will keep swallowing jobs.
+  debug:
+    msg: >-
+      WARNING: {{ item.item.name }} has no listener after restart —
+      check {{ github_runner_base_dir }}/{{ item.item.name }}/stderr.log
+  loop: "{{ _restarted_listeners.results | default([]) }}"
+  when:
+    - item.stdout is defined
+    - item.stdout | trim | length == 0
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Note battery-aware hosts are restarted by the power monitor
+  debug:
+    msg: >-
+      Runners torn down; the power monitor will start them within 60s while on
+      AC power. On battery they stay down by design.
+  when: github_runner_battery_aware | default(false)
