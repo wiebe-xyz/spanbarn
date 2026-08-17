@@ -7,17 +7,16 @@ import time
 import pytest
 
 from spanbarn import (
+    Span,
     SpanBarn,
     SpanBarnConfig,
     SpanBarnWSGIMiddleware,
-    Span,
     SpanData,
-    generate_trace_id,
     generate_span_id,
+    generate_trace_id,
     make_traceparent,
     parse_traceparent,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
