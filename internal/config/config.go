@@ -31,6 +31,16 @@ type RetentionConfig struct {
 	// itself needs space to commit. These make retention react to size.
 	DiskElevatedPct int // SPANBARN_RETENTION_DISK_ELEVATED_PCT (default 75)
 	DiskCriticalPct int // SPANBARN_RETENTION_DISK_CRITICAL_PCT (default 90)
+	// DiskTargetPct is the volume-used level the emergency loop evicts back
+	// down to once the critical watermark is crossed. Shortened windows are a
+	// multiplier on a duration; this is what actually bounds the database by
+	// size — evict oldest raw telemetry until the volume fits.
+	DiskTargetPct int // SPANBARN_RETENTION_DISK_TARGET_PCT (default 70)
+	// BallastMB is reserved disk space held purely so it can be surrendered.
+	// A volume at 100% cannot delete its way out, because committing a DELETE
+	// is itself a write; releasing this file is a metadata operation that
+	// always succeeds and buys the room to recover. 0 disables the reserve.
+	BallastMB int // SPANBARN_DB_BALLAST_MB (default 256)
 }
 
 // OIDCConfig groups the IamBarn OIDC integration settings. When Issuer,
@@ -171,6 +181,8 @@ func Load() Config {
 			DeleteBatchYieldMS: getenvInt("SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS", 200),
 			DiskElevatedPct:    getenvInt("SPANBARN_RETENTION_DISK_ELEVATED_PCT", 75),
 			DiskCriticalPct:    getenvInt("SPANBARN_RETENTION_DISK_CRITICAL_PCT", 90),
+			DiskTargetPct:      getenvInt("SPANBARN_RETENTION_DISK_TARGET_PCT", 70),
+			BallastMB:          getenvInt("SPANBARN_DB_BALLAST_MB", 256),
 		},
 		SpanStagingEnabled:       getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
 		TraceBufferWindowSeconds: getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),

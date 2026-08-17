@@ -109,5 +109,7 @@ func retentionConfigFrom(cfg config.Config) retention.Config {
 			Elevated: float64(cfg.Retention.DiskElevatedPct) / 100,
 			Critical: float64(cfg.Retention.DiskCriticalPct) / 100,
 		},
+		TargetFraction: float64(cfg.Retention.DiskTargetPct) / 100,
+		BallastBytes:   int64(cfg.Retention.BallastMB) << 20,
 	}
 }

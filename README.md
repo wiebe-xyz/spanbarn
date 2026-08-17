@@ -251,6 +251,8 @@ project automatically.
 | `SPANBARN_RETENTION_DISK_ELEVATED_PCT` | `75` | Volume-used % at which retention halves its raw-telemetry windows (see [Disk-headroom guard](#disk-headroom-guard)) |
 | `SPANBARN_RETENTION_DISK_CRITICAL_PCT` | `90` | Volume-used % at which retention quarters its raw-telemetry windows |
 | `SPANBARN_INGEST_REJECT_DISK_PCT` | `95` | Volume-used % at which telemetry ingest returns 503; `0`/`100` disables |
+| `SPANBARN_RETENTION_DISK_TARGET_PCT` | `70` | Volume-used % the emergency eviction loop reclaims back down to |
+| `SPANBARN_DB_BALLAST_MB` | `256` | Reserved disk space released so a full volume can delete its way out; `0` disables |
 | `SPANBARN_INGEST_SAMPLE_RATE` | `1.0` | Fraction of normal spans to keep (0-1, 1=keep all) |
 | `SPANBARN_SLOW_THRESHOLD_MS` | `500` | Slow span threshold (ms) |
 | `SPANBARN_QUERY_TIMEOUT_SECONDS` | `30` | Query timeout for dashboard queries |
@@ -299,14 +301,49 @@ dashboard and login — which is what `SQLITE_FULL` does, since it fails the
 leaks capacity state to anonymous callers, and it fails open when the volume
 cannot be measured.
 
+Shortened windows are still only a multiplier on a *duration*, though, and the
+thing that has to be bounded is a *size*. If ingest volume rises enough, even a
+quartered window does not fit. So past the critical watermark retention stops
+guessing and closes the loop: it evicts the oldest raw telemetry, re-measures,
+halves the window again, and repeats until the volume is back under
+`SPANBARN_RETENTION_DISK_TARGET_PCT` or it hits a 15-minute floor. Reaching the
+floor without fitting is logged as an error — at that point ingest is outrunning
+eviction, which is a capacity problem, not a retention one.
+
 The full ladder, then:
 
 | volume used | behaviour |
 |---|---|
-| < 75% | configured retention windows |
+| < 75% | configured retention windows; ballast held |
 | ≥ 75% | raw-telemetry windows halved |
-| ≥ 90% | raw-telemetry windows quartered |
+| ≥ 90% | windows quartered **and** evict oldest until back under 70% |
 | ≥ 95% | telemetry ingest refused (`503`); dashboard and login unaffected |
+| 100% | ballast released, emergency eviction, writes requeued not dropped |
+
+Retention also re-checks every 30s instead of every 5 minutes while the volume
+is critical: five minutes is fine when there is room, and most of the remaining
+margin when there is not.
+
+### Surviving a volume that does fill
+
+A disk that reaches 100% cannot delete its way out. Committing a `DELETE` is
+itself a write, so retention deadlocks exactly when it is needed, and the
+database stays wedged until someone rebuilds it by hand. That is not a
+hypothetical: it is what kept production down, unnoticed, for 26 days.
+
+So SpanBarn buys a way out in advance. `SPANBARN_DB_BALLAST_MB` reserves a file
+next to the database that exists only to be surrendered — deleting it is a
+metadata operation that succeeds even at 100% full, and it hands retention
+exactly the room it needs to commit the deletes that reclaim real space. The
+reserve is re-taken once usage is back under target, so the next emergency has
+a way out too. It is written with real bytes, not `ftruncate`: a sparse file
+reserves nothing and would free nothing.
+
+The write path cooperates. A `SQLITE_FULL` error is no longer retried five times
+and then dead-lettered — that spends seconds failing and then discards the very
+batch that would have been written a moment later. It is detected on the first
+attempt, the batch goes back on the Redis queue, and the worker backs off while
+retention digs out.
 
 Two properties worth knowing:
 

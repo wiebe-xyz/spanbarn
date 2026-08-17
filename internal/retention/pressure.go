@@ -154,8 +154,30 @@ func (w *RetentionWorker) applyDiskPressure(ctx context.Context, cfg Config) Con
 
 	used := space.UsedFraction()
 	tier := TierFor(used, cfg.Watermarks)
+	w.pressured.Store(tier == TierCritical)
+
 	if tier == TierNormal {
+		// Keep the reserve topped up while things are calm — that is the only
+		// time it can be paid for. A ballast created lazily during an emergency
+		// would be a write on a volume that has no room for writes.
+		if b := w.ballastFor(cfg); b.Enabled() && !b.Present() {
+			if err := b.Ensure(); err != nil {
+				w.logger.Warn("retention: could not create disk ballast", "error", err)
+			} else {
+				w.logger.Info("retention: disk ballast reserved",
+					"bytes", b.Size(), "path", b.Path())
+			}
+		}
 		return cfg
+	}
+
+	// Past the critical watermark, shortened windows are not enough on their
+	// own: they are a fixed multiplier applied to a duration, and the thing we
+	// actually need to bound is a size. Evict until the volume fits.
+	if needsReclaim(used, cfg.Watermarks) {
+		if err := w.reclaimToTarget(ctx, cfg, space); err != nil {
+			w.logger.Error("retention: emergency reclaim failed", "error", err)
+		}
 	}
 
 	shortened := tier.Apply(cfg)
