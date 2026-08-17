@@ -7,10 +7,11 @@
 # up on the Mac mini, while still being named mac-laptop-* (agentName is
 # "{{ inventory_hostname }}-{{ runner_name }}"). Addressing each host explicitly
 # makes the playbook target the machine it names, from wherever it is run.
+# mac_local_host_name is this machine's `scutil --get LocalHostName`. It is how
+# group_vars/macos_runners.yml decides local-vs-ssh; see the note there.
+mac_local_host_name: mini
 ansible_host: "{{ lookup('env', 'SPANBARN_MAC_MINI_HOST') | default('mini.local', true) }}"
 ansible_user: "{{ lookup('env', 'SPANBARN_MAC_MINI_USER') | default('wiebe', true) }}"
-ansible_connection: ssh
-ansible_python_interpreter: /usr/bin/python3
 
 github_runner_enabled: true
 github_runner_version: "2.334.0"
