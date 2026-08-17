@@ -317,7 +317,10 @@ func (w *RedisWorker) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			w.logger.Error("redis worker: consume failed", "error", err)
+			// Warn, not error: the connection drop is transient, the backoff
+			// below handles it, and nothing has been lost. Logging it at error
+			// filed a BugBarn issue for every Redis reconnect.
+			w.logger.Warn("redis worker: consume failed, retrying", "error", err)
 			// Brief backoff to avoid spinning on a broken Redis connection.
 			select {
 			case <-ctx.Done():

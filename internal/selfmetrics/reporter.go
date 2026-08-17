@@ -38,6 +38,30 @@ type Reporter struct {
 	client    *http.Client
 	logger    *slog.Logger
 	startNano uint64
+
+	// failures counts consecutive export failures so a sibling pod being
+	// unavailable produces one log line and one recovery line, rather than one
+	// every interval. Self-metrics are best-effort telemetry about ourselves:
+	// a rolling restart of the ingest pod is expected, not newsworthy, and at
+	// a 30s interval it otherwise filed hundreds of BugBarn events for a
+	// condition nobody needs to act on.
+	failures int
+}
+
+// exportFailed reports an export failure, logging only the first of a run.
+func (rp *Reporter) exportFailed(msg string, args ...any) {
+	rp.failures++
+	if rp.failures == 1 {
+		rp.logger.Warn(msg, args...)
+	}
+}
+
+// exportSucceeded clears the failure run, noting how much was suppressed.
+func (rp *Reporter) exportSucceeded() {
+	if rp.failures > 1 {
+		rp.logger.Info("self-metrics export recovered", "suppressed_failures", rp.failures-1)
+	}
+	rp.failures = 0
 }
 
 // NewReporter builds a Reporter. endpoint is the SpanBarn base URL (e.g.
@@ -94,13 +118,15 @@ func (rp *Reporter) flush(ctx context.Context) {
 	httpReq.Header.Set("User-Agent", selfInstrumentUA)
 	resp, err := rp.client.Do(httpReq)
 	if err != nil {
-		rp.logger.Warn("self-metrics export failed", "error", err)
+		rp.exportFailed("self-metrics export failed", "error", err)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		rp.logger.Warn("self-metrics export rejected", "status", resp.StatusCode)
+		rp.exportFailed("self-metrics export rejected", "status", resp.StatusCode)
+		return
 	}
+	rp.exportSucceeded()
 }
 
 // buildRequest converts a snapshot into an OTLP ExportMetricsServiceRequest.
