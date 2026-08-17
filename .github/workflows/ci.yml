@@ -99,7 +99,12 @@ jobs:
           python3 -m venv .ci-venv
           . .ci-venv/bin/activate
           python -m pip install --upgrade pip
-          python -m pip install build pytest ruff
+          # Pin the linter. An unpinned `ruff` means CI installs whatever
+          # released most recently, so a new ruff that enables rules by default
+          # turns every open PR red without a line of our code changing —
+          # which is exactly what ruff 0.16 did here. Same reasoning as the
+          # pinned gocyclo/dupl in scripts/quality-gate.sh. Bump deliberately.
+          python -m pip install build pytest 'ruff==0.16.3'
           while IFS= read -r manifest; do
             dir="$(dirname "$manifest")"
             has_tests=0

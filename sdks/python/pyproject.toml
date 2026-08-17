@@ -17,3 +17,17 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "ruff>=0.1.0"]
+
+# Without a [tool.ruff] table, ruff does not treat this file as its config: it
+# falls back to its built-in defaults AND infers no target-version, so it
+# reports rules for Python versions newer than the >=3.9 this package declares.
+# Both halves of that are drift we do not want deciding whether CI is green, so
+# state the rules and the floor explicitly.
+[tool.ruff]
+target-version = "py39"
+
+[tool.ruff.lint]
+# Ruff's historical default (pycodestyle errors + pyflakes) plus import
+# sorting. Deliberately explicit: extending this set should be a decision
+# someone makes, not something a ruff release does for us.
+select = ["E4", "E7", "E9", "F", "I"]

@@ -7,12 +7,11 @@ import secrets
 import sys
 import threading
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from contextvars import ContextVar
 from queue import Empty, Queue
 from typing import Any, Callable, Dict, List, Optional, Tuple
-
 
 _current_span: ContextVar[Optional[Span]] = ContextVar("_current_span", default=None)
 
