@@ -76,18 +76,30 @@ func (s *Server) registerRoutes() {
 		ingestAuth = func(next http.Handler) http.Handler { return apiKeyAuth(s.apiKey, next) }
 		otlpAuth = func(next http.Handler) http.Handler { return apiKeyOrBearerAuth(s.apiKey, next) }
 	}
+	// shed refuses telemetry while the storage volume is nearly full. It sits
+	// *inside* auth deliberately: capacity state is internal, so an
+	// unauthenticated caller should get 401 rather than learn that our disk is
+	// filling. The auth lookup it costs is a read, which still succeeds on a
+	// full volume — only writes fail.
+	//
+	// It is applied to telemetry routes only, never to the query or session
+	// routes: the entire point is that the dashboard and login survive the
+	// condition that makes ingest unsafe. /internal/v1/ingest is also left
+	// ungated — it is the pod-to-pod forwarding path, and refusing there would
+	// strand records in the sender's spool, which rotates and drops them.
+	shed := s.admission.Middleware()
 	if s.ingest != nil {
-		s.mux.Handle("/api/v1/spans", ingestRL(ingestAuth(http.HandlerFunc(s.handleIngest))))
+		s.mux.Handle("/api/v1/spans", ingestRL(ingestAuth(shed(http.HandlerFunc(s.handleIngest)))))
 		// OTLP/HTTP trace endpoint — only registered when there is an ingest handler.
-		s.mux.Handle("/v1/traces", ingestRL(otlpAuth(http.HandlerFunc(s.handleOTLP))))
+		s.mux.Handle("/v1/traces", ingestRL(otlpAuth(shed(http.HandlerFunc(s.handleOTLP)))))
 	}
 	if s.metricsIngest != nil {
 		// OTLP/HTTP metrics endpoint.
-		s.mux.Handle("/v1/metrics", ingestRL(otlpAuth(http.HandlerFunc(s.handleOTLPMetrics))))
+		s.mux.Handle("/v1/metrics", ingestRL(otlpAuth(shed(http.HandlerFunc(s.handleOTLPMetrics)))))
 	}
 	if s.logsIngest != nil {
 		// OTLP/HTTP logs endpoint.
-		s.mux.Handle("/v1/logs", ingestRL(otlpAuth(http.HandlerFunc(s.handleOTLPLogs))))
+		s.mux.Handle("/v1/logs", ingestRL(otlpAuth(shed(http.HandlerFunc(s.handleOTLPLogs)))))
 	}
 
 	// Query endpoints — rate limited + session auth required.

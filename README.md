@@ -250,6 +250,7 @@ project automatically.
 | `SPANBARN_METRICS_RETENTION_DAYS` | `7` | Days to keep raw metric points. Raw points are only read for ranges ≤ 6h; longer ranges read rollups. |
 | `SPANBARN_RETENTION_DISK_ELEVATED_PCT` | `75` | Volume-used % at which retention halves its raw-telemetry windows (see [Disk-headroom guard](#disk-headroom-guard)) |
 | `SPANBARN_RETENTION_DISK_CRITICAL_PCT` | `90` | Volume-used % at which retention quarters its raw-telemetry windows |
+| `SPANBARN_INGEST_REJECT_DISK_PCT` | `95` | Volume-used % at which telemetry ingest returns 503; `0`/`100` disables |
 | `SPANBARN_INGEST_SAMPLE_RATE` | `1.0` | Fraction of normal spans to keep (0-1, 1=keep all) |
 | `SPANBARN_SLOW_THRESHOLD_MS` | `500` | Slow span threshold (ms) |
 | `SPANBARN_QUERY_TIMEOUT_SECONDS` | `30` | Query timeout for dashboard queries |
@@ -288,6 +289,24 @@ their configured values, with floors so no window ever collapses to zero.
 Aggregates, error samples and error logs are deliberately never shortened: they
 are what the product is for, they are small per unit time, and an operator
 investigating the incident that caused the pressure must still find the evidence.
+
+If the volume climbs past `SPANBARN_INGEST_REJECT_DISK_PCT` anyway, telemetry
+ingest starts answering `503` with `Retry-After` (and `Unavailable` on the OTLP
+gRPC surface). This is deliberately asymmetric: **telemetry is refused, the
+control plane is not.** Dropping spans is cheap and recoverable; losing the
+dashboard and login — which is what `SQLITE_FULL` does, since it fails the
+`web_sessions` insert too — is neither. The gate sits behind auth so it never
+leaks capacity state to anonymous callers, and it fails open when the volume
+cannot be measured.
+
+The full ladder, then:
+
+| volume used | behaviour |
+|---|---|
+| < 75% | configured retention windows |
+| ≥ 75% | raw-telemetry windows halved |
+| ≥ 90% | raw-telemetry windows quartered |
+| ≥ 95% | telemetry ingest refused (`503`); dashboard and login unaffected |
 
 Two properties worth knowing:
 

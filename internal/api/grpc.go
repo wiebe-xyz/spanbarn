@@ -29,8 +29,16 @@ func NewGRPCServer(s *Server, logger *slog.Logger) *GRPCServer {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// The OTLP gRPC surface never touches the HTTP mux, so the shed middleware
+	// on the HTTP routes does not cover it — gating only HTTP would read as
+	// protection while leaving this path wide open. Admission runs after auth,
+	// matching the HTTP ordering: capacity state is internal, so an
+	// unauthenticated caller gets Unauthenticated rather than Unavailable.
 	srv := grpc.NewServer(
-		grpc.UnaryInterceptor(grpcAuthInterceptor(s)),
+		grpc.ChainUnaryInterceptor(
+			grpcAuthInterceptor(s),
+			s.admission.UnaryInterceptor(),
+		),
 	)
 	collectortracepb.RegisterTraceServiceServer(srv, &grpcTraceServer{s: s})
 	collectormetricspb.RegisterMetricsServiceServer(srv, &grpcMetricsServer{s: s})

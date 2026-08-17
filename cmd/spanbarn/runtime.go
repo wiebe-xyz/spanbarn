@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/wiebe-xyz/spanbarn/internal/api"
@@ -62,6 +63,32 @@ func warnObsoleteRetentionEnv(cfg config.Config, logger *slog.Logger) {
 		"ignored_value", cfg.Retention.FullHours,
 		"retention_interesting_hours", cfg.Retention.InterestingHours,
 		"boring_retention_minutes", cfg.Retention.BoringMinutes)
+}
+
+// newAdmission builds the disk-pressure admission controller for the pods that
+// receive telemetry. It is the last rung of the ladder that starts in the
+// retention worker (shorten windows at 75%, harder at 90%): if the volume still
+// climbs to the reject threshold, refuse telemetry outright so that
+// control-plane writes — above all the session insert that login depends on —
+// keep working. Returns nil when there is no database to measure, which leaves
+// admission disabled rather than guessing.
+func newAdmission(repo *repository.Repository, cfg config.Config, logger *slog.Logger) *api.Admission {
+	if repo == nil || cfg.DBPath == "" {
+		return nil
+	}
+	probe := func(ctx context.Context) (float64, bool) {
+		space, err := repo.DBSpace(ctx, cfg.DBPath)
+		if err != nil || !space.Measured() {
+			return 0, false
+		}
+		return space.UsedFraction(), true
+	}
+	a := api.NewAdmission(probe, float64(cfg.IngestRejectDiskPct)/100)
+	if a.Enabled() {
+		logger.Info("telemetry admission control enabled",
+			"reject_at_disk_pct", cfg.IngestRejectDiskPct, "db_path", cfg.DBPath)
+	}
+	return a
 }
 
 // retentionConfigFrom maps the app config's retention windows onto the retention
