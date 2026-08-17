@@ -133,7 +133,13 @@ func (w *RetentionWorker) applyDiskPressure(ctx context.Context, cfg Config) Con
 	}
 	space, err := reporter.DBSpace(ctx, cfg.DBPath)
 	if err != nil {
-		w.logger.Warn("retention: disk space probe failed", "error", err)
+		// A cancelled context means the process is shutting down, not that the
+		// probe is broken. Reporting it files an issue for a clean stop — the
+		// same mistake the queue consumers made, caught here on my own code by
+		// SPA-59, which appeared during a routine rolling deploy.
+		if ctx.Err() == nil {
+			w.logger.Warn("retention: disk space probe failed", "error", err)
+		}
 		return cfg
 	}
 	if !space.Measured() {
@@ -175,7 +181,10 @@ func (w *RetentionWorker) applyDiskPressure(ctx context.Context, cfg Config) Con
 	// own: they are a fixed multiplier applied to a duration, and the thing we
 	// actually need to bound is a size. Evict until the volume fits.
 	if needsReclaim(used, cfg.Watermarks) {
-		if err := w.reclaimToTarget(ctx, cfg, space); err != nil {
+		// Same reasoning as the probe above: eviction aborts on shutdown, and
+		// that is not a failure worth reporting. A genuine reclaim failure —
+		// the disk is full and we could not dig out — still surfaces loudly.
+		if err := w.reclaimToTarget(ctx, cfg, space); err != nil && ctx.Err() == nil {
 			w.logger.Error("retention: emergency reclaim failed", "error", err)
 		}
 	}
