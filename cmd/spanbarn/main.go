@@ -264,7 +264,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	// Trace buffer: same tail-based sampling the reader applies. Without it,
 	// single-node installs silently ingest everything unsampled and every
 	// ingest.sample_ratio.* setting reads back fine while doing nothing.
-	standaloneBuffer := ingest.NewTraceBuffer(ingest.DefaultTraceBufferTTL, ingest.NewCachedRatioLookup(queryRepo, time.Minute), logger)
+	standaloneBuffer := newTraceBuffer(cfg, ingest.NewCachedRatioLookup(queryRepo, time.Minute), logger)
 	safeGo("trace-buffer-drain", &wg, func() {
 		for {
 			select {
@@ -296,6 +296,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	selfRec.RegisterGauge("spanbarn.spool.bytes", map[string]string{"dir": cfg.SpoolDir}, func() float64 {
 		return float64(eventSpool.Size())
 	})
+	registerTraceBufferGauges(selfRec, standaloneBuffer)
 	metricAccumulator.SetOnPersist(selfRec.AddRollups)
 	apiServer.SetSelfMetricsRecorder(selfRec)
 	startSelfMetrics(ctx, cfg, &wg, selfRec, logger)
@@ -458,7 +459,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	if roRepo != nil {
 		ratioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
 	}
-	traceBuffer := ingest.NewTraceBuffer(ingest.DefaultTraceBufferTTL, ratioLookup, logger)
+	traceBuffer := newTraceBuffer(cfg, ratioLookup, logger)
 	safeGo("trace-buffer-drain", &wg, func() {
 		for {
 			select {
@@ -494,6 +495,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 			return float64(depths[lbl])
 		})
 	}
+	registerTraceBufferGauges(readerSelfRec, traceBuffer)
 	apiServer.SetSelfMetricsRecorder(readerSelfRec)
 	startSelfMetrics(readerCtx, cfg, &wg, readerSelfRec, logger)
 
@@ -1104,7 +1106,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	if roRepo != nil {
 		ingestRatioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
 	}
-	traceBuffer := ingest.NewTraceBuffer(ingest.DefaultTraceBufferTTL, ingestRatioLookup, logger)
+	traceBuffer := newTraceBuffer(cfg, ingestRatioLookup, logger)
 	safeGo("trace-buffer-drain", &wg, func() {
 		for {
 			select {

@@ -200,6 +200,10 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		opt(s)
 	}
 
+	if s.traceBuffer != nil {
+		s.metrics.RegisterTraceBuffer(s.traceBuffer.Stats)
+	}
+
 	// A server that accepts spans but has no TraceBuffer silently ingests
 	// everything unsampled: handleOTLP falls through to Enqueue, and every
 	// ingest.sample_ratio.* setting reads back fine while doing nothing. That is
