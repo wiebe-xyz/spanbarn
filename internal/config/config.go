@@ -133,6 +133,16 @@ type Config struct {
 	OIDC                     OIDCConfig
 	GRPCAddr                 string // SPANBARN_GRPC_ADDR — gRPC listener for OTLP; empty = disabled
 	TrustProxy               bool   // SPANBARN_TRUST_PROXY — trust X-Forwarded-For/X-Real-IP for client IP (rate limiting); defaults to true outside dev
+	// TraceBufferMaxSpans caps how many spans the in-memory tail-sampling trace
+	// buffer holds across all in-flight traces. Above it the buffer sheds
+	// traces sampling was going to discard anyway; a deployment whose span rate
+	// outgrows the default needs this raised rather than silently losing
+	// telemetry. 0 disables the cap (unbounded memory — dev only).
+	TraceBufferMaxSpans int // SPANBARN_TRACE_BUFFER_MAX_SPANS (default 50000)
+	// TraceBufferTTLSeconds is how long the trace buffer holds a trace before
+	// making its sampling decision. Longer catches later error spans; shorter
+	// holds fewer spans for the same ingest rate.
+	TraceBufferTTLSeconds int // SPANBARN_TRACE_BUFFER_TTL_SECONDS (default 600)
 	// E2EEnabled explicitly opens the /api/v1/e2e/session endpoint (Playwright
 	// login bypass). Default false; production additionally hard-blocks it
 	// regardless of this flag. SPANBARN_E2E_ENABLED.
@@ -186,6 +196,8 @@ func Load() Config {
 		},
 		SpanStagingEnabled:       getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
 		TraceBufferWindowSeconds: getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
+		TraceBufferMaxSpans:      getenvInt("SPANBARN_TRACE_BUFFER_MAX_SPANS", 50000),
+		TraceBufferTTLSeconds:    getenvInt("SPANBARN_TRACE_BUFFER_TTL_SECONDS", 600),
 		StagingMaxAgeSeconds:     getenvInt("SPANBARN_STAGING_MAX_AGE_SECONDS", 900),
 		IngestSampleRate:         getenvFloat("SPANBARN_INGEST_SAMPLE_RATE", 1.0),
 		SlowThresholdMS:          getenvInt("SPANBARN_SLOW_THRESHOLD_MS", 500),

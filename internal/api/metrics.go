@@ -8,6 +8,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 )
 
 // Metrics holds Prometheus metrics for SpanBarn.
@@ -63,6 +65,40 @@ func NewMetrics() *Metrics {
 
 	m.metricsHandler = promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 	return m
+}
+
+// RegisterTraceBuffer exposes the tail-sampling trace buffer's occupancy and
+// loss. Cap pressure was previously a log line only — which is exactly how a
+// month of missing CronJob traces went unnoticed — so it gets first-class
+// metrics: occupancy to see the cap coming, and loss split by what it costs.
+func (m *Metrics) RegisterTraceBuffer(stats func() ingest.BufferStats) {
+	if stats == nil {
+		return
+	}
+	gauge := func(name, help string, read func(ingest.BufferStats) float64) prometheus.Collector {
+		return prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help}, func() float64 {
+			return read(stats())
+		})
+	}
+	counter := func(name, help string, read func(ingest.BufferStats) float64) prometheus.Collector {
+		return prometheus.NewCounterFunc(prometheus.CounterOpts{Name: name, Help: help}, func() float64 {
+			return read(stats())
+		})
+	}
+	m.registry.MustRegister(
+		gauge("trace_buffer_spans", "Spans currently held in the tail-sampling trace buffer.",
+			func(s ingest.BufferStats) float64 { return float64(s.BufferedSpans) }),
+		gauge("trace_buffer_traces", "Traces currently held in the tail-sampling trace buffer.",
+			func(s ingest.BufferStats) float64 { return float64(s.BufferedTraces) }),
+		gauge("trace_buffer_max_spans", "Configured span cap for the trace buffer (SPANBARN_TRACE_BUFFER_MAX_SPANS); 0 means uncapped.",
+			func(s ingest.BufferStats) float64 { return float64(s.MaxSpans) }),
+		counter("trace_buffer_spans_shed_total", "Spans freed at cap from traces sampling was going to discard anyway. Expected under load; costs no stored telemetry.",
+			func(s ingest.BufferStats) float64 { return float64(s.EvictedSacrificialSpans) }),
+		counter("trace_buffer_spans_lost_total", "Spans lost at cap that would have been stored: evicted from keepable traces, refused outright, or undeliverable to the drain. Non-zero means the cap is too small for the span rate.",
+			func(s ingest.BufferStats) float64 {
+				return float64(s.EvictedKeptSpans + s.RefusedSpans + s.UndeliveredSpans)
+			}),
+	)
 }
 
 // Handler returns an http.Handler for the /metrics endpoint.

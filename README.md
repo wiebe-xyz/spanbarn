@@ -254,6 +254,8 @@ project automatically.
 | `SPANBARN_RETENTION_DISK_TARGET_PCT` | `70` | Volume-used % the emergency eviction loop reclaims back down to |
 | `SPANBARN_DB_BALLAST_MB` | `256` | Reserved disk space released so a full volume can delete its way out; `0` disables |
 | `SPANBARN_INGEST_SAMPLE_RATE` | `1.0` | Fraction of normal spans to keep (0-1, 1=keep all) |
+| `SPANBARN_TRACE_BUFFER_MAX_SPANS` | `50000` | Spans the tail-sampling trace buffer holds across all in-flight traces. Above it the buffer sheds traces sampling would discard anyway; if `trace_buffer_spans_lost_total` is climbing, this is too small for your span rate. `0` uncaps it (unbounded memory — dev only). |
+| `SPANBARN_TRACE_BUFFER_TTL_SECONDS` | `600` | How long a trace is buffered before its sampling decision. Longer catches later error spans; shorter holds fewer spans at the same ingest rate. |
 | `SPANBARN_SLOW_THRESHOLD_MS` | `500` | Slow span threshold (ms) |
 | `SPANBARN_QUERY_TIMEOUT_SECONDS` | `30` | Query timeout for dashboard queries |
 | `SPANBARN_AGGREGATION_INTERVAL` | `1m` | Aggregation bucket size |

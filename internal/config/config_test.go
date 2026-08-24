@@ -89,3 +89,29 @@ func TestMetricsRetentionDaysEnvOverride(t *testing.T) {
 		t.Fatalf("Retention.MetricsDays = %d, want 30", got)
 	}
 }
+
+func TestTraceBufferLimitsDefault(t *testing.T) {
+	cfg := Load()
+	if cfg.TraceBufferMaxSpans != 50000 {
+		t.Errorf("TraceBufferMaxSpans = %d, want 50000", cfg.TraceBufferMaxSpans)
+	}
+	if cfg.TraceBufferTTLSeconds != 600 {
+		t.Errorf("TraceBufferTTLSeconds = %d, want 600", cfg.TraceBufferTTLSeconds)
+	}
+}
+
+// TestTraceBufferLimitsEnvOverride pins that the trace buffer's ceiling is
+// tunable at all. The defaults imply a fixed ingest ceiling across every
+// project; a deployment that outgrows it needs to raise the cap without waiting
+// for a release, which is how a month of cron traces went missing.
+func TestTraceBufferLimitsEnvOverride(t *testing.T) {
+	t.Setenv("SPANBARN_TRACE_BUFFER_MAX_SPANS", "250000")
+	t.Setenv("SPANBARN_TRACE_BUFFER_TTL_SECONDS", "120")
+	cfg := Load()
+	if cfg.TraceBufferMaxSpans != 250000 {
+		t.Errorf("TraceBufferMaxSpans = %d, want 250000", cfg.TraceBufferMaxSpans)
+	}
+	if cfg.TraceBufferTTLSeconds != 120 {
+		t.Errorf("TraceBufferTTLSeconds = %d, want 120", cfg.TraceBufferTTLSeconds)
+	}
+}

@@ -62,7 +62,7 @@ func TestWriterModeServesNoOTLP(t *testing.T) {
 	if fn == nil {
 		t.Skip("runWriterMode not found")
 	}
-	if bodyCalls(fn, "NewTraceBuffer") {
+	if bodyCalls(fn, "NewTraceBuffer") || bodyCalls(fn, "newTraceBuffer") {
 		t.Skip("runWriterMode now builds a trace buffer; it presumably serves OTLP — nothing to guard")
 	}
 
