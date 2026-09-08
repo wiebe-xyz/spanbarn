@@ -135,6 +135,38 @@ jobs:
         with:
           go-version: '1.26.x'
           cache: false
+      - name: Ensure kustomize
+        # infracheck renders the kustomize overlays. It exits non-zero when
+        # neither kustomize nor kubectl is present rather than reporting a clean
+        # render, so make sure one of them is there — pinned, not whatever the
+        # host happens to carry.
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v kustomize >/dev/null 2>&1 || command -v kubectl >/dev/null 2>&1; then
+            echo "kustomize/kubectl already on PATH"
+            exit 0
+          fi
+          KUSTOMIZE_VERSION=v5.8.1
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64)  PLAT=darwin_arm64 ;;
+            Darwin-*)      PLAT=darwin_amd64 ;;
+            Linux-aarch64) PLAT=linux_arm64 ;;
+            *)             PLAT=linux_amd64 ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL --retry 3 --retry-delay 3 \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_${PLAT}.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP/bin" kustomize
+          chmod +x "$RUNNER_TEMP/bin/kustomize"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Gate script tests
+        shell: bash
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+        run: |
+          bash scripts/quality-lib.test.sh
+          go test ./scripts/...
       - name: Quality gate
         shell: bash
         env:

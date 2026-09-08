@@ -1,7 +1,22 @@
 name: Binary Release
 
+# Cuts the next semver tag and publishes .deb packages, macOS tarballs, an npm
+# package and a PyPI package.
+#
+# This used to trigger on `push: main` with no dependency on anything. Creating
+# the tag is its FIRST step, so on a red build it had already tagged, published
+# to npm and published to PyPI while CI was still running — and the tag is what
+# a person then deploys to production from. A workflow that publishes on every
+# push is not gated by a test suite that happens to run beside it.
+#
+# `workflow_run` is the only cross-workflow dependency GitHub Actions offers.
+# Both halves matter: the `conclusion == 'success'` guard is what makes CI a
+# gate, and checking out `workflow_run.head_sha` is what makes it a gate on the
+# commit CI actually tested rather than on whatever main has drifted to since.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches:
       - main
   workflow_dispatch:
@@ -16,14 +31,30 @@ jobs:
   tag:
     name: Create Release Tag
     runs-on: ubuntu-latest
+    # A manual run releases the current default branch. An automatic run
+    # releases only a push that CI passed; a failed, cancelled or skipped CI run
+    # produces no tag, and therefore no npm, PyPI, deb or brew publish.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success')
     outputs:
       version: ${{ steps.next_version.outputs.version }}
       version_num: ${{ steps.next_version.outputs.version_num }}
+      sha: ${{ steps.release_sha.outputs.sha }}
     steps:
+      - name: Resolve the commit CI passed
+        id: release_sha
+        run: |
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          echo "sha=${SHA}" >> $GITHUB_OUTPUT
+          echo "Releasing ${SHA}"
+
       - name: Checkout code
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ steps.release_sha.outputs.sha }}
 
       - name: Get latest tag
         id: latest_tag
@@ -62,6 +93,8 @@ jobs:
         working-directory: sdks/js
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
@@ -84,6 +117,8 @@ jobs:
         working-directory: sdks/python
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -105,6 +140,8 @@ jobs:
         arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -163,6 +200,8 @@ jobs:
         arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -255,6 +294,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
 
       - name: Download darwin artifacts
         uses: actions/download-artifact@v8
@@ -332,6 +373,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.tag.outputs.sha }}
 
       - name: Download darwin artifacts for checksums
         uses: actions/download-artifact@v8

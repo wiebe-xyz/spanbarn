@@ -8,7 +8,7 @@ export XDG_CACHE_HOME := $(CURDIR)/.cache
 export GOCACHE := $(CURDIR)/.cache/go-build
 export GOMODCACHE := $(CURDIR)/.cache/go-mod
 
-.PHONY: help setup test lint build dev docker-build spec-check quality-gate
+.PHONY: help setup test lint build dev docker-build spec-check quality-gate quality-gate-update quality-gate-test
 
 help:
 	@printf '%s\n' \
@@ -17,6 +17,8 @@ help:
 		'  test         run spec checks plus available language tests' \
 		'  lint         run available linters and static checks' \
 		'  quality-gate enforce coverage/complexity/file-length/duplication baselines' \
+		'  quality-gate-update  refresh the count baselines in scripts/quality-thresholds.conf' \
+		'  quality-gate-test    run the gate scripts own tests' \
 		'  build        run available build checks' \
 		'  dev          start the local compose stack if available' \
 		'  docker-build build placeholder images when Dockerfiles exist' \
@@ -136,6 +138,21 @@ quality-gate:
 	@set -eu; \
 	for dir in $(GOCACHE) $(GOMODCACHE); do mkdir -p "$$dir"; done; \
 	bash scripts/quality-gate.sh
+
+# The only escape hatch. Rewrites the count baselines in
+# scripts/quality-thresholds.conf from the current tree, and the boundaries and
+# infra baselines from the current scan. Commit the diff — that is what makes a
+# threshold change reviewable.
+quality-gate-update:
+	@set -eu; \
+	for dir in $(GOCACHE) $(GOMODCACHE); do mkdir -p "$$dir"; done; \
+	bash scripts/quality-gate.sh --update-baseline
+
+quality-gate-test:
+	@set -eu; \
+	for dir in $(GOCACHE) $(GOMODCACHE); do mkdir -p "$$dir"; done; \
+	bash scripts/quality-lib.test.sh; \
+	go test ./scripts/...
 
 build:
 	@set -eu; \

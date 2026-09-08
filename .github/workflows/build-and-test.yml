@@ -90,15 +90,52 @@ jobs:
           go-version: '1.26'
           cache: true
       - name: staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@latest && staticcheck ./...
+        # Pinned, not @latest. This is the repo's only dead-code gate; a new
+        # staticcheck release would otherwise change what CI enforces with no
+        # commit on our side, which is the drift the adjacent gocyclo/dupl/ruff
+        # pins exist to prevent.
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
       - name: go vet
         run: go vet ./...
       - name: Go tests with race detector
         run: go test -race -count=1 ./...
-      - name: Coverage gate (service + repository)
+      - name: Ensure kustomize
+        # infracheck renders the kustomize overlays. It exits non-zero when
+        # neither kustomize nor kubectl is present rather than reporting a clean
+        # render, so make sure one of them is there — pinned, not whatever the
+        # host happens to carry.
+        shell: bash
         run: |
-          go test -coverprofile=coverage.out ./internal/service/... ./internal/repository 2>/dev/null || go test -coverprofile=coverage.out ./internal/service/... ./internal/repository
-          go tool cover -func=coverage.out | tail -1 | awk '{pct=$3+0; if(pct<60){printf "Coverage %.1f%% is below 60%% threshold\n", pct; exit 1}}'
+          set -euo pipefail
+          if command -v kustomize >/dev/null 2>&1 || command -v kubectl >/dev/null 2>&1; then
+            echo "kustomize/kubectl already on PATH"
+            exit 0
+          fi
+          KUSTOMIZE_VERSION=v5.8.1
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64)  PLAT=darwin_arm64 ;;
+            Darwin-*)      PLAT=darwin_amd64 ;;
+            Linux-aarch64) PLAT=linux_arm64 ;;
+            *)             PLAT=linux_amd64 ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL --retry 3 --retry-delay 3 \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_${PLAT}.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP/bin" kustomize
+          chmod +x "$RUNNER_TEMP/bin/kustomize"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Gate script tests
+        run: |
+          bash scripts/quality-lib.test.sh
+          go test ./scripts/...
+      - name: Quality gate
+        # This replaces an inline 60% coverage floor that sat over packages
+        # measuring 80.5% and 71.1% — twenty points of slack, so it could never
+        # fire, and it was the only coverage check anywhere in the deploy path.
+        # scripts/quality-gate.sh enforces the real floors plus complexity, file
+        # length and duplication, and now blocks a rollout rather than only a
+        # `quality` job that no deploy job depends on.
+        run: bash scripts/quality-gate.sh
 
   frontend-lint:
     runs-on: ubuntu-latest
@@ -278,7 +315,24 @@ jobs:
               spanbarn-web=${WEB_IMAGE}:${{ github.sha }}
             kubectl -n spanbarn-staging rollout status deployment/spanbarn --timeout=360s
             kubectl -n spanbarn-staging rollout status deployment/spanbarn-web --timeout=360s
-            kubectl -n spanbarn-staging rollout status deployment/spanbarn-ingest --timeout=360s || true
+            # The ingest writer is checked as strictly as the other two. It used
+            # to end in '|| true' (7ddd3ce) because k3s1 is contended and ingest
+            # sometimes needed longer than 360s to schedule onto its local-path
+            # PVC. The cost of that was staging reporting success with the
+            # writer never ready, and the E2E suite in the next job running
+            # against it — a real outage and a slow scheduler produced the same
+            # green tick. The fix for 'sometimes needs longer' is a longer
+            # timeout, not a suppressed exit code.
+            if ! kubectl -n spanbarn-staging rollout status deployment/spanbarn-ingest --timeout=900s; then
+              echo '::error::staging ingest rollout did not become ready'
+              # Diagnostics only. Their exit codes are deliberately ignored so a
+              # missing object cannot mask the failure above; the 'exit 1' is
+              # what decides the job.
+              kubectl -n spanbarn-staging describe deployment/spanbarn-ingest || true
+              kubectl -n spanbarn-staging get pods -l app=spanbarn-ingest -o wide || true
+              kubectl -n spanbarn-staging get events --sort-by=.lastTimestamp | tail -40 || true
+              exit 1
+            fi
           "
 
       - name: Post release marker to BugBarn
