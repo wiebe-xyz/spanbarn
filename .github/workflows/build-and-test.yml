@@ -139,41 +139,43 @@ jobs:
 
   frontend-lint:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@v6
+      - name: Enable corepack
+        # setup-node's pnpm cache needs pnpm resolvable on PATH, so corepack
+        # has to run before setup-node.
+        run: corepack enable
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: TypeScript typecheck
-        run: npm run lint
+        run: pnpm --filter @spanbarn/web lint
       - name: ESLint
-        run: npm run lint:eslint
+        run: pnpm --filter @spanbarn/web lint:eslint
 
   frontend-test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@v6
+      - name: Enable corepack
+        # setup-node's pnpm cache needs pnpm resolvable on PATH, so corepack
+        # has to run before setup-node.
+        run: corepack enable
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Run Vitest
-        run: npm test
+        run: pnpm --filter @spanbarn/web test
 
   deploy:
     needs: [build, test, quality-backend, frontend-lint, frontend-test]
@@ -384,8 +386,15 @@ jobs:
           echo "::add-mask::$E2E_API_KEY"
 
           cd "$(git rev-parse --show-toplevel)"
-          npm install
-          npx playwright install chromium
+          # This runner is shared with other repos' jobs. `corepack enable`
+          # writes shims into the Node install by default; point it at a
+          # job-scoped directory instead of touching the shared one.
+          mkdir -p "$RUNNER_TEMP/corepack-bin"
+          corepack enable --install-directory "$RUNNER_TEMP/corepack-bin"
+          export PATH="$RUNNER_TEMP/corepack-bin:$PATH"
+          echo "$RUNNER_TEMP/corepack-bin" >> "$GITHUB_PATH"
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install chromium
           E2E_BASE_URL="${STAGING_URL}" \
           E2E_API_KEY="${E2E_API_KEY}" \
-          npx playwright test --project=chromium --reporter=line
+          pnpm exec playwright test --project=chromium --reporter=line

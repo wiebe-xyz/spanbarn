@@ -2,15 +2,20 @@ FROM node:22-alpine AS build
 
 WORKDIR /app
 
-COPY web/package*.json ./
-RUN npm ci
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
 
-COPY web/ .
-RUN npm run build
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY web/package.json web/
+COPY sdks/js/package.json sdks/js/
+RUN pnpm install --frozen-lockfile --filter @spanbarn/web...
+
+COPY web/ web/
+RUN pnpm --filter @spanbarn/web build
 
 FROM caddy:2.8-alpine
 
-COPY --from=build /app/dist /srv
+COPY --from=build /app/web/dist /srv
 COPY deploy/docker/Caddyfile /etc/caddy/Caddyfile
 
 EXPOSE 8080
