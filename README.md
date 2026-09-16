@@ -254,6 +254,7 @@ project automatically.
 | `SPANBARN_METRIC_ROLLUP_WEEKLY_DAYS` | `730` | Days to keep weekly rollups |
 | `SPANBARN_METRIC_ROLLUP_MONTHLY_DAYS` | `0` | Days to keep monthly rollups; `0` keeps them indefinitely |
 | `SPANBARN_ROLLUP_COMPACT_BUCKETS_PER_PASS` | `12` | Target buckets each tier compacts per pass |
+| `SPANBARN_ROLLUP_COMPACT_ENABLED` | `1` | Set to `0` to stop compaction without a rollback. The coarse tiers stop growing and retention holds every tier, since nothing advances the watermark. |
 | `SPANBARN_RETENTION_DISK_ELEVATED_PCT` | `75` | Volume-used % at which retention halves its raw-telemetry windows (see [Disk-headroom guard](#disk-headroom-guard)) |
 | `SPANBARN_RETENTION_DISK_CRITICAL_PCT` | `90` | Volume-used % at which retention quarters its raw-telemetry windows |
 | `SPANBARN_INGEST_REJECT_DISK_PCT` | `95` | Volume-used % at which telemetry ingest returns 503; `0`/`100` disables |

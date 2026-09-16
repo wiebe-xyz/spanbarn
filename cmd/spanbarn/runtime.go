@@ -166,5 +166,6 @@ func newRollupCompactor(repo rollup.Repository, cfg config.Config, logger *slog.
 	return rollup.New(repo, rollup.Config{
 		DBPath:         cfg.DBPath,
 		BucketsPerPass: cfg.Retention.CompactBucketsPerPass,
+		Disabled:       !cfg.Retention.CompactEnabled,
 	}, logger)
 }

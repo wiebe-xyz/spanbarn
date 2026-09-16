@@ -43,6 +43,11 @@ type Config struct {
 	// bucket writes its coarse rows before retention drops the source window, so
 	// a pass needs a little room even though the net effect frees space.
 	MinFreeBytes int64
+	// Disabled stops compaction entirely. The zero value runs, so a caller that
+	// says nothing gets compaction; the flag exists so an operator can stop it
+	// on a live system without rolling the binary back. Retention then holds
+	// every tier, because a tier is only deleted as far as it was compacted.
+	Disabled bool
 }
 
 func (c Config) withDefaults() Config {
@@ -92,6 +97,12 @@ func New(repo Repository, cfg Config, logger *slog.Logger) *Compactor {
 // Run compacts on a ticker until ctx is cancelled, quickly while there is
 // backlog and slowly once the ladder is current.
 func (c *Compactor) Run(ctx context.Context) {
+	if c.cfg.Disabled {
+		c.logger.Warn("rollup compaction is disabled — coarse tiers will not be written, " +
+			"and retention will hold every tier because nothing advances the compaction watermark")
+		return
+	}
+
 	timer := time.NewTimer(c.cfg.Interval)
 	defer timer.Stop()
 

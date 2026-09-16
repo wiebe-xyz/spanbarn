@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,6 +71,63 @@ func TestRollupWindowReadsTheRequestedTier(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Sum != 2 {
 		t.Fatalf("got %d rows (%+v), want only the hourly one", len(got), got)
+	}
+}
+
+// TestRollupWindowQueriesSeekAnIndex is a performance assertion, and it exists
+// because the performance is a correctness problem in disguise.
+//
+// The first version filtered on bucket alone. Every index on these tables leads
+// with project_id, so SQLite had nothing to seek and scanned the whole table:
+// 5.5M rows and 2.6 GB on production, on the single writer connection, which
+// stalled every other write behind each compacted bucket until the write
+// scheduler reported a wedge. A row-count test passes either way, so the query
+// plan is what has to be checked.
+func TestRollupWindowQueriesSeekAnIndex(t *testing.T) {
+	repo := setupTestDB(t)
+
+	tests := []struct {
+		name string
+		sql  string
+		args []any
+	}{
+		{"5m tier", rollupWindowFineQuery, []any{1, time.Now(), time.Now(), 10}},
+		{"coarse tier", rollupWindowCoarseQuery, []any{1, 3600, time.Now(), time.Now(), 10}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := repo.DB().Query("EXPLAIN QUERY PLAN "+tc.sql, tc.args...)
+			if err != nil {
+				t.Fatalf("explain: %v", err)
+			}
+			defer rows.Close()
+
+			var plan []string
+			for rows.Next() {
+				var id, parent, notUsed int
+				var detail string
+				if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+					t.Fatalf("scan: %v", err)
+				}
+				plan = append(plan, detail)
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatalf("rows: %v", err)
+			}
+			if len(plan) == 0 {
+				t.Fatal("no query plan returned")
+			}
+
+			for _, step := range plan {
+				if strings.HasPrefix(step, "SCAN ") {
+					t.Errorf("query plan scans a table instead of seeking an index: %q\nfull plan: %v", step, plan)
+				}
+			}
+			if !strings.Contains(strings.Join(plan, " "), "USING INDEX") {
+				t.Errorf("query plan uses no index: %v", plan)
+			}
+		})
 	}
 }
 

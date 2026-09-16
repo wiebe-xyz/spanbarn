@@ -175,3 +175,47 @@ func TestCompactorIsIdempotent(t *testing.T) {
 		t.Errorf("re-running doubled the bucket: %v then %v", first[0].Sum, second[0].Sum)
 	}
 }
+
+// TestCompactorDisabledStopsImmediately: the kill switch has to stop compaction
+// without stopping the writer, because the shape that makes compaction
+// misbehave may only exist on one database. Run must return at once rather than
+// sit on its ticker, so the goroutine is gone rather than merely idle.
+func TestCompactorDisabledStopsImmediately(t *testing.T) {
+	repo := testRepo(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	h1 := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	if err := repo.UpsertMetricRollups([]repository.MetricRollup{
+		counterRow(h1, "v1", 10),
+		counterRow(h1.Add(30*time.Minute), "v1", 40),
+	}); err != nil {
+		t.Fatalf("UpsertMetricRollups: %v", err)
+	}
+
+	c := New(repo, Config{BucketsPerPass: 24, Disabled: true}, slog.New(slog.DiscardHandler))
+	c.now = func() time.Time { return h1.Add(2 * time.Hour) }
+
+	start := time.Now()
+	c.Run(ctx)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("Run took %s: it waited on its ticker instead of returning", elapsed)
+	}
+
+	got, err := repo.QueryCoarseRollups(ctx, repository.CoarseRollupFilter{
+		ProjectID: 1, Name: "reqs", StepSeconds: StepHour, From: h1, To: h1.Add(3 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("QueryCoarseRollups: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("compacted %d buckets while disabled", len(got))
+	}
+
+	// The watermark must stay put, so retention keeps every tier intact.
+	if _, ok, err := repo.MetricRollupWatermark(ctx, Step5m); err != nil {
+		t.Fatalf("watermark: %v", err)
+	} else if ok {
+		t.Error("watermark advanced while compaction was disabled, which would let retention delete un-compacted data")
+	}
+}
