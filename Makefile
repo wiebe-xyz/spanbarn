@@ -34,16 +34,12 @@ setup:
 		echo "[setup] go $$dir"; \
 		(cd "$$dir" && go mod download); \
 	done; \
-	for pkg in $$(find . $(FIND_PRUNE) -name package.json -print 2>/dev/null); do \
+	if [ -f pnpm-workspace.yaml ]; then \
 		found=1; \
-		dir=$$(dirname "$$pkg"); \
-		echo "[setup] node $$dir"; \
-		if [ -f "$$dir/package-lock.json" ]; then \
-			(cd "$$dir" && npm ci); \
-		else \
-			(cd "$$dir" && npm install); \
-		fi; \
-	done; \
+		echo "[setup] node (pnpm workspace)"; \
+		corepack enable; \
+		pnpm install --frozen-lockfile; \
+	fi; \
 	for py in $$(find . $(FIND_PRUNE) \( -name pyproject.toml -o -name requirements.txt \) -print 2>/dev/null); do \
 		found=1; \
 		dir=$$(dirname "$$py"); \
@@ -79,12 +75,11 @@ test: spec-check
 			(cd "$$dir" && go test ./...); \
 		fi; \
 	done; \
-	for pkg in $$(find . $(FIND_PRUNE) -name package.json -print 2>/dev/null); do \
+	if [ -f pnpm-workspace.yaml ]; then \
 		found=1; \
-		dir=$$(dirname "$$pkg"); \
-		echo "[test] node $$dir"; \
-		(cd "$$dir" && npm run test --if-present); \
-	done; \
+		echo "[test] node (pnpm workspace)"; \
+		pnpm -r --if-present run test; \
+	fi; \
 	for py in $$(find . $(FIND_PRUNE) \( -name pyproject.toml -o -name requirements.txt \) -print 2>/dev/null); do \
 		found=1; \
 		dir=$$(dirname "$$py"); \
@@ -116,12 +111,11 @@ lint:
 			fi; \
 		fi; \
 	done; \
-	for pkg in $$(find . $(FIND_PRUNE) -name package.json -print 2>/dev/null); do \
+	if [ -f pnpm-workspace.yaml ]; then \
 		found=1; \
-		dir=$$(dirname "$$pkg"); \
-		echo "[lint] node $$dir"; \
-		(cd "$$dir" && npm run lint --if-present); \
-	done; \
+		echo "[lint] node (pnpm workspace)"; \
+		pnpm -r --if-present run lint; \
+	fi; \
 	for py in $$(find . $(FIND_PRUNE) \( -name pyproject.toml -o -name requirements.txt \) -print 2>/dev/null); do \
 		found=1; \
 		dir=$$(dirname "$$py"); \
@@ -166,12 +160,11 @@ build:
 			(cd "$$dir" && go build ./...); \
 		fi; \
 	done; \
-	for pkg in $$(find . $(FIND_PRUNE) -name package.json -print 2>/dev/null); do \
+	if [ -f pnpm-workspace.yaml ]; then \
 		found=1; \
-		dir=$$(dirname "$$pkg"); \
-		echo "[build] node $$dir"; \
-		(cd "$$dir" && npm run build --if-present); \
-	done; \
+		echo "[build] node (pnpm workspace)"; \
+		pnpm -r --if-present run build; \
+	fi; \
 	for py in $$(find . $(FIND_PRUNE) \( -name pyproject.toml -o -name requirements.txt \) -print 2>/dev/null); do \
 		found=1; \
 		dir=$$(dirname "$$py"); \
