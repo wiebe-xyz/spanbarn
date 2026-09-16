@@ -95,7 +95,8 @@ func scale(v int, factor float64, floor int) int {
 
 // Apply shortens the raw-telemetry retention windows according to the tier.
 //
-// Only raw telemetry is shortened — spans, boring spans, metrics and logs. The
+// Only raw telemetry is shortened — spans, boring spans, metrics, logs and the
+// 5-minute rollup tier. The
 // derived data (aggregates, error samples, error logs) is deliberately left
 // alone: it is what the product is actually for, it is far smaller per unit
 // time, and dropping it would mean an operator investigating the incident that
@@ -109,6 +110,13 @@ func (t Tier) Apply(cfg Config) Config {
 	cfg.BoringRetentionMinutes = scale(cfg.BoringRetentionMinutes, f, 5)
 	cfg.MetricsRetentionDays = scale(cfg.MetricsRetentionDays, f, 1)
 	cfg.LogRetentionHours = scale(cfg.LogRetentionHours, f, 1)
+	// Only the 5-minute rollup tier shortens. It is raw telemetry, it is where
+	// metric cardinality actually costs disk, and the compactor has already
+	// summarised everything older into the hourly tier and beyond — so this
+	// gives up resolution, not history. The coarse tiers are left alone for the
+	// same reason aggregates and error samples are: they are what survives an
+	// incident, and a year of them is smaller than a day of the 5-minute tier.
+	cfg.MetricRollupRetentionDays = scale(cfg.MetricRollupRetentionDays, f, 1)
 	return cfg
 }
 

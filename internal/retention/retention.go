@@ -3,7 +3,6 @@ package retention
 import (
 	"context"
 	"log/slog"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,79 +51,13 @@ type Repository interface {
 	DeleteExpiredWebSessions(now time.Time) (int64, error)
 	DeleteMetricsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteMetricRollupsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
+	DeleteCoarseRollupsOlderThan(ctx context.Context, step int64, cutoff time.Time) (int64, error)
+	MetricRollupWatermark(ctx context.Context, step int64) (time.Time, bool, error)
 	DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error)
 	GetSetting(key string) (string, error)
 	ListProjectIDs() ([]int64, error)
 	EvictProjectTracesOlderThan(ctx context.Context, projectID int64, cutoff time.Time) (int64, error)
 	ProjectNonErrorTraceCountCutoff(ctx context.Context, projectID int64, keepN int) (time.Time, bool, error)
-}
-
-// Config controls the retention worker's behaviour.
-type Config struct {
-	InterestingRetentionHours int           // hours to keep spans (default 48 = 2d); this is the cutoff RunOnce deletes spans on, so it sizes the database
-	BoringRetentionMinutes    int           // minutes to keep sampled boring spans (default 30); 0 disables boring cleanup
-	ErrorRetentionDays        int           // days to keep error samples (default 30)
-	AggregateRetentionDays    int           // days to keep aggregates (default 365)
-	MetricsRetentionDays      int           // days to keep raw metric data points (default 7). Raw points are only ever read for ranges <= rollupQueryThreshold (6h); longer ranges read metric_rollups, which have their own (much longer) window.
-	MetricRollupRetentionDays int           // days to keep downsampled metric rollups (default 365)
-	LogRetentionHours         int           // hours to keep log records (default 24)
-	ErrorLogRetentionDays     int           // days to keep logs for error-sampled traces (default 30)
-	SlowThresholdUS           int64         // microseconds above which a span is "slow"
-	Interval                  time.Duration // how often to run (default 5m)
-	// BatchYield is how long the worker voluntarily releases the write lock
-	// between deletion batches so the span-insert worker can drain the Redis
-	// queue. 0 disables yielding (old behaviour). Default 30s.
-	BatchYield time.Duration
-	// DBPath is the on-disk database file, used to measure how full the volume
-	// is. Empty disables disk-pressure tiering (windows stay purely time-based).
-	DBPath string
-	// Watermarks are the volume-used fractions at which retention starts
-	// shortening its raw-telemetry windows. Zero values take the defaults.
-	Watermarks Watermarks
-	// TargetFraction is the volume-used level the emergency loop evicts back
-	// down to once the critical watermark is crossed. Default 0.70.
-	TargetFraction float64
-	// BallastBytes is the reserved space held so that a full volume can always
-	// delete its way out. 0 disables the reserve — which means a volume that
-	// does reach 100% stays wedged until a human intervenes.
-	BallastBytes int64
-}
-
-func (c Config) withDefaults() Config {
-	if c.InterestingRetentionHours <= 0 {
-		c.InterestingRetentionHours = 48
-	}
-	if c.BoringRetentionMinutes <= 0 {
-		c.BoringRetentionMinutes = 30
-	}
-	if c.ErrorRetentionDays <= 0 {
-		c.ErrorRetentionDays = 30
-	}
-	if c.AggregateRetentionDays <= 0 {
-		c.AggregateRetentionDays = 365
-	}
-	if c.MetricsRetentionDays <= 0 {
-		c.MetricsRetentionDays = 7
-	}
-	if c.MetricRollupRetentionDays <= 0 {
-		c.MetricRollupRetentionDays = 365
-	}
-	if c.LogRetentionHours <= 0 {
-		c.LogRetentionHours = 24
-	}
-	if c.ErrorLogRetentionDays <= 0 {
-		c.ErrorLogRetentionDays = 30
-	}
-	if c.SlowThresholdUS <= 0 {
-		c.SlowThresholdUS = 1_000_000 // 1 second
-	}
-	if c.Interval <= 0 {
-		c.Interval = 5 * time.Minute
-	}
-	if c.BatchYield == 0 {
-		c.BatchYield = 30 * time.Second
-	}
-	return c
 }
 
 // RetentionWorker manages span lifecycle: aggregate old spans, sample
@@ -203,60 +136,6 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 	}
 }
 
-// effectiveConfig returns the retention config, overriding with DB settings where present.
-func (w *RetentionWorker) effectiveConfig() Config {
-	cfg := w.cfg
-	readInt := func(key string) (int, bool) {
-		v, err := w.repo.GetSetting(key)
-		if err != nil || v == "" {
-			return 0, false
-		}
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return 0, false
-		}
-		return n, true
-	}
-	// retention_full_hours is obsolete: the "drop uninteresting spans early" tier
-	// it used to name is now the boring-span classifier (expires_at +
-	// boring_retention_minutes). It was still readable but wired to nothing, and
-	// the README advertised it as "hours to keep all spans" — so it read back
-	// fine while doing nothing, and an operator who set it believed spans were
-	// capped when they were not. That is what filled production's disk. Say so
-	// rather than ignoring it silently.
-	if _, ok := readInt("retention_full_hours"); ok {
-		w.warnObsoleteFullHours.Do(func() {
-			w.logger.Warn("setting 'retention_full_hours' is obsolete and does nothing — "+
-				"span retention is governed by 'retention_interesting_hours'; uninteresting spans "+
-				"expire via 'boring_retention_minutes'. Remove the setting.",
-				"retention_interesting_hours", cfg.InterestingRetentionHours,
-				"boring_retention_minutes", cfg.BoringRetentionMinutes)
-		})
-	}
-	if n, ok := readInt("retention_interesting_hours"); ok {
-		cfg.InterestingRetentionHours = n
-	}
-	if n, ok := readInt("retention_aggregated_days"); ok {
-		cfg.AggregateRetentionDays = n
-	}
-	if n, ok := readInt("retention_error_days"); ok {
-		cfg.ErrorRetentionDays = n
-	}
-	if n, ok := readInt("boring_retention_minutes"); ok {
-		cfg.BoringRetentionMinutes = n
-	}
-	if n, ok := readInt("metrics_retention_days"); ok {
-		cfg.MetricsRetentionDays = n
-	}
-	if n, ok := readInt("log_retention_hours"); ok {
-		cfg.LogRetentionHours = n
-	}
-	if n, ok := readInt("error_log_retention_days"); ok {
-		cfg.ErrorLogRetentionDays = n
-	}
-	return cfg
-}
-
 // RunOnce executes a single retention cycle:
 //  1. Fetch spans older than full_retention_hours in batches, sample errors, aggregate, delete
 //  2. Delete old error_samples and aggregates
@@ -287,7 +166,6 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	errorCutoff := now.Add(-time.Duration(cfg.ErrorRetentionDays) * 24 * time.Hour)
 	aggCutoff := now.Add(-time.Duration(cfg.AggregateRetentionDays) * 24 * time.Hour)
 	metricsCutoff := now.Add(-time.Duration(cfg.MetricsRetentionDays) * 24 * time.Hour)
-	metricRollupCutoff := now.Add(-time.Duration(cfg.MetricRollupRetentionDays) * 24 * time.Hour)
 	logCutoff := now.Add(-time.Duration(cfg.LogRetentionHours) * time.Hour)
 	errorLogCutoff := now.Add(-time.Duration(cfg.ErrorLogRetentionDays) * 24 * time.Hour)
 
@@ -414,7 +292,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	metricRollupsDeleted, err := w.repo.DeleteMetricRollupsOlderThan(ctx, metricRollupCutoff)
+	rollupRowsDeleted, err := w.deleteRollupTiers(ctx, cfg, now)
 	if err != nil {
 		return err
 	}
@@ -449,7 +327,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		attribute.Int64("error_samples_deleted", errorSamplesDeleted),
 		attribute.Int64("aggregates_deleted", aggregatesDeleted),
 		attribute.Int64("metrics_deleted", metricsDeleted),
-		attribute.Int64("metric_rollups_deleted", metricRollupsDeleted),
+		attribute.Int64("rollup_rows_deleted", rollupRowsDeleted),
 		attribute.Int64("logs_deleted", logsDeleted),
 		attribute.Int64("e2e_users_deleted", e2eUsersDeleted),
 		attribute.Int64("web_sessions_deleted", webSessionsDeleted),
@@ -464,7 +342,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		"error_samples_deleted", errorSamplesDeleted,
 		"aggregates_deleted", aggregatesDeleted,
 		"metrics_deleted", metricsDeleted,
-		"metric_rollups_deleted", metricRollupsDeleted,
+		"rollup_rows_deleted", rollupRowsDeleted,
 		"logs_deleted", logsDeleted,
 		"e2e_users_deleted", e2eUsersDeleted,
 		"web_sessions_deleted", webSessionsDeleted,

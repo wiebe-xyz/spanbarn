@@ -248,6 +248,12 @@ project automatically.
 | `SPANBARN_RETENTION_AGGREGATED_DAYS` | `30` | Days to keep aggregates |
 | `SPANBARN_RETENTION_ERROR_DAYS` | `90` | Days to keep error samples |
 | `SPANBARN_METRICS_RETENTION_DAYS` | `7` | Days to keep raw metric points. Raw points are only read for ranges ≤ 6h; longer ranges read rollups. |
+| `SPANBARN_METRIC_ROLLUP_RETENTION_DAYS` | `2` | Days to keep 5-minute rollups (see [Rollup tiers](#rollup-tiers)) |
+| `SPANBARN_METRIC_ROLLUP_HOURLY_DAYS` | `30` | Days to keep hourly rollups |
+| `SPANBARN_METRIC_ROLLUP_DAILY_DAYS` | `365` | Days to keep daily rollups |
+| `SPANBARN_METRIC_ROLLUP_WEEKLY_DAYS` | `730` | Days to keep weekly rollups |
+| `SPANBARN_METRIC_ROLLUP_MONTHLY_DAYS` | `0` | Days to keep monthly rollups; `0` keeps them indefinitely |
+| `SPANBARN_ROLLUP_COMPACT_BUCKETS_PER_PASS` | `12` | Target buckets each tier compacts per pass |
 | `SPANBARN_RETENTION_DISK_ELEVATED_PCT` | `75` | Volume-used % at which retention halves its raw-telemetry windows (see [Disk-headroom guard](#disk-headroom-guard)) |
 | `SPANBARN_RETENTION_DISK_CRITICAL_PCT` | `90` | Volume-used % at which retention quarters its raw-telemetry windows |
 | `SPANBARN_INGEST_REJECT_DISK_PCT` | `95` | Volume-used % at which telemetry ingest returns 503; `0`/`100` disables |
@@ -278,6 +284,48 @@ project automatically.
 | `SPANBARN_FUNNELBARN_API_KEY` | | FunnelBarn API key |
 | `SPANBARN_FUNNELBARN_PROJECT` | | FunnelBarn project slug |
 
+### Rollup tiers
+
+Metric rollups are kept at five resolutions. The ingest accumulator writes
+5-minute buckets keyed by the full attribute set, and the writer's compactor
+merges each tier into the next one, oldest closed bucket first: 5m into 1h, 1h
+into 1d, 1d into 1w, 1w into 1mo.
+
+| tier | default window | setting |
+|---|---|---|
+| 5 minutes | 2 days | `SPANBARN_METRIC_ROLLUP_RETENTION_DAYS` |
+| hourly | 30 days | `SPANBARN_METRIC_ROLLUP_HOURLY_DAYS` |
+| daily | 365 days | `SPANBARN_METRIC_ROLLUP_DAILY_DAYS` |
+| weekly | 730 days | `SPANBARN_METRIC_ROLLUP_WEEKLY_DAYS` |
+| monthly | kept | `SPANBARN_METRIC_ROLLUP_MONTHLY_DAYS` (`0` keeps all) |
+
+Two things shrink a tier as it climbs the ladder. Twelve 5-minute buckets become
+one hour, and volatile attributes are dropped at each step, so series that
+differed only by `service.version`, `service.instance.id` or the host merge into
+one. The second effect is the larger one in practice: production carried 10,483
+attribute sets for a single metric because every deploy minted new series, which
+is how the 5-minute tier reached 3.7 GB, 76% of the database. Raw request paths
+are dropped from the daily tier upwards for the same reason. Both lists can be
+overridden with the settings `metrics.rollup_drop_attrs.hourly` and
+`metrics.rollup_drop_attrs.daily`.
+
+Counters and histograms merge as per-bucket increases. Each source series is
+differenced against its own previous bucket before the series are added together,
+and the coarse row stores the previous coarse bucket's total plus that increase.
+A deploy that replaces one instance series with another therefore reads as
+continuous, where adding running totals together would show a drop and be taken
+for a counter reset.
+
+**A tier is deleted only as far as it has been compacted into the tier above.**
+The compactor records that point per tier, and retention will not cross it at any
+pressure level, so a stalled compactor delays cleanup while the data waits.
+
+Queries pick their own resolution: ranges up to 6h read raw data points, then 5m
+up to two days, hourly to a month, daily to a year, and weekly or monthly beyond
+that, falling back to the next coarser tier when the finer one has already been
+compacted away. `GET /api/v1/metrics/series` reports what it used as
+`step_seconds`, and the metrics page labels the chart with it.
+
 ### Disk-headroom guard
 
 Retention windows are a clock, but a disk is a budget. When ingest volume rises,
@@ -288,11 +336,14 @@ recover in place: freeing rows needs space to commit the delete.
 
 So retention also watches size. Each cycle it samples how full the database's
 volume is and, past the watermarks above, shortens its **raw telemetry** windows
-— spans, boring spans, metrics and logs — to 1/2 (elevated) or 1/4 (critical) of
-their configured values, with floors so no window ever collapses to zero.
-Aggregates, error samples and error logs are deliberately never shortened: they
-are what the product is for, they are small per unit time, and an operator
-investigating the incident that caused the pressure must still find the evidence.
+(spans, boring spans, metrics, logs and the 5-minute rollup tier) to 1/2
+(elevated) or 1/4 (critical) of their configured values, with floors so no window
+ever collapses to zero. Aggregates, error samples, error logs and the coarse
+rollup tiers are deliberately never shortened: they are what the product is for,
+they are small per unit time, and an operator investigating the incident that
+caused the pressure must still find the evidence. Shortening the 5-minute tier
+gives up resolution while the hourly tier and above keep the history, and the
+compaction watermark still bounds what may go.
 
 If the volume climbs past `SPANBARN_INGEST_REJECT_DISK_PCT` anyway, telemetry
 ingest starts answering `503` with `Retry-After` (and `Unavailable` on the OTLP

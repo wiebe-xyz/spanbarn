@@ -98,20 +98,37 @@ func (b metricBase) mergeAttrs(dpAttrs map[string]any) json.RawMessage {
 func (b metricBase) convertMetric(m *metricspb.Metric) []model.MetricRecord {
 	switch d := m.GetData().(type) {
 	case *metricspb.Metric_Gauge:
-		return b.fromNumberDataPoints(model.MetricTypeGauge, d.Gauge.GetDataPoints())
+		return b.fromNumberDataPoints(model.MetricTypeGauge, d.Gauge.GetDataPoints(), "")
 	case *metricspb.Metric_Sum:
-		return b.fromNumberDataPoints(model.MetricTypeSum, d.Sum.GetDataPoints())
+		return b.fromNumberDataPoints(model.MetricTypeSum, d.Sum.GetDataPoints(),
+			temporalityName(d.Sum.GetAggregationTemporality()))
 	case *metricspb.Metric_Histogram:
-		return b.fromHistogramDataPoints(d.Histogram.GetDataPoints())
+		return b.fromHistogramDataPoints(d.Histogram.GetDataPoints(),
+			temporalityName(d.Histogram.GetAggregationTemporality()))
 	case *metricspb.Metric_ExponentialHistogram:
-		return b.fromExpHistogramDataPoints(d.ExponentialHistogram.GetDataPoints())
+		return b.fromExpHistogramDataPoints(d.ExponentialHistogram.GetDataPoints(),
+			temporalityName(d.ExponentialHistogram.GetAggregationTemporality()))
 	case *metricspb.Metric_Summary:
 		return b.fromSummaryDataPoints(d.Summary.GetDataPoints())
 	}
 	return nil
 }
 
-func (b metricBase) fromNumberDataPoints(typ model.MetricType, dps []*metricspb.NumberDataPoint) []model.MetricRecord {
+// temporalityName maps the OTLP enum onto the string stored with the rollup.
+// An unspecified temporality stays empty, and the compaction path reads empty as
+// cumulative — the SDK default, and what every exporter sending here uses.
+func temporalityName(t metricspb.AggregationTemporality) string {
+	switch t {
+	case metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA:
+		return "delta"
+	case metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE:
+		return "cumulative"
+	default:
+		return ""
+	}
+}
+
+func (b metricBase) fromNumberDataPoints(typ model.MetricType, dps []*metricspb.NumberDataPoint, temporality string) []model.MetricRecord {
 	recs := make([]model.MetricRecord, 0, len(dps))
 	for _, dp := range dps {
 		recs = append(recs, model.MetricRecord{
@@ -123,13 +140,14 @@ func (b metricBase) fromNumberDataPoints(typ model.MetricType, dps []*metricspb.
 			TimeUnixNano:      dp.GetTimeUnixNano(),
 			StartTimeUnixNano: dp.GetStartTimeUnixNano(),
 			Value:             extractNumberValue(dp),
+			Temporality:       temporality,
 			Attributes:        b.mergeAttrs(kvListToMap(dp.GetAttributes())),
 		})
 	}
 	return recs
 }
 
-func (b metricBase) fromHistogramDataPoints(dps []*metricspb.HistogramDataPoint) []model.MetricRecord {
+func (b metricBase) fromHistogramDataPoints(dps []*metricspb.HistogramDataPoint, temporality string) []model.MetricRecord {
 	recs := make([]model.MetricRecord, 0, len(dps))
 	for _, dp := range dps {
 		extra, _ := json.Marshal(map[string]any{
@@ -146,6 +164,7 @@ func (b metricBase) fromHistogramDataPoints(dps []*metricspb.HistogramDataPoint)
 			StartTimeUnixNano: dp.GetStartTimeUnixNano(),
 			Value:             dp.GetSum(),
 			Count:             dp.GetCount(),
+			Temporality:       temporality,
 			Attributes:        b.mergeAttrs(kvListToMap(dp.GetAttributes())),
 			Extra:             extra,
 		})
@@ -153,7 +172,7 @@ func (b metricBase) fromHistogramDataPoints(dps []*metricspb.HistogramDataPoint)
 	return recs
 }
 
-func (b metricBase) fromExpHistogramDataPoints(dps []*metricspb.ExponentialHistogramDataPoint) []model.MetricRecord {
+func (b metricBase) fromExpHistogramDataPoints(dps []*metricspb.ExponentialHistogramDataPoint, temporality string) []model.MetricRecord {
 	recs := make([]model.MetricRecord, 0, len(dps))
 	for _, dp := range dps {
 		extra, _ := json.Marshal(map[string]any{
@@ -172,6 +191,7 @@ func (b metricBase) fromExpHistogramDataPoints(dps []*metricspb.ExponentialHisto
 			StartTimeUnixNano: dp.GetStartTimeUnixNano(),
 			Value:             dp.GetSum(),
 			Count:             dp.GetCount(),
+			Temporality:       temporality,
 			Attributes:        b.mergeAttrs(kvListToMap(dp.GetAttributes())),
 			Extra:             extra,
 		})

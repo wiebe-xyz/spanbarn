@@ -25,6 +25,14 @@ type MetricRollup struct {
 	Last            float64
 	ObsCount        int64
 	Extra           string // merged histogram / last summary quantiles
+	// Temporality is the OTLP aggregation temporality ("delta", "cumulative",
+	// or empty where the exporter did not say). Compaction differences a
+	// cumulative series into per-bucket increases and passes a delta one
+	// through, so the two must stay distinguishable.
+	Temporality string
+	// StepSeconds is the tier's bucket width. Zero means the 5-minute tier in
+	// metric_rollups; anything else is a row of metric_rollups_coarse.
+	StepSeconds int64
 }
 
 // MetricRollupFilter scopes a rollup query.
@@ -56,9 +64,9 @@ func (r *Repository) UpsertMetricRollups(rollups []MetricRollup) error {
 		defer tx.Rollback()
 
 		stmt, err := tx.PrepareContext(ctx, `INSERT INTO metric_rollups
-			(project_id, name, type, unit, attr_fingerprint, attributes, bucket,
+			(project_id, name, type, unit, temporality, attr_fingerprint, attributes, bucket,
 			 count, sum, min, max, last, obs_count, extra)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(project_id, name, attr_fingerprint, bucket)
 			DO UPDATE SET
 				count = count + excluded.count,
@@ -67,7 +75,8 @@ func (r *Repository) UpsertMetricRollups(rollups []MetricRollup) error {
 				max = MAX(max, excluded.max),
 				last = excluded.last,
 				obs_count = obs_count + excluded.obs_count,
-				extra = excluded.extra`)
+				extra = excluded.extra,
+				temporality = excluded.temporality`)
 		if err != nil {
 			return err
 		}
@@ -83,7 +92,7 @@ func (r *Repository) UpsertMetricRollups(rollups []MetricRollup) error {
 				extra = &m.Extra
 			}
 			if _, err := stmt.ExecContext(ctx,
-				m.ProjectID, m.Name, m.Type, m.Unit, m.AttrFingerprint, attrs, m.Bucket,
+				m.ProjectID, m.Name, m.Type, m.Unit, m.Temporality, m.AttrFingerprint, attrs, m.Bucket,
 				m.Count, m.Sum, m.Min, m.Max, m.Last, m.ObsCount, extra,
 			); err != nil {
 				return err
@@ -112,9 +121,13 @@ func (r *Repository) QueryMetricRollups(ctx context.Context, f MetricRollupFilte
 	}
 	args = append(args, limit)
 
-	q := fmt.Sprintf(`SELECT project_id, name, type, unit, attr_fingerprint, attributes, bucket,
+	// Ordered newest-first under the limit, then reversed, so a range wider than
+	// the limit keeps its most recent buckets. Ascending order truncated at the
+	// limit would return the oldest rows and drop everything current, which is
+	// the opposite of what a chart needs.
+	q := fmt.Sprintf(`SELECT project_id, name, type, unit, temporality, attr_fingerprint, attributes, bucket,
 		count, sum, min, max, last, obs_count, extra
-		FROM metric_rollups WHERE %s ORDER BY bucket ASC LIMIT ?`,
+		FROM metric_rollups WHERE %s ORDER BY bucket DESC LIMIT ?`,
 		strings.Join(where, " AND "))
 
 	rows, err := r.db.QueryContext(ctx, q, args...)
@@ -123,12 +136,23 @@ func (r *Repository) QueryMetricRollups(ctx context.Context, f MetricRollupFilte
 	}
 	defer rows.Close()
 
+	out, err := scanMetricRollups(rows)
+	if err != nil {
+		return nil, err
+	}
+	reverseRollups(out)
+	return out, nil
+}
+
+// scanMetricRollups reads rollup rows in the column order every rollup query
+// selects.
+func scanMetricRollups(rows *sql.Rows) ([]MetricRollup, error) {
 	var out []MetricRollup
 	for rows.Next() {
 		var m MetricRollup
 		var extra sql.NullString
 		if err := rows.Scan(
-			&m.ProjectID, &m.Name, &m.Type, &m.Unit, &m.AttrFingerprint, &m.Attributes, &m.Bucket,
+			&m.ProjectID, &m.Name, &m.Type, &m.Unit, &m.Temporality, &m.AttrFingerprint, &m.Attributes, &m.Bucket,
 			&m.Count, &m.Sum, &m.Min, &m.Max, &m.Last, &m.ObsCount, &extra,
 		); err != nil {
 			return nil, err
@@ -139,6 +163,14 @@ func (r *Repository) QueryMetricRollups(ctx context.Context, f MetricRollupFilte
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// reverseRollups flips a newest-first page back into bucket order, which is what
+// rate derivation across consecutive buckets expects.
+func reverseRollups(rows []MetricRollup) {
+	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+		rows[i], rows[j] = rows[j], rows[i]
+	}
 }
 
 // QueryProjectRollups returns every rollup bucket for a project within a time
@@ -152,7 +184,7 @@ func (r *Repository) QueryProjectRollups(ctx context.Context, projectID int64, f
 		limit = 50000
 	}
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT project_id, name, type, unit, attr_fingerprint, attributes, bucket,
+		`SELECT project_id, name, type, unit, temporality, attr_fingerprint, attributes, bucket,
 			count, sum, min, max, last, obs_count, extra
 		 FROM metric_rollups
 		 WHERE project_id = ? AND bucket >= ? AND bucket <= ?
@@ -164,22 +196,7 @@ func (r *Repository) QueryProjectRollups(ctx context.Context, projectID int64, f
 	}
 	defer rows.Close()
 
-	var out []MetricRollup
-	for rows.Next() {
-		var m MetricRollup
-		var extra sql.NullString
-		if err := rows.Scan(
-			&m.ProjectID, &m.Name, &m.Type, &m.Unit, &m.AttrFingerprint, &m.Attributes, &m.Bucket,
-			&m.Count, &m.Sum, &m.Min, &m.Max, &m.Last, &m.ObsCount, &extra,
-		); err != nil {
-			return nil, err
-		}
-		if extra.Valid {
-			m.Extra = extra.String
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return scanMetricRollups(rows)
 }
 
 // DeleteMetricRollupsOlderThan removes rollup buckets older than cutoff, in

@@ -84,45 +84,107 @@ func TestMetricAccumulatorKeepsOpenBucket(t *testing.T) {
 	}
 }
 
-func TestMetricAccumulatorHistogramMerge(t *testing.T) {
-	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
-	w := &fakeRollupWriter{}
-	acc := NewMetricAccumulator(w, time.Minute, time.Minute, nil)
-	acc.now = func() time.Time { return base.Add(90 * time.Second) }
-
-	hist := func(tNano uint64, counts string, obs uint64, sum float64) model.MetricRecord {
-		return model.MetricRecord{
-			ProjectID: 1, Name: "h", Type: model.MetricTypeHistogram,
-			TimeUnixNano: tNano, Value: sum, Count: obs,
-			Attributes: json.RawMessage(`{}`),
-			Extra:      json.RawMessage(`{"bounds":[10,20],"counts":` + counts + `}`),
-		}
+// histogramRecord builds one explicit-bucket histogram point.
+func histogramRecord(temporality string, tNano uint64, counts string, obs uint64, sum float64) model.MetricRecord {
+	return model.MetricRecord{
+		ProjectID: 1, Name: "h", Type: model.MetricTypeHistogram,
+		TimeUnixNano: tNano, Value: sum, Count: obs,
+		Temporality: temporality,
+		Attributes:  json.RawMessage(`{}`),
+		Extra:       json.RawMessage(`{"bounds":[10,20],"counts":` + counts + `}`),
 	}
-	acc.AddMetric(hist(uint64(base.Add(5*time.Second).UnixNano()), `[1,2,0]`, 3, 30))
-	acc.AddMetric(hist(uint64(base.Add(15*time.Second).UnixNano()), `[3,1,1]`, 5, 55))
+}
 
+func flushOne(t *testing.T, acc *MetricAccumulator, w *fakeRollupWriter) repository.MetricRollup {
+	t.Helper()
 	if err := acc.Flush(context.Background()); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
 	if len(w.got) != 1 {
 		t.Fatalf("want 1 rollup, got %d", len(w.got))
 	}
-	r := w.got[0]
-	if r.ObsCount != 8 || r.Sum != 85 {
-		t.Errorf("histogram totals wrong: obs=%d sum=%v", r.ObsCount, r.Sum)
-	}
-	var merged struct {
+	return w.got[0]
+}
+
+func histogramCounts(t *testing.T, extra string) []float64 {
+	t.Helper()
+	var h struct {
 		Bounds []float64 `json:"bounds"`
 		Counts []float64 `json:"counts"`
 	}
-	if err := json.Unmarshal([]byte(r.Extra), &merged); err != nil {
+	if err := json.Unmarshal([]byte(extra), &h); err != nil {
 		t.Fatalf("unmarshal extra: %v", err)
 	}
-	want := []float64{4, 3, 1}
-	for i, c := range want {
-		if merged.Counts[i] != c {
-			t.Errorf("merged counts[%d] = %v, want %v (%v)", i, merged.Counts[i], c, merged.Counts)
+	return h.Counts
+}
+
+// TestMetricAccumulatorCumulativeHistogramKeepsNewestSnapshot: a cumulative
+// point carries totals since process start, so the newest one describes the
+// bucket. Adding them multiplied the distribution by the number of exports that
+// happened to land in the window — at a 10s export interval a 5-minute bucket
+// claimed 30 times the observations it saw. It is also what lets compaction
+// difference consecutive buckets into real per-window distributions.
+//
+// A point with no temporality is treated as cumulative, which is the SDK default.
+func TestMetricAccumulatorCumulativeHistogramKeepsNewestSnapshot(t *testing.T) {
+	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	w := &fakeRollupWriter{}
+	acc := NewMetricAccumulator(w, time.Minute, time.Minute, nil)
+	acc.now = func() time.Time { return base.Add(90 * time.Second) }
+
+	acc.AddMetric(histogramRecord("", uint64(base.Add(5*time.Second).UnixNano()), `[1,2,0]`, 3, 30))
+	acc.AddMetric(histogramRecord("cumulative", uint64(base.Add(15*time.Second).UnixNano()), `[3,1,1]`, 5, 55))
+
+	r := flushOne(t, acc, w)
+	if r.ObsCount != 5 || r.Sum != 55 {
+		t.Errorf("totals = obs %d / sum %v, want the newest snapshot's 5 / 55", r.ObsCount, r.Sum)
+	}
+	for i, want := range []float64{3, 1, 1} {
+		if got := histogramCounts(t, r.Extra)[i]; got != want {
+			t.Errorf("counts[%d] = %v, want %v", i, got, want)
 		}
+	}
+}
+
+// TestMetricAccumulatorDeltaHistogramFolds: a delta point holds only what was
+// observed since the last export, so points add up.
+func TestMetricAccumulatorDeltaHistogramFolds(t *testing.T) {
+	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	w := &fakeRollupWriter{}
+	acc := NewMetricAccumulator(w, time.Minute, time.Minute, nil)
+	acc.now = func() time.Time { return base.Add(90 * time.Second) }
+
+	acc.AddMetric(histogramRecord("delta", uint64(base.Add(5*time.Second).UnixNano()), `[1,2,0]`, 3, 30))
+	acc.AddMetric(histogramRecord("delta", uint64(base.Add(15*time.Second).UnixNano()), `[3,1,1]`, 5, 55))
+
+	r := flushOne(t, acc, w)
+	if r.ObsCount != 8 || r.Sum != 85 {
+		t.Errorf("totals = obs %d / sum %v, want 8 / 85", r.ObsCount, r.Sum)
+	}
+	for i, want := range []float64{4, 3, 1} {
+		if got := histogramCounts(t, r.Extra)[i]; got != want {
+			t.Errorf("counts[%d] = %v, want %v", i, got, want)
+		}
+	}
+}
+
+// TestMetricAccumulatorStoresTemporality: compaction cannot tell a running total
+// from an increment without it, so it has to reach the row.
+func TestMetricAccumulatorStoresTemporality(t *testing.T) {
+	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	w := &fakeRollupWriter{}
+	acc := NewMetricAccumulator(w, time.Minute, time.Minute, nil)
+	acc.now = func() time.Time { return base.Add(90 * time.Second) }
+
+	acc.AddMetric(model.MetricRecord{
+		ProjectID: 1, Name: "c", Type: model.MetricTypeSum,
+		TimeUnixNano: uint64(base.Add(5 * time.Second).UnixNano()),
+		Value:        7, Temporality: "cumulative",
+		Attributes: json.RawMessage(`{}`),
+	})
+
+	if got := flushOne(t, acc, w).Temporality; got != "cumulative" {
+		t.Errorf("temporality = %q, want %q", got, "cumulative")
 	}
 }
 

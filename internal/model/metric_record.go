@@ -24,9 +24,15 @@ type MetricRecord struct {
 	TimeUnixNano      uint64
 	StartTimeUnixNano uint64
 	// Value is the scalar for gauge/sum, or the sum-of-observations for histogram/summary.
-	Value      float64
-	Count      uint64          // histogram / summary count
-	Attributes json.RawMessage // merged resource < scope < data-point attributes
+	Value float64
+	Count uint64 // histogram / summary count
+	// Temporality is the OTLP aggregation temporality of sums and histograms:
+	// "delta" when the point already holds the change since the last export,
+	// "cumulative" when it holds a running total, empty when the exporter did
+	// not say (and for gauges, which have none). Rollup compaction has to know
+	// which it is before it can turn a tier into per-bucket increases.
+	Temporality string
+	Attributes  json.RawMessage // merged resource < scope < data-point attributes
 	// Extra holds type-specific payload as JSON:
 	//   histogram     — {"bounds":[…],"counts":[…]}
 	//   exp_histogram — {"scale":N,"zero_count":N,"positive":{…},"negative":{…}}

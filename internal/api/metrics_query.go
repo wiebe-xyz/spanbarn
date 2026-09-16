@@ -8,6 +8,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/metrics"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/rollup"
 )
 
 // metricsQueryHandlers holds session-authenticated metrics query handlers.
@@ -29,6 +30,11 @@ type metricSeriesResponse struct {
 	Unit   string           `json:"unit"`
 	Render string           `json:"render"`
 	Series []metrics.Series `json:"series"`
+	// Step is the resolution the answer was served at, in seconds: 0 for raw
+	// data points, otherwise the rollup tier's bucket width. A long range is
+	// answered from coarser buckets, and the chart says so rather than implying
+	// a precision it does not have.
+	Step int64 `json:"step_seconds"`
 }
 
 // handleMetricNames returns distinct metric names for a project within a time range.
@@ -181,10 +187,11 @@ func (h *metricsQueryHandlers) handleMetricSeries(w http.ResponseWriter, r *http
 	var (
 		metricType, unit string
 		in               []metrics.InputPoint
+		step             int64
 		queryErr         error
 	)
 	if to.Sub(from) > rollupQueryThreshold {
-		metricType, unit, in, queryErr = h.rollupInput(r, projectID, name, from, to, labels, limit)
+		metricType, unit, in, step, queryErr = h.rollupInput(r, projectID, name, from, to, labels, limit)
 	} else {
 		metricType, unit, in, queryErr = h.rawInput(r, projectID, name, from, to, labels, limit)
 	}
@@ -204,6 +211,7 @@ func (h *metricsQueryHandlers) handleMetricSeries(w http.ResponseWriter, r *http
 		Unit:   unit,
 		Render: string(metrics.RenderFor(metricType)),
 		Series: series,
+		Step:   step,
 	})
 }
 
@@ -236,26 +244,71 @@ func (h *metricsQueryHandlers) rawInput(r *http.Request, projectID int64, name s
 	return metricType, unit, in, nil
 }
 
+// rollupTierSteps lists the resolutions worth trying for a range, finest first.
+//
+// The finest tier that still gives a readable chart is preferred, and the
+// coarser ones are fallbacks: the fine tiers are kept for days while the coarse
+// ones go back years, so a month-old week-long range simply has no 5-minute
+// buckets left to read. Asking in order turns that into a slightly smoother
+// chart instead of an empty one.
+func rollupTierSteps(width time.Duration) []int64 {
+	switch {
+	case width <= 48*time.Hour:
+		return []int64{rollup.Step5m, rollup.StepHour, rollup.StepDay}
+	case width <= 30*24*time.Hour:
+		return []int64{rollup.StepHour, rollup.StepDay, rollup.StepWeek}
+	case width <= 365*24*time.Hour:
+		return []int64{rollup.StepDay, rollup.StepWeek, rollup.StepMonth}
+	default:
+		return []int64{rollup.StepWeek, rollup.StepMonth}
+	}
+}
+
 // rollupInput loads downsampled rollup buckets and maps them to derivation
-// input. The per-type value choice keeps metrics.Derive working unchanged:
-// gauges use the bucket average, counters use the bucket-end cumulative value
-// (so rate is derived across buckets), distributions carry their merged extra.
-func (h *metricsQueryHandlers) rollupInput(r *http.Request, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, error) {
-	rows, err := h.repo.QueryMetricRollups(r.Context(), repository.MetricRollupFilter{
+// input, returning the resolution it read. The per-type value choice keeps
+// metrics.Derive working unchanged: gauges use the bucket average, counters use
+// the bucket-end cumulative value (so rate is derived across buckets),
+// distributions carry their merged extra.
+func (h *metricsQueryHandlers) rollupInput(r *http.Request, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, int64, error) {
+	filter := repository.MetricRollupFilter{
 		ProjectID: projectID, Name: name, From: from, To: to, Attributes: labels, Limit: limit,
-	})
-	if err != nil {
-		return "", "", nil, err
 	}
-	var metricType, unit string
-	in := make([]metrics.InputPoint, 0, len(rows))
-	for _, row := range rows {
-		if metricType == "" {
-			metricType, unit = row.Type, row.Unit
+	for _, step := range rollupTierSteps(to.Sub(from)) {
+		rows, err := h.queryTier(r, step, filter)
+		if err != nil {
+			return "", "", nil, 0, err
 		}
-		in = append(in, rollupToInput(row))
+		if len(rows) == 0 {
+			continue
+		}
+		var metricType, unit string
+		in := make([]metrics.InputPoint, 0, len(rows))
+		for _, row := range rows {
+			if metricType == "" {
+				metricType, unit = row.Type, row.Unit
+			}
+			in = append(in, rollupToInput(row))
+		}
+		return metricType, unit, in, step, nil
 	}
-	return metricType, unit, in, nil
+	return "", "", nil, 0, nil
+}
+
+// queryTier reads one resolution. The 5-minute tier is the accumulator's own
+// table; every coarser tier shares metric_rollups_coarse.
+func (h *metricsQueryHandlers) queryTier(r *http.Request, step int64, f repository.MetricRollupFilter) ([]repository.MetricRollup, error) {
+	if step == repository.Rollup5mStep {
+		return h.repo.QueryMetricRollups(r.Context(), f)
+	}
+	return h.repo.QueryCoarseRollups(r.Context(), repository.CoarseRollupFilter{
+		ProjectID:   f.ProjectID,
+		Name:        f.Name,
+		StepSeconds: step,
+		From:        f.From,
+		To:          f.To,
+		Attributes:  f.Attributes,
+		Limit:       f.Limit,
+	})
 }
 
 // rollupToInput maps a rollup bucket to a derivation input point. The per-type

@@ -394,11 +394,22 @@ function MetricChart({
   groupBy: string[]
   onToggleGroupBy: (key: string) => void
 }): ReactElement {
-  const { name, type, unit, render, series } = resp
+  const { name, type, unit, render, series, step_seconds: step } = resp
   const { rows, lines } = useMemo(() => buildChart(resp), [resp])
   const keys = useMemo(() => availableKeys(series), [series])
 
   const totalPoints = series.reduce((n, s) => n + s.points.length, 0)
+
+  // Which tier answered the query. A long range is served from coarser buckets,
+  // and saying so beats implying a precision the chart no longer has.
+  const resolution = (s: number): string => {
+    if (s >= 2592000) return 'monthly'
+    if (s >= 604800) return 'weekly'
+    if (s >= 86400) return 'daily'
+    if (s >= 3600) return 'hourly'
+    if (s >= 60) return `${Math.round(s / 60)}-minute`
+    return 'raw'
+  }
 
   return (
     <div
@@ -417,6 +428,7 @@ function MetricChart({
         </span>
         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>
           {series.length} series · {totalPoints} points
+          {step ? ` · ${resolution(step)} buckets` : ''}
         </span>
       </div>
       <p style={{ margin: '0 0 0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{RENDER_HINT[render]}</p>

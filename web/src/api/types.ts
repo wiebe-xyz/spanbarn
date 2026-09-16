@@ -348,6 +348,12 @@ export type MetricSeriesResponse = {
   unit: string
   render: MetricRender
   series: MetricSeries[]
+  /**
+   * Resolution the answer was served at, in seconds: 0 for raw data points,
+   * otherwise the rollup tier's bucket width (300, 3600, 86400, 604800, or a
+   * month). Long ranges are answered from coarser buckets.
+   */
+  step_seconds: number
 }
 
 /** A single log entry returned by the logs query API. */

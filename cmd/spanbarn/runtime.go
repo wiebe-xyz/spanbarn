@@ -9,6 +9,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
+	"github.com/wiebe-xyz/spanbarn/internal/rollup"
 )
 
 // serverConfigFrom builds the api.ServerConfig fields shared by every mode.
@@ -134,6 +135,15 @@ func retentionConfigFrom(cfg config.Config) retention.Config {
 		MetricsRetentionDays:      cfg.Retention.MetricsDays,
 		LogRetentionHours:         cfg.Retention.LogHours,
 		ErrorLogRetentionDays:     cfg.Retention.ErrorLogDays,
+		// Every rollup tier is mapped here. The tier that filled production's
+		// disk had a config field and a default but no line in this function, so
+		// it sat at 365 days no matter what anyone set; TestRetentionConfigFrom
+		// now covers every window for that reason.
+		MetricRollupRetentionDays: cfg.Retention.RollupDays,
+		HourlyRollupDays:          cfg.Retention.RollupHourlyDays,
+		DailyRollupDays:           cfg.Retention.RollupDailyDays,
+		WeeklyRollupDays:          cfg.Retention.RollupWeeklyDays,
+		MonthlyRollupDays:         cfg.Retention.RollupMonthlyDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 		DBPath:                    cfg.DBPath,
 		Watermarks: retention.Watermarks{
@@ -143,4 +153,18 @@ func retentionConfigFrom(cfg config.Config) retention.Config {
 		TargetFraction: float64(cfg.Retention.DiskTargetPct) / 100,
 		BallastBytes:   int64(cfg.Retention.BallastMB) << 20,
 	}
+}
+
+// newRollupCompactor builds the metric rollup compactor for the standalone and
+// writer bootstraps.
+//
+// It belongs beside the retention worker because the two are one mechanism: this
+// summarises each rollup tier into the coarser one, and retention may delete a
+// tier only as far as this has got. Without it nothing above the 5-minute tier
+// is ever written, and nothing below the coarsest is ever dropped.
+func newRollupCompactor(repo rollup.Repository, cfg config.Config, logger *slog.Logger) *rollup.Compactor {
+	return rollup.New(repo, rollup.Config{
+		DBPath:         cfg.DBPath,
+		BucketsPerPass: cfg.Retention.CompactBucketsPerPass,
+	}, logger)
 }

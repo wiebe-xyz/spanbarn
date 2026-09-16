@@ -51,9 +51,10 @@ type metricKey struct {
 }
 
 type metricSlot struct {
-	metricType string
-	unit       string
-	attributes string
+	metricType  string
+	unit        string
+	attributes  string
+	temporality string
 
 	count    int64
 	sum      float64
@@ -106,9 +107,10 @@ func (a *MetricAccumulator) AddMetric(rec model.MetricRecord) {
 	sl := a.slots[k]
 	if sl == nil {
 		sl = &metricSlot{
-			metricType: string(rec.Type),
-			unit:       rec.Unit,
-			attributes: metrics.CanonicalAttributes(attrs),
+			metricType:  string(rec.Type),
+			unit:        rec.Unit,
+			attributes:  metrics.CanonicalAttributes(attrs),
+			temporality: rec.Temporality,
 		}
 		a.slots[k] = sl
 	}
@@ -130,9 +132,7 @@ func (a *MetricAccumulator) AddMetric(rec model.MetricRecord) {
 			sl.lastNano = rec.TimeUnixNano
 		}
 	case model.MetricTypeHistogram:
-		sl.sum += rec.Value
-		sl.obsCount += int64(rec.Count)
-		a.foldHistogram(sl, rec.Extra)
+		a.addHistogramPoint(sl, rec)
 	case model.MetricTypeExponentialHistogram, model.MetricTypeSummary:
 		sl.sum += rec.Value
 		sl.obsCount += int64(rec.Count)
@@ -141,6 +141,49 @@ func (a *MetricAccumulator) AddMetric(rec model.MetricRecord) {
 			sl.lastNano = rec.TimeUnixNano
 		}
 	}
+}
+
+// addHistogramPoint folds one histogram data point into its slot.
+//
+// A delta point holds the observations since the last export, so points add up.
+// A cumulative point holds a running snapshot since process start, so adding
+// them multiplies the distribution by the number of exports that landed in the
+// bucket: with a 10s export interval a 5-minute bucket claimed 30 times the
+// observations it saw, and both the bucket counts and obs_count were inflated
+// the same way. The newest snapshot stands for the bucket instead, which is also
+// what lets compaction difference consecutive buckets into real per-window
+// distributions.
+func (a *MetricAccumulator) addHistogramPoint(sl *metricSlot, rec model.MetricRecord) {
+	if rec.Temporality == temporalityDelta {
+		sl.sum += rec.Value
+		sl.obsCount += int64(rec.Count)
+		a.foldHistogram(sl, rec.Extra)
+		return
+	}
+	if sl.haveHist && rec.TimeUnixNano < sl.lastNano {
+		return // an older snapshot than the one already held
+	}
+	sl.sum = rec.Value
+	sl.obsCount = int64(rec.Count)
+	sl.lastNano = rec.TimeUnixNano
+	a.replaceHistogram(sl, rec.Extra)
+}
+
+// temporalityDelta is the stored name for delta aggregation temporality.
+const temporalityDelta = "delta"
+
+// replaceHistogram stores a cumulative snapshot as the slot's distribution.
+func (a *MetricAccumulator) replaceHistogram(sl *metricSlot, extra json.RawMessage) {
+	var h struct {
+		Bounds []float64 `json:"bounds"`
+		Counts []float64 `json:"counts"`
+	}
+	if len(extra) == 0 || json.Unmarshal(extra, &h) != nil {
+		return
+	}
+	sl.histBounds = append([]float64(nil), h.Bounds...)
+	sl.histCounts = append([]float64(nil), h.Counts...)
+	sl.haveHist = true
 }
 
 // foldHistogram merges an explicit-bucket histogram's counts into the slot.
@@ -212,6 +255,7 @@ func (a *MetricAccumulator) toRollup(k metricKey, sl *metricSlot) repository.Met
 		Name:            k.name,
 		Type:            sl.metricType,
 		Unit:            sl.unit,
+		Temporality:     sl.temporality,
 		AttrFingerprint: k.fingerprint,
 		Attributes:      sl.attributes,
 		Bucket:          k.bucket,

@@ -23,6 +23,22 @@ type RetentionConfig struct {
 	LogHours           int // SPANBARN_LOG_RETENTION_HOURS — how long to keep log records (default 24)
 	ErrorLogDays       int // SPANBARN_ERROR_LOG_RETENTION_DAYS — how long to keep logs for error traces (default 30)
 	DeleteBatchYieldMS int // SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS — pause between batched retention deletes so the WAL checkpoint and reads aren't starved (default 200)
+	// Rollup tier windows. Metric rollups are compacted 5m → 1h → 1d → 1w → 1mo
+	// by internal/rollup, and each tier keeps its own window. Storage is bounded
+	// by resolution rather than by a single cutoff: a year of history costs a
+	// few thousand monthly rows, while the 5-minute tier — which is where
+	// cardinality actually bites — is held to days. A tier is only ever deleted
+	// up to the point it has been compacted into the tier above it.
+	RollupDays        int // SPANBARN_METRIC_ROLLUP_RETENTION_DAYS — 5-minute tier (default 2)
+	RollupHourlyDays  int // SPANBARN_METRIC_ROLLUP_HOURLY_DAYS (default 30)
+	RollupDailyDays   int // SPANBARN_METRIC_ROLLUP_DAILY_DAYS (default 365)
+	RollupWeeklyDays  int // SPANBARN_METRIC_ROLLUP_WEEKLY_DAYS (default 730)
+	RollupMonthlyDays int // SPANBARN_METRIC_ROLLUP_MONTHLY_DAYS (default 0 = keep indefinitely)
+	// CompactBucketsPerPass bounds how many target buckets each tier compacts in
+	// one pass, keeping a single write-lock hold short. The compactor paces
+	// itself: it runs every few seconds while there is backlog and falls back to
+	// its idle interval once the ladder is current.
+	CompactBucketsPerPass int // SPANBARN_ROLLUP_COMPACT_BUCKETS_PER_PASS (default 12)
 	// DiskElevatedPct / DiskCriticalPct are the percentages of the database
 	// volume in use at which retention starts shortening its raw-telemetry
 	// windows. Time-based retention alone cannot bound the database — when
@@ -193,6 +209,13 @@ func Load() Config {
 			DiskCriticalPct:    getenvInt("SPANBARN_RETENTION_DISK_CRITICAL_PCT", 90),
 			DiskTargetPct:      getenvInt("SPANBARN_RETENTION_DISK_TARGET_PCT", 70),
 			BallastMB:          getenvInt("SPANBARN_DB_BALLAST_MB", 256),
+
+			RollupDays:            getenvInt("SPANBARN_METRIC_ROLLUP_RETENTION_DAYS", 2),
+			RollupHourlyDays:      getenvInt("SPANBARN_METRIC_ROLLUP_HOURLY_DAYS", 30),
+			RollupDailyDays:       getenvInt("SPANBARN_METRIC_ROLLUP_DAILY_DAYS", 365),
+			RollupWeeklyDays:      getenvInt("SPANBARN_METRIC_ROLLUP_WEEKLY_DAYS", 730),
+			RollupMonthlyDays:     getenvInt("SPANBARN_METRIC_ROLLUP_MONTHLY_DAYS", 0),
+			CompactBucketsPerPass: getenvInt("SPANBARN_ROLLUP_COMPACT_BUCKETS_PER_PASS", 12),
 		},
 		SpanStagingEnabled:       getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
 		TraceBufferWindowSeconds: getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
