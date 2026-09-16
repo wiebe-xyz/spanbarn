@@ -12,14 +12,35 @@ import (
 // metric_rollups_coarse, which is why the reads below switch on it.
 const Rollup5mStep int64 = 300
 
-// RollupWindow returns the rows of one tier with buckets in [from, to), ordered
-// so that a compaction pass can walk series by series: project, then name, then
-// fingerprint, then time.
+// rollupWindowFineQuery and rollupWindowCoarseQuery read one project's slice of a
+// compaction window.
+//
+// Both lead with project_id because every index on these tables does. A query
+// filtering on bucket alone has no index to use and full-scans the table: on
+// production that was 5.5M rows and 2.6 GB per bucket compacted, held on the
+// single writer connection, which stalled every other write behind it until the
+// scheduler's watchdog reported a wedge. deleteOlderThanPerProject carries the
+// same warning for the same reason.
+const rollupWindowFineQuery = `SELECT project_id, name, type, unit, temporality, attr_fingerprint, attributes, bucket,
+		count, sum, min, max, last, obs_count, extra
+	 FROM metric_rollups
+	 WHERE project_id = ? AND bucket >= ? AND bucket < ?
+	 ORDER BY name, attr_fingerprint, bucket LIMIT ?`
+
+const rollupWindowCoarseQuery = `SELECT ` + coarseColumns + `
+	 FROM metric_rollups_coarse
+	 WHERE project_id = ? AND step_seconds = ? AND bucket >= ? AND bucket < ?
+	 ORDER BY name, attr_fingerprint, bucket LIMIT ?`
+
+// RollupWindow returns the rows of one tier with buckets in [from, to), a
+// project at a time so each read seeks its index instead of scanning the table.
+// Within a project the rows come out series by series: name, then fingerprint,
+// then time.
 //
 // The caller asks for one extra source bucket before the window it is
 // compacting. That row is what turns a running total into the increase inside
 // the window, and reading it here rather than in a second query keeps the pass
-// to a single scan of one index range.
+// to one index range per project.
 func (r *Repository) RollupWindow(ctx context.Context, step int64, from, to time.Time, limit int) ([]MetricRollup, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
@@ -28,23 +49,44 @@ func (r *Repository) RollupWindow(ctx context.Context, step int64, from, to time
 		limit = 200000
 	}
 
+	table := "metric_rollups_coarse"
+	if step == Rollup5mStep {
+		table = "metric_rollups"
+	}
+	pids, err := r.distinctProjectIDs(ctx, table)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []MetricRollup
+	for _, pid := range pids {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		batch, err := r.rollupWindowForProject(ctx, step, pid, from, to, limit-len(out))
+		if err != nil {
+			return out, err
+		}
+		out = append(out, batch...)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// rollupWindowForProject reads one project's rows from a compaction window.
+func (r *Repository) rollupWindowForProject(ctx context.Context, step, projectID int64, from, to time.Time, limit int) ([]MetricRollup, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
 	var rows *sql.Rows
 	var err error
 	if step == Rollup5mStep {
-		rows, err = r.db.QueryContext(ctx,
-			`SELECT project_id, name, type, unit, temporality, attr_fingerprint, attributes, bucket,
-				count, sum, min, max, last, obs_count, extra
-			 FROM metric_rollups
-			 WHERE bucket >= ? AND bucket < ?
-			 ORDER BY project_id, name, attr_fingerprint, bucket LIMIT ?`,
-			from, to, limit)
+		rows, err = r.db.QueryContext(ctx, rollupWindowFineQuery, projectID, from, to, limit)
 	} else {
-		rows, err = r.db.QueryContext(ctx,
-			`SELECT `+coarseColumns+`
-			 FROM metric_rollups_coarse
-			 WHERE step_seconds = ? AND bucket >= ? AND bucket < ?
-			 ORDER BY project_id, name, attr_fingerprint, bucket LIMIT ?`,
-			step, from, to, limit)
+		rows, err = r.db.QueryContext(ctx, rollupWindowCoarseQuery, projectID, step, from, to, limit)
 	}
 	if err != nil {
 		return nil, err

@@ -39,6 +39,12 @@ type RetentionConfig struct {
 	// itself: it runs every few seconds while there is backlog and falls back to
 	// its idle interval once the ladder is current.
 	CompactBucketsPerPass int // SPANBARN_ROLLUP_COMPACT_BUCKETS_PER_PASS (default 12)
+	// CompactEnabled turns rollup compaction off without a rollback. Compaction
+	// writes the coarse tiers and moves the watermark retention deletes up to,
+	// so turning it off stops both: the tiers stop growing and nothing is
+	// dropped. That is the right trade when compaction itself is misbehaving on
+	// a database whose shape only production has.
+	CompactEnabled bool // SPANBARN_ROLLUP_COMPACT_ENABLED (default 1)
 	// DiskElevatedPct / DiskCriticalPct are the percentages of the database
 	// volume in use at which retention starts shortening its raw-telemetry
 	// windows. Time-based retention alone cannot bound the database — when
@@ -216,6 +222,7 @@ func Load() Config {
 			RollupWeeklyDays:      getenvInt("SPANBARN_METRIC_ROLLUP_WEEKLY_DAYS", 730),
 			RollupMonthlyDays:     getenvInt("SPANBARN_METRIC_ROLLUP_MONTHLY_DAYS", 0),
 			CompactBucketsPerPass: getenvInt("SPANBARN_ROLLUP_COMPACT_BUCKETS_PER_PASS", 12),
+			CompactEnabled:        getenvInt("SPANBARN_ROLLUP_COMPACT_ENABLED", 1) != 0,
 		},
 		SpanStagingEnabled:       getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
 		TraceBufferWindowSeconds: getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
