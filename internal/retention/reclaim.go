@@ -202,5 +202,17 @@ func (w *RetentionWorker) evictOlderThan(ctx context.Context, cfg Config, cutoff
 		total += n
 	}
 
+	// The 5-minute rollup tier is raw telemetry too, and on a full volume it is
+	// usually the largest thing that may legally go — leaving it out is what let
+	// this loop grind the span window down to its floor while reporting that
+	// ingest was outrunning eviction. Deletion still stops at the compaction
+	// watermark, so nothing that has not been summarised is lost, and the coarse
+	// tiers are never touched: they are the history the ladder exists to keep.
+	if n, err := w.deleteRollupTiers(ctx, TierCritical.Apply(cfg), time.Now().UTC()); err != nil {
+		return total, err
+	} else {
+		total += n
+	}
+
 	return total, nil
 }

@@ -15,6 +15,22 @@ data:
   SPANBARN_RETENTION_ERROR_DAYS: "30"
   SPANBARN_RETENTION_AGGREGATED_DAYS: "90"
   SPANBARN_AGGREGATION_INTERVAL: "5m"
+  # Metric rollup tiers. The writer compacts rollups 5m → 1h → 1d → 1w → 1mo and
+  # each tier keeps its own window, so storage is bounded by resolution rather
+  # than by one cutoff: recent data stays fine-grained, old data stays readable
+  # for years at a few thousand rows a month. A tier is deleted only as far as it
+  # has been compacted into the next one, so a stalled compactor delays cleanup
+  # instead of losing history.
+  #
+  # These are written out rather than left to defaults because the window that
+  # filled production had a default and no wiring: the 5-minute tier reached
+  # 3.7 GB, 76% of the database, while nothing could change it.
+  SPANBARN_METRIC_ROLLUP_RETENTION_DAYS: "2"
+  SPANBARN_METRIC_ROLLUP_HOURLY_DAYS: "30"
+  SPANBARN_METRIC_ROLLUP_DAILY_DAYS: "365"
+  SPANBARN_METRIC_ROLLUP_WEEKLY_DAYS: "730"
+  # 0 keeps the monthly tier indefinitely — about a megabyte a year here.
+  SPANBARN_METRIC_ROLLUP_MONTHLY_DAYS: "0"
   # Span staging (tail sampling): the writer appends consumed spans to
   # spans_staging (cheap) and a background flusher classifies whole traces off
   # the hot path, so the Redis write-queue never backs up to the cap. Validated

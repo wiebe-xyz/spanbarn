@@ -213,6 +213,9 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
 
+	compactor := newRollupCompactor(repo, cfg, logger)
+	safeGo("rollup-compactor", &wg, func() { compactor.Run(retentionCtx) })
+
 	ratioLookup := ingest.NewCachedRatioLookup(queryRepo, time.Minute)
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
@@ -825,6 +828,11 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
+
+	// Shares retentionRepo for the same reason retention does: a longer query
+	// timeout and the write scheduler, on the one writer connection.
+	compactor := newRollupCompactor(retentionRepo, cfg, logger)
+	safeGo("rollup-compactor", &wg, func() { compactor.Run(retentionCtx) })
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
 	// Alert reads run on the read-only connection; the rare trigger write stays

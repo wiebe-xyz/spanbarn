@@ -17,14 +17,7 @@ type RuntimeStats = {
   numGC: number
 }
 
-type RetentionSettings = {
-  retention_full_hours: string
-  retention_aggregated_days: string
-  retention_error_days: string
-  metrics_retention_days: string
-  log_retention_hours: string
-  error_log_retention_days: string
-}
+type RetentionSettings = Record<string, string>
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -88,15 +81,35 @@ function SystemHealthPanel() {
   )
 }
 
+type RetentionField = { key: string; label: string; placeholder: string }
+
+// The windows this panel owns. Blank means "use the server default", which is
+// why every field starts empty and carries its default as a placeholder: the
+// panel used to seed itself with hardcoded numbers and PUT its whole state, so
+// simply opening it and pressing Save wrote an override for every field,
+// including retention_full_hours, a setting that does nothing.
+const RETENTION_FIELDS: RetentionField[] = [
+  { key: 'retention_interesting_hours', label: 'Span retention (hours)', placeholder: '48' },
+  { key: 'retention_aggregated_days', label: 'Aggregate retention (days)', placeholder: '365' },
+  { key: 'retention_error_days', label: 'Error sample retention (days)', placeholder: '30' },
+  { key: 'metrics_retention_days', label: 'Raw metrics retention (days)', placeholder: '7' },
+  { key: 'log_retention_hours', label: 'Log retention (hours)', placeholder: '24' },
+  { key: 'error_log_retention_days', label: 'Error log retention (days)', placeholder: '30' },
+]
+
+const ROLLUP_FIELDS: RetentionField[] = [
+  { key: 'metric_rollup_retention_days', label: '5-minute rollups (days)', placeholder: '2' },
+  { key: 'metric_rollup_hourly_days', label: 'Hourly rollups (days)', placeholder: '30' },
+  { key: 'metric_rollup_daily_days', label: 'Daily rollups (days)', placeholder: '365' },
+  { key: 'metric_rollup_weekly_days', label: 'Weekly rollups (days)', placeholder: '730' },
+  { key: 'metric_rollup_monthly_days', label: 'Monthly rollups (days)', placeholder: '0 keeps all' },
+]
+
+const ALL_RETENTION_FIELDS = [...RETENTION_FIELDS, ...ROLLUP_FIELDS]
+
 function RetentionSettingsPanel() {
-  const [settings, setSettings] = useState<RetentionSettings>({
-    retention_full_hours: '72',
-    retention_aggregated_days: '30',
-    retention_error_days: '90',
-    metrics_retention_days: '90',
-    log_retention_hours: '24',
-    error_log_retention_days: '30',
-  })
+  const [settings, setSettings] = useState<RetentionSettings>({})
+  const [obsoleteSet, setObsoleteSet] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -104,21 +117,22 @@ function RetentionSettingsPanel() {
   useEffect(() => {
     fetchJSON<Record<string, string>>('/api/v1/settings')
       .then((data) => {
-        if (data) {
-          setSettings((prev) => ({ ...prev, ...data }))
-        }
+        if (!data) return
+        const owned: RetentionSettings = {}
+        for (const f of ALL_RETENTION_FIELDS) owned[f.key] = data[f.key] ?? ''
+        setSettings(owned)
+        setObsoleteSet(Boolean(data.retention_full_hours))
       })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
 
-  const handleSave = async () => {
+  // Only the keys this panel owns are sent. An empty value clears the override
+  // and returns the window to the server default.
+  const save = async (patch: RetentionSettings) => {
     setSaving(true)
     try {
-      await fetchJSON('/api/v1/settings', {
-        method: 'PUT',
-        body: JSON.stringify(settings),
-      })
+      await fetchJSON('/api/v1/settings', { method: 'PUT', body: JSON.stringify(patch) })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch {
@@ -136,74 +150,36 @@ function RetentionSettingsPanel() {
     width: 80,
   }
 
+  const renderField = (f: RetentionField) => (
+    <label key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{f.label}</span>
+      <input
+        type="number"
+        min="0"
+        placeholder={f.placeholder}
+        value={settings[f.key] ?? ''}
+        onChange={(e) => setSettings((s) => ({ ...s, [f.key]: e.target.value }))}
+        style={fieldStyle}
+      />
+    </label>
+  )
+
   return (
     <div className="card" style={{ marginBottom: '1.5rem' }}>
       <div style={{ fontWeight: 700, fontSize: '0.875rem', marginBottom: '0.75rem' }}>
         Retention
       </div>
       <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'end' }}>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Span retention (hours)</span>
-          <input
-            type="number"
-            min="1"
-            value={settings.retention_full_hours}
-            onChange={(e) => setSettings((s) => ({ ...s, retention_full_hours: e.target.value }))}
-            style={fieldStyle}
-          />
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Aggregate retention (days)</span>
-          <input
-            type="number"
-            min="1"
-            value={settings.retention_aggregated_days}
-            onChange={(e) => setSettings((s) => ({ ...s, retention_aggregated_days: e.target.value }))}
-            style={fieldStyle}
-          />
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Error sample retention (days)</span>
-          <input
-            type="number"
-            min="1"
-            value={settings.retention_error_days}
-            onChange={(e) => setSettings((s) => ({ ...s, retention_error_days: e.target.value }))}
-            style={fieldStyle}
-          />
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Metrics retention (days)</span>
-          <input
-            type="number"
-            min="1"
-            value={settings.metrics_retention_days}
-            onChange={(e) => setSettings((s) => ({ ...s, metrics_retention_days: e.target.value }))}
-            style={fieldStyle}
-          />
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Log retention (hours)</span>
-          <input
-            type="number"
-            min="1"
-            value={settings.log_retention_hours}
-            onChange={(e) => setSettings((s) => ({ ...s, log_retention_hours: e.target.value }))}
-            style={fieldStyle}
-          />
-        </label>
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Error log retention (days)</span>
-          <input
-            type="number"
-            min="1"
-            value={settings.error_log_retention_days}
-            onChange={(e) => setSettings((s) => ({ ...s, error_log_retention_days: e.target.value }))}
-            style={fieldStyle}
-          />
-        </label>
+        {RETENTION_FIELDS.map(renderField)}
+      </div>
+
+      <div style={{ fontWeight: 700, fontSize: '0.875rem', margin: '1.25rem 0 0.75rem' }}>
+        Metric rollup tiers
+      </div>
+      <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', alignItems: 'end' }}>
+        {ROLLUP_FIELDS.map(renderField)}
         <button
-          onClick={handleSave}
+          onClick={() => void save(settings)}
           disabled={saving}
           className="btn"
           style={{ fontSize: '0.8125rem' }}
@@ -212,7 +188,32 @@ function RetentionSettingsPanel() {
         </button>
       </div>
       <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 8 }}>
-        Spans older than the retention window are aggregated and deleted. Changes take effect on the next retention cycle (~5 min).
+        Rollups are compacted 5m to 1h to 1d to 1w to 1mo, dropping volatile attributes such as
+        service.version at each step. A tier is deleted only once it has been compacted into the
+        next one, so a shorter window lowers resolution while the coarser tiers keep the history.
+      </div>
+
+      {obsoleteSet && (
+        <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 8 }}>
+          retention_full_hours is stored but obsolete: it is wired to nothing. Span retention is the
+          field above.{' '}
+          <button
+            className="btn"
+            style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem' }}
+            onClick={() => {
+              setObsoleteSet(false)
+              void save({ retention_full_hours: '' })
+            }}
+          >
+            Remove it
+          </button>
+        </div>
+      )}
+
+      <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 8 }}>
+        Spans older than the retention window are aggregated and deleted. Changes take effect on the
+        next retention cycle (~5 min). While the disk is filling, the raw windows and the 5-minute
+        rollup tier shorten automatically; the coarser tiers are left alone.
       </div>
     </div>
   )

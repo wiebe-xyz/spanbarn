@@ -164,13 +164,20 @@ func serveSWR[T any](
 // boring.min_traces_per_minute, boring.min_traces_per_minute.project.{id}.
 // Per-project retention caps: retention.max_hours.project.{id},
 // retention.max_traces.project.{id}.
+// Rollup tiers: metric_rollup_retention_days (the 5-minute tier) plus
+// metric_rollup_{hourly,daily,weekly,monthly}_days, and the attribute reduction
+// lists metrics.rollup_drop_attrs.{hourly,daily}.
 func isAllowedSettingKey(k string) bool {
 	switch k {
 	case "retention_full_hours", "retention_interesting_hours",
 		"retention_aggregated_days", "retention_error_days",
 		"boring_retention_minutes", "boring.sample_ratio",
 		"boring.min_traces_per_minute",
-		"metrics_retention_days", "log_retention_hours", "error_log_retention_days":
+		"metrics_retention_days", "log_retention_hours", "error_log_retention_days",
+		"metric_rollup_retention_days", "metric_rollup_hourly_days",
+		"metric_rollup_daily_days", "metric_rollup_weekly_days",
+		"metric_rollup_monthly_days",
+		"metrics.rollup_drop_attrs.hourly", "metrics.rollup_drop_attrs.daily":
 		return true
 	}
 	return strings.HasPrefix(k, "ingest.sample_ratio.") ||
