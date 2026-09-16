@@ -48,7 +48,7 @@ func TestRollupTierKeptUntilCompacted(t *testing.T) {
 	now := time.Now().UTC()
 	insertFineRollup(t, repo, now.Add(-10*24*time.Hour))
 
-	deleted, err := w.deleteRollupTiers(context.Background(), w.cfg, now)
+	deleted, _, err := w.deleteRollupTiers(context.Background(), w.cfg, now, maxRollupRowsPerCycle)
 	if err != nil {
 		t.Fatalf("deleteRollupTiers: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestRollupTierDeletesOnlyUpToWatermark(t *testing.T) {
 		t.Fatalf("SetMetricRollupWatermark: %v", err)
 	}
 
-	deleted, err := w.deleteRollupTiers(ctx, w.cfg, now)
+	deleted, _, err := w.deleteRollupTiers(ctx, w.cfg, now, maxRollupRowsPerCycle)
 	if err != nil {
 		t.Fatalf("deleteRollupTiers: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestRollupTierWindowWinsWhenWatermarkIsAhead(t *testing.T) {
 		t.Fatalf("SetMetricRollupWatermark: %v", err)
 	}
 
-	deleted, err := w.deleteRollupTiers(ctx, w.cfg, now)
+	deleted, _, err := w.deleteRollupTiers(ctx, w.cfg, now, maxRollupRowsPerCycle)
 	if err != nil {
 		t.Fatalf("deleteRollupTiers: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestCoarsestTierNeedsNoWatermark(t *testing.T) {
 	now := time.Now().UTC()
 	insertCoarseRollup(t, repo, rollup.StepMonth, now.AddDate(0, -6, 0))
 
-	deleted, err := w.deleteRollupTiers(context.Background(), w.cfg, now)
+	deleted, _, err := w.deleteRollupTiers(context.Background(), w.cfg, now, maxRollupRowsPerCycle)
 	if err != nil {
 		t.Fatalf("deleteRollupTiers: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestMonthlyTierKeptIndefinitelyByDefault(t *testing.T) {
 	now := time.Now().UTC()
 	insertCoarseRollup(t, repo, rollup.StepMonth, now.AddDate(-5, 0, 0))
 
-	deleted, err := w.deleteRollupTiers(context.Background(), w.cfg, now)
+	deleted, _, err := w.deleteRollupTiers(context.Background(), w.cfg, now, maxRollupRowsPerCycle)
 	if err != nil {
 		t.Fatalf("deleteRollupTiers: %v", err)
 	}
@@ -168,5 +168,48 @@ func TestPressureShortensOnlyTheFineTier(t *testing.T) {
 
 	if got := TierCritical.Apply(Config{MetricRollupRetentionDays: 1}).MetricRollupRetentionDays; got != 1 {
 		t.Errorf("5m tier floor = %d, want 1 day", got)
+	}
+}
+
+// TestRollupBudgetCapsOneCycleAndResumes: the first cycle after compaction
+// starts faces a backlog of millions of rows. Draining it in one call is what
+// took production's retention worker out of service for twelve minutes — no
+// deletes of anything else, no disk re-measurement, no log line. A cycle now
+// stops at its budget, says a backlog remains, and the next cycle picks up.
+func TestRollupBudgetCapsOneCycleAndResumes(t *testing.T) {
+	w, repo := setupTestWorker(t, Config{MetricRollupRetentionDays: 2})
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	for i := 0; i < 40; i++ {
+		insertFineRollup(t, repo, now.Add(-time.Duration(10*24+i)*time.Hour))
+	}
+	if err := repo.SetMetricRollupWatermark(ctx, rollup.Step5m, now); err != nil {
+		t.Fatalf("SetMetricRollupWatermark: %v", err)
+	}
+
+	deleted, backlog, err := w.deleteRollupTiers(ctx, w.cfg, now, 10)
+	if err != nil {
+		t.Fatalf("deleteRollupTiers: %v", err)
+	}
+	if deleted != 10 {
+		t.Errorf("deleted %d rows, want the 10 the budget allows", deleted)
+	}
+	if !backlog {
+		t.Error("a cycle that stopped at its budget must report the backlog it left")
+	}
+	if got := countRows(t, repo, "metric_rollups"); got != 30 {
+		t.Errorf("rows remaining = %d, want 30", got)
+	}
+
+	deleted, backlog, err = w.deleteRollupTiers(ctx, w.cfg, now, maxRollupRowsPerCycle)
+	if err != nil {
+		t.Fatalf("second cycle: %v", err)
+	}
+	if deleted != 30 {
+		t.Errorf("second cycle deleted %d rows, want the remaining 30", deleted)
+	}
+	if backlog {
+		t.Error("nothing is left, so no backlog should be reported")
 	}
 }

@@ -206,3 +206,9 @@ func (r *Repository) DeleteMetricRollupsOlderThan(ctx context.Context, cutoff ti
 	// of full-scanning the table (bucket has no standalone index).
 	return r.deleteOlderThanPerProject(ctx, "metric_rollups", "bucket", cutoff)
 }
+
+// DeleteMetricRollupsOlderThanLimited removes at most max 5-minute rollup rows
+// older than cutoff, reporting whether more were left for the next cycle.
+func (r *Repository) DeleteMetricRollupsOlderThanLimited(ctx context.Context, cutoff time.Time, max int64) (int64, bool, error) {
+	return r.deleteOlderThanPerProjectLimited(ctx, "metric_rollups", "bucket", cutoff, max)
+}

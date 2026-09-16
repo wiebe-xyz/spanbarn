@@ -222,7 +222,12 @@ func Load() Config {
 			RollupWeeklyDays:      getenvInt("SPANBARN_METRIC_ROLLUP_WEEKLY_DAYS", 730),
 			RollupMonthlyDays:     getenvInt("SPANBARN_METRIC_ROLLUP_MONTHLY_DAYS", 0),
 			CompactBucketsPerPass: getenvInt("SPANBARN_ROLLUP_COMPACT_BUCKETS_PER_PASS", 12),
-			CompactEnabled:        getenvInt("SPANBARN_ROLLUP_COMPACT_ENABLED", 1) != 0,
+			// getenvBool, not getenvInt: getenvInt only accepts values > 0, so it
+			// reads "0" as unset and hands back the default. A switch whose off
+			// position is silently ignored is worse than no switch, and this one
+			// was found the only way such a thing ever is — on production, with
+			// the env var set to 0 and compaction still running.
+			CompactEnabled: getenvBool("SPANBARN_ROLLUP_COMPACT_ENABLED", true),
 		},
 		SpanStagingEnabled:       getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
 		TraceBufferWindowSeconds: getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),

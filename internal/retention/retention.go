@@ -51,7 +51,8 @@ type Repository interface {
 	DeleteExpiredWebSessions(now time.Time) (int64, error)
 	DeleteMetricsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteMetricRollupsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
-	DeleteCoarseRollupsOlderThan(ctx context.Context, step int64, cutoff time.Time) (int64, error)
+	DeleteMetricRollupsOlderThanLimited(ctx context.Context, cutoff time.Time, max int64) (int64, bool, error)
+	DeleteCoarseRollupsOlderThanLimited(ctx context.Context, step int64, cutoff time.Time, max int64) (int64, bool, error)
 	MetricRollupWatermark(ctx context.Context, step int64) (time.Time, bool, error)
 	DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error)
 	GetSetting(key string) (string, error)
@@ -292,7 +293,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	rollupRowsDeleted, err := w.deleteRollupTiers(ctx, cfg, now)
+	rollupRowsDeleted, rollupBacklog, err := w.deleteRollupTiers(ctx, cfg, now, maxRollupRowsPerCycle)
 	if err != nil {
 		return err
 	}
@@ -328,6 +329,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		attribute.Int64("aggregates_deleted", aggregatesDeleted),
 		attribute.Int64("metrics_deleted", metricsDeleted),
 		attribute.Int64("rollup_rows_deleted", rollupRowsDeleted),
+		attribute.Bool("rollup_backlog_remains", rollupBacklog),
 		attribute.Int64("logs_deleted", logsDeleted),
 		attribute.Int64("e2e_users_deleted", e2eUsersDeleted),
 		attribute.Int64("web_sessions_deleted", webSessionsDeleted),
@@ -343,6 +345,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		"aggregates_deleted", aggregatesDeleted,
 		"metrics_deleted", metricsDeleted,
 		"rollup_rows_deleted", rollupRowsDeleted,
+		"rollup_backlog_remains", rollupBacklog,
 		"logs_deleted", logsDeleted,
 		"e2e_users_deleted", e2eUsersDeleted,
 		"web_sessions_deleted", webSessionsDeleted,

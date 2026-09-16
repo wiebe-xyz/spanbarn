@@ -145,6 +145,39 @@ func (r *Repository) QueryProjectCoarseRollups(ctx context.Context, projectID, s
 	return scanMetricRollups(rows)
 }
 
+// DeleteCoarseRollupsOlderThanLimited removes at most max rows of one tier older
+// than cutoff, reporting whether more were left for the next cycle.
+func (r *Repository) DeleteCoarseRollupsOlderThanLimited(ctx context.Context, step int64, cutoff time.Time, max int64) (int64, bool, error) {
+	pids, err := r.distinctProjectIDs(ctx, "metric_rollups_coarse")
+	if err != nil {
+		return 0, false, err
+	}
+
+	const q = `DELETE FROM metric_rollups_coarse WHERE rowid IN (
+		SELECT rowid FROM metric_rollups_coarse
+		WHERE project_id = ? AND step_seconds = ? AND bucket < ? LIMIT ?)`
+	var total int64
+	for _, pid := range pids {
+		pid := pid
+		n, _, err := r.batchedDeleteLimited(ctx, max-total, func(limit int64) (int64, error) {
+			res, e := r.db.ExecContext(ctx, q, pid, step, cutoff, limit)
+			if e != nil {
+				return 0, e
+			}
+			m, _ := res.RowsAffected()
+			return m, nil
+		})
+		total += n
+		if err != nil {
+			return total, true, err
+		}
+		if total >= max {
+			return total, true, nil
+		}
+	}
+	return total, false, nil
+}
+
 // DeleteCoarseRollupsOlderThan removes buckets of one tier older than cutoff, a
 // project at a time so each bounded DELETE seeks
 // idx_metric_rollups_coarse_bucket instead of scanning the table.
