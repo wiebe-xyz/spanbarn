@@ -2,6 +2,12 @@ apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: spanbarn
+  # The certificate for spanbarn.wiebe.xyz comes from Traefik's own ACME
+  # resolver ("letsencrypt", DNS-01 via Cloudflare, set on the websecure
+  # entrypoint in the cluster's Traefik HelmChartConfig and stored in
+  # /data/acme.json). cert-manager does not watch IngressRoute, and the cluster
+  # has no ClusterIssuer by this name, so the annotation below does nothing and
+  # the tls.secretName at the bottom names a Secret that does not exist.
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-cloudflare
 spec:

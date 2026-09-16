@@ -133,6 +133,10 @@ func corsMiddleware(allowedOrigins []string, next http.Handler) http.Handler {
 		// client errors). These carry the session cookie, so credentials are
 		// required — but only for allow-listed origins. Reflecting an arbitrary
 		// origin with credentials was the cross-origin write-injection vector.
+		// The session cookie is host-only, so the only browsers that can
+		// authenticate here are SpanBarn's own dashboard pages, which post to
+		// their own host (spanbarn.wiebe.xyz, sb.bananasketch.nl) and need no
+		// CORS. A branded ingest-only alias therefore needs no allowlist entry.
 		case "/api/v1/telemetry", "/api/v1/client-errors":
 			if origin := r.Header.Get("Origin"); origin != "" && originAllowed(origin, allowedOrigins) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)

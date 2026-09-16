@@ -64,13 +64,14 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	publicURL := s.publicURL
-	if publicURL == "" {
-		publicURL = "https://spanbarn.wiebe.xyz"
-	}
+	// Ingest links follow the host the guide was requested on, so a branded
+	// sb. alias stays branded. Dashboard links (E2E, project admin) always use
+	// the canonical host: branded aliases carry the ingest surface only.
+	publicURL := s.canonicalURL()
+	ingestURL := s.ingestBaseURL(r)
 
-	endpoint := publicURL + "/v1/traces"
-	setupURL := publicURL + "/api/v1/setup/" + slug
+	endpoint := ingestURL + "/v1/traces"
+	setupURL := ingestURL + "/api/v1/setup/" + slug
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	b := &strings.Builder{}
@@ -148,7 +149,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(b, ")\n```\n\n")
 
 	fmt.Fprintf(b, "### Environment Variables (any OTel SDK)\n\n")
-	fmt.Fprintf(b, "```bash\nexport OTEL_EXPORTER_OTLP_ENDPOINT=%s\n", strings.TrimSuffix(publicURL, "/")+"/")
+	fmt.Fprintf(b, "```bash\nexport OTEL_EXPORTER_OTLP_ENDPOINT=%s\n", ingestURL+"/")
 	fmt.Fprintf(b, "export OTEL_EXPORTER_OTLP_HEADERS=\"Authorization=Bearer %s\"\n", plaintext)
 	fmt.Fprintf(b, "export OTEL_SERVICE_NAME=%s\n```\n\n---\n\n", slug)
 
