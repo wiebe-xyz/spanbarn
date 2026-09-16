@@ -131,6 +131,81 @@ func TestRollupWindowQueriesSeekAnIndex(t *testing.T) {
 	}
 }
 
+// TestDeleteMetricRollupsOlderThanLimited: the ceiling is what keeps a retention
+// cycle finite. Draining millions of rows in one call is what took production's
+// retention worker out of service — no other deletes, no disk re-measurement, no
+// log line — while compaction kept writing underneath it.
+func TestDeleteMetricRollupsOlderThanLimited(t *testing.T) {
+	repo := setupTestDB(t)
+	ctx := context.Background()
+	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+
+	var rows []MetricRollup
+	for i := 0; i < 25; i++ {
+		rows = append(rows, fineRow(base.Add(time.Duration(i)*time.Minute), "fp", float64(i)))
+	}
+	if err := repo.UpsertMetricRollups(rows); err != nil {
+		t.Fatalf("UpsertMetricRollups: %v", err)
+	}
+	cutoff := base.Add(24 * time.Hour)
+
+	n, more, err := repo.DeleteMetricRollupsOlderThanLimited(ctx, cutoff, 10)
+	if err != nil {
+		t.Fatalf("limited delete: %v", err)
+	}
+	if n != 10 || !more {
+		t.Errorf("deleted %d rows (more=%v), want 10 with a backlog reported", n, more)
+	}
+
+	n, more, err = repo.DeleteMetricRollupsOlderThanLimited(ctx, cutoff, 100)
+	if err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	if n != 15 || more {
+		t.Errorf("second pass deleted %d rows (more=%v), want the remaining 15 and no backlog", n, more)
+	}
+}
+
+func TestDeleteCoarseRollupsOlderThanLimited(t *testing.T) {
+	repo := setupTestDB(t)
+	ctx := context.Background()
+	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+
+	var rows []MetricRollup
+	for i := 0; i < 12; i++ {
+		rows = append(rows, coarseRow(3600, base.Add(time.Duration(i)*time.Hour), float64(i)))
+	}
+	rows = append(rows, coarseRow(86400, base, 99)) // another tier, must survive
+	if err := repo.UpsertCoarseRollups(ctx, rows); err != nil {
+		t.Fatalf("UpsertCoarseRollups: %v", err)
+	}
+	cutoff := base.Add(30 * 24 * time.Hour)
+
+	n, more, err := repo.DeleteCoarseRollupsOlderThanLimited(ctx, 3600, cutoff, 5)
+	if err != nil {
+		t.Fatalf("limited delete: %v", err)
+	}
+	if n != 5 || !more {
+		t.Errorf("deleted %d rows (more=%v), want 5 with a backlog reported", n, more)
+	}
+
+	n, more, err = repo.DeleteCoarseRollupsOlderThanLimited(ctx, 3600, cutoff, 100)
+	if err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	if n != 7 || more {
+		t.Errorf("second pass deleted %d rows (more=%v), want the remaining 7 and no backlog", n, more)
+	}
+
+	var daily int
+	if err := repo.DB().QueryRow(`SELECT COUNT(*) FROM metric_rollups_coarse WHERE step_seconds = 86400`).Scan(&daily); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if daily != 1 {
+		t.Errorf("daily rows = %d, want 1 — a ceiling on one tier must not touch another", daily)
+	}
+}
+
 // TestCoarseLastByFingerprint feeds the running total that keeps a compacted
 // counter monotonic from one tier bucket to the next.
 func TestCoarseLastByFingerprint(t *testing.T) {

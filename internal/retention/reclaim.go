@@ -208,7 +208,7 @@ func (w *RetentionWorker) evictOlderThan(ctx context.Context, cfg Config, cutoff
 	// ingest was outrunning eviction. Deletion still stops at the compaction
 	// watermark, so nothing that has not been summarised is lost, and the coarse
 	// tiers are never touched: they are the history the ladder exists to keep.
-	if n, err := w.deleteRollupTiers(ctx, TierCritical.Apply(cfg), time.Now().UTC()); err != nil {
+	if n, _, err := w.deleteRollupTiers(ctx, TierCritical.Apply(cfg), time.Now().UTC(), maxRollupRowsPerRound); err != nil {
 		return total, err
 	} else {
 		total += n

@@ -90,6 +90,27 @@ func TestMetricsRetentionDaysEnvOverride(t *testing.T) {
 	}
 }
 
+func TestRollupCompactionEnabledByDefault(t *testing.T) {
+	if !Load().Retention.CompactEnabled {
+		t.Fatal("rollup compaction should be on by default")
+	}
+}
+
+// TestRollupCompactionDisabledByEnv guards the off position of the switch. It
+// was first wired through getenvInt, which only accepts values above zero and so
+// read "0" as unset and handed back the default. The flag was set to 0 on
+// production and compaction carried on regardless.
+func TestRollupCompactionDisabledByEnv(t *testing.T) {
+	for _, off := range []string{"0", "false", "no"} {
+		t.Run(off, func(t *testing.T) {
+			t.Setenv("SPANBARN_ROLLUP_COMPACT_ENABLED", off)
+			if Load().Retention.CompactEnabled {
+				t.Errorf("SPANBARN_ROLLUP_COMPACT_ENABLED=%s must disable compaction", off)
+			}
+		})
+	}
+}
+
 func TestTraceBufferLimitsDefault(t *testing.T) {
 	cfg := Load()
 	if cfg.TraceBufferMaxSpans != 50000 {

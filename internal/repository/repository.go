@@ -217,6 +217,82 @@ func (r *Repository) deleteOlderThanPerProject(ctx context.Context, table, timeC
 	return total, nil
 }
 
+// batchedDeleteLimited is batchedDelete with a ceiling: it stops once max rows
+// have been deleted, and reports whether it left more behind.
+//
+// The ceiling is what keeps a retention cycle finite. Draining a backlog of
+// millions of rows in one call holds the cycle open for as long as that takes,
+// and a cycle that never returns never deletes anything else, never re-measures
+// the disk it is trying to free, and never logs — so from the outside retention
+// simply goes silent while the volume fills.
+func (r *Repository) batchedDeleteLimited(ctx context.Context, max int64, exec func(limit int64) (int64, error)) (int64, bool, error) {
+	var total int64
+	for total < max {
+		if err := ctx.Err(); err != nil {
+			return total, true, err
+		}
+
+		batch := int64(retentionDeleteBatch)
+		if remaining := max - total; remaining < batch {
+			batch = remaining
+		}
+
+		var n int64
+		if err := r.execLow(func() error {
+			var e error
+			n, e = exec(batch)
+			return e
+		}); err != nil {
+			return total, true, err
+		}
+		total += n
+
+		if n < batch {
+			return total, false, nil // tail reached
+		}
+		if r.deleteBatchYield > 0 {
+			select {
+			case <-ctx.Done():
+				return total, true, ctx.Err()
+			case <-time.After(r.deleteBatchYield):
+			}
+		}
+	}
+	return total, true, nil
+}
+
+// deleteOlderThanPerProjectLimited is deleteOlderThanPerProject under a row
+// ceiling, seeking the (project_id, timeCol) index a project at a time.
+func (r *Repository) deleteOlderThanPerProjectLimited(ctx context.Context, table, timeCol string, cutoff time.Time, max int64) (int64, bool, error) {
+	pids, err := r.distinctProjectIDs(ctx, table)
+	if err != nil {
+		return 0, false, err
+	}
+
+	q := "DELETE FROM " + table + " WHERE rowid IN (SELECT rowid FROM " + table +
+		" WHERE project_id = ? AND " + timeCol + " < ? LIMIT ?)"
+	var total int64
+	for _, pid := range pids {
+		pid := pid
+		n, _, err := r.batchedDeleteLimited(ctx, max-total, func(limit int64) (int64, error) {
+			res, e := r.db.ExecContext(ctx, q, pid, cutoff, limit)
+			if e != nil {
+				return 0, e
+			}
+			m, _ := res.RowsAffected()
+			return m, nil
+		})
+		total += n
+		if err != nil {
+			return total, true, err
+		}
+		if total >= max {
+			return total, true, nil // ceiling hit; the rest waits for the next cycle
+		}
+	}
+	return total, false, nil
+}
+
 // batchedDelete repeatedly runs exec — a single retentionDeleteBatch-bounded
 // DELETE returning the rows it affected — through the low-priority write queue
 // until a batch deletes fewer than retentionDeleteBatch rows (i.e. the tail is
