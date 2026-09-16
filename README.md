@@ -228,7 +228,7 @@ project automatically.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SPANBARN_ADDR` | `:8080` | Listen address |
-| `SPANBARN_PUBLIC_URL` | | External URL for links |
+| `SPANBARN_PUBLIC_URL` | `https://spanbarn.wiebe.xyz` | Canonical dashboard URL for links. The setup guide names the requesting host instead when it is a branded `sb.` alias |
 | `SPANBARN_DB_PATH` | `.data/spanbarn.db` | SQLite database path |
 | `SPANBARN_SPOOL_DIR` | `.data/spool` | Ingest write-ahead spool |
 | `SPANBARN_API_KEY` | | Static ingest API key |
@@ -265,7 +265,7 @@ project automatically.
 | `SPANBARN_SLOW_THRESHOLD_MS` | `500` | Slow span threshold (ms) |
 | `SPANBARN_QUERY_TIMEOUT_SECONDS` | `30` | Query timeout for dashboard queries |
 | `SPANBARN_AGGREGATION_INTERVAL` | `1m` | Aggregation bucket size |
-| `SPANBARN_ALLOWED_ORIGINS` | `*` | CORS origins (CSV) |
+| `SPANBARN_ALLOWED_ORIGINS` | (empty) | CORS origins (CSV) for the dashboard API and the session-authed `/api/v1/telemetry` and `/api/v1/client-errors`. Empty sends no CORS headers there. `/v1/traces` and `/api/v1/spans` allow any origin regardless |
 | `SPANBARN_SELF_ENDPOINT` | | Self-reporting endpoint |
 | `SPANBARN_SELF_API_KEY` | | Self-reporting API key |
 | `SPANBARN_ENVIRONMENT` | | Deployment environment tag (e.g. `production`) |
