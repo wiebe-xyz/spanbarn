@@ -109,6 +109,13 @@ type FunnelBarnConfig struct {
 	Project  string // SPANBARN_FUNNELBARN_PROJECT
 }
 
+// DefaultMaxBodyBytes is the default SPANBARN_MAX_BODY_BYTES: 4 MiB, applied to
+// the wire and the decompressed size of an ingest request on both OTLP
+// transports. The OTLP spec recommends 64 MiB, but a request this size holds
+// about 34 MiB of live heap and allocates ~110 MiB while it is processed
+// (BenchmarkOTLPIngestMemory), against a 448 MiB GOMEMLIMIT on the ingest pod.
+const DefaultMaxBodyBytes = 4 << 20
+
 // Config holds all SPANBARN_* environment variables with sensible defaults.
 type Config struct {
 	Addr                string
@@ -198,7 +205,7 @@ func Load() Config {
 		AdminPasswordBcrypt: os.Getenv("SPANBARN_ADMIN_PASSWORD_BCRYPT"),
 		SessionSecret:       os.Getenv("SPANBARN_SESSION_SECRET"),
 		SessionTTLSeconds:   getenvInt("SPANBARN_SESSION_TTL_SECONDS", 43200),
-		MaxBodyBytes:        getenvInt64("SPANBARN_MAX_BODY_BYTES", 1<<20),
+		MaxBodyBytes:        getenvInt64("SPANBARN_MAX_BODY_BYTES", DefaultMaxBodyBytes),
 		MaxSpoolBytes:       getenvInt64("SPANBARN_MAX_SPOOL_BYTES", 0),
 		IngestRejectDiskPct: getenvInt("SPANBARN_INGEST_REJECT_DISK_PCT", 95),
 		Retention: RetentionConfig{

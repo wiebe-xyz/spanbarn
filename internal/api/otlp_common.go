@@ -1,6 +1,8 @@
 package api
 
 import (
+	"compress/gzip"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -9,20 +11,47 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// readOTLPBody reads the full request body, mapping a MaxBytesReader overflow to
-// 413 and any other read error to 400. Returns ok=false after writing the error
-// response, so callers just `if !ok { return }`.
-func readOTLPBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		if strings.Contains(err.Error(), "http: request body too large") {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large", "")
+// readOTLPBody reads the full request body, transparently gunzipping it when
+// the client sent Content-Encoding: gzip (the OTLP spec requires servers to
+// accept it). The size limit applies to the wire bytes (via the server-wide
+// maxBodyBytesMiddleware) and again to the decompressed bytes, so a small
+// compressed body cannot inflate past it.
+//
+// An oversize body maps to 413, an unsupported encoding to 415, and any other
+// read error (including a corrupt gzip stream) to 400. Returns ok=false after
+// writing the error response, so callers just `if !ok { return }`.
+func (s *Server) readOTLPBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	src := r.Body
+	switch enc := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding"))); enc {
+	case "", "identity":
+	case "gzip":
+		zr, err := gzip.NewReader(r.Body)
+		if err != nil {
+			writeOTLPReadError(w, err)
 			return nil, false
 		}
-		writeError(w, http.StatusBadRequest, "failed to read body", err.Error())
+		defer zr.Close()
+		src = http.MaxBytesReader(w, zr, s.maxBodyBytes)
+	default:
+		writeError(w, http.StatusUnsupportedMediaType, "unsupported content encoding", enc)
+		return nil, false
+	}
+
+	body, err := io.ReadAll(src)
+	if err != nil {
+		writeOTLPReadError(w, err)
 		return nil, false
 	}
 	return body, true
+}
+
+func writeOTLPReadError(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large", "")
+		return
+	}
+	writeError(w, http.StatusBadRequest, "failed to read body", err.Error())
 }
 
 // decodeOTLP unmarshals an OTLP export request from body into msg, choosing

@@ -16,7 +16,7 @@ func (s *Server) handleOTLPLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, ok := readOTLPBody(w, r)
+	body, ok := s.readOTLPBody(w, r)
 	if !ok {
 		return
 	}

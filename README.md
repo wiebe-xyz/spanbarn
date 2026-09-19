@@ -71,15 +71,19 @@ The OpenTelemetry spec defines two equivalent transports for OTLP:
 | **Proxy support** | Works through any reverse proxy | Requires HTTP/2-aware proxy |
 | **SDK support** | All OTel SDKs | All OTel SDKs |
 
-**SpanBarn supports OTLP/HTTP only.** This is a deliberate choice: HTTP works behind Caddy, Nginx, and standard load balancers without extra configuration, and the payload format is identical — same protobuf messages, same semantics, same signal fidelity. The JSON encoding option makes debugging easier (pipe requests through `jq`, inspect in browser dev tools).
-
-gRPC's only advantage is slightly lower overhead on persistent streaming connections at very high throughput. For a self-hosted single-binary tool, HTTP is the simpler and more portable choice.
+SpanBarn serves both. OTLP/HTTP is on the main listener (`/v1/traces`, `/v1/metrics`, `/v1/logs`) and works behind Caddy, Nginx and standard load balancers without extra configuration. OTLP/gRPC listens on `SPANBARN_GRPC_ADDR` (default `:4317`, empty disables it). The payload is the same protobuf messages on both, and the JSON encoding on HTTP makes debugging easier (pipe requests through `jq`, inspect in browser dev tools).
 
 Both content types are supported:
 - `application/x-protobuf` (default) — binary protobuf, used by most SDKs
 - `application/json` — JSON encoding via protojson, useful for debugging and `curl`
 
 The response format is content-negotiated via the `Accept` header.
+
+#### Compression and request size
+
+Both transports accept gzip, as the OTLP spec requires. On HTTP, send `Content-Encoding: gzip` (`identity` or no header means uncompressed; any other encoding gets `415`). On gRPC, use the `gzip` compressor.
+
+`SPANBARN_MAX_BODY_BYTES` (default 4 MiB) caps an export on both transports. It applies to the bytes on the wire and again to the decompressed size, so a small compressed body cannot inflate past it. An export over the limit gets `413` on HTTP and `RESOURCE_EXHAUSTED` on gRPC. OTLP exporters treat both as non-retryable and drop the batch, so keep the SDK's `max_export_batch_size` small enough that a batch stays under the limit.
 
 ## SDKs
 
@@ -240,7 +244,7 @@ project automatically.
 | `SPANBARN_OIDC_REFRESH_GRACE_SECONDS` | `3600` | Stale-serve ceiling while IamBarn refresh fails transiently |
 | `SPANBARN_E2E_ENABLED` | `false` | Open the e2e session endpoint (never in production) |
 | `SPANBARN_TRUSTED_PROXIES` | | CIDRs allowed to assert X-Forwarded-Proto; unset outside dev assumes upstream TLS |
-| `SPANBARN_MAX_BODY_BYTES` | `1048576` | Max ingest body (1 MiB) |
+| `SPANBARN_MAX_BODY_BYTES` | `4194304` | Max ingest body (4 MiB), on the wire and decompressed; also the gRPC max message size |
 | `SPANBARN_MAX_SPOOL_BYTES` | | Spool backpressure limit |
 | `SPANBARN_RETENTION_FULL_HOURS` | — | **Obsolete and ignored.** Logs a warning if set. Uninteresting spans now expire via `SPANBARN_BORING_RETENTION_MINUTES`. |
 | `SPANBARN_RETENTION_INTERESTING_HOURS` | `48` | Hours to keep spans (2 days). This is the window spans are actually deleted on, so it sizes the database. |
