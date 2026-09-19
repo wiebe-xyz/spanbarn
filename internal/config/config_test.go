@@ -136,3 +136,16 @@ func TestTraceBufferLimitsEnvOverride(t *testing.T) {
 		t.Errorf("TraceBufferTTLSeconds = %d, want 120", cfg.TraceBufferTTLSeconds)
 	}
 }
+
+func TestMaxBodyBytesDefault(t *testing.T) {
+	if got := Load().MaxBodyBytes; got != 4<<20 {
+		t.Fatalf("default MaxBodyBytes = %d, want %d (4 MiB)", got, 4<<20)
+	}
+}
+
+func TestMaxBodyBytesEnvOverride(t *testing.T) {
+	t.Setenv("SPANBARN_MAX_BODY_BYTES", "8388608")
+	if got := Load().MaxBodyBytes; got != 8<<20 {
+		t.Fatalf("MaxBodyBytes = %d, want %d", got, 8<<20)
+	}
+}
