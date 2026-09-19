@@ -126,24 +126,31 @@ func (s *Spool) readFile(path string, cursor int64, limit int) ([]model.SpanReco
 		}
 	}
 
+	// A Reader rather than a Scanner: a Scanner caps the line at its buffer size,
+	// and one span larger than that stalls replay at the same offset forever. A
+	// line here is bounded by the ingest body limit instead.
 	var records []model.SpanRecord
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 1<<20), 1<<20)
+	reader := bufio.NewReaderSize(f, 64<<10)
 	pos := cursor
 
-	for scanner.Scan() && len(records) < limit {
-		line := scanner.Bytes()
+	for len(records) < limit {
+		line, err := reader.ReadBytes('\n')
+		if err == io.EOF {
+			// A trailing fragment with no newline is a write still in flight.
+			// Leave it unread so the cursor never skips bytes the writer has not
+			// finished.
+			break
+		}
+		if err != nil {
+			return records, pos, fmt.Errorf("spool read: %w", err)
+		}
+		pos += int64(len(line))
+
 		var rec model.SpanRecord
 		if err := json.Unmarshal(line, &rec); err != nil {
-			pos += int64(len(line)) + 1
 			continue
 		}
 		records = append(records, rec)
-		pos += int64(len(line)) + 1
-	}
-
-	if err := scanner.Err(); err != nil {
-		return records, pos, fmt.Errorf("spool scan: %w", err)
 	}
 
 	return records, pos, nil
