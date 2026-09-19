@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	_ "google.golang.org/grpc/encoding/gzip" // OTLP servers MUST accept gzip; register it here rather than rely on a transitive import
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -34,7 +35,13 @@ func NewGRPCServer(s *Server, logger *slog.Logger) *GRPCServer {
 	// protection while leaving this path wide open. Admission runs after auth,
 	// matching the HTTP ordering: capacity state is internal, so an
 	// unauthenticated caller gets Unauthenticated rather than Unavailable.
+	//
+	// MaxRecvMsgSize shares SPANBARN_MAX_BODY_BYTES with the HTTP transport, so
+	// one setting bounds an OTLP export on either one. grpc-go applies it to the
+	// decompressed message and answers RESOURCE_EXHAUSTED, the gRPC counterpart
+	// of HTTP 413.
 	srv := grpc.NewServer(
+		grpc.MaxRecvMsgSize(int(s.maxBodyBytes)),
 		grpc.ChainUnaryInterceptor(
 			grpcAuthInterceptor(s),
 			s.admission.UnaryInterceptor(),
