@@ -30,7 +30,7 @@ test.describe('Attributes', () => {
 
     // The trace health page links here.
     await page.goto('/trace-health');
-    await page.getByRole('link', { name: 'Attributes' }).click();
+    await page.getByRole('link', { name: 'Attributes', exact: true }).click();
     await expect(page).toHaveURL(/\/attributes/);
   });
 });

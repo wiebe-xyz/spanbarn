@@ -66,8 +66,14 @@ test.describe('Boards', () => {
     // One range for every panel, saved with the board.
     const range = page.getByRole('combobox', { name: 'Time range' });
     await expect(range).toHaveValue('24h');
+    // A reload cancels a request still in flight, so wait for each save to land.
+    const saved = () => page.waitForResponse((r) => r.request().method() === 'PUT' && /\/api\/v1\/boards\/\d+$/.test(r.url()) && r.ok());
+    const rangeSaved = saved();
     await range.selectOption('1h');
+    await rangeSaved;
+    const refreshSaved = saved();
     await page.getByRole('combobox', { name: 'Refresh interval' }).selectOption('60');
+    await refreshSaved;
 
     await page.reload();
     await expect(cards).toHaveCount(3, { timeout: 15000 });
