@@ -288,14 +288,16 @@ jobs:
   # The server is deployed via k8s, so only the CLI is brewed. Credentials are
   # decrypted on disk from deploy/ci-secrets.yaml (SOPS + age) using the
   # SOPS_AGE_KEY_PRODUCTION repo secret — the same mechanism as the deploy
-  # workflows. No MinIO/tap GitHub Actions secrets are required.
-  #   ci-secrets.yaml provides: minio.{access_key,secret_key,endpoint,bucket}
+  # workflows. No R2/tap GitHub Actions secrets are required.
+  #   ci-secrets.yaml provides: r2.{access_key,secret_key,endpoint,bucket}
   #                             github.release_tag_pat (push to the tap)
-  # Tap repo: webwiebe/homebrew-spanbarn. Tarballs served from
-  # https://webwiebe.nl/brew/ (MinIO brew/ prefix).
+  # Tap repo: webwiebe/homebrew-spanbarn. Tarballs are uploaded to Cloudflare R2
+  # (bucket webwiebe-apt-repository-production, brew/ prefix) and served from
+  # https://webwiebe.nl/brew/. The bucket has a 5 GB retention policy
+  # (wiebe-xyz/rapid-root#2839), so only the newest 2 sb tarballs per arch stay.
   # ---------------------------------------------------------------------------
   update-brew-repo:
-    name: Update Homebrew Tarballs (MinIO)
+    name: Update Homebrew Tarballs (R2)
     runs-on: ubuntu-latest
     needs: [tag, build-darwin-tarballs]
     steps:
@@ -353,24 +355,65 @@ jobs:
           end
           EOF
 
-      - name: Deploy to MinIO (brew/ prefix — only adds sb files)
+      - name: Deploy to R2 (brew/ prefix — only adds sb files)
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY_PRODUCTION }}
+          AWS_DEFAULT_REGION: auto
         run: |
           pip install awscli
-          # Decrypt MinIO credentials on disk (never echoed).
-          export AWS_ACCESS_KEY_ID=$(sops -d --extract '["minio"]["access_key"]' deploy/ci-secrets.yaml)
-          export AWS_SECRET_ACCESS_KEY=$(sops -d --extract '["minio"]["secret_key"]' deploy/ci-secrets.yaml)
-          AWS_ENDPOINT_URL=$(sops -d --extract '["minio"]["endpoint"]' deploy/ci-secrets.yaml)
-          MINIO_BUCKET=$(sops -d --extract '["minio"]["bucket"]' deploy/ci-secrets.yaml)
-          # cp per-file (not sync) to avoid the LIST timeout against MinIO; we
-          # only ever upload, never delete other apps' files in the bucket.
+          # Decrypt R2 credentials on disk (never echoed).
+          export AWS_ACCESS_KEY_ID=$(sops -d --extract '["r2"]["access_key"]' deploy/ci-secrets.yaml)
+          export AWS_SECRET_ACCESS_KEY=$(sops -d --extract '["r2"]["secret_key"]' deploy/ci-secrets.yaml)
+          AWS_ENDPOINT_URL=$(sops -d --extract '["r2"]["endpoint"]' deploy/ci-secrets.yaml)
+          R2_BUCKET=$(sops -d --extract '["r2"]["bucket"]' deploy/ci-secrets.yaml)
+          # Fail loudly rather than publishing nowhere.
+          for var in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_ENDPOINT_URL R2_BUCKET; do
+            if [ -z "${!var}" ]; then
+              echo "ERROR: ${var} is empty — r2.* in deploy/ci-secrets.yaml must be set."
+              exit 1
+            fi
+          done
+          # cp per-file (not sync): sync LISTs the whole brew/ prefix, which
+          # holds every other publisher's tarballs. cp touches only our keys.
           find brew-repo -type f | while read -r f; do
             key="${f#brew-repo/}"
             aws --endpoint-url "$AWS_ENDPOINT_URL" s3 cp \
               "$f" \
-              "s3://${MINIO_BUCKET}/brew/${key}" \
+              "s3://${R2_BUCKET}/brew/${key}" \
               --cache-control "public, max-age=3600, must-revalidate"
+          done
+
+      - name: Prune old brew tarballs from R2
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY_PRODUCTION }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          export AWS_ACCESS_KEY_ID=$(sops -d --extract '["r2"]["access_key"]' deploy/ci-secrets.yaml)
+          export AWS_SECRET_ACCESS_KEY=$(sops -d --extract '["r2"]["secret_key"]' deploy/ci-secrets.yaml)
+          AWS_ENDPOINT_URL=$(sops -d --extract '["r2"]["endpoint"]' deploy/ci-secrets.yaml)
+          R2_BUCKET=$(sops -d --extract '["r2"]["bucket"]' deploy/ci-secrets.yaml)
+          # Keep only the newest KEEP versions of the tarballs this job
+          # publishes (bucket 5 GB retention policy, rapid-root#2839). Scoped to
+          # sb's own name+arch prefixes: a targeted list per prefix, never a
+          # bucket-wide LIST, so other publishers' tarballs are never touched.
+          KEEP=2
+          for GROUP in sb-darwin-amd64 sb-darwin-arm64; do
+            aws --endpoint-url "$AWS_ENDPOINT_URL" s3api list-objects-v2 \
+              --bucket "$R2_BUCKET" --prefix "brew/${GROUP}-" \
+              --query 'Contents[].Key' --output text 2>/dev/null \
+              | tr '\t' '\n' | grep -E '\.tar\.gz$' | sort -V > /tmp/${GROUP}-versions.txt || true
+
+            COUNT=$(wc -l < /tmp/${GROUP}-versions.txt)
+            DROP=$((COUNT - KEEP))
+            if [ "$DROP" -gt 0 ]; then
+              head -n "$DROP" /tmp/${GROUP}-versions.txt | while read -r key; do
+                echo "Pruning old brew tarball: $key"
+                aws --endpoint-url "$AWS_ENDPOINT_URL" s3 rm "s3://${R2_BUCKET}/${key}"
+                aws --endpoint-url "$AWS_ENDPOINT_URL" s3 rm "s3://${R2_BUCKET}/${key}.sha256" || true
+              done
+            else
+              echo "${GROUP}: ${COUNT} tarball(s) in R2, nothing to prune."
+            fi
           done
 
   update-homebrew-tap:
