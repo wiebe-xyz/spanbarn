@@ -259,7 +259,64 @@ export type SavedQuery = {
   minDurationUs: number
   /** The shared filter model (see filters/model.ts). Null when the query has none. */
   filters: unknown
+  /** The rest of a board query. Absent on a plain trace filter. */
+  definition?: QueryDefinition
   createdAt: string
+}
+
+/** What a board stores of a query besides its filter. It mirrors the group-by endpoint parameters. */
+export type QueryDefinition = {
+  groupBy: string[]
+  calcs: string[]
+  orderBy?: string
+  asc?: boolean
+  limit?: number
+  sample?: number
+  /** The calculation a chart panel draws. Defaults to the first. */
+  chartCalc?: string
+}
+
+export type PanelView = 'table' | 'chart'
+
+export type BoardPanel = {
+  id: number
+  boardId: number
+  savedQueryId: number
+  title: string
+  view: PanelView
+  position: number
+  query: SavedQuery
+}
+
+/** An ordered grid of query panels sharing one time range. */
+export type Board = {
+  id: number
+  projectId: number
+  name: string
+  /** One of the group-by ranges: 1h, 24h, 7d or 30d. */
+  timeRange: string
+  /** 0 is off. */
+  refreshSeconds: number
+  panels: BoardPanel[]
+  createdAt: string
+  updatedAt: string
+}
+
+export type BoardSettings = { name: string; timeRange: string; refreshSeconds: number }
+
+export type NewPanel = {
+  title: string
+  view: PanelView
+  filters?: unknown
+  definition: QueryDefinition
+}
+
+/** A deploy marker drawn on time series panels. */
+export type Release = {
+  id: number
+  projectId: number
+  version: string
+  releasedAt: string
 }
 
 /** A configured alert rule. */

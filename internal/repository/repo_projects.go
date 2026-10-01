@@ -143,6 +143,9 @@ func (r *Repository) DeleteProject(id int64) error {
 		if _, err := tx.Exec("DELETE FROM api_keys WHERE project_id = ?", id); err != nil {
 			return err
 		}
+		if err := deleteProjectBoards(tx, id); err != nil {
+			return err
+		}
 		res, err := tx.Exec("DELETE FROM projects WHERE id = ?", id)
 		if err != nil {
 			return err

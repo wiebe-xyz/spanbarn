@@ -1,5 +1,5 @@
 import { type ReactElement } from 'react'
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { formatAxisTime, seriesColor, statusColor, statusDash, type PivotedSeries } from '../../utils/dashboardData'
 
 type SeriesChartProps = {
@@ -12,12 +12,14 @@ type SeriesChartProps = {
   /** Colour series by HTTP status class instead of the shared palette. */
   byStatus?: boolean
   height?: number
+  /** Release markers: a dashed vertical line with the version at the top. */
+  markers?: { time: number; label: string }[]
 }
 
 const tick = { fontSize: 11, fill: 'var(--text-muted)' }
 
 /** One line per group over a fixed time window, so empty stretches stay empty. */
-export function SeriesChart({ series, fromMs, toMs, label, formatValue, byStatus, height = 200 }: SeriesChartProps): ReactElement {
+export function SeriesChart({ series, fromMs, toMs, label, formatValue, byStatus, height = 200, markers }: SeriesChartProps): ReactElement {
   const span = toMs - fromMs
   return (
     <div style={{ marginBottom: '0.75rem' }}>
@@ -44,6 +46,15 @@ export function SeriesChart({ series, fromMs, toMs, label, formatValue, byStatus
               color: 'var(--text)',
             }}
           />
+          {markers?.map((m) => (
+            <ReferenceLine
+              key={`${m.time}-${m.label}`}
+              x={m.time}
+              stroke="var(--text-muted)"
+              strokeDasharray="4 3"
+              label={{ value: m.label, position: 'top', fontSize: 10, fill: 'var(--text-muted)' }}
+            />
+          ))}
           {series.groups.map((g, i) => (
             <Line
               key={g}

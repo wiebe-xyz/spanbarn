@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, cleanup } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { AnalyzePage } from './AnalyzePage'
 
@@ -160,6 +160,15 @@ describe('AnalyzePage', () => {
     analyze.mockRejectedValue(new Error('invalid filter'))
     renderPage('/analyze?run=1&project=7')
     expect(await screen.findByRole('alert')).toHaveTextContent('invalid filter')
+  })
+
+  it('offers to save a result to a board, and not before there is one', async () => {
+    renderPage()
+    await screen.findByRole('option', { name: 'Profotograaf' })
+    expect(screen.queryByRole('button', { name: 'Save to board' })).not.toBeInTheDocument()
+    cleanup()
+    renderPage('/analyze?run=1&project=7&group_by=url.path&calc=count')
+    expect(await screen.findByRole('button', { name: 'Save to board' })).toBeInTheDocument()
   })
 
   it('adds a distinct count calculation from the attribute box', async () => {
