@@ -33,8 +33,11 @@ func init() {
 // ADD COLUMN of a VIRTUAL generated column is metadata-only (no row rewrite).
 // The index is not: building it evaluates json_extract over every existing span
 // while holding the single write connection, which is the wedge migrations 030
-// and 032 avoid. On a large spans table, create the index by hand before the
-// deploy; IF NOT EXISTS then makes this statement a no-op.
+// and 032 avoid. Spans are short-lived (retention keeps the table small; prod
+// held about 87k rows when this shipped), so the build takes well under a
+// second and the migration runs as is. Do not create the column or the index by
+// hand ahead of the deploy: the ALTER below is not guarded, so a pre-existing
+// column fails the migration with "duplicate column name".
 func up034(ctx context.Context, tx *sql.Tx) error {
 	for _, stmt := range []string{
 		`ALTER TABLE spans ADD COLUMN http_status INTEGER GENERATED ALWAYS AS (
