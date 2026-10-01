@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { AnalyzeParams, AnalyzeResponse, AnalyzeSeriesResponse } from '../api/types'
 import { QueryEditor } from '../components/analyze/QueryEditor'
 import { ResultTable } from '../components/analyze/ResultTable'
+import { SaveToBoard } from '../components/boards/SaveToBoard'
 import { SeriesChart } from '../components/dashboard/SeriesChart'
 import { serializeFilter } from '../filters/model'
 import {
@@ -146,6 +147,7 @@ export function AnalyzePage(): ReactElement {
       />
 
       {error && <div role="alert" style={errorStyle}>{error}</div>}
+      {running && table && win && <SaveToBoard projectId={projectId} state={committed} />}
       {running && table && win && (
         <Results
           table={table}

@@ -671,6 +671,226 @@ paths:
         '400':
           description: As /api/v1/analyze, or more than one calculation
 
+  /api/v1/boards:
+    get:
+      summary: List the boards of a project, newest first, without panels
+      operationId: listBoards
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+      responses:
+        '200':
+          description: Boards
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Board'}
+    post:
+      summary: Create an empty board
+      operationId: createBoard
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BoardSettings'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, properties: {id: {type: integer}}}
+        '400':
+          description: Missing project or name, or a range or refresh interval that is not offered
+
+  /api/v1/boards/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    get:
+      summary: Get a board with its panels in order
+      operationId: getBoard
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The board
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Board'}
+        '404':
+          description: No such board
+    put:
+      summary: Replace the name, shared time range and refresh interval
+      operationId: updateBoard
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BoardSettings'}
+      responses:
+        '200':
+          description: Updated
+        '400':
+          description: Invalid name, range or refresh interval
+        '404':
+          description: No such board
+    delete:
+      summary: Delete a board, its panels and the queries only those panels used
+      operationId: deleteBoard
+      security:
+        - session: []
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          description: No such board
+
+  /api/v1/boards/{id}/panels:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      summary: Save a query to the board as a new last panel
+      description: >
+        Stores the query (filters plus definition) and the panel in one transaction.
+        A board holds at most 50 panels. See specs/001-telemetry-aggregator/data-model.md (boards).
+      operationId: addBoardPanel
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [definition]
+              properties:
+                title: {type: string, maxLength: 200}
+                view: {type: string, enum: [table, chart], default: table}
+                filters: {type: object, description: 'Filter model'}
+                definition: {$ref: '#/components/schemas/QueryDefinition'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, properties: {id: {type: integer}}}
+        '400':
+          description: Invalid filter or definition, or the board is full
+        '404':
+          description: No such board
+
+  /api/v1/boards/{id}/panels/order:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    put:
+      summary: Set the panel order
+      operationId: reorderBoardPanels
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [panelIds]
+              properties:
+                panelIds: {type: array, items: {type: integer}, description: 'Every panel of the board once'}
+      responses:
+        '200':
+          description: Reordered
+        '400':
+          description: The list is not exactly the panels of the board
+        '404':
+          description: No such board
+
+  /api/v1/boards/{id}/panels/{panel}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: panel, in: path, required: true, schema: {type: integer}}
+    put:
+      summary: Rename a panel and switch it between table and chart
+      operationId: updateBoardPanel
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, view]
+              properties:
+                title: {type: string, maxLength: 200}
+                view: {type: string, enum: [table, chart]}
+      responses:
+        '200':
+          description: Updated
+        '400':
+          description: Invalid title or view
+        '404':
+          description: No such panel on this board
+    delete:
+      summary: Remove a panel, and its query when no other panel uses it
+      operationId: deleteBoardPanel
+      security:
+        - session: []
+      responses:
+        '200':
+          description: Removed
+        '404':
+          description: No such panel on this board
+
+  /api/v1/releases:
+    get:
+      summary: Release markers of a project in a time range, oldest first
+      operationId: listReleases
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+      responses:
+        '200':
+          description: Releases
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Release'}
+        '400':
+          description: Missing project or range
+    post:
+      summary: Record a release marker
+      operationId: createRelease
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId, version]
+              properties:
+                projectId: {type: integer}
+                version: {type: string, maxLength: 120}
+                releasedAt: {type: string, format: date-time, description: 'Default now'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, properties: {id: {type: integer}}}
+        '400':
+          description: Missing project or version
+
   /api/v1/traces/{traceId}:
     get:
       summary: Get full trace by ID
@@ -759,6 +979,59 @@ components:
       name: session
 
   schemas:
+    QueryDefinition:
+      type: object
+      required: [calcs]
+      description: The part of a board query the filter model does not carry. Names match the /api/v1/analyze parameters.
+      properties:
+        groupBy: {type: array, items: {type: string}, maxItems: 4}
+        calcs: {type: array, items: {type: string}, minItems: 1, maxItems: 9}
+        orderBy: {type: string, description: 'One of calcs'}
+        asc: {type: boolean}
+        limit: {type: integer, maximum: 100}
+        sample: {type: integer}
+        chartCalc: {type: string, description: 'One of calcs. The calculation a chart panel draws, default the first'}
+    BoardSettings:
+      type: object
+      properties:
+        projectId: {type: integer, description: 'Create only'}
+        name: {type: string, maxLength: 120}
+        timeRange: {type: string, enum: ['1h', '24h', '7d', '30d'], default: '24h'}
+        refreshSeconds: {type: integer, enum: [0, 30, 60, 300, 900]}
+    Board:
+      type: object
+      properties:
+        id: {type: integer}
+        projectId: {type: integer}
+        name: {type: string}
+        timeRange: {type: string}
+        refreshSeconds: {type: integer}
+        panels:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: integer}
+              boardId: {type: integer}
+              savedQueryId: {type: integer}
+              title: {type: string}
+              view: {type: string, enum: [table, chart]}
+              position: {type: integer}
+              query:
+                type: object
+                properties:
+                  id: {type: integer}
+                  filters: {type: object, description: 'Filter model'}
+                  definition: {$ref: '#/components/schemas/QueryDefinition'}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    Release:
+      type: object
+      properties:
+        id: {type: integer}
+        projectId: {type: integer}
+        version: {type: string}
+        releasedAt: {type: string, format: date-time}
     TraceSummary:
       type: object
       properties:

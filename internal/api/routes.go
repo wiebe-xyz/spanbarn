@@ -1,6 +1,11 @@
 package api
 
-import "net/http"
+import (
+	"log/slog"
+	"net/http"
+
+	"github.com/wiebe-xyz/spanbarn/internal/service"
+)
 
 // registerRoutes sets up all HTTP routes on the server's mux.
 func (s *Server) registerRoutes() {
@@ -197,6 +202,13 @@ func (s *Server) registerRoutes() {
 
 		s.mux.Handle("/api/v1/saved-queries", apiRL(sessionAuth(sqh)))
 		s.mux.Handle("/api/v1/saved-queries/", apiRL(sessionAuth(sqh)))
+	}
+
+	// Boards and release markers — rate limited + session auth required.
+	if s.repo != nil && s.sessions != nil {
+		bh := &boardHandlers{svc: service.NewBoardService(s.repo, slog.Default())}
+		sessionAuth := SessionMiddleware(s.sessions)
+		bh.register(s.mux, func(h http.Handler) http.Handler { return apiRL(sessionAuth(h)) })
 	}
 
 	// Trace exclusions — persistent operation-level filters per project.

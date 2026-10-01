@@ -12,6 +12,11 @@ import type {
   PromptSummary,
   PromptRecord,
   SavedQuery,
+  Board,
+  BoardSettings,
+  NewPanel,
+  PanelView,
+  Release,
   Alert,
   HealthResponse,
   TraceSearchParams,
@@ -308,6 +313,46 @@ export const api = {
 
   deleteSavedQuery: (id: number) =>
     fetchJSON<{ status: string }>(`/api/v1/saved-queries/${id}`, { method: 'DELETE' }),
+
+  listBoards: (projectId: number) =>
+    fetchJSON<Board[]>(`/api/v1/boards${qs({ project_id: projectId })}`),
+
+  getBoard: (id: number) => fetchJSON<Board>(`/api/v1/boards/${id}`),
+
+  createBoard: (projectId: number, name: string, timeRange = '24h', refreshSeconds = 0) =>
+    fetchJSON<{ id: number }>('/api/v1/boards', {
+      method: 'POST',
+      body: JSON.stringify({ projectId, name, timeRange, refreshSeconds }),
+    }),
+
+  updateBoard: (id: number, settings: BoardSettings) =>
+    fetchJSON<{ status: string }>(`/api/v1/boards/${id}`, { method: 'PUT', body: JSON.stringify(settings) }),
+
+  deleteBoard: (id: number) => fetchJSON<{ status: string }>(`/api/v1/boards/${id}`, { method: 'DELETE' }),
+
+  addPanel: (boardId: number, panel: NewPanel) =>
+    fetchJSON<{ id: number }>(`/api/v1/boards/${boardId}/panels`, { method: 'POST', body: JSON.stringify(panel) }),
+
+  updatePanel: (boardId: number, panelId: number, title: string, view: PanelView) =>
+    fetchJSON<{ status: string }>(`/api/v1/boards/${boardId}/panels/${panelId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ title, view }),
+    }),
+
+  deletePanel: (boardId: number, panelId: number) =>
+    fetchJSON<{ status: string }>(`/api/v1/boards/${boardId}/panels/${panelId}`, { method: 'DELETE' }),
+
+  reorderPanels: (boardId: number, panelIds: number[]) =>
+    fetchJSON<{ status: string }>(`/api/v1/boards/${boardId}/panels/order`, {
+      method: 'PUT',
+      body: JSON.stringify({ panelIds }),
+    }),
+
+  listReleases: (projectId: number, from: string, to: string) =>
+    fetchJSON<Release[]>(`/api/v1/releases${qs({ project_id: projectId, from, to })}`),
+
+  createRelease: (projectId: number, version: string) =>
+    fetchJSON<{ id: number }>('/api/v1/releases', { method: 'POST', body: JSON.stringify({ projectId, version }) }),
 
   getWebVitals: (from: string, to: string, service?: string) =>
     fetchJSON<WebVitalSummary[]>(`/api/v1/web-vitals${qs({ from, to, service })}`),

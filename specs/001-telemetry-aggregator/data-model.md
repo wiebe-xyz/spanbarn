@@ -108,6 +108,7 @@ Span N──1 Span (via parent_span_id, self-referencing)
 | name | TEXT | |
 | service, operation, status, min_duration_us | | Legacy fixed fields from migration 006. Kept for rollback and for clients that still send only these. |
 | filters | TEXT | Migration 036. The shared filter model as JSON, `''` when the query has no filter. |
+| definition | TEXT | Migration 037. The rest of a board query as JSON (see Boards), `''` for a plain trace filter. |
 | created_at | DATETIME | |
 
 Migration 036 adds `filters` and fills it from the four legacy fields: `service` becomes `service = v`, `operation` becomes `name = v`, `status` becomes `status = v` and `min_duration_us` becomes `duration_us >= v`, joined by `and`. The API does the same for a create request that sends only the legacy fields.
@@ -139,6 +140,59 @@ Migration 036 adds `filters` and fills it from the four legacy fields: `service`
 - A series query takes one calculation and returns it per bucket for the top groups (default 5, at most 10) and an other line. It reuses the sample ratio of the table query so both views agree. The bucket defaults to the smallest of 1m, 5m, 15m, 30m, 1h, 3h, 6h, 12h, 1d that gives 48 buckets or fewer, at most 500 buckets.
 - `project_id`, `from` and `to` are required and the range is at most 30 days. The scan reads at most `max_spans` spans (default 200,000, at most 500,000), newest first. `sample` is 1 in N (1 to 1000). With `sample` unset the repository counts matching spans up to the cap. When they exceed it, it estimates the match from a sampled count and picks the smallest ratio that fits (`id % N = 0`). Counts and sums are multiplied by N in the response. Percentiles, maxima and distinct counts are not scaled and describe the sample. The response reports `scanned`, `sampleEvery`, `truncated` and `maxSpans`.
 - Cost: each query reads the attribute JSON of up to `max_spans` spans through `idx_spans_project_ingested`, the same cost class as attribute discovery.
+
+### boards, board_panels and releases
+
+Migration 037 adds the tables behind boards: a project's ordered grid of query panels, each drawn as a chart or a table.
+
+**boards**
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER | PK |
+| project_id | INTEGER | FK → projects |
+| name | TEXT | At most 120 characters |
+| time_range | TEXT | The shared range of every panel: `1h`, `24h` (default), `7d` or `30d`, all inside the 30 day limit of a group-by query |
+| refresh_seconds | INTEGER | 0 (off), 30, 60, 300 or 900 |
+| created_at, updated_at | DATETIME | |
+
+**board_panels**
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER | PK |
+| board_id | INTEGER | FK → boards |
+| saved_query_id | INTEGER | FK → saved_queries. The query this panel runs |
+| title | TEXT | At most 200 characters |
+| view | TEXT | `table` or `chart` |
+| position | INTEGER | Order in the grid, 0 first |
+| created_at | DATETIME | |
+
+**releases**
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER | PK |
+| project_id | INTEGER | FK → projects |
+| version | TEXT | At most 120 characters |
+| released_at | DATETIME | Drawn as a dashed vertical line on chart panels in range |
+| created_at | DATETIME | |
+
+Indexes: `idx_boards_project` ON (project_id), `idx_board_panels_board` ON (board_id, position), `idx_board_panels_query` ON (saved_query_id), `idx_releases_project_time` ON (project_id, released_at).
+
+**Query definition.** A panel's query is a `saved_queries` row. `filters` (migration 036) holds the filter model and `definition` (migration 037) holds the rest as JSON, with the names of the group-by endpoint parameters:
+
+```json
+{"groupBy":["url.path"],"calcs":["count","p95"],"orderBy":"p95","asc":false,"limit":20,"sample":0,"chartCalc":"p95"}
+```
+
+`calcs` has 1 to 9 entries and `groupBy` at most 4 distinct keys, both validated like a `/api/v1/analyze` request. `orderBy` and `chartCalc` name one of `calcs`. `chartCalc` is the calculation a chart panel draws and defaults to the first. The time range is not part of the definition. It belongs to the board, so every panel of a board shares one range and one refresh interval. A panel runs its definition against `/api/v1/analyze` (table) or `/api/v1/analyze/series` (chart) in the window `[now - range, now]`.
+
+- "Save to board" (`POST /api/v1/boards/{id}/panels`) inserts the `saved_queries` row and the `board_panels` row in one transaction, and the query takes the board's project. Rows from before migration 037 keep `definition = ''` and are plain trace filters.
+- Deleting a panel or a board also deletes the board queries (`definition != ''`) that no panel uses any more. A plain trace filter is never deleted this way. Deleting a saved query deletes the panels that point at it. Deleting a project deletes its panels, boards, releases and saved queries.
+- A board holds at most 50 panels. Reordering takes the full list of panel ids.
+- Releases are recorded with `POST /api/v1/releases` (a version and an optional time, default now) from the board page or a script with a session. Nothing derives them from `service.version` on spans.
+- The tables are small (a handful of rows per project), so no backfill or special retention applies.
 
 ### aggregates (long-term metrics)
 
