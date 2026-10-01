@@ -386,13 +386,13 @@ jobs:
           echo "::add-mask::$E2E_API_KEY"
 
           cd "$(git rev-parse --show-toplevel)"
-          # This runner is shared with other repos' jobs. `corepack enable`
-          # writes shims into the Node install by default; point it at a
-          # job-scoped directory instead of touching the shared one.
-          mkdir -p "$RUNNER_TEMP/corepack-bin"
-          corepack enable --install-directory "$RUNNER_TEMP/corepack-bin"
-          export PATH="$RUNNER_TEMP/corepack-bin:$PATH"
-          echo "$RUNNER_TEMP/corepack-bin" >> "$GITHUB_PATH"
+          # The self-hosted runner's Node has no corepack, and the runner is
+          # shared with other repos' jobs, so install the pnpm version pinned in
+          # package.json into a job-scoped directory.
+          PNPM_VERSION=$(node -p "require('./package.json').packageManager.split('@')[1]")
+          npm install --prefix "$RUNNER_TEMP/pnpm" "pnpm@${PNPM_VERSION}"
+          export PATH="$RUNNER_TEMP/pnpm/node_modules/.bin:$PATH"
+          echo "$RUNNER_TEMP/pnpm/node_modules/.bin" >> "$GITHUB_PATH"
           pnpm install --frozen-lockfile
           pnpm exec playwright install chromium
           E2E_BASE_URL="${STAGING_URL}" \
