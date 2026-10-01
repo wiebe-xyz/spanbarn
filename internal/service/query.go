@@ -35,6 +35,10 @@ type QueryRepository interface {
 	QueryDashboardCounts(f repository.SpanFilter, intervalSec int64, group repository.DashboardGroup, topN int) ([]repository.DashboardCountPoint, error)
 	QueryDashboardPercentiles(f repository.SpanFilter, intervalSec int64, group repository.DashboardGroup, topN int) ([]repository.DashboardPercentilePoint, error)
 	QueryDashboardHeatmap(f repository.SpanFilter, intervalSec int64) ([]repository.DashboardHeatmapCell, error)
+	QueryOrphanSpanGroups(ctx context.Context, w repository.HealthWindow) ([]repository.OrphanSpanGroup, error)
+	QuerySingleSpanTraceGroups(ctx context.Context, w repository.HealthWindow) ([]repository.SingleSpanTraceGroup, error)
+	QuerySpanNameSummary(ctx context.Context, w repository.HealthWindow) ([]repository.SpanNameSummary, error)
+	RootlessTraceCount(ctx context.Context, w repository.HealthWindow) (int64, error)
 }
 
 // SampleRatioLookup returns the configured 1-in-N sampling ratio for a project.

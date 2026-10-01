@@ -43,6 +43,47 @@ export type TraceSummary = {
   startTime: string
   rootModel?: string
   promptCount?: number
+  /** false: no span without a parent. null: not computed yet (older rows). rootSpanName is empty when false. */
+  hasRoot?: boolean | null
+  /** Spans whose parent is absent from the trace. */
+  orphanCount?: number
+}
+
+/** Spans whose parent was never ingested, grouped by name, kind and service. */
+export type OrphanSpanGroup = {
+  name: string
+  kind: string
+  service: string
+  count: number
+  sampleTraceId: string
+}
+
+/** Traces with exactly one span, grouped by that span's name and service. */
+export type SingleSpanTraceGroup = {
+  name: string
+  service: string
+  count: number
+  sampleTraceId: string
+}
+
+/** Stored count of a span name and how many of those spans are roots. */
+export type SpanNameSummary = {
+  name: string
+  count: number
+  rootCount: number
+}
+
+export type RootlessTraces = {
+  total: number
+  traces: TraceSummary[]
+}
+
+/** Project and range scope shared by every trace health view. */
+export type TraceHealthScope = {
+  projectId: number
+  from: string
+  to: string
+  limit?: number
 }
 
 /** Aggregated metrics for a group of traces sharing the same root operation. */

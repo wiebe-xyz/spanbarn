@@ -39,7 +39,8 @@ const (
 type Repository interface {
 	CountSpansOlderThan(cutoff time.Time) (int64, error)
 	GetSpansForAggregation(cutoff time.Time, limit int) ([]repository.Span, error)
-	DeleteSpansByMaxID(maxID int64) (int64, error)
+	DeleteSpansByMaxIDRefreshing(ctx context.Context, maxID int64) (int64, error)
+	BackfillTraceStructure(ctx context.Context, max int64) (int64, bool, error)
 	DeleteSpansOlderThan(cutoff time.Time) (int64, error)
 	DeleteExpiredBoringSpans(ctx context.Context, now time.Time) (int64, error)
 	DeleteExpiredTraceSummaries(ctx context.Context, now time.Time) (int64, error)
@@ -237,7 +238,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 					maxID = s.ID
 				}
 			}
-			deleted, err := w.repo.DeleteSpansByMaxID(maxID)
+			deleted, err := w.repo.DeleteSpansByMaxIDRefreshing(ctx, maxID)
 			if err != nil {
 				batchErr = err
 				return
@@ -280,6 +281,8 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	if _, err := w.repo.DeleteTraceSummariesOlderThan(ctx, interestingCutoff, errorCutoff); err != nil {
 		return err
 	}
+
+	w.backfillTraceStructure(ctx)
 
 	errorSamplesDeleted, err := w.repo.DeleteErrorSamplesOlderThan(ctx, errorCutoff)
 	if err != nil {

@@ -73,6 +73,32 @@ Span N──1 Span (via parent_span_id, self-referencing)
 - `idx_spans_service_name` ON (project_id, service, name, start_time_us)
 - `idx_spans_status` ON (project_id, status, ingested_at)
 
+### trace_summaries (one row per trace, serves the trace list)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| project_id | INTEGER | PK part 1 |
+| trace_id | TEXT | PK part 2 |
+| root_name | TEXT | Name of the root span. Empty when the trace has no root. |
+| root_service | TEXT | Service of the root span. Empty when the trace has no root. |
+| root_duration_us | INTEGER | Duration of the root span. 0 when the trace has no root. |
+| start_time_us | INTEGER | Earliest span start |
+| span_count | INTEGER | Stored spans of the trace, recomputed from `spans` on every write and after eviction |
+| has_error | INTEGER | 1 when any span has status error |
+| ingested_at | DATETIME | Earliest span ingest time; retention key |
+| expires_at | DATETIME | Set for boring-sampled traces, NULL otherwise |
+| has_root | INTEGER | Migration 035. 1 when a span with no parent exists, 0 when none does, NULL until computed. |
+| orphan_count | INTEGER | Migration 035. Spans whose `parent_span_id` matches no `span_id` in the same trace. NULL until computed. |
+
+**Structure columns.** `has_root`, `orphan_count` and `span_count` are recomputed from `spans` (two seeks of `idx_spans_trace` per trace) inside the transaction that writes spans, so a late parent or a late root corrects the row. Retention does the same for error traces that lose part of their spans (`DeleteSpansByMaxIDRefreshing`); non-error summaries are deleted together with their spans. When no root exists the root fields are cleared.
+
+**Backfill for rows from before migration 035.** The migration only adds nullable columns and runs no statement over `spans`, because a bulk backfill on a multi-GB single-writer database would hold the write connection (the failure that led migration 032 to skip its backfill). Existing rows read NULL. The retention worker calls `BackfillTraceStructure` every cycle: batches of 200 summaries, one low-priority write transaction per batch, at most 20,000 per cycle, reading NULL rows through the partial index `idx_trace_summaries_unchecked`. A summary whose spans are already gone settles from its own `root_name`. NULL rows match neither `has_root = 0` nor `orphan_count > 0`, so filters never report a guess.
+
+**Indexes:**
+- `idx_trace_summaries_list` ON (project_id, ingested_at DESC)
+- `idx_trace_summaries_expires` ON (expires_at) WHERE expires_at IS NOT NULL
+- `idx_trace_summaries_unchecked` ON (project_id, trace_id) WHERE has_root IS NULL
+
 ### aggregates (long-term metrics)
 
 | Column | Type | Notes |

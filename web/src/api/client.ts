@@ -15,6 +15,11 @@ import type {
   Alert,
   HealthResponse,
   TraceSearchParams,
+  TraceHealthScope,
+  OrphanSpanGroup,
+  SingleSpanTraceGroup,
+  SpanNameSummary,
+  RootlessTraces,
   WebVitalSummary,
   WebVitalTimeseriesBucket,
   MetricNamesResponse,
@@ -116,6 +121,10 @@ function dashboardQs(f: DashboardFilter, extra: Record<string, string | undefine
   })
 }
 
+function healthQs(s: TraceHealthScope): string {
+  return qs({ project_id: s.projectId, from: s.from, to: s.to, limit: s.limit })
+}
+
 export const api = {
   getDashboardCounts: (f: DashboardFilter, groupBy: 'service' | 'http_status', rootOnly: boolean) =>
     fetchJSON<DashboardCounts>(
@@ -179,6 +188,18 @@ export const api = {
     fetchJSON<TraceGroupSummary[]>(
       `/api/v1/traces/groups${qs({ from, to, service, status, min_duration_us: minDurationUs })}`,
     ),
+
+  getOrphanSpans: (s: TraceHealthScope) =>
+    fetchJSON<OrphanSpanGroup[]>(`/api/v1/trace-health/orphan-spans${healthQs(s)}`),
+
+  getRootlessTraces: (s: TraceHealthScope) =>
+    fetchJSON<RootlessTraces>(`/api/v1/trace-health/rootless-traces${healthQs(s)}`),
+
+  getSingleSpanTraces: (s: TraceHealthScope) =>
+    fetchJSON<SingleSpanTraceGroup[]>(`/api/v1/trace-health/single-span-traces${healthQs(s)}`),
+
+  getSpanNames: (s: TraceHealthScope) =>
+    fetchJSON<SpanNameSummary[]>(`/api/v1/trace-health/span-names${healthQs(s)}`),
 
   getTrace: (traceId: string) =>
     fetchJSON<TraceDetail>(`/api/v1/traces/${encodeURIComponent(traceId)}`),

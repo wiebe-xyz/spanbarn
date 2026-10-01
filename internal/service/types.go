@@ -51,6 +51,12 @@ type TraceSummary struct {
 	StartTime    time.Time `json:"startTime"`
 	RootModel    string    `json:"rootModel,omitempty"`
 	PromptCount  int       `json:"promptCount,omitempty"`
+	// HasRoot is null while the summary's structure is not computed yet (rows
+	// from before the lazy backfill reached them). RootSpanName is empty when
+	// HasRoot is false.
+	HasRoot *bool `json:"hasRoot"`
+	// OrphanCount is the number of spans whose parent is absent from the trace.
+	OrphanCount int `json:"orphanCount"`
 }
 
 // TraceDetail holds a full trace with all its spans.
@@ -170,10 +176,14 @@ type TraceSearchFilter struct {
 	RootOnly          bool
 	SortErrorsFirst   bool
 	ExcludeOperations []string
-	From              time.Time
-	To                time.Time
-	Limit             int
-	Offset            int
+	// HasRoot keeps only traces with (true) or without (false) a root span.
+	HasRoot *bool
+	// HasOrphans keeps only traces with at least one orphan span.
+	HasOrphans bool
+	From       time.Time
+	To         time.Time
+	Limit      int
+	Offset     int
 }
 
 // TraceGroupSummary holds aggregated metrics for a group of traces sharing the same root operation.

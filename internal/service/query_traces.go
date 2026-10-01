@@ -54,6 +54,8 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 		RootOnly:          filter.RootOnly,
 		SortErrorsFirst:   filter.SortErrorsFirst,
 		ExcludeOperations: excluded,
+		HasRoot:           filter.HasRoot,
+		HasOrphans:        filter.HasOrphans,
 		From:              filter.From,
 		To:                filter.To,
 		Limit:             limit,
@@ -81,6 +83,8 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 			StartTime:    time.UnixMicro(r.StartTimeUs),
 			RootModel:    r.RootModel,
 			PromptCount:  r.PromptCount,
+			HasRoot:      r.HasRoot,
+			OrphanCount:  r.OrphanCount,
 		})
 	}
 	return result, nil

@@ -295,6 +295,120 @@ paths:
         '400':
           description: Missing or invalid range, or range over 48 hours
 
+  /api/v1/trace-health/orphan-spans:
+    get:
+      summary: Spans whose parent span was never ingested, grouped by name, kind and service
+      description: Project and range are required. The range is limited to 7 days because the parent lookup joins spans to themselves.
+      operationId: traceHealthOrphanSpans
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - $ref: '#/components/parameters/TraceHealthLimit'
+      responses:
+        '200':
+          description: Orphan span groups, largest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: {type: string}
+                    kind: {type: string}
+                    service: {type: string}
+                    count: {type: integer}
+                    sampleTraceId: {type: string}
+        '400':
+          description: Missing project or range, reversed range, or range over 7 days
+
+  /api/v1/trace-health/rootless-traces:
+    get:
+      summary: Traces that hold no root span
+      description: Reads trace_summaries.has_root. Summaries from before migration 035 are included once the lazy backfill reaches them.
+      operationId: traceHealthRootlessTraces
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - $ref: '#/components/parameters/TraceHealthLimit'
+      responses:
+        '200':
+          description: Total rootless traces in the window and the newest ones
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: {type: integer}
+                  traces:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TraceSummary'
+        '400':
+          description: Missing project or range, reversed range, or range over 7 days
+
+  /api/v1/trace-health/single-span-traces:
+    get:
+      summary: Traces with exactly one span, grouped by that span's name and service
+      operationId: traceHealthSingleSpanTraces
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - $ref: '#/components/parameters/TraceHealthLimit'
+      responses:
+        '200':
+          description: Single-span trace groups, largest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: {type: string}
+                    service: {type: string}
+                    count: {type: integer}
+                    sampleTraceId: {type: string}
+        '400':
+          description: Missing project or range, reversed range, or range over 7 days
+
+  /api/v1/trace-health/span-names:
+    get:
+      summary: Stored span count and root_count per span name
+      description: Entry points have root_count equal to count; internal helpers have root_count 0. Counts are stored spans, not sample-corrected.
+      operationId: traceHealthSpanNames
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - $ref: '#/components/parameters/TraceHealthLimit'
+      responses:
+        '200':
+          description: Span names, most frequent first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: {type: string}
+                    count: {type: integer}
+                    rootCount: {type: integer}
+        '400':
+          description: Missing project or range, reversed range, or range over 7 days
+
   /api/v1/traces/{traceId}:
     get:
       summary: Get full trace by ID
@@ -357,6 +471,18 @@ components:
       description: Span status (ok, error, unset)
       schema:
         type: string
+    TraceHealthProject:
+      name: project_id
+      in: query
+      required: true
+      schema:
+        type: integer
+    TraceHealthLimit:
+      name: limit
+      in: query
+      description: Rows to return, default 100, at most 500
+      schema:
+        type: integer
   securitySchemes:
     apiKey:
       type: apiKey
@@ -371,6 +497,24 @@ components:
       name: session
 
   schemas:
+    TraceSummary:
+      type: object
+      properties:
+        traceId: {type: string}
+        rootSpanName:
+          type: string
+          description: Empty when the trace has no root span
+        rootService: {type: string}
+        durationUs: {type: integer}
+        spanCount: {type: integer}
+        status: {type: string}
+        startTime: {type: string, format: date-time}
+        hasRoot:
+          type: [boolean, 'null']
+          description: null while the summary's structure is not computed yet
+        orphanCount:
+          type: integer
+          description: Spans whose parent is absent from the trace
     SpanBatch:
       type: object
       required:
