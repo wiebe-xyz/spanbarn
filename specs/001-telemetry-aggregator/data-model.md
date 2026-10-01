@@ -61,7 +61,7 @@ Span N──1 Span (via parent_span_id, self-referencing)
 | status | TEXT | ok, error, unset |
 | start_time_us | INTEGER | Unix microseconds |
 | duration_us | INTEGER | Duration in microseconds |
-| attributes | TEXT | JSON object |
+| attributes | TEXT | JSON object with flat dotted keys (`"url.path"`), so queries address them as `$."url.path"`. Attribute discovery (`GET /api/v1/attributes`) reads this column with `json_each`; there is no `span_attrs` side table (see `deploy/docs/attribute-storage-design.md`). |
 | events | TEXT | JSON array (logs, exceptions) |
 | ingested_at | DATETIME | |
 | http_status | INTEGER | VIRTUAL generated from `attributes`: `http.response.status_code`, else `http.status_code`. NULL when absent or when `attributes` is not valid JSON. Never written by ingest. |

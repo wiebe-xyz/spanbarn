@@ -39,6 +39,7 @@ type QueryRepository interface {
 	QuerySingleSpanTraceGroups(ctx context.Context, w repository.HealthWindow) ([]repository.SingleSpanTraceGroup, error)
 	QuerySpanNameSummary(ctx context.Context, w repository.HealthWindow) ([]repository.SpanNameSummary, error)
 	RootlessTraceCount(ctx context.Context, w repository.HealthWindow) (int64, error)
+	ScanAttributes(ctx context.Context, w repository.AttributeWindow) (*repository.AttributeScan, error)
 }
 
 // SampleRatioLookup returns the configured 1-in-N sampling ratio for a project.

@@ -13,6 +13,7 @@ const OperationsPage = lazy(() => import('./pages/OperationsPage').then(m => ({ 
 const OperationDetailPage = lazy(() => import('./pages/OperationDetailPage').then(m => ({ default: m.OperationDetailPage })))
 const TracesPage = lazy(() => import('./pages/TracesPage').then(m => ({ default: m.TracesPage })))
 const TraceHealthPage = lazy(() => import('./pages/TraceHealthPage').then(m => ({ default: m.TraceHealthPage })))
+const AttributesPage = lazy(() => import('./pages/AttributesPage').then(m => ({ default: m.AttributesPage })))
 const TraceDetailPage = lazy(() => import('./pages/TraceDetailPage').then(m => ({ default: m.TraceDetailPage })))
 const DependenciesPage = lazy(() => import('./pages/DependenciesPage').then(m => ({ default: m.DependenciesPage })))
 const ServiceMapPage = lazy(() => import('./pages/ServiceMapPage').then(m => ({ default: m.ServiceMapPage })))
@@ -43,6 +44,7 @@ function App() {
               <Route path="services/:service/operations/:operation" element={<OperationDetailPage />} />
               <Route path="traces" element={<TracesPage />} />
               <Route path="trace-health" element={<TraceHealthPage />} />
+              <Route path="attributes" element={<AttributesPage />} />
               <Route path="traces/:traceId" element={<TraceDetailPage />} />
               <Route path="dependencies" element={<DependenciesPage />} />
               <Route path="service-map" element={<ServiceMapPage />} />

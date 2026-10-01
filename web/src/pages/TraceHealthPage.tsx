@@ -101,6 +101,7 @@ export function TraceHealthPage(): ReactElement {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4, flexWrap: 'wrap' }}>
         <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>Trace health</h1>
         <Link to="/traces" style={{ fontSize: 13, color: '#93c5fd' }}>Back to traces</Link>
+        <Link to="/attributes" style={{ fontSize: 13, color: '#93c5fd' }}>Attributes</Link>
       </div>
       <p style={{ color: '#9ca3af', fontSize: 13, margin: '0 0 16px' }}>
         Counts are stored spans and traces, not sample-corrected. The range is limited to 7 days.

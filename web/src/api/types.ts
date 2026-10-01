@@ -452,3 +452,39 @@ export type LogsParams = {
   limit?: number
   offset?: number
 }
+
+/** Project, range and optional filters for attribute discovery. */
+export type AttributeScope = {
+  projectId: number
+  from: string
+  to: string
+  spanName?: string
+  service?: string
+  /** Restrict to one key and return up to 100 values for it. */
+  key?: string
+  /** Keep 1 span in N. Unset samples 1 in 20 above 24h. */
+  sample?: number
+  maxSpans?: number
+  /** Values kept per key: 5 by default, up to 20, or up to 100 with `key`. */
+  top?: number
+}
+
+export type AttributeValue = { value: string; count: number }
+
+export type AttributeKey = {
+  key: string
+  spans: number
+  /** Share of scanned spans that populate the key, 0 to 1. */
+  coverage: number
+  distinct: number
+  distinctCapped: boolean
+  top: AttributeValue[]
+}
+
+export type AttributeDiscovery = {
+  scanned: number
+  sample: number
+  truncated: boolean
+  maxSpans: number
+  keys: AttributeKey[]
+}
