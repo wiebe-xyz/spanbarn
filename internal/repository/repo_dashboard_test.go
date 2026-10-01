@@ -7,7 +7,8 @@ import (
 )
 
 // dashSpan inserts one span and pins its ingested_at so bucket assertions do not
-// depend on the wall clock.
+// depend on the wall clock. The value is written in Go's time.String() form,
+// the shape production stores, because strftime cannot parse it directly.
 func dashSpan(t *testing.T, repo *Repository, id, parent, name, service, attrs string, durUs int64, at time.Time) {
 	t.Helper()
 	s := Span{
@@ -18,7 +19,7 @@ func dashSpan(t *testing.T, repo *Repository, id, parent, name, service, attrs s
 	if err := repo.InsertSpans([]Span{s}); err != nil {
 		t.Fatalf("insert %s: %v", id, err)
 	}
-	if _, err := repo.DB().Exec(`UPDATE spans SET ingested_at = ? WHERE span_id = ?`, at.UTC().Format("2006-01-02 15:04:05"), id); err != nil {
+	if _, err := repo.DB().Exec(`UPDATE spans SET ingested_at = ? WHERE span_id = ?`, at.UTC().String(), id); err != nil {
 		t.Fatalf("pin %s: %v", id, err)
 	}
 }

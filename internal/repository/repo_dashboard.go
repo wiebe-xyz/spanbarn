@@ -98,8 +98,15 @@ func dashboardWhere(f SpanFilter, extra ...string) (string, []any) {
 	return " WHERE " + strings.Join(where, " AND "), args
 }
 
+// ingestedEpochSQL converts ingested_at to Unix seconds. The column holds Go's
+// time.String() form ("2026-10-01 14:42:41 +0000 UTC"), which strftime cannot
+// parse: it returns NULL for the whole value. The first 19 characters are always
+// a valid UTC "YYYY-MM-DD HH:MM:SS", so the zone suffix and any fractional
+// seconds are cut off before parsing.
+const ingestedEpochSQL = "CAST(strftime('%s', substr(ingested_at, 1, 19)) AS INTEGER)"
+
 func bucketExpr(intervalSec int64) string {
-	return fmt.Sprintf("(CAST(strftime('%%s', ingested_at) AS INTEGER) / %d) * %d", intervalSec, intervalSec)
+	return fmt.Sprintf("(%s / %d) * %d", ingestedEpochSQL, intervalSec, intervalSec)
 }
 
 // QueryDashboardCounts counts spans per time bucket and group. Only the topN

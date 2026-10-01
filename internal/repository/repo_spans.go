@@ -807,7 +807,7 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 	}
 
 	whereClause := strings.Join(where, " AND ")
-	bucketExpr := fmt.Sprintf("datetime((strftime('%%s', ingested_at) / %d) * %d, 'unixepoch')", intervalSec, intervalSec)
+	bucketExpr := fmt.Sprintf("datetime((%s / %d) * %d, 'unixepoch')", ingestedEpochSQL, intervalSec, intervalSec)
 
 	q := fmt.Sprintf(`SELECT %s as bucket, duration_us, status FROM spans WHERE %s ORDER BY bucket, duration_us`, bucketExpr, whereClause)
 
@@ -966,7 +966,7 @@ func (r *Repository) QueryWebVitalsTimeseries(service, page, metric string, from
 	}
 
 	whereClause := strings.Join(where, " AND ")
-	bucketExpr := fmt.Sprintf("datetime((strftime('%%s', ingested_at) / %d) * %d, 'unixepoch')", intervalSec, intervalSec)
+	bucketExpr := fmt.Sprintf("datetime((%s / %d) * %d, 'unixepoch')", ingestedEpochSQL, intervalSec, intervalSec)
 
 	q := fmt.Sprintf(`SELECT %s as bucket, duration_us, attributes FROM spans WHERE %s ORDER BY bucket, duration_us`, bucketExpr, whereClause)
 
