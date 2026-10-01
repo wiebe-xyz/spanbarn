@@ -257,6 +257,8 @@ export type SavedQuery = {
   operation: string
   status: string
   minDurationUs: number
+  /** The shared filter model (see filters/model.ts). Null when the query has none. */
+  filters: unknown
   createdAt: string
 }
 

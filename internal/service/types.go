@@ -3,6 +3,7 @@ package service
 import (
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -180,10 +181,12 @@ type TraceSearchFilter struct {
 	HasRoot *bool
 	// HasOrphans keeps only traces with at least one orphan span.
 	HasOrphans bool
-	From       time.Time
-	To         time.Time
-	Limit      int
-	Offset     int
+	// Expr keeps traces holding a span that matches the filter model. Needs From.
+	Expr   *filter.Expr
+	From   time.Time
+	To     time.Time
+	Limit  int
+	Offset int
 }
 
 // TraceGroupSummary holds aggregated metrics for a group of traces sharing the same root operation.

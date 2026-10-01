@@ -99,6 +99,37 @@ Span N──1 Span (via parent_span_id, self-referencing)
 - `idx_trace_summaries_expires` ON (expires_at) WHERE expires_at IS NOT NULL
 - `idx_trace_summaries_unchecked` ON (project_id, trace_id) WHERE has_root IS NULL
 
+### saved_queries (named trace filters)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER | PK |
+| project_id | INTEGER | FK → projects |
+| name | TEXT | |
+| service, operation, status, min_duration_us | | Legacy fixed fields from migration 006. Kept for rollback and for clients that still send only these. |
+| filters | TEXT | Migration 036. The shared filter model as JSON, `''` when the query has no filter. |
+| created_at | DATETIME | |
+
+Migration 036 adds `filters` and fills it from the four legacy fields: `service` becomes `service = v`, `operation` becomes `name = v`, `status` becomes `status = v` and `min_duration_us` becomes `duration_us >= v`, joined by `and`. The API does the same for a create request that sends only the legacy fields.
+
+**Filter model** (`internal/filter`, one JSON form for the API `filter` query parameter, `saved_queries.filters` and the `filter` parameter of the web URL):
+
+```json
+{"match":"and","filters":[
+  {"key":"kind","op":"=","value":"server"},
+  {"match":"or","filters":[
+    {"key":"url.path","op":"starts-with","value":"/api/v1/library"},
+    {"key":"http.response.status_code","op":">=","value":500}]}]}
+```
+
+- The root is a group. A group holds conditions and at most one level of nested groups. At most 32 conditions, 100 values per `in`.
+- Operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `contains`, `starts-with`, `exists`, `does-not-exist`, `in` and `not-in` (`values` list).
+- A key names a span column (`service`, `name` or `operation`, `kind`, `status`, `resource`, `trace_id`, `span_id`, `parent_span_id`, `duration_us`, `start_time_us`, `http_status`) or an attribute. Attributes are flat dotted keys read with `json_extract(attributes, '$."key"')`. The prefix `attributes.` forces an attribute when its name equals a column.
+- `>`, `<`, `>=`, `<=` compare numbers. On an attribute they apply to JSON numbers only. `contains` and `starts-with` are case sensitive. `!=` and `not-in` also match spans without the attribute.
+- Spans whose `attributes` is not valid JSON never raise an error. They match `does-not-exist`, `!=` and `not-in`.
+- A time range (`from`) is required with a filter, so the scan stays inside a window. On the span list a span matches. On the trace list a trace matches when one of its spans satisfies the whole expression, and the trace row still summarises every span of the trace.
+- Attribute predicates read the JSON of each span in the window (the `json_extract` storage decision in `deploy/docs/attribute-storage-design.md`). Column predicates and `http_status` can use indexes.
+
 ### aggregates (long-term metrics)
 
 | Column | Type | Notes |

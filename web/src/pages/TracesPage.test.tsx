@@ -2,10 +2,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { TracesPage } from './TracesPage'
+import { api } from '../api/client'
 
 vi.mock('../api/client', () => ({
   api: {
     getSavedQueries: vi.fn().mockResolvedValue([]),
+    listProjects: vi.fn().mockResolvedValue([{ id: 1, name: 'p' }]),
+    getAttributes: vi.fn().mockResolvedValue({ scanned: 0, sample: 1, truncated: false, maxSpans: 0, keys: [] }),
+    createSavedQuery: vi.fn().mockResolvedValue({ id: 1 }),
     listTraceExclusions: vi.fn().mockResolvedValue([]),
     getTraceGroups: vi.fn().mockResolvedValue([]),
     getExportUrl: vi.fn().mockReturnValue('/export'),
@@ -81,5 +85,73 @@ describe('TracesPage structure', () => {
     const last = tracesUrls[tracesUrls.length - 1]
     expect(last).not.toContain('has_root')
     expect(last).not.toContain('orphans')
+  })
+})
+
+const LIB = {
+  match: 'and',
+  filters: [
+    { key: 'kind', op: '=', value: 'server' },
+    { key: 'url.path', op: 'starts-with', value: '/api/v1/library' },
+  ],
+}
+
+describe('TracesPage attribute filters', () => {
+  it('reads the filter from the URL, shows the rows and sends it to the API', async () => {
+    const filter = encodeURIComponent(JSON.stringify(LIB))
+    render(
+      <MemoryRouter initialEntries={[`/traces?filter=${filter}`]}>
+        <TracesPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('GET /ok')).toBeInTheDocument())
+    const keys = screen.getAllByLabelText('Filter key') as HTMLInputElement[]
+    expect(keys.map((k) => k.value)).toEqual(['kind', 'url.path'])
+    const sent = new URL(tracesUrls[0], 'http://x').searchParams.get('filter')
+    expect(JSON.parse(sent ?? 'null')).toEqual(LIB)
+  })
+
+  it('sends a filter built in the UI and leaves unfinished rows out', async () => {
+    render(
+      <MemoryRouter initialEntries={['/traces?operation=GET%20/ok']}>
+        <TracesPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('GET /ok', { selector: 'td, span, div' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '+ Add filter' }))
+    fireEvent.click(screen.getByRole('button', { name: '+ Add filter' }))
+    const keys = screen.getAllByLabelText('Filter key')
+    fireEvent.change(keys[0], { target: { value: 'http.response.status_code' } })
+    fireEvent.change(screen.getAllByLabelText('Filter operator')[0], { target: { value: '>=' } })
+    fireEvent.change(screen.getAllByLabelText('Filter value')[0], { target: { value: '500' } })
+    // The second row has no key and is dropped.
+    const before = tracesUrls.length
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    await waitFor(() => expect(tracesUrls.length).toBeGreaterThan(before))
+    const last = tracesUrls[tracesUrls.length - 1]
+    const sent = JSON.parse(new URL(last, 'http://x').searchParams.get('filter') ?? 'null')
+    expect(sent).toEqual({ match: 'and', filters: [{ key: 'http.response.status_code', op: '>=', value: '500' }] })
+  })
+
+  it('saves the filter and loads a saved query back into the builder', async () => {
+    vi.mocked(api.getSavedQueries).mockResolvedValue([
+      { id: 7, projectId: 1, name: 'library', service: '', operation: '', status: '', minDurationUs: 0, filters: LIB, createdAt: '' },
+    ])
+    const filter = encodeURIComponent(JSON.stringify(LIB))
+    render(
+      <MemoryRouter initialEntries={[`/traces?filter=${filter}`]}>
+        <TracesPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('library')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Save Query' }))
+    await waitFor(() => expect(api.createSavedQuery).toHaveBeenCalled())
+    expect(vi.mocked(api.createSavedQuery).mock.calls[0][0].filters).toEqual(LIB)
+
+    fireEvent.click(screen.getAllByLabelText('Remove filter')[0])
+    fireEvent.click(screen.getAllByLabelText('Remove filter')[0])
+    expect(screen.queryAllByLabelText('Filter key')).toHaveLength(0)
+    fireEvent.click(screen.getByText('library'))
+    expect((screen.getAllByLabelText('Filter key') as HTMLInputElement[]).map((k) => k.value)).toEqual(['kind', 'url.path'])
   })
 })

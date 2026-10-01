@@ -464,6 +464,46 @@ paths:
         '400':
           description: Missing project or range, reversed range, range over 7 days, or sample out of range
 
+  /api/v1/spans/search:
+    get:
+      summary: List spans matching a filter expression
+      description: >
+        The filter model is described in specs/001-telemetry-aggregator/data-model.md (saved_queries).
+        Project and from are required. Newest first, at most 200 spans.
+        GET /api/v1/traces accepts the same filter parameter and returns the traces that hold a matching span.
+      operationId: searchSpans
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - {name: filter, in: query, description: 'Filter model as JSON', schema: {type: string}}
+        - {name: limit, in: query, description: Default 50, at most 200, schema: {type: integer}}
+        - {name: offset, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: Matching spans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    traceId: {type: string}
+                    spanId: {type: string}
+                    parentSpanId: {type: string}
+                    name: {type: string}
+                    service: {type: string}
+                    kind: {type: string}
+                    status: {type: string}
+                    startTime: {type: string, format: date-time}
+                    durationUs: {type: integer}
+                    attributes: {type: object}
+        '400':
+          description: Invalid filter, or a filter without a time range
+
   /api/v1/traces/{traceId}:
     get:
       summary: Get full trace by ID

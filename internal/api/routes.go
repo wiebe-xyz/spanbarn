@@ -113,6 +113,7 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/services", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleServices)))))
 		s.mux.Handle("/api/v1/services/", apiRL(readAuth(cache60(qh))))
 		s.mux.Handle("/api/v1/traces", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleTraces)))))
+		s.mux.Handle("/api/v1/spans/search", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleSpanSearch)))))
 		s.mux.Handle("/api/v1/traces/groups", apiRL(readAuth(http.HandlerFunc(qh.handleTraceGroups))))
 		s.mux.Handle("/api/v1/traces/", apiRL(readAuth(http.HandlerFunc(qh.handleTraceDetail))))
 		s.mux.Handle("/api/v1/trace-health/orphan-spans", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleOrphanSpans)))))

@@ -122,7 +122,12 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hasRoot, orphans := parseStructureFilter(r)
+	expr, ok := parseFilterParam(w, r)
+	if !ok {
+		return
+	}
 	filter := service.TraceSearchFilter{
+		Expr:              expr,
 		HasRoot:           hasRoot,
 		HasOrphans:        orphans,
 		ProjectID:         parseInt64Param(r, "project_id", 0),
@@ -141,7 +146,7 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 
 	traces, err := h.svc.SearchTraces(ctx, filter)
 	if err != nil {
-		writeServerError(w, r, "query failed", err)
+		writeFilterQueryError(w, r, err)
 		return
 	}
 

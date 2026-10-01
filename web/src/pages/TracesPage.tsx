@@ -5,6 +5,17 @@ import { Ban } from 'lucide-react'
 import type { SavedQuery, TraceSummary, TraceGroupSummary } from '../api/types'
 import { api } from '../api/client'
 import { TraceStructureBadges } from '../components/TraceStructureBadges'
+import { FilterBuilder } from '../components/filter/FilterBuilder'
+import {
+  andWith,
+  describeFilter,
+  emptyExpr,
+  fieldConditions,
+  hasFilters,
+  parseFilter,
+  serializeFilter,
+  type FilterExpr,
+} from '../filters/model'
 import {
   durationColor,
   formatDuration,
@@ -23,6 +34,8 @@ type Filters = {
   rootOnly: boolean
   /** '' = every trace, 'rootless' = no root span, 'orphans' = has spans with a missing parent. */
   structure: '' | 'rootless' | 'orphans'
+  /** Attribute filters, the shared filter model. Kept in the URL as `filter`. */
+  expr: FilterExpr
   from: string
   to: string
 }
@@ -40,6 +53,7 @@ const defaultFilters = (): Filters => ({
   minSpans: '',
   rootOnly: true,
   structure: '',
+  expr: emptyExpr(),
   from: toLocalDatetime(new Date(Date.now() - 3600_000)),
   to: toLocalDatetime(new Date()),
 })
@@ -58,6 +72,7 @@ function filtersFromParams(params: URLSearchParams): Filters {
     minSpans: params.get('minSpans') ?? defaults.minSpans,
     rootOnly: params.get('rootOnly') !== 'false',
     structure: structureFromParam(params.get('structure')),
+    expr: parseFilter(params.get('filter')),
     from: params.get('from') ?? defaults.from,
     to: params.get('to') ?? defaults.to,
   }
@@ -72,6 +87,8 @@ function filtersToParams(filters: Filters): URLSearchParams {
   if (filters.minSpans) params.set('minSpans', filters.minSpans)
   if (!filters.rootOnly) params.set('rootOnly', 'false')
   if (filters.structure) params.set('structure', filters.structure)
+  const expr = serializeFilter(filters.expr)
+  if (expr) params.set('filter', expr)
   params.set('from', filters.from)
   params.set('to', filters.to)
   return params
@@ -84,7 +101,7 @@ export function TracesPage(): ReactElement {
 
   // View mode: 'grouped' = per-operation aggregate, 'detail' = individual traces for one operation
   const [viewMode, setViewMode] = useState<'grouped' | 'detail'>(() =>
-    searchParams.get('operation') || searchParams.get('structure') ? 'detail' : 'grouped',
+    searchParams.get('operation') || searchParams.get('structure') || searchParams.get('filter') ? 'detail' : 'grouped',
   )
   const [groups, setGroups] = useState<TraceGroupSummary[]>([])
   const [traces, setTraces] = useState<TraceSummary[]>([])
@@ -97,6 +114,7 @@ export function TracesPage(): ReactElement {
   })
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([])
   const [savingQuery, setSavingQuery] = useState(false)
+  const [projectId, setProjectId] = useState(0)
 
   type Exclusion = { id: number; operation: string }
   const [exclusions, setExclusions] = useState<Exclusion[]>([])
@@ -125,6 +143,7 @@ export function TracesPage(): ReactElement {
 
   useEffect(() => {
     api.getSavedQueries().then(setSavedQueries).catch(() => {})
+    api.listProjects().then((p) => setProjectId(p?.[0]?.id ?? 0)).catch(() => {})
     void loadExclusions() // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   }, [loadExclusions])
 
@@ -191,6 +210,8 @@ export function TracesPage(): ReactElement {
         if (filters.rootOnly) params.set('root_only', 'true')
         if (filters.structure === 'rootless') params.set('has_root', 'false')
         if (filters.structure === 'orphans') params.set('orphans', 'true')
+        const expr = serializeFilter(filters.expr)
+        if (expr) params.set('filter', expr)
         for (const e of exclusions) params.append('exclude_operation', e.operation)
 
         const resp = await fetch(`/api/v1/traces?${params}`)
@@ -250,32 +271,25 @@ export function TracesPage(): ReactElement {
   }
 
   const handleSearch = () => {
-    if (viewMode === 'grouped') {
+    // The grouped view aggregates root spans. Attribute filters apply to the trace list.
+    if (viewMode === 'grouped' && hasFilters(filters.expr)) {
+      setViewMode('detail')
+    } else if (viewMode === 'grouped') {
       void searchGroups()
     } else {
       void searchTraces(0)
     }
   }
 
+  const savedExpr = andWith(fieldConditions(filters), filters.expr)
+  const canSave = savedExpr.filters.length > 0
+
   const saveCurrentQuery = async () => {
-    const hasFilters = filters.service || filters.operation || filters.status || filters.minDurationMs
-    if (!hasFilters) return
-    const parts = [
-      filters.service,
-      filters.operation,
-      filters.status,
-      filters.minDurationMs ? `>${filters.minDurationMs}ms` : '',
-    ].filter(Boolean)
-    const name = parts.join(' / ') || 'Unnamed query'
+    if (!canSave) return
+    const name = describeFilter(savedExpr).slice(0, 80) || 'Unnamed query'
     setSavingQuery(true)
     try {
-      await api.createSavedQuery({
-        name,
-        service: filters.service || undefined,
-        operation: filters.operation || undefined,
-        status: filters.status || undefined,
-        minDurationUs: filters.minDurationMs ? Math.round(parseFloat(filters.minDurationMs) * 1000) : undefined,
-      })
+      await api.createSavedQuery({ name, filters: savedExpr })
       const updated = await api.getSavedQueries()
       setSavedQueries(updated)
     } catch {
@@ -286,12 +300,14 @@ export function TracesPage(): ReactElement {
   }
 
   const applySavedQuery = (q: SavedQuery) => {
+    // Saved queries hold one expression. The fixed fields move into it.
     setFilters((prev) => ({
       ...prev,
-      service: q.service || '',
-      operation: q.operation || '',
-      status: q.status || '',
-      minDurationMs: q.minDurationUs ? String(q.minDurationUs / 1000) : '',
+      service: '',
+      operation: '',
+      status: '',
+      minDurationMs: '',
+      expr: parseFilter(q.filters),
     }))
   }
 
@@ -311,7 +327,7 @@ export function TracesPage(): ReactElement {
           </button>
         )}
         <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>
-          {viewMode === 'detail' ? `Traces — ${filters.operation}` : 'Traces'}
+          {viewMode === 'detail' ? `Traces — ${filters.operation || 'filtered'}` : 'Traces'}
         </h1>
       </div>
 
@@ -444,6 +460,12 @@ export function TracesPage(): ReactElement {
           )}
         </div>
 
+        <FilterBuilder
+          value={filters.expr}
+          onChange={(expr) => setFilters((prev) => ({ ...prev, expr }))}
+          projectId={projectId}
+        />
+
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={handleSearch} style={buttonStyle}>
             Search
@@ -478,13 +500,13 @@ export function TracesPage(): ReactElement {
               </a>
               <button
                 onClick={saveCurrentQuery}
-                disabled={savingQuery || !(filters.service || filters.operation || filters.status || filters.minDurationMs)}
+                disabled={savingQuery || !canSave}
                 style={{
                   ...buttonStyle,
                   background: 'transparent',
                   border: '1px solid #374151',
-                  opacity: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 1 : 0.4,
-                  cursor: (filters.service || filters.operation || filters.status || filters.minDurationMs) ? 'pointer' : 'not-allowed',
+                  opacity: canSave ? 1 : 0.4,
+                  cursor: canSave ? 'pointer' : 'not-allowed',
                 }}
               >
                 {savingQuery ? 'Saving...' : 'Save Query'}
