@@ -64,8 +64,10 @@ Span N──1 Span (via parent_span_id, self-referencing)
 | attributes | TEXT | JSON object |
 | events | TEXT | JSON array (logs, exceptions) |
 | ingested_at | DATETIME | |
+| http_status | INTEGER | VIRTUAL generated from `attributes`: `http.response.status_code`, else `http.status_code`. NULL when absent or when `attributes` is not valid JSON. Never written by ingest. |
 
 **Indexes:**
+- `idx_spans_http_status` ON (project_id, ingested_at, http_status)
 - `idx_spans_project_ingested` ON (project_id, ingested_at)
 - `idx_spans_trace` ON (trace_id)
 - `idx_spans_service_name` ON (project_id, service, name, start_time_us)

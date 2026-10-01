@@ -121,6 +121,9 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/prompts", apiRL(readAuth(cache60(http.HandlerFunc(qh.handlePrompts)))))
 		s.mux.Handle("/api/v1/prompts/detail", apiRL(readAuth(http.HandlerFunc(qh.handlePromptDetail))))
 		s.mux.Handle("/api/v1/service-map", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleServiceMap)))))
+		s.mux.Handle("/api/v1/dashboard/counts", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDashboardCounts)))))
+		s.mux.Handle("/api/v1/dashboard/percentiles", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDashboardPercentiles)))))
+		s.mux.Handle("/api/v1/dashboard/heatmap", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDashboardHeatmap)))))
 		// Web vitals are RUM aggregates that the query service does not scope by
 		// project, so they stay session-only (not exposed by the read-key CLI).
 		s.mux.Handle("/api/v1/web-vitals", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleWebVitals)))))
