@@ -18,6 +18,8 @@ import type {
   TraceHealthScope,
   AttributeDiscovery,
   AttributeScope,
+  AttributeCompareScope,
+  AttributeComparison,
   OrphanSpanGroup,
   SingleSpanTraceGroup,
   SpanNameSummary,
@@ -142,6 +144,20 @@ function attributeQs(s: AttributeScope): string {
   })
 }
 
+function compareQs(s: AttributeCompareScope): string {
+  return qs({
+    project_id: s.projectId,
+    from: s.from,
+    to: s.to,
+    selection: s.selection,
+    baseline: s.baseline,
+    sample: s.sample,
+    max_spans: s.maxSpans,
+    limit: s.limit,
+    top: s.top,
+  })
+}
+
 export const api = {
   getDashboardCounts: (f: DashboardFilter, groupBy: 'service' | 'http_status', rootOnly: boolean) =>
     fetchJSON<DashboardCounts>(
@@ -220,6 +236,9 @@ export const api = {
 
   getAttributes: (s: AttributeScope) =>
     fetchJSON<AttributeDiscovery>(`/api/v1/attributes${attributeQs(s)}`),
+
+  compareAttributes: (s: AttributeCompareScope) =>
+    fetchJSON<AttributeComparison>(`/api/v1/attributes/compare${compareQs(s)}`),
 
   getTrace: (traceId: string) =>
     fetchJSON<TraceDetail>(`/api/v1/traces/${encodeURIComponent(traceId)}`),

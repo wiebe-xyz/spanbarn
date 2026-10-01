@@ -17,7 +17,11 @@ type Props = {
   onChange: (next: FilterExpr) => void
   /** Project whose attribute keys and values are suggested. 0 turns suggestions off. */
   projectId: number
+  /** Names the builder when a page shows more than one. */
+  label?: string
 }
+
+const DEFAULT_LABEL = 'Attribute filters'
 
 function MatchSelect({ value, onChange, label }: { value: Match; onChange: (m: Match) => void; label: string }): ReactElement {
   return (
@@ -32,8 +36,11 @@ function MatchSelect({ value, onChange, label }: { value: Match; onChange: (m: M
  * Builds the shared filter model: rows of key, operator and value joined by AND
  * or OR, with one level of groups.
  */
-export function FilterBuilder({ value, onChange, projectId }: Props): ReactElement {
+export function FilterBuilder({ value, onChange, projectId, label = DEFAULT_LABEL }: Props): ReactElement {
   const suggestions = useAttributeSuggestions(projectId)
+  const named = label !== DEFAULT_LABEL
+  const matchLabel = named ? `${label} match` : 'Match'
+  const groupMatchLabel = named ? `${label} group match` : 'Group match'
 
   const setNode = (i: number, node: FilterNode) =>
     onChange({ ...value, filters: value.filters.map((n, j) => (j === i ? node : n)) })
@@ -51,11 +58,11 @@ export function FilterBuilder({ value, onChange, projectId }: Props): ReactEleme
   }
 
   return (
-    <fieldset style={boxStyle} aria-label="Attribute filters">
-      <legend style={{ fontSize: 12, color: '#9ca3af', padding: '0 6px' }}>Attribute filters</legend>
+    <fieldset style={boxStyle} aria-label={label}>
+      <legend style={{ fontSize: 12, color: '#9ca3af', padding: '0 6px' }}>{label}</legend>
       {value.filters.length > 1 && (
         <div style={{ marginBottom: 8, fontSize: 12, color: '#9ca3af', display: 'flex', gap: 8, alignItems: 'center' }}>
-          Match <MatchSelect label="Match" value={value.match} onChange={(match) => onChange({ ...value, match })} />
+          Match <MatchSelect label={matchLabel} value={value.match} onChange={(match) => onChange({ ...value, match })} />
         </div>
       )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -63,7 +70,7 @@ export function FilterBuilder({ value, onChange, projectId }: Props): ReactEleme
           isGroup(node) ? (
             <div key={i} style={groupStyle} role="group" aria-label="Filter group">
               <div style={{ fontSize: 12, color: '#9ca3af', display: 'flex', gap: 8, alignItems: 'center' }}>
-                Group, match <MatchSelect label="Group match" value={node.match} onChange={(match) => setNode(i, { ...node, match })} />
+                Group, match <MatchSelect label={groupMatchLabel} value={node.match} onChange={(match) => setNode(i, { ...node, match })} />
                 <button type="button" onClick={() => removeNode(i)} style={linkButton}>Remove group</button>
               </div>
               {node.filters.map((c, ci) => (
