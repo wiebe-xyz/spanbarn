@@ -46,6 +46,22 @@ type operand struct {
 	path string
 }
 
+// IsColumn reports whether a bare key names a span column instead of an
+// attribute.
+func IsColumn(key string) bool {
+	_, ok := columns[key]
+	return ok
+}
+
+// AttrKey returns the key that selects the attribute `name` in a filter. An
+// attribute named like a span column needs the "attributes." prefix.
+func AttrKey(name string) string {
+	if IsColumn(name) || strings.HasPrefix(name, attrPrefix) {
+		return attrPrefix + name
+	}
+	return name
+}
+
 func resolve(key string) operand {
 	if rest, ok := strings.CutPrefix(key, attrPrefix); ok && rest != "" {
 		return operand{attr: true, path: `$."` + rest + `"`}

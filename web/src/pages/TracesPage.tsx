@@ -6,6 +6,7 @@ import type { SavedQuery, TraceSummary, TraceGroupSummary } from '../api/types'
 import { api } from '../api/client'
 import { TraceStructureBadges } from '../components/TraceStructureBadges'
 import { FilterBuilder } from '../components/filter/FilterBuilder'
+import { compareUrl } from '../filters/compareLink'
 import {
   andWith,
   describeFilter,
@@ -476,6 +477,16 @@ export function TracesPage(): ReactElement {
             title="Orphan spans, rootless traces, single-span traces and span names"
           >
             Trace health
+          </button>
+          <button
+            onClick={() =>
+              navigate(compareUrl({ projectId, selection: savedExpr, fromMs: new Date(filters.from).getTime() }))
+            }
+            disabled={!canSave}
+            style={{ ...buttonStyle, background: 'transparent', border: '1px solid #374151', opacity: canSave ? 1 : 0.5 }}
+            title="Rank the attributes whose values differ between these spans and all other spans"
+          >
+            Compare attributes
           </button>
           {viewMode === 'detail' && (
             <>

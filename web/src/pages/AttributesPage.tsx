@@ -95,6 +95,7 @@ export function AttributesPage(): ReactElement {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4, flexWrap: 'wrap' }}>
         <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>Attributes</h1>
         <Link to="/traces" style={{ fontSize: 13, color: '#93c5fd' }}>Back to traces</Link>
+        <Link to="/compare" style={{ fontSize: 13, color: '#93c5fd' }}>Compare attributes</Link>
       </div>
       <p style={{ color: '#9ca3af', fontSize: 13, margin: '0 0 16px' }}>
         Attribute keys with the share of spans that set them, distinct values and the most common values.

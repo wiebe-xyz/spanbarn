@@ -464,6 +464,77 @@ paths:
         '400':
           description: Missing project or range, reversed range, range over 7 days, or sample out of range
 
+  /api/v1/attributes/compare:
+    get:
+      summary: Rank the attributes whose values differ most between a selection and a baseline
+      description: >
+        BubbleUp-style comparison. Project, range and a non-empty selection filter are required; the range is
+        limited to 7 days. The baseline defaults to every span of the project in the range, the selection
+        included. Both sets are read through the same sample ratio (1 in 20 above 24 hours unless sample is
+        given) and a row cap of max_spans spans (newest first, default 10000, at most 50000), so the cost is
+        two bounded scans. Attributes are ranked by total variation distance: half the sum of the absolute
+        differences between the value shares of the two sets, where spans that do not set the attribute count as
+        a value of their own. 0 means identical, 1 means no value in common. The span columns service, name,
+        kind and status are compared too; an attribute named like a span column is reported as attributes.NAME.
+        Per attribute at most 200 distinct values are kept per set and the rest is summed, so the score of a
+        high-cardinality attribute is approximate. Filter model: specs/001-telemetry-aggregator/data-model.md.
+      operationId: compareAttributes
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - {name: selection, in: query, required: true, description: 'Filter model as JSON, the spans to explain', schema: {type: string}}
+        - {name: baseline, in: query, description: 'Filter model as JSON, the spans to compare with; empty means all spans', schema: {type: string}}
+        - {name: sample, in: query, description: 'Keep 1 span in N, 1 to 1000', schema: {type: integer}}
+        - {name: max_spans, in: query, description: Row cap on spans read per set, schema: {type: integer}}
+        - {name: limit, in: query, description: Attributes to return, default 20, at most 100, schema: {type: integer}}
+        - {name: top, in: query, description: Values per attribute, default 5, at most 20, schema: {type: integer}}
+      responses:
+        '200':
+          description: Attributes ordered by total variation distance, largest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  selection:
+                    type: object
+                    properties:
+                      scanned: {type: integer}
+                      truncated: {type: boolean}
+                  baseline:
+                    type: object
+                    properties:
+                      scanned: {type: integer}
+                      truncated: {type: boolean}
+                  sample: {type: integer}
+                  maxSpans: {type: integer}
+                  attributes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: {type: string}
+                        score: {type: number, description: Total variation distance, 0 to 1}
+                        selectionCoverage: {type: number}
+                        baselineCoverage: {type: number}
+                        values:
+                          type: array
+                          description: Values that differ most, largest difference first
+                          items:
+                            type: object
+                            properties:
+                              value: {type: string}
+                              missing: {type: boolean, description: The bucket of spans that do not set the attribute}
+                              selectionCount: {type: integer}
+                              selectionShare: {type: number}
+                              baselineCount: {type: integer}
+                              baselineShare: {type: number}
+        '400':
+          description: Missing project, range or selection, invalid filter, range over 7 days, or sample out of range
+
   /api/v1/spans/search:
     get:
       summary: List spans matching a filter expression

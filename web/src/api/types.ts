@@ -490,3 +490,48 @@ export type AttributeDiscovery = {
   maxSpans: number
   keys: AttributeKey[]
 }
+
+/** Project, range and the two filter expressions (JSON) for an attribute comparison. */
+export type AttributeCompareScope = {
+  projectId: number
+  from: string
+  to: string
+  /** The spans to explain, as serialized filter JSON. Required. */
+  selection: string
+  /** The spans to compare with. Empty compares with every span in the range. */
+  baseline?: string
+  /** Keep 1 span in N. Unset samples 1 in 20 above 24h. */
+  sample?: number
+  maxSpans?: number
+  limit?: number
+  top?: number
+}
+
+export type AttributeValueShare = {
+  value: string
+  /** The bucket of spans that do not set the attribute. */
+  missing?: boolean
+  selectionCount: number
+  selectionShare: number
+  baselineCount: number
+  baselineShare: number
+}
+
+export type AttributeDifference = {
+  key: string
+  /** Total variation distance between the two value distributions, 0 to 1. */
+  score: number
+  selectionCoverage: number
+  baselineCoverage: number
+  values: AttributeValueShare[]
+}
+
+export type AttributeSetSummary = { scanned: number; truncated: boolean }
+
+export type AttributeComparison = {
+  selection: AttributeSetSummary
+  baseline: AttributeSetSummary
+  sample: number
+  maxSpans: number
+  attributes: AttributeDifference[]
+}

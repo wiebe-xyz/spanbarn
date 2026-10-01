@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { TracesPage } from './TracesPage'
 import { api } from '../api/client'
 
@@ -153,5 +153,40 @@ describe('TracesPage attribute filters', () => {
     expect(screen.queryAllByLabelText('Filter key')).toHaveLength(0)
     fireEvent.click(screen.getByText('library'))
     expect((screen.getAllByLabelText('Filter key') as HTMLInputElement[]).map((k) => k.value)).toEqual(['kind', 'url.path'])
+  })
+})
+
+function Where() {
+  const loc = useLocation()
+  return <div data-testid="where">{loc.pathname + loc.search}</div>
+}
+
+describe('TracesPage compare', () => {
+  it('opens the comparison with the current filters as the selection', async () => {
+    const filter = encodeURIComponent(JSON.stringify(LIB))
+    render(
+      <MemoryRouter initialEntries={[`/traces?service=web&filter=${filter}`]}>
+        <Routes>
+          <Route path="/traces" element={<TracesPage />} />
+          <Route path="/compare" element={<Where />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Compare attributes' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Compare attributes' }))
+
+    const where = (await screen.findByTestId('where')).textContent ?? ''
+    expect(where.startsWith('/compare?')).toBe(true)
+    const selection = JSON.parse(new URLSearchParams(where.split('?')[1]).get('selection') ?? 'null')
+    expect(selection.filters).toEqual([{ key: 'service', op: '=', value: 'web' }, ...LIB.filters])
+  })
+
+  it('disables the comparison until a filter is set', async () => {
+    render(
+      <MemoryRouter initialEntries={['/traces']}>
+        <TracesPage />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('button', { name: 'Compare attributes' })).toBeDisabled()
   })
 })
