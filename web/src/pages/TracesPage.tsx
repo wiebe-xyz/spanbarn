@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Ban } from 'lucide-react'
 import type { SavedQuery, TraceSummary, TraceGroupSummary } from '../api/types'
 import { api } from '../api/client'
+import { TraceStructureBadges } from '../components/TraceStructureBadges'
 import {
   durationColor,
   formatDuration,
@@ -20,6 +21,8 @@ type Filters = {
   minDurationMs: string
   minSpans: string
   rootOnly: boolean
+  /** '' = every trace, 'rootless' = no root span, 'orphans' = has spans with a missing parent. */
+  structure: '' | 'rootless' | 'orphans'
   from: string
   to: string
 }
@@ -36,9 +39,14 @@ const defaultFilters = (): Filters => ({
   minDurationMs: '',
   minSpans: '',
   rootOnly: true,
+  structure: '',
   from: toLocalDatetime(new Date(Date.now() - 3600_000)),
   to: toLocalDatetime(new Date()),
 })
+
+function structureFromParam(v: string | null): Filters['structure'] {
+  return v === 'rootless' || v === 'orphans' ? v : ''
+}
 
 function filtersFromParams(params: URLSearchParams): Filters {
   const defaults = defaultFilters()
@@ -49,6 +57,7 @@ function filtersFromParams(params: URLSearchParams): Filters {
     minDurationMs: params.get('minDurationMs') ?? defaults.minDurationMs,
     minSpans: params.get('minSpans') ?? defaults.minSpans,
     rootOnly: params.get('rootOnly') !== 'false',
+    structure: structureFromParam(params.get('structure')),
     from: params.get('from') ?? defaults.from,
     to: params.get('to') ?? defaults.to,
   }
@@ -62,6 +71,7 @@ function filtersToParams(filters: Filters): URLSearchParams {
   if (filters.minDurationMs) params.set('minDurationMs', filters.minDurationMs)
   if (filters.minSpans) params.set('minSpans', filters.minSpans)
   if (!filters.rootOnly) params.set('rootOnly', 'false')
+  if (filters.structure) params.set('structure', filters.structure)
   params.set('from', filters.from)
   params.set('to', filters.to)
   return params
@@ -74,7 +84,7 @@ export function TracesPage(): ReactElement {
 
   // View mode: 'grouped' = per-operation aggregate, 'detail' = individual traces for one operation
   const [viewMode, setViewMode] = useState<'grouped' | 'detail'>(() =>
-    searchParams.get('operation') ? 'detail' : 'grouped',
+    searchParams.get('operation') || searchParams.get('structure') ? 'detail' : 'grouped',
   )
   const [groups, setGroups] = useState<TraceGroupSummary[]>([])
   const [traces, setTraces] = useState<TraceSummary[]>([])
@@ -179,6 +189,8 @@ export function TracesPage(): ReactElement {
           if (n > 0) params.set('min_spans', String(n))
         }
         if (filters.rootOnly) params.set('root_only', 'true')
+        if (filters.structure === 'rootless') params.set('has_root', 'false')
+        if (filters.structure === 'orphans') params.set('orphans', 'true')
         for (const e of exclusions) params.append('exclude_operation', e.operation)
 
         const resp = await fetch(`/api/v1/traces?${params}`)
@@ -206,7 +218,7 @@ export function TracesPage(): ReactElement {
   }
 
   const backToGroups = () => {
-    setFilters((prev) => ({ ...prev, operation: '' }))
+    setFilters((prev) => ({ ...prev, operation: '', structure: '' }))
     setViewMode('grouped')
   }
 
@@ -403,6 +415,22 @@ export function TracesPage(): ReactElement {
 
           {viewMode === 'detail' && (
             <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 12, color: '#9ca3af' }}>Structure</span>
+              <select
+                aria-label="Structure"
+                value={filters.structure}
+                onChange={(e) => updateFilter('structure', e.target.value)}
+                style={inputStyle}
+              >
+                <option value="">All traces</option>
+                <option value="rootless">No root span</option>
+                <option value="orphans">Has orphan spans</option>
+              </select>
+            </label>
+          )}
+
+          {viewMode === 'detail' && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <span style={{ fontSize: 12, color: '#9ca3af' }}>Root traces only</span>
               <select
                 value={filters.rootOnly ? 'true' : 'false'}
@@ -419,6 +447,13 @@ export function TracesPage(): ReactElement {
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={handleSearch} style={buttonStyle}>
             Search
+          </button>
+          <button
+            onClick={() => navigate('/trace-health')}
+            style={{ ...buttonStyle, background: 'transparent', border: '1px solid #374151' }}
+            title="Orphan spans, rootless traces, single-span traces and span names"
+          >
+            Trace health
           </button>
           {viewMode === 'detail' && (
             <>
@@ -664,16 +699,23 @@ export function TracesPage(): ReactElement {
                       <code style={{ fontSize: 12 }}>{truncateId(trace.traceId)}</code>
                     </td>
                     <td style={{ ...tdStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span>{trace.rootSpanName}</span>
-                      <span
-                        onClick={(e) => { e.stopPropagation(); void excludeOp(trace.rootSpanName) }}
-                        title={`Exclude "${trace.rootSpanName}" from results`}
-                        style={{ color: '#4b5563', cursor: 'pointer', flexShrink: 0, lineHeight: 1, display: 'flex' }}
-                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#ef4444' }}
-                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = '#4b5563' }}
-                      >
-                        <Ban size={12} />
-                      </span>
+                      {trace.rootSpanName ? (
+                        <>
+                          <span>{trace.rootSpanName}</span>
+                          <span
+                            onClick={(e) => { e.stopPropagation(); void excludeOp(trace.rootSpanName) }}
+                            title={`Exclude "${trace.rootSpanName}" from results`}
+                            style={{ color: '#4b5563', cursor: 'pointer', flexShrink: 0, lineHeight: 1, display: 'flex' }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = '#ef4444' }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = '#4b5563' }}
+                          >
+                            <Ban size={12} />
+                          </span>
+                        </>
+                      ) : (
+                        <span style={{ color: '#6b7280' }}>—</span>
+                      )}
+                      <TraceStructureBadges trace={trace} />
                     </td>
                     <td style={tdStyle}>{trace.rootService}</td>
                     <td style={{ ...tdStyle, color: '#d1d5db', fontSize: 12 }}>

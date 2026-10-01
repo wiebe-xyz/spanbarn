@@ -111,7 +111,9 @@ func mergeExpiry(acc, span *time.Time, seen bool) *time.Time {
 // upsertTraceSummariesTx writes the rollups within an existing transaction, so
 // they land atomically with the spans that produced them. Accumulating columns
 // use MIN/SUM/MAX; root fields only overwrite when the incoming batch actually
-// carried a root (root_name != ”).
+// carried a root (root_name != ”). The structural columns (has_root,
+// orphan_count) and span_count are then recomputed from spans (see
+// refreshTraceStructureTx), so spans must already be written in tx.
 func upsertTraceSummariesTx(ctx context.Context, tx *sql.Tx, sums []traceSummaryAgg) error {
 	if len(sums) == 0 {
 		return nil
@@ -146,7 +148,10 @@ func upsertTraceSummariesTx(ctx context.Context, tx *sql.Tx, sums []traceSummary
 			return err
 		}
 	}
-	return nil
+	// Recompute span_count, has_root and orphan_count from the spans table. The
+	// per-batch accumulation above cannot know whether a parent arrived in an
+	// earlier or later batch; reading the trace's own spans can.
+	return refreshTraceStructureTx(ctx, tx, summaryKeysForSpans(sums))
 }
 
 // DeleteExpiredTraceSummaries drops summaries whose stamped expires_at has passed

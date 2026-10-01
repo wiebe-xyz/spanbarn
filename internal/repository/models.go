@@ -81,10 +81,16 @@ type SpanFilter struct {
 	RootOnly          bool
 	SortErrorsFirst   bool
 	ExcludeOperations []string
-	From              time.Time
-	To                time.Time
-	Limit             int
-	Offset            int
+	// HasRoot filters trace summaries on whether the trace holds a root span.
+	// nil applies no filter. Summaries whose structure is not computed yet match
+	// neither value.
+	HasRoot *bool
+	// HasOrphans keeps only traces with at least one orphan span.
+	HasOrphans bool
+	From       time.Time
+	To         time.Time
+	Limit      int
+	Offset     int
 }
 
 // RootSpanGroup holds per-operation aggregate stats computed from root spans.

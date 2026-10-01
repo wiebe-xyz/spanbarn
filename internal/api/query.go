@@ -121,7 +121,10 @@ func (h *queryHandlers) handleTraces(w http.ResponseWriter, r *http.Request) {
 		limit = 200
 	}
 
+	hasRoot, orphans := parseStructureFilter(r)
 	filter := service.TraceSearchFilter{
+		HasRoot:           hasRoot,
+		HasOrphans:        orphans,
 		ProjectID:         parseInt64Param(r, "project_id", 0),
 		Service:           r.URL.Query().Get("service"),
 		Operation:         r.URL.Query().Get("operation"),

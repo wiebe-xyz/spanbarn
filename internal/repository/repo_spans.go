@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -263,6 +264,10 @@ type TraceSummaryRow struct {
 	RootDuration int64
 	RootModel    string
 	PromptCount  int
+	// HasRoot is nil while the summary's structure is not computed yet.
+	HasRoot *bool
+	// OrphanCount is the number of spans whose parent is absent from the trace.
+	OrphanCount int
 }
 
 // SearchTraceSummaries returns at most filter.Limit trace summaries matching the
@@ -323,6 +328,7 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 		where = append(where, "span_count >= ?")
 		args = append(args, minSpans)
 	}
+	where = f.appendStructureWhere(where)
 
 	whereSQL := ""
 	if len(where) > 0 {
@@ -338,7 +344,7 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 		orderBy = "has_error DESC, ingested_at DESC"
 	}
 
-	q := fmt.Sprintf(`SELECT trace_id, start_time_us, span_count, has_error, root_name, root_service, root_duration_us
+	q := fmt.Sprintf(`SELECT trace_id, start_time_us, span_count, has_error, root_name, root_service, root_duration_us, has_root, orphan_count
 		FROM trace_summaries%s
 		ORDER BY %s
 		LIMIT %d OFFSET %d`, whereSQL, orderBy, limit, f.Offset)
@@ -354,12 +360,14 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 	for rows.Next() {
 		var tr TraceSummaryRow
 		var hasErrorInt int
+		var hasRoot, orphans sql.NullInt64
 		if err := rows.Scan(&tr.TraceID, &tr.StartTimeUs, &tr.SpanCount, &hasErrorInt,
-			&tr.RootName, &tr.RootService, &tr.RootDuration); err != nil {
+			&tr.RootName, &tr.RootService, &tr.RootDuration, &hasRoot, &orphans); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		tr.HasError = hasErrorInt == 1
+		tr.HasRoot, tr.OrphanCount = structureFromColumns(hasRoot, orphans)
 		row := tr
 		order = append(order, tr.TraceID)
 		byTrace[tr.TraceID] = &row
