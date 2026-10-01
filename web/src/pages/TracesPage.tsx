@@ -37,6 +37,8 @@ type Filters = {
   structure: '' | 'rootless' | 'orphans'
   /** Attribute filters, the shared filter model. Kept in the URL as `filter`. */
   expr: FilterExpr
+  /** Project the list is scoped to. '' lists every project. Set by links from the query page. */
+  project: string
   from: string
   to: string
 }
@@ -55,6 +57,7 @@ const defaultFilters = (): Filters => ({
   rootOnly: true,
   structure: '',
   expr: emptyExpr(),
+  project: '',
   from: toLocalDatetime(new Date(Date.now() - 3600_000)),
   to: toLocalDatetime(new Date()),
 })
@@ -74,6 +77,7 @@ function filtersFromParams(params: URLSearchParams): Filters {
     rootOnly: params.get('rootOnly') !== 'false',
     structure: structureFromParam(params.get('structure')),
     expr: parseFilter(params.get('filter')),
+    project: params.get('project') ?? defaults.project,
     from: params.get('from') ?? defaults.from,
     to: params.get('to') ?? defaults.to,
   }
@@ -90,6 +94,7 @@ function filtersToParams(filters: Filters): URLSearchParams {
   if (filters.structure) params.set('structure', filters.structure)
   const expr = serializeFilter(filters.expr)
   if (expr) params.set('filter', expr)
+  if (filters.project) params.set('project', filters.project)
   params.set('from', filters.from)
   params.set('to', filters.to)
   return params
@@ -116,6 +121,7 @@ export function TracesPage(): ReactElement {
   const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([])
   const [savingQuery, setSavingQuery] = useState(false)
   const [projectId, setProjectId] = useState(0)
+  const filtersProject = filters.project
 
   type Exclusion = { id: number; operation: string }
   const [exclusions, setExclusions] = useState<Exclusion[]>([])
@@ -144,9 +150,9 @@ export function TracesPage(): ReactElement {
 
   useEffect(() => {
     api.getSavedQueries().then(setSavedQueries).catch(() => {})
-    api.listProjects().then((p) => setProjectId(p?.[0]?.id ?? 0)).catch(() => {})
+    api.listProjects().then((p) => setProjectId(Number(filtersProject) || (p?.[0]?.id ?? 0))).catch(() => {})
     void loadExclusions() // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
-  }, [loadExclusions])
+  }, [loadExclusions, filtersProject])
 
   // Fetch services for dropdown
   useEffect(() => {
@@ -213,6 +219,7 @@ export function TracesPage(): ReactElement {
         if (filters.structure === 'orphans') params.set('orphans', 'true')
         const expr = serializeFilter(filters.expr)
         if (expr) params.set('filter', expr)
+        if (filters.project) params.set('project_id', filters.project)
         for (const e of exclusions) params.append('exclude_operation', e.operation)
 
         const resp = await fetch(`/api/v1/traces?${params}`)

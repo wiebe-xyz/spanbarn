@@ -130,6 +130,16 @@ Migration 036 adds `filters` and fills it from the four legacy fields: `service`
 - A time range (`from`) is required with a filter, so the scan stays inside a window. On the span list a span matches. On the trace list a trace matches when one of its spans satisfies the whole expression, and the trace row still summarises every span of the trace.
 - Attribute predicates read the JSON of each span in the window (the `json_extract` storage decision in `deploy/docs/attribute-storage-design.md`). Column predicates and `http_status` can use indexes.
 
+### Group-by queries (no schema change)
+
+`GET /api/v1/analyze` and `GET /api/v1/analyze/series` (`internal/repository/repo_analyze*.go`, `internal/service/query_analyze*.go`) compute calculations per group over the `spans` table. They add no table, column or migration. The filter model selects the spans, and group keys use the same key resolution as filters (span column or attribute, read as text, a missing key groups as `''`).
+
+- Calculations: `count`, `error_rate` (fraction of spans with status `error`), `sum_duration`, `avg_duration`, `max_duration`, `p50`, `p95`, `p99` (nearest rank over `duration_us`, computed with window functions per group) and `count_distinct:<attribute>`. Durations are microseconds.
+- Group by 0 to 4 keys. A table query returns the top `limit` groups (default 20, at most 100) ordered by one calculation, plus one other row that aggregates every group beyond the cap. Each group row carries a `drill` filter (the request filter AND one `=` or `does-not-exist` per key) that selects exactly that group on the trace and span lists. The other row has none.
+- A series query takes one calculation and returns it per bucket for the top groups (default 5, at most 10) and an other line. It reuses the sample ratio of the table query so both views agree. The bucket defaults to the smallest of 1m, 5m, 15m, 30m, 1h, 3h, 6h, 12h, 1d that gives 48 buckets or fewer, at most 500 buckets.
+- `project_id`, `from` and `to` are required and the range is at most 30 days. The scan reads at most `max_spans` spans (default 200,000, at most 500,000), newest first. `sample` is 1 in N (1 to 1000). With `sample` unset the repository counts matching spans up to the cap. When they exceed it, it estimates the match from a sampled count and picks the smallest ratio that fits (`id % N = 0`). Counts and sums are multiplied by N in the response. Percentiles, maxima and distinct counts are not scaled and describe the sample. The response reports `scanned`, `sampleEvery`, `truncated` and `maxSpans`.
+- Cost: each query reads the attribute JSON of up to `max_spans` spans through `idx_spans_project_ingested`, the same cost class as attribute discovery.
+
 ### aggregates (long-term metrics)
 
 | Column | Type | Notes |

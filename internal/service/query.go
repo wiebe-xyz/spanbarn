@@ -41,6 +41,7 @@ type QueryRepository interface {
 	RootlessTraceCount(ctx context.Context, w repository.HealthWindow) (int64, error)
 	ScanAttributes(ctx context.Context, w repository.AttributeWindow) (*repository.AttributeScan, error)
 	ScanAttributeSet(ctx context.Context, w repository.AttributeSetWindow) (*repository.AttributeSetScan, error)
+	Analyze(ctx context.Context, q repository.AnalyzeQuery) (*repository.AnalyzeResult, error)
 }
 
 // SampleRatioLookup returns the configured 1-in-N sampling ratio for a project.
