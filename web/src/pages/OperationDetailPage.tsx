@@ -109,7 +109,7 @@ export function OperationDetailPage(): ReactElement {
     <div>
       {/* Breadcrumb */}
       <div className="breadcrumb">
-        <Link to="/">Services</Link>
+        <Link to="/services">Services</Link>
         <ChevronRight size={14} />
         <Link to={`/services/${encodeURIComponent(service!)}`}>{service}</Link>
         <ChevronRight size={14} />

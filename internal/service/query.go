@@ -32,6 +32,9 @@ type QueryRepository interface {
 	StreamSpans(filter repository.SpanFilter, fn func(repository.Span) error) error
 	QueryWebVitals(service string, from, to time.Time) ([]repository.WebVitalRow, error)
 	QueryWebVitalsTimeseries(service, page, metric string, from, to time.Time, intervalSec int64) ([]repository.WebVitalBucket, error)
+	QueryDashboardCounts(f repository.SpanFilter, intervalSec int64, group repository.DashboardGroup, topN int) ([]repository.DashboardCountPoint, error)
+	QueryDashboardPercentiles(f repository.SpanFilter, intervalSec int64, group repository.DashboardGroup, topN int) ([]repository.DashboardPercentilePoint, error)
+	QueryDashboardHeatmap(f repository.SpanFilter, intervalSec int64) ([]repository.DashboardHeatmapCell, error)
 }
 
 // SampleRatioLookup returns the configured 1-in-N sampling ratio for a project.

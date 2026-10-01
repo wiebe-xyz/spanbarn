@@ -145,6 +145,156 @@ paths:
                 items:
                   $ref: '#/components/schemas/OperationSummary'
 
+  /api/v1/dashboard/counts:
+    get:
+      summary: Span or trace counts over time, grouped by service or HTTP status code
+      description: Reads raw spans, so the range is limited to 48 hours. Only the ten largest groups keep their own series; the rest fold into "other".
+      operationId: dashboardCounts
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - $ref: '#/components/parameters/DashboardProject'
+        - $ref: '#/components/parameters/DashboardService'
+        - $ref: '#/components/parameters/DashboardName'
+        - $ref: '#/components/parameters/DashboardStatus'
+        - name: group_by
+          in: query
+          schema:
+            type: string
+            enum: [service, http_status]
+            default: service
+        - name: root_only
+          in: query
+          description: Count only root spans (traces)
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Count series
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intervalSeconds:
+                    type: integer
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        time:
+                          type: string
+                          format: date-time
+                        group:
+                          type: string
+                        count:
+                          type: integer
+        '400':
+          description: Missing or invalid range, range over 48 hours, or unknown group_by
+
+  /api/v1/dashboard/percentiles:
+    get:
+      summary: Exact P90/P95/P99 span duration over time, grouped by service or span name
+      description: Computed from raw span durations. Only the ten largest groups are returned.
+      operationId: dashboardPercentiles
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - $ref: '#/components/parameters/DashboardProject'
+        - $ref: '#/components/parameters/DashboardService'
+        - $ref: '#/components/parameters/DashboardName'
+        - $ref: '#/components/parameters/DashboardStatus'
+        - name: group_by
+          in: query
+          schema:
+            type: string
+            enum: [service, name]
+            default: service
+      responses:
+        '200':
+          description: Percentile series, durations in microseconds
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intervalSeconds:
+                    type: integer
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        time:
+                          type: string
+                          format: date-time
+                        group:
+                          type: string
+                        count:
+                          type: integer
+                        p90Us:
+                          type: integer
+                        p95Us:
+                          type: integer
+                        p99Us:
+                          type: integer
+        '400':
+          description: Missing or invalid range, range over 48 hours, or unknown group_by
+
+  /api/v1/dashboard/heatmap:
+    get:
+      summary: Span duration distribution over time
+      description: Populated cells only. Each duration bucket covers [lowerUs, upperUs) on a half-octave scale.
+      operationId: dashboardHeatmap
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - $ref: '#/components/parameters/DashboardProject'
+        - $ref: '#/components/parameters/DashboardService'
+        - $ref: '#/components/parameters/DashboardName'
+        - $ref: '#/components/parameters/DashboardStatus'
+        - name: root_only
+          in: query
+          description: Use only root spans (traces)
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Heatmap cells
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intervalSeconds:
+                    type: integer
+                  cells:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        time:
+                          type: string
+                          format: date-time
+                        bucket:
+                          type: integer
+                          description: Duration bucket index; lowerUs is about 2^(bucket/2) - 1
+                        lowerUs:
+                          type: integer
+                        upperUs:
+                          type: integer
+                        count:
+                          type: integer
+        '400':
+          description: Missing or invalid range, or range over 48 hours
+
   /api/v1/traces/{traceId}:
     get:
       summary: Get full trace by ID
@@ -168,6 +318,45 @@ paths:
           description: Trace not found
 
 components:
+  parameters:
+    DashboardFrom:
+      name: from
+      in: query
+      required: true
+      schema:
+        type: string
+        format: date-time
+    DashboardTo:
+      name: to
+      in: query
+      required: true
+      description: Must be after from, and at most 48 hours later
+      schema:
+        type: string
+        format: date-time
+    DashboardProject:
+      name: project_id
+      in: query
+      description: Omit or 0 for all projects
+      schema:
+        type: integer
+    DashboardService:
+      name: service
+      in: query
+      schema:
+        type: string
+    DashboardName:
+      name: name
+      in: query
+      description: Span name
+      schema:
+        type: string
+    DashboardStatus:
+      name: status
+      in: query
+      description: Span status (ok, error, unset)
+      schema:
+        type: string
   securitySchemes:
     apiKey:
       type: apiKey

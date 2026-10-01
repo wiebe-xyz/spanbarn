@@ -7,6 +7,7 @@ import { TimeRangeProvider } from './contexts/TimeRangeContext'
 // load only ships React + shell + the page you actually opened, instead of
 // the entire dashboard. Pages export named components, so unwrap them here.
 const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })))
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })))
 const ServicesPage = lazy(() => import('./pages/ServicesPage').then(m => ({ default: m.ServicesPage })))
 const OperationsPage = lazy(() => import('./pages/OperationsPage').then(m => ({ default: m.OperationsPage })))
 const OperationDetailPage = lazy(() => import('./pages/OperationDetailPage').then(m => ({ default: m.OperationDetailPage })))
@@ -35,7 +36,8 @@ function App() {
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/" element={<DashboardLayout />}>
-              <Route index element={<ServicesPage />} />
+              <Route index element={<DashboardPage />} />
+              <Route path="services" element={<ServicesPage />} />
               <Route path="services/:service" element={<OperationsPage />} />
               <Route path="services/:service/operations/:operation" element={<OperationDetailPage />} />
               <Route path="traces" element={<TracesPage />} />
