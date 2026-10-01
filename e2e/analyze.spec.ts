@@ -24,7 +24,7 @@ test.describe('Query (group by)', () => {
 
     // Nothing runs until the query is submitted.
     await page.getByRole('button', { name: '+ Add group by' }).click();
-    await page.getByLabel('Group by key 1').fill('kind');
+    await page.getByLabel('Group by key 1', { exact: true }).fill('kind');
     await page.getByRole('button', { name: 'Run query' }).click();
     await expect(page).toHaveURL(/group_by=kind/);
     await expect(page).toHaveURL(/range=24h/);

@@ -1,5 +1,5 @@
 const CACHE_NAME = 'spanbarn-v2';
-const API_CACHE = 'spanbarn-api-v1';
+const API_CACHE = 'spanbarn-api-v2';
 const STATIC_ASSETS = [
   '/',
   '/favicon.svg',
@@ -17,6 +17,15 @@ const PAGE_API_MAP = {
   '/service-map': ['/api/v1/service-map'],
   '/prompts': ['/api/v1/prompts'],
 };
+
+// Only read-heavy aggregate endpoints are served stale-while-revalidate.
+// Everything else (boards, alerts, settings, projects, ...) is edited by the
+// user, so a cached copy would show the state from before their own save.
+const SWR_API_PATHS = [...new Set(Object.values(PAGE_API_MAP).flat())];
+
+function isSwrApiPath(pathname) {
+  return SWR_API_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
+}
 
 const NAV_ADJACENCY = {
   '/': ['/dependencies', '/pages'],
@@ -100,7 +109,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
 
   if (url.pathname.startsWith('/api/') && request.method === 'GET') {
-    if (url.pathname === '/api/v1/health' || url.pathname.includes('/login') || url.pathname.includes('/logout')) {
+    if (!isSwrApiPath(url.pathname)) {
       return;
     }
 

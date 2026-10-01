@@ -27,7 +27,7 @@ test.describe('Dashboard', () => {
       'Duration by Service',
       'Duration by Name',
     ]) {
-      await expect(page.getByRole('region', { name: title })).toBeVisible({ timeout: 10000 });
+      await expect(page.getByRole('region', { name: title, exact: true })).toBeVisible({ timeout: 10000 });
     }
     await expect(page.getByRole('combobox', { name: 'Time range' })).toHaveValue('24h');
 
