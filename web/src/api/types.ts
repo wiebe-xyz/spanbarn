@@ -535,3 +535,61 @@ export type AttributeComparison = {
   maxSpans: number
   attributes: AttributeDifference[]
 }
+
+/** Query of the group-by view. The wire names of calcs are listed in analyze/model.ts. */
+export type AnalyzeParams = {
+  projectId: number
+  from: string
+  to: string
+  /** The shared filter model as JSON. */
+  filter?: string
+  groupBy: string[]
+  calcs: string[]
+  orderBy?: string
+  asc?: boolean
+  limit?: number
+  /** Keep 1 span in N. Unset or 0 samples only when the scan exceeds the row cap. */
+  sample?: number
+  /** Bucket length in seconds, series only. */
+  bucket?: number
+}
+
+export type AnalyzeRow = {
+  group: string[]
+  other?: boolean
+  count: number
+  /** One value per calc. Durations are microseconds and error_rate is a fraction. */
+  values: number[]
+  /** Filter that selects the spans of this group. Absent on the other row. */
+  drill?: unknown
+}
+
+export type AnalyzeResponse = {
+  groupBy: string[]
+  calcs: string[]
+  rows: AnalyzeRow[]
+  other?: AnalyzeRow
+  scanned: number
+  sampleEvery: number
+  truncated: boolean
+  maxSpans: number
+}
+
+export type AnalyzeSeriesLine = {
+  group: string[]
+  other?: boolean
+  values: (number | null)[]
+}
+
+export type AnalyzeSeriesResponse = {
+  groupBy: string[]
+  calc: string
+  bucketSeconds: number
+  /** Bucket starts in unix seconds. */
+  buckets: number[]
+  series: AnalyzeSeriesLine[]
+  scanned: number
+  sampleEvery: number
+  truncated: boolean
+  maxSpans: number
+}

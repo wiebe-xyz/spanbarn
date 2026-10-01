@@ -575,6 +575,102 @@ paths:
         '400':
           description: Invalid filter, or a filter without a time range
 
+  /api/v1/analyze:
+    get:
+      summary: Calculations per group over spans
+      description: >
+        Group-by query over the spans of one project in a required time range (at most 30 days).
+        Calculations are count, error_rate, sum_duration, avg_duration, max_duration, p50, p95, p99
+        and count_distinct:<attribute>. Durations are microseconds. Groups beyond the cap fold into
+        the other row. Each group row has a drill filter that selects its spans.
+        See specs/001-telemetry-aggregator/data-model.md (Group-by queries).
+      operationId: analyze
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - {name: filter, in: query, description: 'Filter model as JSON', schema: {type: string}}
+        - {name: group_by, in: query, description: 'Span column or attribute key, repeat for up to 4', schema: {type: array, items: {type: string}}, style: form, explode: true}
+        - {name: calc, in: query, description: 'Calculation, repeat for several. Default count', schema: {type: array, items: {type: string}}, style: form, explode: true}
+        - {name: order_by, in: query, description: 'One of the calc values, default the first', schema: {type: string}}
+        - {name: order, in: query, description: 'asc or desc (default)', schema: {type: string}}
+        - {name: limit, in: query, description: 'Group cap, default 20, at most 100', schema: {type: integer}}
+        - {name: sample, in: query, description: '1 in N spans. 0 or unset picks the ratio from max_spans', schema: {type: integer}}
+        - {name: max_spans, in: query, description: 'Row cap on spans read, default 200000, at most 500000', schema: {type: integer}}
+      responses:
+        '200':
+          description: One row per group
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groupBy: {type: array, items: {type: string}}
+                  calcs: {type: array, items: {type: string}}
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        group: {type: array, items: {type: string}}
+                        count: {type: integer}
+                        values: {type: array, items: {type: number}}
+                        drill: {type: object}
+                  other: {type: object}
+                  scanned: {type: integer}
+                  sampleEvery: {type: integer}
+                  truncated: {type: boolean}
+                  maxSpans: {type: integer}
+        '400':
+          description: Missing project or range, range over 30 days, invalid filter, key or calculation
+
+  /api/v1/analyze/series:
+    get:
+      summary: One calculation over time for the largest groups
+      description: >
+        Takes the parameters of /api/v1/analyze, one calc, and bucket (seconds, default about 48 buckets).
+        Returns the top groups (limit default 5, at most 10) and an other line.
+      operationId: analyzeSeries
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - {name: filter, in: query, schema: {type: string}}
+        - {name: group_by, in: query, schema: {type: array, items: {type: string}}, style: form, explode: true}
+        - {name: calc, in: query, schema: {type: string}}
+        - {name: bucket, in: query, description: 'Bucket length in seconds, at most 500 buckets', schema: {type: integer}}
+        - {name: limit, in: query, schema: {type: integer}}
+        - {name: sample, in: query, schema: {type: integer}}
+        - {name: max_spans, in: query, schema: {type: integer}}
+      responses:
+        '200':
+          description: Lines aligned to buckets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  calc: {type: string}
+                  bucketSeconds: {type: integer}
+                  buckets: {type: array, items: {type: integer}}
+                  series:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        group: {type: array, items: {type: string}}
+                        other: {type: boolean}
+                        values: {type: array, items: {type: number, nullable: true}}
+                  scanned: {type: integer}
+                  sampleEvery: {type: integer}
+                  truncated: {type: boolean}
+        '400':
+          description: As /api/v1/analyze, or more than one calculation
+
   /api/v1/traces/{traceId}:
     get:
       summary: Get full trace by ID

@@ -122,6 +122,8 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/api/v1/trace-health/span-names", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleSpanNames)))))
 		s.mux.Handle("/api/v1/attributes", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAttributes)))))
 		s.mux.Handle("/api/v1/attributes/compare", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAttributeCompare)))))
+		s.mux.Handle("/api/v1/analyze", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAnalyze)))))
+		s.mux.Handle("/api/v1/analyze/series", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAnalyzeSeries)))))
 		s.mux.Handle("/api/v1/dependencies", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDependencies)))))
 		s.mux.Handle("/api/v1/database", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDatabaseQueries)))))
 		s.mux.Handle("/api/v1/database/detail", apiRL(readAuth(http.HandlerFunc(qh.handleDatabaseQueryDetail))))

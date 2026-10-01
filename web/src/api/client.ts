@@ -20,6 +20,9 @@ import type {
   AttributeScope,
   AttributeCompareScope,
   AttributeComparison,
+  AnalyzeParams,
+  AnalyzeResponse,
+  AnalyzeSeriesResponse,
   OrphanSpanGroup,
   SingleSpanTraceGroup,
   SpanNameSummary,
@@ -124,6 +127,19 @@ function dashboardQs(f: DashboardFilter, extra: Record<string, string | undefine
     status: f.status,
     ...extra,
   })
+}
+
+function analyzeQs(p: AnalyzeParams): string {
+  const q = new URLSearchParams({ project_id: String(p.projectId), from: p.from, to: p.to })
+  if (p.filter) q.set('filter', p.filter)
+  for (const g of p.groupBy) q.append('group_by', g)
+  for (const c of p.calcs) q.append('calc', c)
+  if (p.orderBy) q.set('order_by', p.orderBy)
+  if (p.asc) q.set('order', 'asc')
+  if (p.limit) q.set('limit', String(p.limit))
+  if (p.sample) q.set('sample', String(p.sample))
+  if (p.bucket) q.set('bucket', String(p.bucket))
+  return '?' + q.toString()
 }
 
 function healthQs(s: TraceHealthScope): string {
@@ -239,6 +255,11 @@ export const api = {
 
   compareAttributes: (s: AttributeCompareScope) =>
     fetchJSON<AttributeComparison>(`/api/v1/attributes/compare${compareQs(s)}`),
+  analyze: (p: AnalyzeParams) =>
+    fetchJSON<AnalyzeResponse>(`/api/v1/analyze${analyzeQs(p)}`),
+
+  analyzeSeries: (p: AnalyzeParams) =>
+    fetchJSON<AnalyzeSeriesResponse>(`/api/v1/analyze/series${analyzeQs(p)}`),
 
   getTrace: (traceId: string) =>
     fetchJSON<TraceDetail>(`/api/v1/traces/${encodeURIComponent(traceId)}`),

@@ -190,3 +190,15 @@ describe('TracesPage compare', () => {
     expect(await screen.findByRole('button', { name: 'Compare attributes' })).toBeDisabled()
   })
 })
+
+describe('TracesPage project scope', () => {
+  it('scopes the list to the project of a link from the query page', async () => {
+    render(
+      <MemoryRouter initialEntries={['/traces?project=7&filter=' + encodeURIComponent(JSON.stringify(LIB))]}>
+        <TracesPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('GET /ok')).toBeInTheDocument())
+    expect(tracesUrls[0]).toContain('project_id=7')
+  })
+})
