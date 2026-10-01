@@ -33,6 +33,7 @@ import type {
   PinnedTracesResponse,
   LogsParams,
 } from './types'
+import type { FilterExpr } from '../filters/model'
 import type {
   DashboardFilter,
   DashboardCounts,
@@ -259,7 +260,7 @@ export const api = {
   getSavedQueries: (projectId = 1) =>
     fetchJSON<SavedQuery[]>(`/api/v1/saved-queries${qs({ project_id: projectId })}`),
 
-  createSavedQuery: (query: { name: string; service?: string; operation?: string; status?: string; minDurationUs?: number }) =>
+  createSavedQuery: (query: { name: string; filters?: FilterExpr }) =>
     fetchJSON<{ id: number }>('/api/v1/saved-queries', {
       method: 'POST',
       body: JSON.stringify({ projectId: 1, ...query }),

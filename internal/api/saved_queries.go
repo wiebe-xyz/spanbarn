@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -42,6 +43,9 @@ func (h *savedQueryHandlers) handleCreate(w http.ResponseWriter, r *http.Request
 		Operation     string `json:"operation"`
 		Status        string `json:"status"`
 		MinDurationUs int64  `json:"minDurationUs"`
+		// Filters is the shared filter model. When it is absent, the four
+		// legacy fields above are mapped to it.
+		Filters json.RawMessage `json:"filters"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON", err.Error())
@@ -54,6 +58,14 @@ func (h *savedQueryHandlers) handleCreate(w http.ResponseWriter, r *http.Request
 	if body.ProjectID == 0 {
 		body.ProjectID = 1
 	}
+	expr, err := filter.Parse(string(body.Filters))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid filters", err.Error())
+		return
+	}
+	if expr == nil {
+		expr = filter.FromLegacy(body.Service, body.Operation, body.Status, body.MinDurationUs)
+	}
 
 	id, err := h.repo.CreateSavedQuery(repository.SavedQuery{
 		ProjectID:     body.ProjectID,
@@ -62,6 +74,7 @@ func (h *savedQueryHandlers) handleCreate(w http.ResponseWriter, r *http.Request
 		Operation:     body.Operation,
 		Status:        body.Status,
 		MinDurationUs: body.MinDurationUs,
+		Filters:       json.RawMessage(filter.Marshal(expr)),
 	})
 	if err != nil {
 		writeServerError(w, r, "failed to create saved query", err)

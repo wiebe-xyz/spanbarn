@@ -56,6 +56,7 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 		ExcludeOperations: excluded,
 		HasRoot:           filter.HasRoot,
 		HasOrphans:        filter.HasOrphans,
+		Expr:              filter.Expr,
 		From:              filter.From,
 		To:                filter.To,
 		Limit:             limit,

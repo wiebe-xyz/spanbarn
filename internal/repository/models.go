@@ -3,6 +3,8 @@ package repository
 import (
 	"database/sql"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 )
 
 type Project struct {
@@ -87,10 +89,15 @@ type SpanFilter struct {
 	HasRoot *bool
 	// HasOrphans keeps only traces with at least one orphan span.
 	HasOrphans bool
-	From       time.Time
-	To         time.Time
-	Limit      int
-	Offset     int
+	// Expr is the attribute and column filter model (internal/filter). On a span
+	// query it ANDs with the fields above. On a trace query a trace matches when
+	// one of its spans satisfies the whole expression. A From bound is required
+	// with it, so the scan stays inside a time window.
+	Expr   *filter.Expr
+	From   time.Time
+	To     time.Time
+	Limit  int
+	Offset int
 }
 
 // RootSpanGroup holds per-operation aggregate stats computed from root spans.

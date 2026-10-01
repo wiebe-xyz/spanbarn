@@ -105,6 +105,10 @@ func (r *Repository) QuerySpans(f SpanFilter) ([]Span, error) {
 		where = append(where, "trace_id = ?")
 		args = append(args, f.TraceID)
 	}
+	where, args, err := f.appendExprWhere(where, args)
+	if err != nil {
+		return nil, err
+	}
 
 	q := "SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at FROM spans"
 	if len(where) > 0 {
@@ -329,6 +333,10 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 		args = append(args, minSpans)
 	}
 	where = f.appendStructureWhere(where)
+	where, args, err := f.appendTraceExprWhere(where, args)
+	if err != nil {
+		return nil, err
+	}
 
 	whereSQL := ""
 	if len(where) > 0 {
