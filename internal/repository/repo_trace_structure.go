@@ -22,6 +22,11 @@ type TraceKey struct {
 // A root is a span with no parent. An orphan is a span whose parent_span_id is
 // set but matches no span_id in the same trace. Both lookups seek
 // idx_spans_trace, so the cost depends on the size of one trace, not the table.
+//
+// Every spans reference is pinned with INDEXED BY idx_spans_trace. Without it
+// the planner (no ANALYZE stats) picked idx_spans_http_status (project_id=?),
+// which walks every span of the project once per trace and made a 500-span
+// batch cost seconds. The pin fails loudly if the index is ever dropped.
 // span_count is recomputed from the same rows, which keeps it equal to what the
 // trace detail shows after spans have been evicted.
 //
@@ -30,18 +35,18 @@ type TraceKey struct {
 // cutoff). settleTraceStructureSQL then records what the summary itself knows.
 const (
 	refreshTraceStructureSQL = `UPDATE trace_summaries SET
-		span_count = (SELECT COUNT(*) FROM spans WHERE project_id = ?1 AND trace_id = ?2),
-		has_root = EXISTS (SELECT 1 FROM spans
+		span_count = (SELECT COUNT(*) FROM spans INDEXED BY idx_spans_trace WHERE project_id = ?1 AND trace_id = ?2),
+		has_root = EXISTS (SELECT 1 FROM spans INDEXED BY idx_spans_trace
 			WHERE project_id = ?1 AND trace_id = ?2
 			  AND (parent_span_id IS NULL OR parent_span_id = '')),
-		orphan_count = (SELECT COUNT(*) FROM spans s
+		orphan_count = (SELECT COUNT(*) FROM spans s INDEXED BY idx_spans_trace
 			WHERE s.project_id = ?1 AND s.trace_id = ?2
 			  AND s.parent_span_id IS NOT NULL AND s.parent_span_id != ''
-			  AND NOT EXISTS (SELECT 1 FROM spans p
+			  AND NOT EXISTS (SELECT 1 FROM spans p INDEXED BY idx_spans_trace
 			                  WHERE p.project_id = ?1 AND p.trace_id = ?2
 			                    AND p.span_id = s.parent_span_id))
 		WHERE project_id = ?1 AND trace_id = ?2
-		  AND EXISTS (SELECT 1 FROM spans WHERE project_id = ?1 AND trace_id = ?2)`
+		  AND EXISTS (SELECT 1 FROM spans INDEXED BY idx_spans_trace WHERE project_id = ?1 AND trace_id = ?2)`
 
 	// clearStaleRootSQL drops root fields once the root span is gone, so a
 	// rootless trace never lists a name taken from somewhere else.

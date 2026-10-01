@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -209,6 +210,53 @@ func TestTraceHealthQueries(t *testing.T) {
 	past := HealthWindow{ProjectID: 1, From: time.Now().Add(-48 * time.Hour), To: time.Now().Add(-47 * time.Hour)}
 	if got, _ := repo.QuerySpanNameSummary(ctx, past); len(got) != 0 {
 		t.Errorf("window ignored: %+v", got)
+	}
+}
+
+// The refresh must seek idx_spans_trace on every spans reference. Left to the
+// planner it chose idx_spans_http_status (project_id=?), a walk of the whole
+// project per trace, which made ingest quadratic in the span count.
+func TestRefreshTraceStructurePlanSeeksTraceIndex(t *testing.T) {
+	repo := setupTestDB(t)
+	for _, q := range []string{refreshTraceStructureSQL, clearStaleRootSQL, settleTraceStructureSQL} {
+		rows, err := repo.DB().Query("EXPLAIN QUERY PLAN "+q, 1, "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			if strings.Contains(detail, "SEARCH") && strings.Contains(detail, "spans") &&
+				!strings.Contains(detail, "idx_spans_trace") {
+				t.Errorf("spans not read through idx_spans_trace: %s", detail)
+			}
+		}
+		rows.Close()
+	}
+}
+
+// Ingesting many one-span traces in 500-span batches stays linear. Before the
+// index pin each trace's refresh scanned the project, and 5500 spans took
+// minutes under -race.
+func TestInsertSpansManyTracesStaysFast(t *testing.T) {
+	repo := setupTestDB(t)
+	start := time.Now()
+	const total, chunk = 5500, 500
+	for i := 0; i < total; i += chunk {
+		batch := make([]Span, 0, chunk)
+		for j := i; j < i+chunk && j < total; j++ {
+			batch = append(batch, tsSpan(fmt.Sprintf("fast-%d", j), fmt.Sprintf("s%d", j), "", "op", "svc", "ok", 1, 10))
+		}
+		if err := repo.InsertSpans(batch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if d := time.Since(start); d > 60*time.Second {
+		t.Errorf("ingesting %d spans took %s", total, d)
 	}
 }
 
