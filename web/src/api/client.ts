@@ -16,6 +16,8 @@ import type {
   HealthResponse,
   TraceSearchParams,
   TraceHealthScope,
+  AttributeDiscovery,
+  AttributeScope,
   OrphanSpanGroup,
   SingleSpanTraceGroup,
   SpanNameSummary,
@@ -125,6 +127,20 @@ function healthQs(s: TraceHealthScope): string {
   return qs({ project_id: s.projectId, from: s.from, to: s.to, limit: s.limit })
 }
 
+function attributeQs(s: AttributeScope): string {
+  return qs({
+    project_id: s.projectId,
+    from: s.from,
+    to: s.to,
+    span_name: s.spanName,
+    service: s.service,
+    key: s.key,
+    sample: s.sample,
+    max_spans: s.maxSpans,
+    top: s.top,
+  })
+}
+
 export const api = {
   getDashboardCounts: (f: DashboardFilter, groupBy: 'service' | 'http_status', rootOnly: boolean) =>
     fetchJSON<DashboardCounts>(
@@ -200,6 +216,9 @@ export const api = {
 
   getSpanNames: (s: TraceHealthScope) =>
     fetchJSON<SpanNameSummary[]>(`/api/v1/trace-health/span-names${healthQs(s)}`),
+
+  getAttributes: (s: AttributeScope) =>
+    fetchJSON<AttributeDiscovery>(`/api/v1/attributes${attributeQs(s)}`),
 
   getTrace: (traceId: string) =>
     fetchJSON<TraceDetail>(`/api/v1/traces/${encodeURIComponent(traceId)}`),

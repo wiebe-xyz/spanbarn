@@ -409,6 +409,61 @@ paths:
         '400':
           description: Missing project or range, reversed range, or range over 7 days
 
+  /api/v1/attributes:
+    get:
+      summary: Attribute keys of a project's spans with coverage, cardinality and top values
+      description: >
+        Project and range are required and the range is limited to 7 days. The scan reads at most
+        max_spans spans (newest first, default 20000, at most 100000) from spans.attributes with json_each.
+        Ranges over 24 hours read a 1-in-20 sample (id % 20 = 0) unless sample is given; sample=1 is exact.
+        Counts cover the scanned spans, not the whole window. Storage decision:
+        deploy/docs/attribute-storage-design.md.
+      operationId: discoverAttributes
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - {name: span_name, in: query, description: Only spans with this name, schema: {type: string}}
+        - {name: service, in: query, description: Only spans of this service, schema: {type: string}}
+        - {name: key, in: query, description: Only this attribute key, with up to 100 top values, schema: {type: string}}
+        - {name: sample, in: query, description: 'Keep 1 span in N, 1 to 1000', schema: {type: integer}}
+        - {name: max_spans, in: query, description: Row cap on spans read, schema: {type: integer}}
+        - {name: limit, in: query, description: Keys to return, default 50, at most 200, schema: {type: integer}}
+        - {name: top, in: query, description: 'Values per key, default 5, at most 20 (100 with key)', schema: {type: integer}}
+      responses:
+        '200':
+          description: Keys ordered by the number of spans that populate them
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scanned: {type: integer, description: Spans read after sampling}
+                  sample: {type: integer, description: 1-in-N ratio applied}
+                  truncated: {type: boolean, description: The scan stopped at maxSpans}
+                  maxSpans: {type: integer}
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: {type: string}
+                        spans: {type: integer}
+                        coverage: {type: number, description: Share of scanned spans that populate the key}
+                        distinct: {type: integer, description: Distinct values, capped at 1000}
+                        distinctCapped: {type: boolean}
+                        top:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value: {type: string}
+                              count: {type: integer}
+        '400':
+          description: Missing project or range, reversed range, range over 7 days, or sample out of range
+
   /api/v1/traces/{traceId}:
     get:
       summary: Get full trace by ID
