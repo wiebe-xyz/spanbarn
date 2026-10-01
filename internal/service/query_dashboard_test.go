@@ -158,6 +158,9 @@ func TestDashboardPercentilesAndHeatmap(t *testing.T) {
 		if c.UpperUs <= c.LowerUs {
 			t.Errorf("cell edges [%d,%d) not increasing", c.LowerUs, c.UpperUs)
 		}
+		if c.LowerUs != repository.HeatmapBucketLowerUs(c.Bucket) {
+			t.Errorf("cell bucket %d does not match lower edge %d", c.Bucket, c.LowerUs)
+		}
 	}
 	if total != 3 {
 		t.Errorf("heatmap total = %d, want 3", total)

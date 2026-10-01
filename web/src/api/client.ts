@@ -26,6 +26,12 @@ import type {
   PinnedTracesResponse,
   LogsParams,
 } from './types'
+import type {
+  DashboardFilter,
+  DashboardCounts,
+  DashboardPercentiles,
+  DashboardHeatmap,
+} from './dashboardTypes'
 
 export class ApiError extends Error {
   status: number
@@ -98,7 +104,32 @@ function qs(params: Record<string, string | number | undefined>): string {
   return '?' + entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')
 }
 
+function dashboardQs(f: DashboardFilter, extra: Record<string, string | undefined> = {}): string {
+  return qs({
+    from: f.from,
+    to: f.to,
+    project_id: f.projectId || undefined,
+    service: f.service,
+    name: f.name,
+    status: f.status,
+    ...extra,
+  })
+}
+
 export const api = {
+  getDashboardCounts: (f: DashboardFilter, groupBy: 'service' | 'http_status', rootOnly: boolean) =>
+    fetchJSON<DashboardCounts>(
+      `/api/v1/dashboard/counts${dashboardQs(f, { group_by: groupBy, root_only: rootOnly ? 'true' : undefined })}`,
+    ),
+
+  getDashboardPercentiles: (f: DashboardFilter, groupBy: 'service' | 'name') =>
+    fetchJSON<DashboardPercentiles>(`/api/v1/dashboard/percentiles${dashboardQs(f, { group_by: groupBy })}`),
+
+  getDashboardHeatmap: (f: DashboardFilter, rootOnly: boolean) =>
+    fetchJSON<DashboardHeatmap>(
+      `/api/v1/dashboard/heatmap${dashboardQs(f, { root_only: rootOnly ? 'true' : undefined })}`,
+    ),
+
   login: (username: string, password: string) =>
     fetchJSON<{ username: string }>('/api/v1/login', {
       method: 'POST',

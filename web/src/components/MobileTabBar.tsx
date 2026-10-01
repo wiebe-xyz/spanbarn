@@ -1,12 +1,12 @@
 import { useRef, useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, BarChart2, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut, ScrollText } from 'lucide-react'
+import { Activity, LayoutDashboard, BarChart2, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut, ScrollText } from 'lucide-react'
 import { useIambarnSession, iambarnLogout, useIambarnProfile } from '../api/iambarnWidget'
 import { isOIDCSession } from '../api/clientConfig'
 import { IambarnProfileModal } from './IambarnProfileModal'
 
 const tabs = [
-  { to: '/', icon: Activity, label: 'Services' },
+  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/traces', icon: Search, label: 'Traces' },
   { to: '/dependencies', icon: GitBranch, label: 'Deps' },
   { to: '/prompts', icon: BrainCircuit, label: 'Prompts' },
@@ -59,6 +59,25 @@ export function MobileTabBar(): ReactElement {
             boxShadow: '0 -4px 24px rgba(0, 0, 0, 0.4)',
           }}
         >
+          <NavLink
+            to="/services"
+            onClick={() => setMoreOpen(false)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.625rem',
+              width: '100%',
+              padding: '0.625rem 0.75rem',
+              borderRadius: '0.5rem',
+              fontSize: '0.875rem',
+              fontWeight: 500,
+              color: 'var(--text-muted)',
+              textDecoration: 'none',
+            }}
+          >
+            <Activity size={18} />
+            Services
+          </NavLink>
           <NavLink
             to="/logs"
             onClick={() => setMoreOpen(false)}

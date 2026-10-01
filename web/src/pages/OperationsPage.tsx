@@ -122,7 +122,7 @@ export function OperationsPage(): ReactElement {
     <div>
       {/* Breadcrumb */}
       <div className="breadcrumb">
-        <Link to="/">Services</Link>
+        <Link to="/services">Services</Link>
         <ChevronRight size={14} />
         <span style={{ color: 'var(--text)' }}>{service}</span>
       </div>

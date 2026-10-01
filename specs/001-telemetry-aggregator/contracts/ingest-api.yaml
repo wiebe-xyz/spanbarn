@@ -283,6 +283,9 @@ paths:
                         time:
                           type: string
                           format: date-time
+                        bucket:
+                          type: integer
+                          description: Duration bucket index; lowerUs is about 2^(bucket/2) - 1
                         lowerUs:
                           type: integer
                         upperUs:

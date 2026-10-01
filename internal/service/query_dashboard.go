@@ -62,9 +62,11 @@ type DashboardPercentiles struct {
 }
 
 // DashboardHeatmapCell is one populated cell of the duration heatmap. The
-// duration bucket covers [LowerUs, UpperUs).
+// duration bucket covers [LowerUs, UpperUs); Bucket is its index on the
+// half-octave scale, so a client can place cells without inverting the edges.
 type DashboardHeatmapCell struct {
 	Time    time.Time `json:"time"`
+	Bucket  int       `json:"bucket"`
 	LowerUs int64     `json:"lowerUs"`
 	UpperUs int64     `json:"upperUs"`
 	Count   int64     `json:"count"`
@@ -204,6 +206,7 @@ func (s *QueryService) GetDashboardHeatmap(ctx context.Context, q DashboardQuery
 	for _, c := range cells {
 		out.Cells = append(out.Cells, DashboardHeatmapCell{
 			Time:    c.Bucket,
+			Bucket:  c.DurationBucket,
 			LowerUs: repository.HeatmapBucketLowerUs(c.DurationBucket),
 			UpperUs: repository.HeatmapBucketLowerUs(c.DurationBucket + 1),
 			Count:   c.Count,

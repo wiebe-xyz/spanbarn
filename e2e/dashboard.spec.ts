@@ -7,6 +7,34 @@ test.describe('Dashboard', () => {
     await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
   });
 
+  test('landing page is the dashboard and services moved to /services', async ({ page, request }) => {
+    const hasE2EKey = !!process.env.E2E_API_KEY;
+    const hasOIDCCreds = !!process.env.E2E_OIDC_EMAIL && !!process.env.E2E_OIDC_PASSWORD;
+    const cfg = await getClientConfig(request);
+    test.skip(
+      !!cfg.oidc?.enabled && !hasE2EKey && !hasOIDCCreds,
+      'Set E2E_API_KEY (preferred) or E2E_OIDC_EMAIL+E2E_OIDC_PASSWORD to run authenticated tests',
+    );
+
+    await login(page, request);
+
+    await page.goto('/');
+    for (const title of [
+      'Trace Counts by Service',
+      'Trace Counts by HTTP Status Code',
+      'Trace Duration Heatmap',
+      'Duration Heatmap',
+      'Duration by Service',
+      'Duration by Name',
+    ]) {
+      await expect(page.getByRole('region', { name: title })).toBeVisible({ timeout: 10000 });
+    }
+    await expect(page.getByRole('combobox', { name: 'Time range' })).toHaveValue('24h');
+
+    await page.goto('/services');
+    await expect(page.getByRole('heading', { name: 'Services' }).first()).toBeVisible();
+  });
+
   test('services page renders after login', async ({ page, request }) => {
     const hasE2EKey = !!process.env.E2E_API_KEY;
     const hasOIDCCreds = !!process.env.E2E_OIDC_EMAIL && !!process.env.E2E_OIDC_PASSWORD;
