@@ -1,16 +1,24 @@
 import { useCallback, useMemo, useState, type ReactElement } from 'react'
-import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
-import type { DashboardFilter } from '../api/dashboardTypes'
+import type { DashboardFilter, DashboardPercentiles } from '../api/dashboardTypes'
 import { AutoRefresh } from '../components/AutoRefresh'
+import { ActiveFilters, type ChipKey } from '../components/dashboard/ActiveFilters'
 import { DashboardCard } from '../components/dashboard/DashboardCard'
-import { DashboardFilters, type DashboardFilterValues } from '../components/dashboard/DashboardFilters'
-import { HeatmapChart } from '../components/dashboard/HeatmapChart'
+import { DashboardFilters } from '../components/dashboard/DashboardFilters'
+import { GroupSelect } from '../components/dashboard/GroupSelect'
+import { HeatmapChart, type HeatmapSelection } from '../components/dashboard/HeatmapChart'
 import { SeriesChart } from '../components/dashboard/SeriesChart'
 import { TimeRangePicker } from '../components/dashboard/TimeRangePicker'
+import { useDashboardParams, COUNTS_GROUPS } from '../components/dashboard/useDashboardParams'
 import { useDashboardQuery } from '../components/dashboard/useDashboardQuery'
 import { pivotSeries } from '../utils/dashboardData'
-import { DEFAULT_DASHBOARD_RANGE, findDashboardRange, getDashboardWindow } from '../utils/dashboardWindow'
+import {
+  DEFAULT_DASHBOARD_RANGE,
+  customWindow,
+  getDashboardWindow,
+  parseCustomWindow,
+  zoomOutWindow,
+} from '../utils/dashboardWindow'
 import { formatCount, formatDuration } from '../utils/format'
 
 const PERCENTILES = [
@@ -19,58 +27,65 @@ const PERCENTILES = [
   { key: 'p90Us', label: 'P90(duration)' },
 ] as const
 
+/** A drag narrower than this share of the window counts as a click, not a zoom. */
+const MIN_BRUSH_SHARE = 0.02
+
 /** Default dashboard: counts, status codes, duration distribution and percentiles for the chosen window. */
 export function DashboardPage(): ReactElement {
-  const [params, setParams] = useSearchParams()
+  const { state, update } = useDashboardParams()
   const [refreshInterval, setRefreshInterval] = useState(0)
   const [refreshKey, setRefreshKey] = useState(0)
+  const { range, offset, filters, minUs, maxUs, countsGroup } = state
 
-  const range = findDashboardRange(params.get('range') ?? DEFAULT_DASHBOARD_RANGE).value
-  const offset = Math.max(0, Number(params.get('offset')) || 0)
-  const filters: DashboardFilterValues = {
-    projectId: Number(params.get('project')) || 0,
-    service: params.get('service') ?? '',
-    name: params.get('name') ?? '',
-    status: params.get('status') ?? '',
-  }
-
-  // Filters and range live in the URL so a view can be linked and survives reload.
-  const update = useCallback(
-    (changes: Record<string, string | number | undefined>) => {
-      setParams(
-        (prev) => {
-          const next = new URLSearchParams(prev)
-          for (const [k, v] of Object.entries(changes)) {
-            if (v === undefined || v === '' || v === 0) next.delete(k)
-            else next.set(k, String(v))
-          }
-          return next
-        },
-        { replace: true },
-      )
-    },
-    [setParams],
+  // A refresh recomputes a preset window so "now" advances; a zoomed window is fixed.
+  const win = useMemo(
+    () => parseCustomWindow(state.customFrom, state.customTo) ?? getDashboardWindow(range, offset),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshKey is the trigger
+    [range, offset, state.customFrom, state.customTo, refreshKey],
   )
-
-  // A refresh recomputes the window so "now" advances.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshKey is the trigger
-  const win = useMemo(() => getDashboardWindow(range, offset), [range, offset, refreshKey])
+  const zoomed = parseCustomWindow(state.customFrom, state.customTo) !== null
   const { from, to, fromMs, toMs } = win
   const { projectId, service, name, status } = filters
   const filter: DashboardFilter = useMemo(
-    () => ({ from, to, projectId, service, name, status }),
-    [from, to, projectId, service, name, status],
+    () => ({ from, to, projectId, service, name, status, minDurationUs: minUs, maxDurationUs: maxUs }),
+    [from, to, projectId, service, name, status, minUs, maxUs],
   )
 
-  const traceCountsByService = useDashboardQuery(filter, (f) => api.getDashboardCounts(f, 'service', true), refreshKey)
+  const zoomTo = useCallback(
+    (a: number, b: number, band?: { minUs: number; maxUs: number }) => {
+      if (b - a < (toMs - fromMs) * MIN_BRUSH_SHARE) return
+      const w = customWindow(a, b)
+      const bandChanges = band && (band.minUs > 0 || band.maxUs > 0) ? { min_us: band.minUs, max_us: band.maxUs } : {}
+      update({ from: w.fromMs, to: w.toMs, range: undefined, offset: undefined, ...bandChanges }, true)
+    },
+    [update, fromMs, toMs],
+  )
+  const zoomHeatmap = useCallback((s: HeatmapSelection) => zoomTo(s.fromMs, s.toMs, s), [zoomTo])
+  const zoomOut = useCallback(() => {
+    const w = zoomOutWindow(fromMs, toMs)
+    update({ from: w.fromMs, to: w.toMs }, true)
+  }, [update, fromMs, toMs])
+  const clearChip = useCallback(
+    (key: ChipKey) => update(key === 'band' ? { min_us: undefined, max_us: undefined } : { [key]: undefined }),
+    [update],
+  )
+  const clearAll = useCallback(
+    () => update({ service: undefined, name: undefined, status: undefined, min_us: undefined, max_us: undefined }),
+    [update],
+  )
+
+  // useDashboardQuery refetches when the filter object changes, so a new group needs a new object.
+  const countsFilter = useMemo(() => ({ ...filter }), [filter, countsGroup]) // eslint-disable-line react-hooks/exhaustive-deps
+  const traceCounts = useDashboardQuery(countsFilter, (f) => api.getDashboardCounts(f, countsGroup, true), refreshKey)
   const traceCountsByStatus = useDashboardQuery(filter, (f) => api.getDashboardCounts(f, 'http_status', true), refreshKey)
   const traceHeatmap = useDashboardQuery(filter, (f) => api.getDashboardHeatmap(f, true), refreshKey)
   const spanHeatmap = useDashboardQuery(filter, (f) => api.getDashboardHeatmap(f, false), refreshKey)
   const byService = useDashboardQuery(filter, (f) => api.getDashboardPercentiles(f, 'service'), refreshKey)
   const byName = useDashboardQuery(filter, (f) => api.getDashboardPercentiles(f, 'name'), refreshKey)
 
-  const countsByService = useMemo(() => pivotSeries(traceCountsByService.data?.points ?? [], (p) => p.count), [traceCountsByService.data])
+  const counts = useMemo(() => pivotSeries(traceCounts.data?.points ?? [], (p) => p.count), [traceCounts.data])
   const countsByStatus = useMemo(() => pivotSeries(traceCountsByStatus.data?.points ?? [], (p) => p.count), [traceCountsByStatus.data])
+  const countsGroupLabel = COUNTS_GROUPS.find((g) => g.value === countsGroup)?.label ?? 'Service'
 
   return (
     <div>
@@ -84,19 +99,44 @@ export function DashboardPage(): ReactElement {
           <TimeRangePicker
             range={range}
             offset={offset}
-            onRangeChange={(r) => update({ range: r === DEFAULT_DASHBOARD_RANGE ? undefined : r, offset: undefined })}
+            custom={zoomed}
+            onRangeChange={(r) =>
+              update({ range: r === DEFAULT_DASHBOARD_RANGE ? undefined : r, offset: undefined, from: undefined, to: undefined })
+            }
             onOffsetChange={(o) => update({ offset: o })}
           />
         </div>
       </div>
 
+      <ActiveFilters
+        zoom={zoomed ? { fromMs, toMs } : null}
+        minUs={minUs}
+        maxUs={maxUs}
+        service={service}
+        name={name}
+        status={status}
+        onZoomOut={zoomOut}
+        onResetZoom={() => update({ from: undefined, to: undefined, min_us: undefined, max_us: undefined }, true)}
+        onClear={clearChip}
+        onClearAll={clearAll}
+      />
+
       <div className="charts-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1rem', alignItems: 'start' }}>
         <DashboardCard
-          title="Trace Counts by Service"
-          info="Root spans per time bucket, one line per service. The ten busiest services get their own line; the rest are grouped as other."
-          {...cardState(traceCountsByService, countsByService.rows.length === 0)}
+          title={`Trace Counts by ${countsGroupLabel}`}
+          info="Root spans per time bucket, one line per group. The ten busiest groups get their own line; the rest are grouped as other. Drag across the chart to zoom; click a name below it to filter."
+          {...cardState(traceCounts, counts.rows.length === 0)}
         >
-          <SeriesChart series={countsByService} fromMs={fromMs} toMs={toMs} label="COUNT" formatValue={formatCount} />
+          <GroupSelect value={countsGroup} options={COUNTS_GROUPS} onChange={(g) => update({ cg: g === 'service' ? undefined : g })} />
+          <SeriesChart
+            series={counts}
+            fromMs={fromMs}
+            toMs={toMs}
+            label="COUNT"
+            formatValue={formatCount}
+            onBrush={zoomTo}
+            onSelectGroup={(g) => update({ [countsGroup]: g })}
+          />
         </DashboardCard>
 
         <DashboardCard
@@ -104,23 +144,27 @@ export function DashboardPage(): ReactElement {
           info="Root spans per time bucket by HTTP status code. Spans without a status code attribute are left out."
           {...cardState(traceCountsByStatus, countsByStatus.rows.length === 0)}
         >
-          <SeriesChart series={countsByStatus} fromMs={fromMs} toMs={toMs} label="COUNT" formatValue={formatCount} byStatus />
+          <SeriesChart series={countsByStatus} fromMs={fromMs} toMs={toMs} label="COUNT" formatValue={formatCount} byStatus onBrush={zoomTo} />
         </DashboardCard>
 
         <DashboardCard
           title="Trace Duration Heatmap"
-          info="Root span durations over time. Darker cells hold more traces; the scale is logarithmic."
+          info="Root span durations over time. Darker cells hold more traces; the scale is logarithmic. Drag a rectangle to zoom in time and keep only that duration band."
           {...cardState(traceHeatmap, (traceHeatmap.data?.cells.length ?? 0) === 0)}
         >
-          {traceHeatmap.data && <HeatmapChart heatmap={traceHeatmap.data} fromMs={fromMs} toMs={toMs} label="HEATMAP(duration)" />}
+          {traceHeatmap.data && (
+            <HeatmapChart heatmap={traceHeatmap.data} fromMs={fromMs} toMs={toMs} label="HEATMAP(duration)" onBrush={zoomHeatmap} />
+          )}
         </DashboardCard>
 
         <DashboardCard
           title="Duration Heatmap"
-          info="Duration of every span over time. Darker cells hold more spans; the scale is logarithmic."
+          info="Duration of every span over time. Darker cells hold more spans; the scale is logarithmic. Drag a rectangle to zoom in time and keep only that duration band."
           {...cardState(spanHeatmap, (spanHeatmap.data?.cells.length ?? 0) === 0)}
         >
-          {spanHeatmap.data && <HeatmapChart heatmap={spanHeatmap.data} fromMs={fromMs} toMs={toMs} label="HEATMAP(duration)" />}
+          {spanHeatmap.data && (
+            <HeatmapChart heatmap={spanHeatmap.data} fromMs={fromMs} toMs={toMs} label="HEATMAP(duration)" onBrush={zoomHeatmap} />
+          )}
         </DashboardCard>
 
         <PercentileCard
@@ -129,6 +173,8 @@ export function DashboardPage(): ReactElement {
           state={byService}
           fromMs={fromMs}
           toMs={toMs}
+          onBrush={zoomTo}
+          onSelectGroup={(g) => update({ service: g })}
         />
 
         <PercentileCard
@@ -137,6 +183,8 @@ export function DashboardPage(): ReactElement {
           state={byName}
           fromMs={fromMs}
           toMs={toMs}
+          onBrush={zoomTo}
+          onSelectGroup={(g) => update({ name: g })}
         />
       </div>
     </div>
@@ -150,12 +198,14 @@ function cardState(q: { loading: boolean; error: string | null }, empty: boolean
 type PercentileCardProps = {
   title: string
   info: string
-  state: ReturnType<typeof useDashboardQuery<import('../api/dashboardTypes').DashboardPercentiles>>
+  state: ReturnType<typeof useDashboardQuery<DashboardPercentiles>>
   fromMs: number
   toMs: number
+  onBrush: (fromMs: number, toMs: number) => void
+  onSelectGroup: (group: string) => void
 }
 
-function PercentileCard({ title, info, state, fromMs, toMs }: PercentileCardProps): ReactElement {
+function PercentileCard({ title, info, state, fromMs, toMs, onBrush, onSelectGroup }: PercentileCardProps): ReactElement {
   const points = state.data?.points
   const charts = useMemo(
     () => PERCENTILES.map((p) => ({ ...p, series: pivotSeries(points ?? [], (pt) => pt[p.key]) })),
@@ -164,7 +214,17 @@ function PercentileCard({ title, info, state, fromMs, toMs }: PercentileCardProp
   return (
     <DashboardCard title={title} info={info} {...cardState(state, (points?.length ?? 0) === 0)}>
       {charts.map((c) => (
-        <SeriesChart key={c.key} series={c.series} fromMs={fromMs} toMs={toMs} label={c.label} formatValue={formatDuration} height={160} />
+        <SeriesChart
+          key={c.key}
+          series={c.series}
+          fromMs={fromMs}
+          toMs={toMs}
+          label={c.label}
+          formatValue={formatDuration}
+          height={160}
+          onBrush={onBrush}
+          onSelectGroup={onSelectGroup}
+        />
       ))}
     </DashboardCard>
   )

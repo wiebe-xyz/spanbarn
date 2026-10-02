@@ -5,6 +5,9 @@ export type DashboardFilter = {
   service?: string
   name?: string
   status?: string
+  /** Span duration band in microseconds; 0 or unset means no bound. */
+  minDurationUs?: number
+  maxDurationUs?: number
 }
 
 export type DashboardCountPoint = {
@@ -46,3 +49,7 @@ export type DashboardHeatmap = {
   intervalSeconds: number
   cells: DashboardHeatmapCell[]
 }
+
+/** Dimensions the counts card can group by. */
+export type CountsGroup = 'service' | 'name' | 'status' | 'http_status'
+export type PercentileGroup = 'service' | 'name' | 'status'

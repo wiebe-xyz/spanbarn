@@ -35,6 +35,40 @@ test.describe('Dashboard', () => {
     await expect(page.getByRole('heading', { name: 'Services' }).first()).toBeVisible();
   });
 
+  test('a zoomed window and filter chips can be linked, widened and cleared', async ({ page, request }) => {
+    const hasE2EKey = !!process.env.E2E_API_KEY;
+    const hasOIDCCreds = !!process.env.E2E_OIDC_EMAIL && !!process.env.E2E_OIDC_PASSWORD;
+    const cfg = await getClientConfig(request);
+    test.skip(
+      !!cfg.oidc?.enabled && !hasE2EKey && !hasOIDCCreds,
+      'Set E2E_API_KEY (preferred) or E2E_OIDC_EMAIL+E2E_OIDC_PASSWORD to run authenticated tests',
+    );
+
+    await login(page, request);
+
+    const to = Date.now() - 3600_000;
+    const from = to - 600_000;
+    await page.goto(`/?from=${from}&to=${to}&service=e2e-service&min_us=1000`);
+
+    const bar = page.getByRole('group', { name: 'Active zoom and filters' });
+    await expect(bar).toContainText('Zoomed', { timeout: 10000 });
+    await expect(page.getByRole('combobox', { name: 'Time range' })).toHaveValue('custom');
+    await expect(page.getByRole('button', { name: 'Remove service = e2e-service' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Remove duration/ })).toBeVisible();
+    for (const title of ['Trace Counts by Service', 'Trace Duration Heatmap', 'Duration by Service']) {
+      await expect(page.getByRole('region', { name: title, exact: true })).toBeVisible();
+    }
+
+    await page.getByRole('button', { name: 'Zoom out' }).click();
+    await expect(page).toHaveURL(/from=\d+&to=\d+/);
+
+    await page.getByRole('button', { name: 'Remove service = e2e-service' }).click();
+    await expect(page.getByRole('button', { name: 'Remove service = e2e-service' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Reset zoom' }).click();
+    await expect(page.getByRole('combobox', { name: 'Time range' })).toHaveValue('24h');
+  });
+
   test('services page renders after login', async ({ page, request }) => {
     const hasE2EKey = !!process.env.E2E_API_KEY;
     const hasOIDCCreds = !!process.env.E2E_OIDC_EMAIL && !!process.env.E2E_OIDC_PASSWORD;
