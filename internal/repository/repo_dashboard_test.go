@@ -2,6 +2,7 @@ package repository
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -198,5 +199,58 @@ func TestQueryDashboardRejectsUnknownGroup(t *testing.T) {
 	repo := setupTestDB(t)
 	if _, err := repo.QueryDashboardCounts(SpanFilter{}, 60, DashboardGroup("x; DROP TABLE spans"), 5); err == nil {
 		t.Error("want error for unknown group")
+	}
+}
+
+// Every dashboard query must be answered from idx_spans_dashboard alone. A plan
+// that reads the spans table row by row costs one random page read per span,
+// which took the dashboard to 20s+ on a cold page cache in production.
+func TestDashboardQueriesUseCoveringIndex(t *testing.T) {
+	repo := setupTestDB(t)
+	from := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+
+	filters := map[string]SpanFilter{
+		"all projects, roots": {From: from, To: to, RootOnly: true},
+		"all projects":        {From: from, To: to},
+		"one project":         {From: from, To: to, ProjectID: 1, RootOnly: true},
+		"narrowed":            {From: from, To: to, ProjectID: 1, Service: "web", Operation: "GET /", Status: "ok"},
+	}
+	for label, f := range filters {
+		where, args := dashboardWhere(f)
+		bucket := bucketExpr(900)
+		queries := map[string]string{
+			"counts by service": fmt.Sprintf(`SELECT %s AS bucket, service AS grp, COUNT(*) FROM `+dashboardSpans+`%s GROUP BY bucket, grp ORDER BY bucket`, bucket, where),
+			"counts by status":  fmt.Sprintf(`SELECT %s AS bucket, CAST(http_status AS TEXT) AS grp, COUNT(*) FROM `+dashboardHTTPSpans+`%s AND http_status IS NOT NULL GROUP BY bucket, grp`, bucket, where),
+			"heatmap":           fmt.Sprintf(`SELECT %s AS bucket, %s AS dbucket, COUNT(*) FROM `+dashboardSpans+`%s GROUP BY bucket, dbucket`, bucket, HeatmapBucketIndexSQL, where),
+			"top groups":        fmt.Sprintf(`SELECT name AS grp, COUNT(*) AS n FROM `+dashboardSpans+`%s GROUP BY grp ORDER BY n DESC LIMIT 10`, where),
+			"percentiles":       fmt.Sprintf(`SELECT %s, name, duration_us FROM `+dashboardSpans+`%s`, bucket, where),
+		}
+		for name, q := range queries {
+			rows, err := repo.DB().Query("EXPLAIN QUERY PLAN "+q, args...)
+			if err != nil {
+				t.Fatalf("%s / %s: %v", label, name, err)
+			}
+			var plan []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+					rows.Close()
+					t.Fatal(err)
+				}
+				plan = append(plan, detail)
+			}
+			rows.Close()
+			want := "COVERING INDEX idx_spans_dashboard"
+			if name == "counts by status" {
+				// Cannot be covered: see migration 038. The partial index keeps
+				// row visits to spans that carry a status code.
+				want = "INDEX idx_spans_dashboard_http"
+			}
+			if joined := strings.Join(plan, " | "); !strings.Contains(joined, want) {
+				t.Errorf("%s / %s is not served by %q: %s", label, name, want, joined)
+			}
+		}
 	}
 }

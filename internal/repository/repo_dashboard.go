@@ -17,6 +17,18 @@ import (
 // runaway project cannot exhaust the reader.
 const dashboardRowCap = 5_000_000
 
+// dashboardSpans is the spans table pinned to the covering index of migration
+// 038. Without ANALYZE stats the planner prefers indexes with an equality prefix
+// (project_id, status) that are not covering, and each row then costs a random
+// page read in the wide spans table. The index holds every column these queries
+// read, so the table is never touched.
+const dashboardSpans = "spans INDEXED BY idx_spans_dashboard"
+
+// dashboardHTTPSpans pins the status-code query to the partial index that holds
+// only spans with a status code. The WHERE clause must repeat
+// "http_status IS NOT NULL" for SQLite to use it.
+const dashboardHTTPSpans = "spans INDEXED BY idx_spans_dashboard_http"
+
 // DashboardOtherGroup labels the series that folds every group outside the top N.
 const DashboardOtherGroup = "other"
 
@@ -118,12 +130,14 @@ func (r *Repository) QueryDashboardCounts(f SpanFilter, intervalSec int64, group
 		return nil, fmt.Errorf("unsupported dashboard group %q", group)
 	}
 	var extra []string
+	table := dashboardSpans
 	if group == DashboardGroupHTTPStatus {
 		extra = append(extra, "http_status IS NOT NULL")
+		table = dashboardHTTPSpans
 	}
 	where, args := dashboardWhere(f, extra...)
-	q := fmt.Sprintf(`SELECT %s AS bucket, %s AS grp, COUNT(*) FROM spans%s GROUP BY bucket, grp ORDER BY bucket`,
-		bucketExpr(intervalSec), expr, where)
+	q := fmt.Sprintf(`SELECT %s AS bucket, %s AS grp, COUNT(*) FROM %s%s GROUP BY bucket, grp ORDER BY bucket`,
+		bucketExpr(intervalSec), expr, table, where)
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -226,7 +240,7 @@ func (r *Repository) QueryDashboardPercentiles(f SpanFilter, intervalSec int64, 
 		return nil, nil
 	}
 
-	q := fmt.Sprintf(`SELECT %s, %s, duration_us FROM spans%s LIMIT %d`,
+	q := fmt.Sprintf(`SELECT %s, %s, duration_us FROM `+dashboardSpans+`%s LIMIT %d`,
 		bucketExpr(intervalSec), expr, where, dashboardRowCap)
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -283,7 +297,7 @@ func (r *Repository) topGroupsByCount(expr, where string, args []any, topN int) 
 	if topN <= 0 {
 		topN = 10
 	}
-	q := fmt.Sprintf(`SELECT %s AS grp, COUNT(*) AS n FROM spans%s GROUP BY grp ORDER BY n DESC, grp LIMIT %d`,
+	q := fmt.Sprintf(`SELECT %s AS grp, COUNT(*) AS n FROM `+dashboardSpans+`%s GROUP BY grp ORDER BY n DESC, grp LIMIT %d`,
 		expr, where, topN)
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -309,7 +323,7 @@ func (r *Repository) topGroupsByCount(expr, where string, args []any, topN int) 
 // duration bucket index follows HeatmapBucketIndexSQL.
 func (r *Repository) QueryDashboardHeatmap(f SpanFilter, intervalSec int64) ([]DashboardHeatmapCell, error) {
 	where, args := dashboardWhere(f)
-	q := fmt.Sprintf(`SELECT %s AS bucket, %s AS dbucket, COUNT(*) FROM spans%s GROUP BY bucket, dbucket ORDER BY bucket, dbucket`,
+	q := fmt.Sprintf(`SELECT %s AS bucket, %s AS dbucket, COUNT(*) FROM `+dashboardSpans+`%s GROUP BY bucket, dbucket ORDER BY bucket, dbucket`,
 		bucketExpr(intervalSec), HeatmapBucketIndexSQL, where)
 
 	ctx, cancel := r.queryContext()
