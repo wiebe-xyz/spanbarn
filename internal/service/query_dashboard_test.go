@@ -33,6 +33,9 @@ func TestDashboardValidation(t *testing.T) {
 		"missing range": {},
 		"inverted":      {From: now, To: now.Add(-time.Hour)},
 		"too wide":      {From: now.Add(-49 * time.Hour), To: now},
+		"too narrow":    {From: now.Add(-30 * time.Second), To: now},
+		"inverted band": {From: now.Add(-time.Hour), To: now, MinDurationUs: 500, MaxDurationUs: 100},
+		"negative band": {From: now.Add(-time.Hour), To: now, MinDurationUs: -1},
 	}
 	for name, q := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -53,8 +56,8 @@ func TestDashboardRejectsUnknownGroup(t *testing.T) {
 	svc := NewQueryService(setupTestRepo(t), nil, nil)
 	from, to := dashboardRange()
 	q := DashboardQuery{From: from, To: to}
-	if _, err := svc.GetDashboardCounts(context.Background(), q, "name", false); !errors.Is(err, ErrInvalidDashboardRequest) {
-		t.Errorf("counts by name err = %v, want ErrInvalidDashboardRequest", err)
+	if _, err := svc.GetDashboardCounts(context.Background(), q, "bogus", false); !errors.Is(err, ErrInvalidDashboardRequest) {
+		t.Errorf("counts by bogus err = %v, want ErrInvalidDashboardRequest", err)
 	}
 	if _, err := svc.GetDashboardPercentiles(context.Background(), q, "http_status"); !errors.Is(err, ErrInvalidDashboardRequest) {
 		t.Errorf("percentiles by http_status err = %v, want ErrInvalidDashboardRequest", err)
@@ -66,7 +69,7 @@ func TestDashboardInterval(t *testing.T) {
 		window time.Duration
 		want   int64
 	}{
-		{30 * time.Minute, 60}, {time.Hour, 60}, {4 * time.Hour, 300},
+		{time.Minute, 15}, {15 * time.Minute, 15}, {16 * time.Minute, 60}, {30 * time.Minute, 60}, {time.Hour, 60}, {4 * time.Hour, 300},
 		{24 * time.Hour, 900}, {48 * time.Hour, 1800},
 	}
 	for _, c := range cases {
@@ -164,5 +167,54 @@ func TestDashboardPercentilesAndHeatmap(t *testing.T) {
 	}
 	if total != 3 {
 		t.Errorf("heatmap total = %d, want 3", total)
+	}
+}
+
+func TestDashboardGroupsAndDurationBand(t *testing.T) {
+	repo := setupTestRepo(t)
+	seedDashboardSpans(t, repo)
+	svc := NewQueryService(repo, nil, nil)
+	from, to := dashboardRange()
+	ctx := context.Background()
+
+	byStatus, err := svc.GetDashboardCounts(ctx, DashboardQuery{ProjectID: 1, From: from, To: to}, "status", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int64{}
+	for _, p := range byStatus.Points {
+		got[p.Group] += p.Count
+	}
+	if got["ok"] != 2 || got["error"] != 1 {
+		t.Errorf("by span status = %v, want ok:2 error:1", got)
+	}
+
+	byName, err := svc.GetDashboardCounts(ctx, DashboardQuery{ProjectID: 1, From: from, To: to}, "name", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]int64{}
+	for _, p := range byName.Points {
+		names[p.Group] += p.Count
+	}
+	if names["GET /"] != 2 || names["SELECT"] != 1 {
+		t.Errorf("by name = %v, want GET /:2 SELECT:1", names)
+	}
+
+	// 1000..5000us keeps only the 2000us span.
+	band, err := svc.GetDashboardCounts(ctx, DashboardQuery{ProjectID: 1, From: from, To: to, MinDurationUs: 1000, MaxDurationUs: 5000}, "service", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total int64
+	for _, p := range band.Points {
+		total += p.Count
+	}
+	if total != 1 {
+		t.Errorf("duration band count = %d, want 1", total)
+	}
+
+	if _, err := svc.GetDashboardPercentiles(ctx, DashboardQuery{ProjectID: 1, From: from, To: to}, "status"); err != nil {
+		t.Errorf("percentiles by status: %v", err)
 	}
 }

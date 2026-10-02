@@ -19,6 +19,10 @@ var ErrInvalidDashboardRequest = errors.New("invalid dashboard request")
 // raw-span retention window, because the dashboard reads raw spans.
 const MaxDashboardWindow = 48 * time.Hour
 
+// MinDashboardWindow is the narrowest range the dashboard serves; below it a
+// chart has too few buckets to read.
+const MinDashboardWindow = time.Minute
+
 // dashboardTopN is how many groups keep their own series.
 const dashboardTopN = 10
 
@@ -28,7 +32,10 @@ type DashboardQuery struct {
 	Service   string
 	Name      string
 	Status    string
-	From, To  time.Time
+	// MinDurationUs and MaxDurationUs bound the span duration. 0 means no bound.
+	MinDurationUs int64
+	MaxDurationUs int64
+	From, To      time.Time
 }
 
 // DashboardCountPoint is one point of a count series.
@@ -87,6 +94,12 @@ func (q DashboardQuery) validate() (int64, error) {
 	if window <= 0 {
 		return 0, fmt.Errorf("%w: to must be after from", ErrInvalidDashboardRequest)
 	}
+	if window < MinDashboardWindow {
+		return 0, fmt.Errorf("%w: range must be at least %s", ErrInvalidDashboardRequest, MinDashboardWindow)
+	}
+	if q.MinDurationUs < 0 || q.MaxDurationUs < 0 || (q.MaxDurationUs > 0 && q.MaxDurationUs < q.MinDurationUs) {
+		return 0, fmt.Errorf("%w: invalid duration bounds", ErrInvalidDashboardRequest)
+	}
 	if window > MaxDashboardWindow {
 		return 0, fmt.Errorf("%w: range is limited to %s", ErrInvalidDashboardRequest, MaxDashboardWindow)
 	}
@@ -96,6 +109,8 @@ func (q DashboardQuery) validate() (int64, error) {
 // dashboardInterval picks a bucket width that keeps a chart near 60-100 points.
 func dashboardInterval(window time.Duration) int64 {
 	switch {
+	case window <= 15*time.Minute:
+		return 15
 	case window <= time.Hour:
 		return 60
 	case window <= 4*time.Hour:
@@ -109,13 +124,15 @@ func dashboardInterval(window time.Duration) int64 {
 
 func (q DashboardQuery) spanFilter(rootOnly bool) repository.SpanFilter {
 	return repository.SpanFilter{
-		ProjectID: q.ProjectID,
-		Service:   q.Service,
-		Operation: q.Name,
-		Status:    q.Status,
-		RootOnly:  rootOnly,
-		From:      q.From.UTC(),
-		To:        q.To.UTC(),
+		ProjectID:   q.ProjectID,
+		Service:     q.Service,
+		Operation:   q.Name,
+		Status:      q.Status,
+		MinDuration: q.MinDurationUs,
+		MaxDuration: q.MaxDurationUs,
+		RootOnly:    rootOnly,
+		From:        q.From.UTC(),
+		To:          q.To.UTC(),
 	}
 }
 
@@ -141,7 +158,7 @@ func (s *QueryService) GetDashboardCounts(ctx context.Context, q DashboardQuery,
 	if err != nil {
 		return nil, err
 	}
-	g, err := dashboardGroup(group, repository.DashboardGroupService, repository.DashboardGroupHTTPStatus)
+	g, err := dashboardGroup(group, repository.DashboardGroupService, repository.DashboardGroupName, repository.DashboardGroupStatus, repository.DashboardGroupHTTPStatus)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +185,7 @@ func (s *QueryService) GetDashboardPercentiles(ctx context.Context, q DashboardQ
 	if err != nil {
 		return nil, err
 	}
-	g, err := dashboardGroup(group, repository.DashboardGroupService, repository.DashboardGroupName)
+	g, err := dashboardGroup(group, repository.DashboardGroupService, repository.DashboardGroupName, repository.DashboardGroupStatus)
 	if err != nil {
 		return nil, err
 	}

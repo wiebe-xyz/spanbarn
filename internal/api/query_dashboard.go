@@ -17,12 +17,14 @@ func parseDashboardQuery(w http.ResponseWriter, r *http.Request) (service.Dashbo
 	}
 	q := r.URL.Query()
 	return service.DashboardQuery{
-		ProjectID: parseInt64Param(r, "project_id", 0),
-		Service:   q.Get("service"),
-		Name:      q.Get("name"),
-		Status:    q.Get("status"),
-		From:      from,
-		To:        to,
+		ProjectID:     parseInt64Param(r, "project_id", 0),
+		Service:       q.Get("service"),
+		Name:          q.Get("name"),
+		Status:        q.Get("status"),
+		From:          from,
+		To:            to,
+		MinDurationUs: parseInt64Param(r, "min_duration_us", 0),
+		MaxDurationUs: parseInt64Param(r, "max_duration_us", 0),
 	}, true
 }
 

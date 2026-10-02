@@ -74,12 +74,15 @@ type Aggregate struct {
 }
 
 type SpanFilter struct {
-	ProjectID         int64
-	TraceID           string
-	Service           string
-	Operation         string
-	Status            string
-	MinDuration       int64
+	ProjectID   int64
+	TraceID     string
+	Service     string
+	Operation   string
+	Status      string
+	MinDuration int64
+	// MaxDuration bounds duration_us from above. Only the dashboard queries
+	// apply it; 0 means no bound.
+	MaxDuration       int64
 	RootOnly          bool
 	SortErrorsFirst   bool
 	ExcludeOperations []string
