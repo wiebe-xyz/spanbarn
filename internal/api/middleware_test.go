@@ -229,3 +229,16 @@ func TestRecoveryMiddleware(t *testing.T) {
 		// Just confirming server is still alive.
 	}
 }
+
+// A crash before login has no session; the route must still accept it.
+func TestClientErrorsRouteNeedsNoSession(t *testing.T) {
+	ts := newCORSTestServer(t)
+	resp, err := http.Post(ts.URL+"/api/v1/client-errors", "application/json", strings.NewReader(`{"message":"x","type":"Error"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202 without a session, got %d", resp.StatusCode)
+	}
+}

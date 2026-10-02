@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 )
 
 type WebVitalSummary struct {
@@ -36,6 +37,7 @@ func (s *QueryService) GetWebVitals(ctx context.Context, service string, from, t
 	if stale, found, _ := cache.GetStale[[]WebVitalSummary](s.cache, ctx, cacheKey); found {
 		if _, already := revalidating.LoadOrStore(cacheKey, true); !already {
 			go func() {
+				defer observability.RecoverAndReport("webvitals-revalidate", false)
 				defer revalidating.Delete(cacheKey)
 				if result, err := s.fetchWebVitals(context.Background(), service, from, to); err == nil {
 					cache.Set(s.cache, context.Background(), cacheKey, result)
@@ -146,6 +148,7 @@ func (s *QueryService) GetWebVitalsTimeseries(ctx context.Context, service, page
 	if stale, found, _ := cache.GetStale[[]WebVitalTimeseriesBucket](s.cache, ctx, cacheKey); found {
 		if _, already := revalidating.LoadOrStore(cacheKey, true); !already {
 			go func() {
+				defer observability.RecoverAndReport("webvitals-revalidate", false)
 				defer revalidating.Delete(cacheKey)
 				if result, err := s.fetchWebVitalsTimeseries(context.Background(), service, page, metric, from, to, interval); err == nil {
 					cache.Set(s.cache, context.Background(), cacheKey, result)

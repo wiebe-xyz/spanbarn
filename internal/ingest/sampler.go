@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 )
 
 const (
@@ -45,7 +47,7 @@ func NewIngestSampler() *IngestSampler {
 		errorTraces:  make(map[string]time.Time),
 		maxPerMinute: DefaultMaxPerMinute,
 	}
-	go s.gcLoop()
+	observability.SafeGo("sampler-gc", nil, s.gcLoop)
 	return s
 }
 

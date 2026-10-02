@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -112,6 +113,7 @@ func kickBackgroundRefresh[T any](
 		return
 	}
 	go func() {
+		defer observability.RecoverAndReport("stats-revalidate", false)
 		defer statsRevalidating.Delete(key)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()

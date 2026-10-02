@@ -182,6 +182,7 @@ func SetupWithConfig(cfg SetupConfig) (*slog.Logger, func()) {
 			Version:     cfg.Version,
 		})
 		handler = NewBugBarnHandler(jsonHandler, bugbarnClient)
+		defaultClient.Store(bugbarnClient)
 	}
 
 	if cfg.SelfEndpoint != "" && cfg.SelfAPIKey != "" {
@@ -205,6 +206,7 @@ func SetupWithConfig(cfg SetupConfig) (*slog.Logger, func()) {
 			selfLogsH.Shutdown()
 		}
 		if bugbarnClient != nil {
+			defaultClient.CompareAndSwap(bugbarnClient, nil)
 			bugbarnClient.Shutdown()
 		}
 	}

@@ -12,6 +12,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
+
 	collectorlogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collectormetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -43,6 +45,7 @@ func NewGRPCServer(s *Server, logger *slog.Logger) *GRPCServer {
 	srv := grpc.NewServer(
 		grpc.MaxRecvMsgSize(int(s.maxBodyBytes)),
 		grpc.ChainUnaryInterceptor(
+			grpcRecoveryInterceptor,
 			grpcAuthInterceptor(s),
 			s.admission.UnaryInterceptor(),
 		),
@@ -178,4 +181,16 @@ func extractGRPCKey(md metadata.MD) string {
 		return strings.TrimPrefix(vals[0], "Bearer ")
 	}
 	return ""
+}
+
+// grpcRecoveryInterceptor turns a handler panic into an Internal status and an
+// exception report. Without it grpc-go lets the panic kill the process.
+func grpcRecoveryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			observability.ReportPanic("grpc:"+info.FullMethod, r, false)
+			err = status.Error(codes.Internal, "internal error")
+		}
+	}()
+	return handler(ctx, req)
 }

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 )
 
 // trustProxyHeaders controls whether X-Forwarded-For/X-Real-IP are trusted when
@@ -72,7 +74,7 @@ func NewRateLimiter(loginRate, ingestRate, apiRate int) *RateLimiter {
 		configs:  configs,
 		nowFunc:  time.Now,
 	}
-	go rl.cleanup()
+	observability.SafeGo("ratelimit-cleanup", nil, rl.cleanup)
 	return rl
 }
 

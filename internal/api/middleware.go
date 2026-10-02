@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 )
 
@@ -84,13 +84,7 @@ func recoveryMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				stack := debug.Stack()
-				logger.Error("panic recovered",
-					"error", fmt.Sprint(rec),
-					"stack", string(stack),
-					"method", r.Method,
-					"path", r.URL.Path,
-				)
+				observability.ReportPanic("http:"+r.Method+" "+r.URL.Path, rec, false)
 				writeError(w, http.StatusInternalServerError, "internal server error", "")
 			}
 		}()

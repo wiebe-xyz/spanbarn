@@ -12,6 +12,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/livetail"
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
 
@@ -60,7 +61,7 @@ func (h *Handler) Broadcaster() *livetail.Broadcaster {
 func (h *Handler) Start(ctx context.Context) {
 	ctx, h.cancel = context.WithCancel(ctx)
 	h.wg.Add(1)
-	go h.flushLoop(ctx)
+	observability.SafeGo("ingest-flush", nil, func() { h.flushLoop(ctx) })
 }
 
 // Enqueue delegates to the underlying queue and publishes to live tail.

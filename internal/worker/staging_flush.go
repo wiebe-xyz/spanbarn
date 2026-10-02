@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 )
@@ -91,7 +92,7 @@ func (f *StagingFlusher) SetMinuteFloor(fl *sampling.MinuteFloor) { f.floor = fl
 // GC runs in its own goroutine so a busy flush loop can never starve it — that is
 // what guarantees spans_staging stays bounded even under sustained overload.
 func (f *StagingFlusher) Run(ctx context.Context) {
-	go f.gcLoop(ctx)
+	observability.SafeGo("staging-gc", nil, func() { f.gcLoop(ctx) })
 	f.flushLoop(ctx)
 }
 
