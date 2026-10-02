@@ -54,6 +54,24 @@ func TestDashboardEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Run("counts by span status within a duration band", func(t *testing.T) {
+		p := dashboardParams(30 * time.Minute)
+		p.Set("group_by", "status")
+		p.Set("min_duration_us", "5000")
+		p.Set("max_duration_us", "9000")
+		rec := dashboardGet(t, srv, token, "/api/v1/dashboard/counts", p)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d: %s", rec.Code, rec.Body.String())
+		}
+		var res service.DashboardCounts
+		if err := json.NewDecoder(rec.Body).Decode(&res); err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Points) != 1 || res.Points[0].Group != "error" || res.Points[0].Count != 1 {
+			t.Errorf("points = %+v, want one error point", res.Points)
+		}
+	})
+
 	t.Run("counts by http_status", func(t *testing.T) {
 		p := dashboardParams(30 * time.Minute)
 		p.Set("group_by", "http_status")
@@ -132,7 +150,16 @@ func TestDashboardEndpointsRejectBadRequests(t *testing.T) {
 	wide := dashboardParams(49 * time.Hour)
 	badGroup := dashboardParams(time.Hour)
 	badGroup.Set("group_by", "bogus")
+	tooNarrow := dashboardParams(time.Minute)
+	now := time.Now().UTC()
+	tooNarrow.Set("from", now.Add(-10*time.Second).Format(time.RFC3339))
+	tooNarrow.Set("to", now.Format(time.RFC3339))
+	invertedBand := dashboardParams(time.Hour)
+	invertedBand.Set("min_duration_us", "500")
+	invertedBand.Set("max_duration_us", "100")
 	cases := map[string]url.Values{
+		"range under 1m": tooNarrow,
+		"inverted band":  invertedBand,
 		"range over 48h": wide,
 		"unknown group":  badGroup,
 		"no range":       {},

@@ -125,6 +125,26 @@ func TestQueryDashboardCountsRootOnlyAndProject(t *testing.T) {
 	}
 }
 
+func TestQueryDashboardCountsMaxDurationAndStatusGroup(t *testing.T) {
+	repo := setupTestDB(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	dashSpan(t, repo, "a", "", "x", "web", `{}`, 100, at)
+	dashSpan(t, repo, "b", "", "x", "web", `{}`, 1000, at)
+	dashSpan(t, repo, "c", "", "x", "web", `{}`, 10000, at)
+
+	pts, err := repo.QueryDashboardCounts(SpanFilter{MinDuration: 500, MaxDuration: 2000}, 3600, DashboardGroupStatus, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total int64
+	for _, p := range pts {
+		total += p.Count
+	}
+	if total != 1 {
+		t.Errorf("count in 500..2000us = %d, want 1 (points %+v)", total, pts)
+	}
+}
+
 func TestQueryDashboardPercentilesExact(t *testing.T) {
 	repo := setupTestDB(t)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
@@ -215,6 +235,7 @@ func TestDashboardQueriesUseCoveringIndex(t *testing.T) {
 		"all projects":        {From: from, To: to},
 		"one project":         {From: from, To: to, ProjectID: 1, RootOnly: true},
 		"narrowed":            {From: from, To: to, ProjectID: 1, Service: "web", Operation: "GET /", Status: "ok"},
+		"duration band":       {From: from, To: to, MinDuration: 100, MaxDuration: 5000},
 	}
 	for label, f := range filters {
 		where, args := dashboardWhere(f)

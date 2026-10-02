@@ -39,6 +39,7 @@ const (
 	DashboardGroupService    DashboardGroup = "service"
 	DashboardGroupName       DashboardGroup = "name"
 	DashboardGroupHTTPStatus DashboardGroup = "http_status"
+	DashboardGroupStatus     DashboardGroup = "status"
 )
 
 // groupExpr maps a dimension to its SQL expression. It is a closed set, so the
@@ -51,6 +52,8 @@ func (g DashboardGroup) groupExpr() (string, bool) {
 		return "name", true
 	case DashboardGroupHTTPStatus:
 		return "CAST(http_status AS TEXT)", true
+	case DashboardGroupStatus:
+		return "status", true
 	}
 	return "", false
 }
@@ -95,13 +98,17 @@ func HeatmapBucketLowerUs(idx int) int64 {
 }
 
 // dashboardWhere builds the shared predicate: the common span filters plus the
-// optional root-only restriction.
+// optional root-only restriction and maximum duration.
 func dashboardWhere(f SpanFilter, extra ...string) (string, []any) {
 	var where []string
 	var args []any
 	where, args = f.appendCommonWhere(where, args)
 	if f.RootOnly {
 		where = append(where, "COALESCE(parent_span_id,'') = ''")
+	}
+	if f.MaxDuration > 0 {
+		where = append(where, "duration_us <= ?")
+		args = append(args, f.MaxDuration)
 	}
 	where = append(where, extra...)
 	if len(where) == 0 {

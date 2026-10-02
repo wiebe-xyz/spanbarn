@@ -147,8 +147,8 @@ paths:
 
   /api/v1/dashboard/counts:
     get:
-      summary: Span or trace counts over time, grouped by service or HTTP status code
-      description: Reads raw spans, so the range is limited to 48 hours. Only the ten largest groups keep their own series; the rest fold into "other".
+      summary: Span or trace counts over time, grouped by service, span name, span status or HTTP status code
+      description: Reads raw spans, so the range is between 1 minute and 48 hours; windows up to 15 minutes use 15 second buckets. Only the ten largest groups keep their own series; the rest fold into "other".
       operationId: dashboardCounts
       security:
         - session: []
@@ -159,11 +159,13 @@ paths:
         - $ref: '#/components/parameters/DashboardService'
         - $ref: '#/components/parameters/DashboardName'
         - $ref: '#/components/parameters/DashboardStatus'
+        - $ref: '#/components/parameters/DashboardMinDuration'
+        - $ref: '#/components/parameters/DashboardMaxDuration'
         - name: group_by
           in: query
           schema:
             type: string
-            enum: [service, http_status]
+            enum: [service, name, status, http_status]
             default: service
         - name: root_only
           in: query
@@ -197,7 +199,7 @@ paths:
 
   /api/v1/dashboard/percentiles:
     get:
-      summary: Exact P90/P95/P99 span duration over time, grouped by service or span name
+      summary: Exact P90/P95/P99 span duration over time, grouped by service, span name or span status
       description: Computed from raw span durations. Only the ten largest groups are returned.
       operationId: dashboardPercentiles
       security:
@@ -209,11 +211,13 @@ paths:
         - $ref: '#/components/parameters/DashboardService'
         - $ref: '#/components/parameters/DashboardName'
         - $ref: '#/components/parameters/DashboardStatus'
+        - $ref: '#/components/parameters/DashboardMinDuration'
+        - $ref: '#/components/parameters/DashboardMaxDuration'
         - name: group_by
           in: query
           schema:
             type: string
-            enum: [service, name]
+            enum: [service, name, status]
             default: service
       responses:
         '200':
@@ -260,6 +264,8 @@ paths:
         - $ref: '#/components/parameters/DashboardService'
         - $ref: '#/components/parameters/DashboardName'
         - $ref: '#/components/parameters/DashboardStatus'
+        - $ref: '#/components/parameters/DashboardMinDuration'
+        - $ref: '#/components/parameters/DashboardMaxDuration'
         - name: root_only
           in: query
           description: Use only root spans (traces)
@@ -953,6 +959,20 @@ components:
       description: Span status (ok, error, unset)
       schema:
         type: string
+    DashboardMinDuration:
+      name: min_duration_us
+      in: query
+      description: Keep spans at least this long, in microseconds
+      schema:
+        type: integer
+        minimum: 0
+    DashboardMaxDuration:
+      name: max_duration_us
+      in: query
+      description: Keep spans at most this long, in microseconds. Must not be below min_duration_us.
+      schema:
+        type: integer
+        minimum: 0
     TraceHealthProject:
       name: project_id
       in: query
