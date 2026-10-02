@@ -15,7 +15,24 @@ vi.mock('../api/client', () => ({
 
 // jsdom cannot lay out recharts, so draw each line as a marker we can count.
 vi.mock('recharts', () => ({
-  LineChart: ({ children }: { children: React.ReactNode }) => <div data-testid="line-chart">{children}</div>,
+  // A drag runs from three hours ago to two hours ago, whatever the window.
+  LineChart: ({ children, onMouseDown, onMouseMove, onMouseUp }: {
+    children: React.ReactNode
+    onMouseDown?: (e: { activeLabel: number }) => void
+    onMouseMove?: (e: { activeLabel: number }) => void
+    onMouseUp?: () => void
+  }) => (
+    <div
+      data-testid="line-chart"
+      onMouseDown={() => onMouseDown?.({ activeLabel: Date.now() - 3 * 3600_000 })}
+      onMouseMove={() => onMouseMove?.({ activeLabel: Date.now() - 2 * 3600_000 })}
+      onMouseUp={() => onMouseUp?.()}
+    >
+      {children}
+    </div>
+  ),
+  ReferenceArea: () => <span data-testid="brush-area" />,
+  ReferenceLine: () => null,
   Line: ({ name }: { name: string }) => <span data-testid="line">{name}</span>,
   XAxis: () => null,
   YAxis: () => null,
@@ -209,5 +226,114 @@ describe('DashboardPage', () => {
     resolveSlow({ intervalSeconds: 900, points: [{ time: T0, group: 'stale', count: 1 }] })
     await new Promise((r) => setTimeout(r, 20))
     expect(within(card('Trace Counts by Service')).getByTestId('line')).toHaveTextContent('fresh')
+  })
+})
+
+describe('DashboardPage zoom and filters', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    counts.mockImplementation(async () => ({
+      intervalSeconds: 900,
+      points: [{ time: T0, group: 'web', count: 5 }, { time: T0, group: 'worker', count: 4 }],
+    }))
+    percentiles.mockResolvedValue({
+      intervalSeconds: 900,
+      points: [{ time: T0, group: 'web', count: 5, p90Us: 9000, p95Us: 12000, p99Us: 30000 }],
+    })
+    heatmap.mockResolvedValue({ intervalSeconds: 900, cells: [{ time: T0, bucket: 10, lowerUs: 31, upperUs: 45, count: 3 }] })
+  })
+
+  function drag(chart: HTMLElement) {
+    fireEvent.mouseDown(chart)
+    fireEvent.mouseMove(chart)
+    fireEvent.mouseUp(chart)
+  }
+
+  it('zooms every card to the dragged range and shows the zoom controls', async () => {
+    renderPage()
+    await waitFor(() => expect(within(card('Trace Counts by Service')).getAllByTestId('line-chart')).toHaveLength(1))
+    expect(screen.queryByRole('group', { name: 'Active zoom and filters' })).toBeNull()
+
+    drag(within(card('Trace Counts by Service')).getByTestId('line-chart'))
+
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Active zoom and filters' })).toHaveTextContent('Zoomed'))
+    const filter = counts.mock.calls.at(-1)![0]
+    expect(Date.parse(filter.to) - Date.parse(filter.from)).toBeCloseTo(3600_000, -3)
+    expect(heatmap.mock.calls.at(-1)![0].from).toBe(filter.from)
+    expect(percentiles.mock.calls.at(-1)![0].to).toBe(filter.to)
+    expect(screen.getByRole('combobox', { name: 'Time range' })).toHaveValue('custom')
+    expect(screen.getByRole('button', { name: 'Previous window' })).toBeDisabled()
+  })
+
+  it('restores a zoomed window from the URL, zooms out and resets', async () => {
+    const to = Date.now() - 3600_000
+    const from = to - 600_000
+    renderPage(`/?from=${from}&to=${to}`)
+    await waitFor(() => expect(counts).toHaveBeenCalled())
+    const first = counts.mock.calls[0][0]
+    expect(Date.parse(first.from)).toBe(from)
+    expect(Date.parse(first.to)).toBe(to)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
+    await waitFor(() => {
+      const f = counts.mock.calls.at(-1)![0]
+      expect(Date.parse(f.to) - Date.parse(f.from)).toBe(1_200_000)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset zoom' }))
+    await waitFor(() => {
+      const f = counts.mock.calls.at(-1)![0]
+      expect(Date.parse(f.to) - Date.parse(f.from)).toBe(24 * 3600_000)
+    })
+    expect(screen.queryByRole('group', { name: 'Active zoom and filters' })).toBeNull()
+  })
+
+  it('filters to a series when its legend entry is clicked, and removes the chip again', async () => {
+    renderPage()
+    await waitFor(() => expect(within(card('Trace Counts by Service')).getByRole('button', { name: 'web' })).toBeInTheDocument())
+
+    fireEvent.click(within(card('Trace Counts by Service')).getByRole('button', { name: 'web' }))
+    await waitFor(() => expect(counts.mock.calls.at(-1)![0].service).toBe('web'))
+    expect(screen.getByRole('button', { name: 'Remove service = web' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove service = web' }))
+    await waitFor(() => expect(counts.mock.calls.at(-1)![0].service).toBe(''))
+    expect(screen.queryByRole('group', { name: 'Active zoom and filters' })).toBeNull()
+  })
+
+  it('filters on span name from the duration card legend', async () => {
+    renderPage()
+    await waitFor(() => expect(within(card('Duration by Name')).getAllByRole('button', { name: 'web' }).length).toBeGreaterThan(0))
+    fireEvent.click(within(card('Duration by Name')).getAllByRole('button', { name: 'web' })[0])
+    await waitFor(() => expect(percentiles.mock.calls.at(-1)![0].name).toBe('web'))
+  })
+
+  it('regroups the counts card and filters on that dimension', async () => {
+    renderPage()
+    await waitFor(() => expect(counts).toHaveBeenCalled())
+    fireEvent.change(within(card('Trace Counts by Service')).getByRole('combobox', { name: 'Group by' }), { target: { value: 'name' } })
+
+    await waitFor(() => expect(card('Trace Counts by Span name')).toBeInTheDocument())
+    await waitFor(() => expect(counts.mock.calls.some(([, g, root]) => g === 'name' && root)).toBe(true))
+
+    fireEvent.click(within(card('Trace Counts by Span name')).getByRole('button', { name: 'web' }))
+    await waitFor(() => expect(counts.mock.calls.at(-1)![0].name).toBe('web'))
+  })
+
+  it('sends the duration band from the URL and clears it from its chip', async () => {
+    renderPage('/?min_us=1000&max_us=5000')
+    await waitFor(() => expect(counts).toHaveBeenCalled())
+    expect(counts.mock.calls[0][0]).toMatchObject({ minDurationUs: 1000, maxDurationUs: 5000 })
+    expect(heatmap.mock.calls[0][0]).toMatchObject({ minDurationUs: 1000, maxDurationUs: 5000 })
+
+    fireEvent.click(screen.getByRole('button', { name: /^Remove duration/ }))
+    await waitFor(() => expect(counts.mock.calls.at(-1)![0].minDurationUs).toBe(0))
+  })
+
+  it('offers Clear all once several filters are active', async () => {
+    renderPage('/?service=web&status=error')
+    await waitFor(() => expect(counts).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: 'Clear all filters' }))
+    await waitFor(() => expect(counts.mock.calls.at(-1)![0]).toMatchObject({ service: '', status: '' }))
   })
 })

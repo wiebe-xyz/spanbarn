@@ -49,6 +49,8 @@ import type {
   DashboardCounts,
   DashboardPercentiles,
   DashboardHeatmap,
+  CountsGroup,
+  PercentileGroup,
 } from './dashboardTypes'
 
 export class ApiError extends Error {
@@ -130,6 +132,8 @@ function dashboardQs(f: DashboardFilter, extra: Record<string, string | undefine
     service: f.service,
     name: f.name,
     status: f.status,
+    min_duration_us: f.minDurationUs || undefined,
+    max_duration_us: f.maxDurationUs || undefined,
     ...extra,
   })
 }
@@ -180,12 +184,12 @@ function compareQs(s: AttributeCompareScope): string {
 }
 
 export const api = {
-  getDashboardCounts: (f: DashboardFilter, groupBy: 'service' | 'http_status', rootOnly: boolean) =>
+  getDashboardCounts: (f: DashboardFilter, groupBy: CountsGroup, rootOnly: boolean) =>
     fetchJSON<DashboardCounts>(
       `/api/v1/dashboard/counts${dashboardQs(f, { group_by: groupBy, root_only: rootOnly ? 'true' : undefined })}`,
     ),
 
-  getDashboardPercentiles: (f: DashboardFilter, groupBy: 'service' | 'name') =>
+  getDashboardPercentiles: (f: DashboardFilter, groupBy: PercentileGroup) =>
     fetchJSON<DashboardPercentiles>(`/api/v1/dashboard/percentiles${dashboardQs(f, { group_by: groupBy })}`),
 
   getDashboardHeatmap: (f: DashboardFilter, rootOnly: boolean) =>
