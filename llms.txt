@@ -1,6 +1,6 @@
 SpanBarn — self-hosted telemetry aggregator with intelligent span retention.
 
-Architecture: Go binary (cmd/spanbarn), SQLite + Litestream, React + Vite frontend.
+Architecture: Go binary (cmd/spanbarn), SQLite (no continuous replication; settings-only snapshots to S3), React + Vite frontend.
 Ingest: OTLP/HTTP (POST /v1/traces) and native JSON (POST /api/v1/spans).
 Pipeline: in-memory queue → NDJSON spool → background worker → SQLite.
 Retention: full spans for N hours, then aggregate to percentile timeseries.
