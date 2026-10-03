@@ -2,6 +2,7 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
@@ -178,6 +179,44 @@ type TraceExclusion struct {
 	ProjectID int64     `json:"projectId"`
 	Operation string    `json:"operation"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+// SLO is a service level objective: the share of total events that must be
+// good over a rolling window. GoodFilter and TotalFilter are filter-model JSON
+// (internal/filter) selecting the good events and all eligible events.
+type SLO struct {
+	ID          int64           `json:"id"`
+	ProjectID   int64           `json:"projectId"`
+	Name        string          `json:"name"`
+	GoodFilter  json.RawMessage `json:"goodFilter"`
+	TotalFilter json.RawMessage `json:"totalFilter"`
+	Target      float64         `json:"target"`
+	WindowDays  int             `json:"windowDays"`
+	CreatedAt   time.Time       `json:"createdAt"`
+}
+
+// SLOBurnAlert fires when the burn rate over WindowMinutes reaches BurnRate.
+// Webhook, email and cooldown mirror Alert. Firing is true between the
+// crossing and the recovery.
+type SLOBurnAlert struct {
+	ID              int64        `json:"id"`
+	SLOID           int64        `json:"sloId"`
+	WindowMinutes   int          `json:"windowMinutes"`
+	BurnRate        float64      `json:"burnRate"`
+	WebhookURL      string       `json:"webhookUrl"`
+	Email           string       `json:"email"`
+	CooldownMinutes int          `json:"cooldownMinutes"`
+	Enabled         bool         `json:"enabled"`
+	Firing          bool         `json:"firing"`
+	LastTriggeredAt sql.NullTime `json:"lastTriggeredAt"`
+}
+
+// SLOCount is the sample-ratio corrected good and total count of one bucket.
+type SLOCount struct {
+	SLOID       int64     `json:"sloId"`
+	BucketStart time.Time `json:"bucketStart"`
+	Good        int64     `json:"good"`
+	Total       int64     `json:"total"`
 }
 
 type Alert struct {
