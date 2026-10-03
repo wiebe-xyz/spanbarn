@@ -256,6 +256,9 @@ func (s *Server) registerManagementRoutes(env *routeEnv) {
 	bh := &boardHandlers{svc: service.NewBoardService(s.repo, slog.Default())}
 	bh.register(s.mux, func(h http.Handler) http.Handler { return apiRL(sessionAuth(h)) })
 
+	// Calculated fields — per-project expressions usable as filter and group-by keys.
+	newCalculatedFieldHandlers(s.repo).register(s.mux, func(h http.Handler) http.Handler { return apiRL(sessionAuth(h)) })
+
 	// Trace exclusions — persistent operation-level filters per project.
 	teh := &traceExclusionHandlers{svc: service.NewTraceExclusionService(s.repo)}
 	s.mux.Handle("/api/v1/trace-exclusions", apiRL(sessionAuth(teh)))
