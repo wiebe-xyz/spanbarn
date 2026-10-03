@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"strings"
 	"testing"
 )
@@ -28,18 +29,14 @@ var otlpServingModes = []string{"runStandalone", "runReaderMode", "runIngestMode
 // no seam to construct one from a test. If you refactor the wiring (e.g. behind
 // a shared helper), update samplerWiringCall below — do not delete the test.
 func TestEveryOTLPModeWiresTheSampler(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	files := parsePackage(t)
 
 	const samplerWiringCall = "WithTraceBuffer"
 
 	for _, mode := range otlpServingModes {
-		fn := findFunc(file, mode)
+		fn := findFunc(files, mode)
 		if fn == nil {
-			t.Fatalf("run mode %s not found in main.go — if it was renamed or removed, update otlpServingModes", mode)
+			t.Fatalf("run mode %s not found in package main — if it was renamed or removed, update otlpServingModes", mode)
 		}
 		if !bodyCalls(fn, samplerWiringCall) {
 			t.Errorf("%s serves OTLP but never calls api.%s — spans will be ingested unsampled "+
@@ -52,13 +49,9 @@ func TestEveryOTLPModeWiresTheSampler(t *testing.T) {
 // writer from the sampling requirement above: it passes a nil ingest handler, so
 // there is nothing to sample. If that changes, the writer needs a buffer too.
 func TestWriterModeServesNoOTLP(t *testing.T) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "main.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse main.go: %v", err)
-	}
+	files := parsePackage(t)
 
-	fn := findFunc(file, "runWriterMode")
+	fn := findFunc(files, "runWriterMode")
 	if fn == nil {
 		t.Skip("runWriterMode not found")
 	}
@@ -87,10 +80,32 @@ func TestWriterModeServesNoOTLP(t *testing.T) {
 	}
 }
 
-func findFunc(file *ast.File, name string) *ast.FuncDecl {
-	for _, decl := range file.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == name && fn.Recv == nil {
-			return fn
+// parsePackage parses every non-test source file of package main, since the
+// run modes live in separate files.
+func parsePackage(t *testing.T) []*ast.File {
+	t.Helper()
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parse package: %v", err)
+	}
+	var files []*ast.File
+	for _, pkg := range pkgs {
+		for _, f := range pkg.Files {
+			files = append(files, f)
+		}
+	}
+	return files
+}
+
+func findFunc(files []*ast.File, name string) *ast.FuncDecl {
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == name && fn.Recv == nil {
+				return fn
+			}
 		}
 	}
 	return nil
