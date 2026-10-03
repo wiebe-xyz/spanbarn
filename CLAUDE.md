@@ -65,6 +65,14 @@ them blocking; the exit criteria are written next to each one.
 - **Boundaries** (`scripts/boundarycheck`) — `internal/api` must reach persistence through `internal/service`, and neither `internal/service` nor `internal/repository` may depend on transport. Baseline: 14 files in `scripts/boundaries-baseline.txt`. Enforce at 5 or fewer; target 0.
 - **Infra** (`scripts/infracheck`) — every kustomize overlay renders, and the rendered workloads have resource requests and limits, readiness and liveness probes, non-floating image tags and no reference to a Secret nobody applies. An overlay that fails to render is a hard error, never a pass. Baseline: 6 findings in `scripts/infra-baseline.txt`. Enforce at 0.
 
+Layering is enforced by `depguard` in `.golangci.yml`, run by `make lint` and the
+`code` CI job (blocking, outside the ratchet counts). Rules: only `repository`
+and `cmd` import `writescheduler`, `database/sql` or the SQLite driver; `service`
+and `repository` import no transport (`net/http`, `api`, `auth`, `ingest`); leaf
+packages import nothing else from the module. `api` -> `repository` stays with
+`boundarycheck`. One baselined exclusion exists (`internal/api/setup.go`); its
+exit criterion is in `scripts/quality-thresholds.conf`. Do not add exclusions.
+
 The gate scripts have their own tests: `make quality-gate-test` runs the ratchet
 semantics (violation present, violation baselined, baseline beatable, clean
 tree) against fixtures without touching the real tree.
