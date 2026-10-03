@@ -60,6 +60,10 @@ jobs:
               echo "[go] $dir"
               (cd "$dir" && go test ./...)
               (cd "$dir" && go vet ./...)
+              # Layering rules (depguard) from .golangci.yml. Pinned like gocyclo/dupl.
+              if [ -f "$dir/.golangci.yml" ]; then
+                (cd "$dir" && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...)
+              fi
               (cd "$dir" && go build ./...)
             fi
           done < <(find . "${prune[@]}" -name go.mod -print)

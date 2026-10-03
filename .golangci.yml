@@ -1,0 +1,136 @@
+version: "2"
+
+# Layering rules, enforced with depguard. Everything else golangci-lint can
+# check is left off on purpose: `go vet` and gofmt run in `make lint`, and the
+# complexity, length and duplication ratchets live in scripts/quality-gate.sh.
+#
+# Test files are excluded from every rule ($test). Tests may wire packages
+# together in ways production code must not.
+#
+# The api -> repository import is tracked by scripts/boundarycheck (soak with a
+# baseline) and is deliberately not repeated here.
+run:
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - depguard
+  # Baselined exclusions. Each one is a known violation; the soak exit
+  # criterion is in scripts/quality-thresholds.conf. Do not add entries.
+  exclusions:
+    rules:
+      - path: internal/api/setup\.go
+        linters:
+          - depguard
+        text: "sql-access"
+  settings:
+    depguard:
+      rules:
+        # Every SQLite write goes through internal/writescheduler, which the
+        # repository wires around its single connection. Only the repository
+        # and the composition root (cmd) may touch the scheduler.
+        write-path:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+            - "!**/internal/repository/**"
+            - "!**/cmd/**"
+          deny:
+            - pkg: github.com/wiebe-xyz/spanbarn/internal/writescheduler
+              desc: SQLite writes go through internal/repository, which owns the write scheduler.
+
+        # Raw SQL access is confined to the repository (and cmd, whose CLI
+        # subcommands open the database directly). Anything else would bypass
+        # the scheduler.
+        sql-access:
+          list-mode: lax
+          files:
+            - $all
+            - "!$test"
+            - "!**/internal/repository/**"
+            - "!**/cmd/**"
+          deny:
+            - pkg: database/sql
+              desc: database access belongs in internal/repository.
+            - pkg: modernc.org/sqlite
+              desc: the SQLite driver is imported by internal/repository only.
+
+        # service and repository stay independent of transport and of the
+        # layers above them.
+        service-no-transport:
+          list-mode: lax
+          files:
+            - "**/internal/service/**"
+            - "!$test"
+          deny:
+            - pkg: net/http
+              desc: service must not depend on HTTP; map errors in internal/api.
+            - pkg: github.com/wiebe-xyz/spanbarn/internal/api
+              desc: service sits below api.
+            - pkg: github.com/wiebe-xyz/spanbarn/internal/auth
+              desc: service sits below the auth transport layer.
+            - pkg: github.com/wiebe-xyz/spanbarn/internal/ingest
+              desc: service sits below the ingest transport layer.
+
+        repository-no-transport:
+          list-mode: lax
+          files:
+            - "**/internal/repository/**"
+            - "!$test"
+          deny:
+            - pkg: net/http
+              desc: repository must not depend on HTTP.
+            - pkg: github.com/wiebe-xyz/spanbarn/internal/api
+              desc: repository sits below api.
+            - pkg: github.com/wiebe-xyz/spanbarn/internal/service
+              desc: repository sits below service.
+            - pkg: github.com/wiebe-xyz/spanbarn/internal/auth
+              desc: repository sits below the auth transport layer.
+            - pkg: github.com/wiebe-xyz/spanbarn/internal/ingest
+              desc: repository sits below the ingest transport layer.
+
+        # Leaves: these packages import nothing else from this module.
+        leaf-packages:
+          list-mode: lax
+          files:
+            - "**/internal/model/**"
+            - "**/internal/filter/**"
+            - "**/internal/cache/**"
+            - "**/internal/metrics/**"
+            - "**/internal/auth/**"
+            - "**/internal/config/**"
+            - "**/internal/selfmetrics/**"
+            - "**/internal/observability/**"
+            - "!$test"
+          deny:
+            - pkg: github.com/wiebe-xyz/spanbarn
+              desc: leaf packages import nothing from this module.
+
+        # Packages that depend only on model.
+        model-only:
+          list-mode: lax
+          files:
+            - "**/internal/livetail/**"
+            - "**/internal/queue/**"
+            - "**/internal/spool/**"
+            - "!$test"
+          allow:
+            - github.com/wiebe-xyz/spanbarn/internal/model
+          deny:
+            - pkg: github.com/wiebe-xyz/spanbarn
+              desc: livetail, queue and spool depend on internal/model only.
+
+        # The scheduler and the sampler depend on observability only.
+        write-scheduler-leaf:
+          list-mode: lax
+          files:
+            - "**/internal/writescheduler/**"
+            - "**/internal/sampling/**"
+            - "!$test"
+          allow:
+            - github.com/wiebe-xyz/spanbarn/internal/observability
+          deny:
+            - pkg: github.com/wiebe-xyz/spanbarn
+              desc: writescheduler and sampling depend on internal/observability only.

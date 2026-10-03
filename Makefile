@@ -104,6 +104,9 @@ lint:
 		if find "$$dir" -name '*.go' -print -quit | grep -q .; then \
 			echo "[lint] go $$dir"; \
 			(cd "$$dir" && go vet ./...); \
+			if [ -f "$$dir/.golangci.yml" ]; then \
+				(cd "$$dir" && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...); \
+			fi; \
 			formatted=$$(cd "$$dir" && find . $(FIND_PRUNE) -name '*.go' -print0 | xargs -0 gofmt -l); \
 			if [ -n "$$formatted" ]; then \
 				printf '%s\n' "$$formatted"; \
