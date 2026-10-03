@@ -3,9 +3,3 @@
 # Columns: overlay <TAB> check <TAB> object.
 # Entries may only be removed. A finding listed here that is fixed makes the
 # check fail as STALE until the baseline is refreshed.
-production	no-liveness-probe	Deployment/spanbarn-redis-queue:redis
-production	no-liveness-probe	Deployment/spanbarn-redis:redis
-staging	no-liveness-probe	Deployment/spanbarn-redis-queue:redis
-staging	no-liveness-probe	Deployment/spanbarn-redis:redis
-testing	no-liveness-probe	Deployment/spanbarn-redis-queue:redis
-testing	no-liveness-probe	Deployment/spanbarn-redis:redis
