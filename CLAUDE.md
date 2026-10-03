@@ -77,10 +77,11 @@ The gate scripts have their own tests: `make quality-gate-test` runs the ratchet
 semantics (violation present, violation baselined, baseline beatable, clean
 tree) against fixtures without touching the real tree.
 
-**Headroom is currently zero** on complexity (23 of 23) and file length (5 of 5),
-and `cmd/spanbarn/main.go` is 22 lines under the 1200-line hard cap. The answer
-is decomposition, not a bigger number — the gate prints the remaining headroom
-on every run so the trend is visible.
+**Headroom is currently zero** on complexity (19 of 19) and file length (4 of 4).
+`cmd/spanbarn` is split into per-mode files (`mode_*.go`) plus shared helpers
+(`serve.go`, `consumers.go`, `wiring.go`), none over 500 lines. The answer to a
+failing count is decomposition, not a bigger number. The gate prints the
+remaining headroom on every run so the trend is visible.
 
 ## CI/CD (GitHub Actions)
 
