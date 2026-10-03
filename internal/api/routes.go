@@ -172,7 +172,7 @@ func (s *Server) registerIngestRoutes(env *routeEnv) {
 // registerQueryRoutes mounts the read endpoints: traces and services, live
 // tail, metrics and logs.
 func (s *Server) registerQueryRoutes(env *routeEnv) {
-	apiRL, readAuth, sessionAuth := env.apiRL, env.readAuth, env.sessionAuth
+	sessionAuth := env.sessionAuth
 
 	// Query endpoints — rate limited + session auth required.
 	// List/aggregate endpoints get a short cache (30s); detail endpoints are not cached.
@@ -186,25 +186,8 @@ func (s *Server) registerQueryRoutes(env *routeEnv) {
 		s.mux.Handle("/api/v1/spans/live", sessionAuth(lth))
 	}
 
-	// Metrics query endpoints — rate limited + session auth required.
 	if s.repo != nil && s.sessions != nil {
-		mqh := &metricsQueryHandlers{svc: service.NewMetricsService(s.repo)}
-
-		s.mux.Handle("/api/v1/metrics/names", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricNames))))
-		s.mux.Handle("/api/v1/metrics/catalog", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricCatalog))))
-		s.mux.Handle("/api/v1/metrics/insights", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricInsights))))
-		s.mux.Handle("/api/v1/metrics/series", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricSeries))))
-	}
-
-	// Logs query endpoints — read auth (session or read key). Pinned-traces are
-	// per-user state, so they stay session-only.
-	if s.repo != nil && s.sessions != nil {
-		lqh := &logsQueryHandlers{svc: service.NewLogsService(s.repo)}
-
-		s.mux.Handle("/api/v1/logs", apiRL(readAuth(http.HandlerFunc(lqh.handleLogs))))
-		s.mux.Handle("/api/v1/logs/histogram", apiRL(readAuth(http.HandlerFunc(lqh.handleLogsHistogram))))
-		s.mux.Handle("/api/v1/pinned-traces", apiRL(sessionAuth(http.HandlerFunc(lqh.handlePinnedTraces))))
-		s.mux.Handle("/api/v1/pinned-traces/", apiRL(sessionAuth(http.HandlerFunc(lqh.handlePinnedTraces))))
+		s.registerMetricsAndLogsRoutes(env)
 	}
 }
 
@@ -292,4 +275,29 @@ func (s *Server) registerProjectRoutes(env *routeEnv) {
 	ph := &projectHandlers{svc: s.projectService(), settings: service.NewSettingsService(s.repo), cache: s.cache}
 	s.mux.Handle("/api/v1/projects", env.apiRL(env.readAuth(ph)))
 	s.mux.Handle("/api/v1/projects/", env.apiRL(env.readAuth(ph)))
+}
+
+// registerMetricsAndLogsRoutes mounts the metrics and logs query endpoints.
+// Metrics are session-only; logs accept a read key, except pinned traces, which
+// are per-user state and stay session-only.
+func (s *Server) registerMetricsAndLogsRoutes(env *routeEnv) {
+	mqh := &metricsQueryHandlers{svc: service.NewMetricsService(s.repo)}
+	lqh := &logsQueryHandlers{svc: service.NewLogsService(s.repo)}
+	routes := []struct {
+		path string
+		auth func(http.Handler) http.Handler
+		h    http.HandlerFunc
+	}{
+		{"/api/v1/metrics/names", env.readAuth, mqh.handleMetricNames},
+		{"/api/v1/metrics/catalog", env.readAuth, mqh.handleMetricCatalog},
+		{"/api/v1/metrics/insights", env.readAuth, mqh.handleMetricInsights},
+		{"/api/v1/metrics/series", env.readAuth, mqh.handleMetricSeries},
+		{"/api/v1/logs", env.readAuth, lqh.handleLogs},
+		{"/api/v1/logs/histogram", env.readAuth, lqh.handleLogsHistogram},
+		{"/api/v1/pinned-traces", env.sessionAuth, lqh.handlePinnedTraces},
+		{"/api/v1/pinned-traces/", env.sessionAuth, lqh.handlePinnedTraces},
+	}
+	for _, r := range routes {
+		s.mux.Handle(r.path, env.apiRL(r.auth(r.h)))
+	}
 }
