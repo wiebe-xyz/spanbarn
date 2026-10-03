@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "ignorePatterns": ["dist", "node_modules", "**/*.mjs", "**/*.cjs", "**/*.js"],
+  "plugins": ["typescript", "unicorn", "oxc", "react"],
+  "categories": {
+    "correctness": "warn"
+  },
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "warn",
+    "react/only-export-components": ["error", { "allowConstantExport": true }],
+    "typescript/no-explicit-any": "error",
+    "no-unused-vars": "error",
+
+    // These eleven exist in oxlint but sit outside its default "correctness"
+    // bundle. eslint's js.configs.recommended enforced every one of them, so
+    // they are turned on explicitly to keep them through the swap.
+    "no-var": "error",
+    "prefer-const": "error",
+    "prefer-rest-params": "error",
+    "prefer-spread": "error",
+    "no-fallthrough": "error",
+    "no-empty": "error",
+    "no-case-declarations": "error",
+    "no-prototype-builtins": "error",
+    "no-regex-spaces": "error",
+    "no-useless-assignment": "error",
+    "preserve-caught-error": "error"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.d.ts"],
+      "rules": { "typescript/no-namespace": "off" }
+    }
+  ]
+}

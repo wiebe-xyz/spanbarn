@@ -154,9 +154,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: TypeScript typecheck
+        run: pnpm -r --if-present run typecheck
+      - name: oxlint ratchet test
+        run: pnpm --filter @spanbarn/web lint:ratchet-test
+      - name: oxlint
         run: pnpm --filter @spanbarn/web lint
-      - name: ESLint
-        run: pnpm --filter @spanbarn/web lint:eslint
 
   frontend-test:
     runs-on: ubuntu-latest
