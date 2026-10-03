@@ -7,12 +7,51 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
+// routeEnv carries the middleware shared by the route groups.
+type routeEnv struct {
+	rl          *RateLimiter
+	ingestRL    func(http.Handler) http.Handler
+	apiRL       func(http.Handler) http.Handler
+	sessionAuth func(http.Handler) http.Handler
+	readAuth    func(http.Handler) http.Handler
+	ingestAuth  func(http.Handler) http.Handler
+	otlpAuth    func(http.Handler) http.Handler
+}
+
 // registerRoutes sets up all HTTP routes on the server's mux.
 func (s *Server) registerRoutes() {
 	rl := s.rateLimiter
-	ingestRL := RateLimitMiddleware(rl, "ingest")
-	apiRL := RateLimitMiddleware(rl, "api")
+	env := &routeEnv{
+		rl:          rl,
+		ingestRL:    RateLimitMiddleware(rl, "ingest"),
+		apiRL:       RateLimitMiddleware(rl, "api"),
+		sessionAuth: SessionMiddleware(s.sessions),
+		readAuth:    SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient),
+	}
+	env.ingestAuth, env.otlpAuth = s.ingestAuthMiddleware()
 
+	s.registerPublicRoutes(env)
+	s.registerIngestRoutes(env)
+	s.registerQueryRoutes(env)
+	s.registerManagementRoutes(env)
+	s.registerProjectRoutes(env)
+}
+
+// ingestAuthMiddleware returns the auth wrappers for the span ingest endpoints
+// and for the OTLP endpoints.
+func (s *Server) ingestAuthMiddleware() (ingestAuth, otlpAuth func(http.Handler) http.Handler) {
+	if s.authorizer != nil {
+		ingestAuth = func(next http.Handler) http.Handler { return authorizerOrBearerAuth(s.authorizer, next) }
+		return ingestAuth, ingestAuth
+	}
+	ingestAuth = func(next http.Handler) http.Handler { return apiKeyAuth(s.apiKey, next) }
+	otlpAuth = func(next http.Handler) http.Handler { return apiKeyOrBearerAuth(s.apiKey, next) }
+	return ingestAuth, otlpAuth
+}
+
+// registerPublicRoutes mounts the health, config, identity, OIDC and metrics
+// endpoints.
+func (s *Server) registerPublicRoutes(env *routeEnv) {
 	// Health endpoint — no auth required.
 	s.mux.HandleFunc("/api/v1/health", s.handleHealth)
 
@@ -24,8 +63,7 @@ func (s *Server) registerRoutes() {
 	// name so the SPA can show it in the profile chip without a cross-origin
 	// request to IamBarn.
 	if s.sessions != nil {
-		sessionAuth := SessionMiddleware(s.sessions)
-		s.mux.Handle("/api/v1/me", apiRL(sessionAuth(http.HandlerFunc(s.handleMe))))
+		s.mux.Handle("/api/v1/me", env.apiRL(env.sessionAuth(http.HandlerFunc(s.handleMe))))
 	}
 
 	// IamBarn proxy — session auth required when OIDC is configured. Forwards
@@ -36,8 +74,7 @@ func (s *Server) registerRoutes() {
 	// not configured. (SetOIDCClient runs after registerRoutes, so we cannot
 	// gate registration on s.oidc != nil here.)
 	if s.sessions != nil {
-		sessionAuth := SessionMiddleware(s.sessions)
-		s.mux.Handle("/api/iam-proxy/", sessionAuth(http.HandlerFunc(s.handleIAMProxy)))
+		s.mux.Handle("/api/iam-proxy/", env.sessionAuth(http.HandlerFunc(s.handleIAMProxy)))
 	}
 
 	// IAMBarn theme manifest — public, no auth, no redirects. Served at the
@@ -45,6 +82,29 @@ func (s *Server) registerRoutes() {
 	// when users arrive via an OAuth authorize redirect from this host.
 	s.mux.HandleFunc("/.well-known/iambarn-theme.json", s.handleThemeManifest)
 
+	s.registerOIDCRoutes(env)
+
+	// Metrics endpoint.
+	if s.metrics != nil {
+		s.mux.Handle("/metrics", s.metrics.Handler(s.metricsToken))
+	}
+
+	// Browser crash reports — rate limited but NOT session-authed: a crash on
+	// the login page happens before any session exists, and a 401 there would
+	// drop exactly the errors that stop operators from logging in. The handler
+	// truncates every field, and the global body cap bounds the request.
+	s.mux.Handle("/api/v1/client-errors", env.ingestRL(http.HandlerFunc(s.handleClientError)))
+
+	// Setup endpoint — intentionally public (onboarding), but rate-limited and
+	// GET-only + read-idempotent (see handleSetup) so anonymous callers cannot
+	// use it to spam projects or amplify writes.
+	if s.repo != nil {
+		s.mux.Handle("/api/v1/setup/{slug}", env.apiRL(http.HandlerFunc(s.handleSetup)))
+	}
+}
+
+// registerOIDCRoutes mounts the OIDC login flow and session refresh.
+func (s *Server) registerOIDCRoutes(env *routeEnv) {
 	// OIDC login flow — public, no auth required. Returns 404 when OIDC is not
 	// configured server-side, so the SPA can fall through to local login.
 	s.mux.HandleFunc("/api/v1/oidc/login", s.handleOIDCLogin)
@@ -55,10 +115,15 @@ func (s *Server) registerRoutes() {
 	// Back-channel logout — public (the IdP is the caller; authenticity comes
 	// from the signed logout token) but rate-limited under the login bucket.
 	s.mux.Handle("/api/v1/oidc/backchannel-logout",
-		RateLimitMiddleware(rl, "login")(http.HandlerFunc(s.handleBackchannelLogout)))
+		RateLimitMiddleware(env.rl, "login")(http.HandlerFunc(s.handleBackchannelLogout)))
 	// Forced session refresh — POST so split deployments route it to the
 	// writer (readers mount SQLite read-only and cannot persist rotations).
-	s.mux.Handle("/api/v1/session/refresh", apiRL(http.HandlerFunc(s.handleSessionRefresh)))
+	s.mux.Handle("/api/v1/session/refresh", env.apiRL(http.HandlerFunc(s.handleSessionRefresh)))
+}
+
+// registerIngestRoutes mounts the endpoints that accept telemetry.
+func (s *Server) registerIngestRoutes(env *routeEnv) {
+	ingestRL, ingestAuth, otlpAuth := env.ingestRL, env.ingestAuth, env.otlpAuth
 
 	// Internal ingest endpoint — used by ingest pods to forward spans to writer.
 	// Uses raw API key auth (pod-to-pod, no need for SHA256/DB lookup).
@@ -67,20 +132,6 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/internal/v1/ingest", internalAuth(http.HandlerFunc(s.handleInternalIngest)))
 	}
 
-	// Metrics endpoint.
-	if s.metrics != nil {
-		s.mux.Handle("/metrics", s.metrics.Handler(s.metricsToken))
-	}
-
-	// Ingest endpoint — rate limited + API key auth required.
-	var ingestAuth, otlpAuth func(http.Handler) http.Handler
-	if s.authorizer != nil {
-		ingestAuth = func(next http.Handler) http.Handler { return authorizerOrBearerAuth(s.authorizer, next) }
-		otlpAuth = ingestAuth
-	} else {
-		ingestAuth = func(next http.Handler) http.Handler { return apiKeyAuth(s.apiKey, next) }
-		otlpAuth = func(next http.Handler) http.Handler { return apiKeyOrBearerAuth(s.apiKey, next) }
-	}
 	// shed refuses telemetry while the storage volume is nearly full. It sits
 	// *inside* auth deliberately: capacity state is internal, so an
 	// unauthenticated caller should get 401 rather than learn that our disk is
@@ -107,54 +158,37 @@ func (s *Server) registerRoutes() {
 		s.mux.Handle("/v1/logs", ingestRL(otlpAuth(shed(http.HandlerFunc(s.handleOTLPLogs)))))
 	}
 
+	// Frontend telemetry — session auth, accepts same format as /api/v1/spans.
+	if s.ingest != nil && s.sessions != nil {
+		s.mux.Handle("/api/v1/telemetry", ingestRL(env.sessionAuth(http.HandlerFunc(s.handleIngest))))
+	}
+
+	// E2E session endpoint — API key auth required; only works when e2e_enabled.
+	if s.repo != nil && s.sessions != nil && s.authorizer != nil {
+		s.mux.Handle("/api/v1/e2e/session", ingestRL(ingestAuth(http.HandlerFunc(s.handleE2ESession))))
+	}
+}
+
+// registerQueryRoutes mounts the read endpoints: traces and services, live
+// tail, metrics and logs.
+func (s *Server) registerQueryRoutes(env *routeEnv) {
+	apiRL, readAuth, sessionAuth := env.apiRL, env.readAuth, env.sessionAuth
+
 	// Query endpoints — rate limited + session auth required.
 	// List/aggregate endpoints get a short cache (30s); detail endpoints are not cached.
 	if s.querySvc != nil && s.sessions != nil {
-		qh := &queryHandlers{svc: s.querySvc}
-		readAuth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
-		sessionAuth := SessionMiddleware(s.sessions)
-		cache60 := func(h http.Handler) http.Handler { return cacheMiddleware(60, h) }
-
-		s.mux.Handle("/api/v1/services", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleServices)))))
-		s.mux.Handle("/api/v1/services/", apiRL(readAuth(cache60(qh))))
-		s.mux.Handle("/api/v1/traces", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleTraces)))))
-		s.mux.Handle("/api/v1/spans/search", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleSpanSearch)))))
-		s.mux.Handle("/api/v1/traces/groups", apiRL(readAuth(http.HandlerFunc(qh.handleTraceGroups))))
-		s.mux.Handle("/api/v1/traces/", apiRL(readAuth(http.HandlerFunc(qh.handleTraceDetail))))
-		s.mux.Handle("/api/v1/trace-health/orphan-spans", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleOrphanSpans)))))
-		s.mux.Handle("/api/v1/trace-health/rootless-traces", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleRootlessTraces)))))
-		s.mux.Handle("/api/v1/trace-health/single-span-traces", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleSingleSpanTraces)))))
-		s.mux.Handle("/api/v1/trace-health/span-names", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleSpanNames)))))
-		s.mux.Handle("/api/v1/attributes", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAttributes)))))
-		s.mux.Handle("/api/v1/attributes/compare", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAttributeCompare)))))
-		s.mux.Handle("/api/v1/analyze", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAnalyze)))))
-		s.mux.Handle("/api/v1/analyze/series", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAnalyzeSeries)))))
-		s.mux.Handle("/api/v1/dependencies", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDependencies)))))
-		s.mux.Handle("/api/v1/database", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDatabaseQueries)))))
-		s.mux.Handle("/api/v1/database/detail", apiRL(readAuth(http.HandlerFunc(qh.handleDatabaseQueryDetail))))
-		s.mux.Handle("/api/v1/prompts", apiRL(readAuth(cache60(http.HandlerFunc(qh.handlePrompts)))))
-		s.mux.Handle("/api/v1/prompts/detail", apiRL(readAuth(http.HandlerFunc(qh.handlePromptDetail))))
-		s.mux.Handle("/api/v1/service-map", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleServiceMap)))))
-		s.mux.Handle("/api/v1/dashboard/counts", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDashboardCounts)))))
-		s.mux.Handle("/api/v1/dashboard/percentiles", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDashboardPercentiles)))))
-		s.mux.Handle("/api/v1/dashboard/heatmap", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDashboardHeatmap)))))
-		// Web vitals are RUM aggregates that the query service does not scope by
-		// project, so they stay session-only (not exposed by the read-key CLI).
-		s.mux.Handle("/api/v1/web-vitals", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleWebVitals)))))
-		s.mux.Handle("/api/v1/web-vitals/timeseries", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleWebVitalsTimeseries)))))
+		s.registerTraceQueryRoutes(env)
 	}
 
 	// Live tail SSE endpoint — session auth required.
 	if s.ingest != nil && s.sessions != nil {
 		lth := &liveTailHandler{broadcaster: s.ingest.Broadcaster()}
-		sessionAuth := SessionMiddleware(s.sessions)
 		s.mux.Handle("/api/v1/spans/live", sessionAuth(lth))
 	}
 
 	// Metrics query endpoints — rate limited + session auth required.
 	if s.repo != nil && s.sessions != nil {
 		mqh := &metricsQueryHandlers{svc: service.NewMetricsService(s.repo)}
-		readAuth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
 
 		s.mux.Handle("/api/v1/metrics/names", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricNames))))
 		s.mux.Handle("/api/v1/metrics/catalog", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricCatalog))))
@@ -166,100 +200,96 @@ func (s *Server) registerRoutes() {
 	// per-user state, so they stay session-only.
 	if s.repo != nil && s.sessions != nil {
 		lqh := &logsQueryHandlers{svc: service.NewLogsService(s.repo)}
-		readAuth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
-		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/logs", apiRL(readAuth(http.HandlerFunc(lqh.handleLogs))))
 		s.mux.Handle("/api/v1/logs/histogram", apiRL(readAuth(http.HandlerFunc(lqh.handleLogsHistogram))))
 		s.mux.Handle("/api/v1/pinned-traces", apiRL(sessionAuth(http.HandlerFunc(lqh.handlePinnedTraces))))
 		s.mux.Handle("/api/v1/pinned-traces/", apiRL(sessionAuth(http.HandlerFunc(lqh.handlePinnedTraces))))
 	}
+}
+
+// registerTraceQueryRoutes mounts the trace, service, dashboard and prompt
+// query endpoints served by the query service.
+func (s *Server) registerTraceQueryRoutes(env *routeEnv) {
+	apiRL, readAuth, sessionAuth := env.apiRL, env.readAuth, env.sessionAuth
+	qh := &queryHandlers{svc: s.querySvc}
+	cache60 := func(h http.Handler) http.Handler { return cacheMiddleware(60, h) }
+
+	s.mux.Handle("/api/v1/services", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleServices)))))
+	s.mux.Handle("/api/v1/services/", apiRL(readAuth(cache60(qh))))
+	s.mux.Handle("/api/v1/traces", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleTraces)))))
+	s.mux.Handle("/api/v1/spans/search", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleSpanSearch)))))
+	s.mux.Handle("/api/v1/traces/groups", apiRL(readAuth(http.HandlerFunc(qh.handleTraceGroups))))
+	s.mux.Handle("/api/v1/traces/", apiRL(readAuth(http.HandlerFunc(qh.handleTraceDetail))))
+	s.mux.Handle("/api/v1/trace-health/orphan-spans", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleOrphanSpans)))))
+	s.mux.Handle("/api/v1/trace-health/rootless-traces", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleRootlessTraces)))))
+	s.mux.Handle("/api/v1/trace-health/single-span-traces", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleSingleSpanTraces)))))
+	s.mux.Handle("/api/v1/trace-health/span-names", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleSpanNames)))))
+	s.mux.Handle("/api/v1/attributes", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAttributes)))))
+	s.mux.Handle("/api/v1/attributes/compare", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAttributeCompare)))))
+	s.mux.Handle("/api/v1/analyze", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAnalyze)))))
+	s.mux.Handle("/api/v1/analyze/series", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAnalyzeSeries)))))
+	s.mux.Handle("/api/v1/dependencies", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDependencies)))))
+	s.mux.Handle("/api/v1/database", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDatabaseQueries)))))
+	s.mux.Handle("/api/v1/database/detail", apiRL(readAuth(http.HandlerFunc(qh.handleDatabaseQueryDetail))))
+	s.mux.Handle("/api/v1/prompts", apiRL(readAuth(cache60(http.HandlerFunc(qh.handlePrompts)))))
+	s.mux.Handle("/api/v1/prompts/detail", apiRL(readAuth(http.HandlerFunc(qh.handlePromptDetail))))
+	s.mux.Handle("/api/v1/service-map", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleServiceMap)))))
+	s.mux.Handle("/api/v1/dashboard/counts", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDashboardCounts)))))
+	s.mux.Handle("/api/v1/dashboard/percentiles", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDashboardPercentiles)))))
+	s.mux.Handle("/api/v1/dashboard/heatmap", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDashboardHeatmap)))))
+	// Web vitals are RUM aggregates that the query service does not scope by
+	// project, so they stay session-only (not exposed by the read-key CLI).
+	s.mux.Handle("/api/v1/web-vitals", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleWebVitals)))))
+	s.mux.Handle("/api/v1/web-vitals/timeseries", apiRL(sessionAuth(cache60(http.HandlerFunc(qh.handleWebVitalsTimeseries)))))
+}
+
+// registerManagementRoutes mounts the session-authenticated endpoints for
+// alerts, settings, saved queries, boards, trace exclusions and export.
+func (s *Server) registerManagementRoutes(env *routeEnv) {
+	if s.repo == nil || s.sessions == nil {
+		return
+	}
+	apiRL, sessionAuth := env.apiRL, env.sessionAuth
 
 	// Alert endpoints — rate limited + session auth required.
-	if s.repo != nil && s.sessions != nil {
-		ah := &alertHandlers{svc: service.NewAlertService(s.repo)}
-		sessionAuth := SessionMiddleware(s.sessions)
-
-		s.mux.Handle("/api/v1/alerts", apiRL(sessionAuth(ah)))
-		s.mux.Handle("/api/v1/alerts/", apiRL(sessionAuth(ah)))
-	}
+	ah := &alertHandlers{svc: service.NewAlertService(s.repo)}
+	s.mux.Handle("/api/v1/alerts", apiRL(sessionAuth(ah)))
+	s.mux.Handle("/api/v1/alerts/", apiRL(sessionAuth(ah)))
 
 	// Settings + stats endpoints — rate limited + session auth required.
-	if s.repo != nil && s.sessions != nil {
-		sh := &settingsHandlers{svc: service.NewSettingsService(s.repo), dbPath: s.dbPath, spoolDir: s.spoolDir, cache: s.cache}
-		sessionAuth := SessionMiddleware(s.sessions)
-
-		s.mux.Handle("/api/v1/settings", apiRL(sessionAuth(sh)))
-		s.mux.Handle("/api/v1/stats/db-size", apiRL(sessionAuth(sh)))
-		s.mux.Handle("/api/v1/stats/counts", apiRL(sessionAuth(sh)))
-		s.mux.Handle("/api/v1/stats/runtime", apiRL(sessionAuth(sh)))
-	}
+	sh := &settingsHandlers{svc: service.NewSettingsService(s.repo), dbPath: s.dbPath, spoolDir: s.spoolDir, cache: s.cache}
+	s.mux.Handle("/api/v1/settings", apiRL(sessionAuth(sh)))
+	s.mux.Handle("/api/v1/stats/db-size", apiRL(sessionAuth(sh)))
+	s.mux.Handle("/api/v1/stats/counts", apiRL(sessionAuth(sh)))
+	s.mux.Handle("/api/v1/stats/runtime", apiRL(sessionAuth(sh)))
 
 	// Saved queries endpoints — rate limited + session auth required.
-	if s.repo != nil && s.sessions != nil {
-		sqh := &savedQueryHandlers{svc: service.NewSavedQueryService(s.repo)}
-		sessionAuth := SessionMiddleware(s.sessions)
-
-		s.mux.Handle("/api/v1/saved-queries", apiRL(sessionAuth(sqh)))
-		s.mux.Handle("/api/v1/saved-queries/", apiRL(sessionAuth(sqh)))
-	}
+	sqh := &savedQueryHandlers{svc: service.NewSavedQueryService(s.repo)}
+	s.mux.Handle("/api/v1/saved-queries", apiRL(sessionAuth(sqh)))
+	s.mux.Handle("/api/v1/saved-queries/", apiRL(sessionAuth(sqh)))
 
 	// Boards and release markers — rate limited + session auth required.
-	if s.repo != nil && s.sessions != nil {
-		bh := &boardHandlers{svc: service.NewBoardService(s.repo, slog.Default())}
-		sessionAuth := SessionMiddleware(s.sessions)
-		bh.register(s.mux, func(h http.Handler) http.Handler { return apiRL(sessionAuth(h)) })
-	}
+	bh := &boardHandlers{svc: service.NewBoardService(s.repo, slog.Default())}
+	bh.register(s.mux, func(h http.Handler) http.Handler { return apiRL(sessionAuth(h)) })
 
 	// Trace exclusions — persistent operation-level filters per project.
-	if s.repo != nil && s.sessions != nil {
-		teh := &traceExclusionHandlers{svc: service.NewTraceExclusionService(s.repo)}
-		sessionAuth := SessionMiddleware(s.sessions)
-
-		s.mux.Handle("/api/v1/trace-exclusions", apiRL(sessionAuth(teh)))
-		s.mux.Handle("/api/v1/trace-exclusions/", apiRL(sessionAuth(teh)))
-	}
-
-	// Frontend telemetry — session auth, accepts same format as /api/v1/spans.
-	if s.ingest != nil && s.sessions != nil {
-		sessionAuth := SessionMiddleware(s.sessions)
-		s.mux.Handle("/api/v1/telemetry", ingestRL(sessionAuth(http.HandlerFunc(s.handleIngest))))
-	}
-
-	// Browser crash reports — rate limited but NOT session-authed: a crash on
-	// the login page happens before any session exists, and a 401 there would
-	// drop exactly the errors that stop operators from logging in. The handler
-	// truncates every field, and the global body cap bounds the request.
-	s.mux.Handle("/api/v1/client-errors", ingestRL(http.HandlerFunc(s.handleClientError)))
+	teh := &traceExclusionHandlers{svc: service.NewTraceExclusionService(s.repo)}
+	s.mux.Handle("/api/v1/trace-exclusions", apiRL(sessionAuth(teh)))
+	s.mux.Handle("/api/v1/trace-exclusions/", apiRL(sessionAuth(teh)))
 
 	// Export endpoint — rate limited + session auth required, streams NDJSON.
-	if s.repo != nil && s.sessions != nil {
-		eh := &exportHandlers{svc: service.NewExportService(s.repo)}
-		sessionAuth := SessionMiddleware(s.sessions)
+	eh := &exportHandlers{svc: service.NewExportService(s.repo)}
+	s.mux.Handle("/api/v1/export", apiRL(sessionAuth(eh)))
+}
 
-		s.mux.Handle("/api/v1/export", apiRL(sessionAuth(eh)))
+// registerProjectRoutes mounts the project endpoints: read auth (session or
+// read key) for listing; the middleware blocks mutating methods for API keys.
+func (s *Server) registerProjectRoutes(env *routeEnv) {
+	if s.repo == nil || s.sessions == nil {
+		return
 	}
-
-	// Setup endpoint — intentionally public (onboarding), but rate-limited and
-	// GET-only + read-idempotent (see handleSetup) so anonymous callers cannot
-	// use it to spam projects or amplify writes.
-	if s.repo != nil {
-		s.mux.Handle("/api/v1/setup/{slug}", apiRL(http.HandlerFunc(s.handleSetup)))
-	}
-
-	// E2E session endpoint — API key auth required; only works when e2e_enabled.
-	if s.repo != nil && s.sessions != nil && s.authorizer != nil {
-		s.mux.Handle("/api/v1/e2e/session", ingestRL(ingestAuth(http.HandlerFunc(s.handleE2ESession))))
-	}
-
-	// Project endpoints — read auth (session or read key) for listing; the
-	// middleware blocks mutating methods for API keys.
-	if s.repo != nil && s.sessions != nil {
-		ph := &projectHandlers{svc: s.projectService(), settings: service.NewSettingsService(s.repo), cache: s.cache}
-		readAuth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
-
-		s.mux.Handle("/api/v1/projects", apiRL(readAuth(ph)))
-		s.mux.Handle("/api/v1/projects/", apiRL(readAuth(ph)))
-	}
-
+	ph := &projectHandlers{svc: s.projectService(), settings: service.NewSettingsService(s.repo), cache: s.cache}
+	s.mux.Handle("/api/v1/projects", env.apiRL(env.readAuth(ph)))
+	s.mux.Handle("/api/v1/projects/", env.apiRL(env.readAuth(ph)))
 }
