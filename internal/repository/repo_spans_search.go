@@ -37,6 +37,10 @@ type TraceSummaryRow struct {
 // their summaries are retained that long (see repo_trace_summaries.go), so
 // dropping the old spans∪error_samples UNION does not lose them.
 func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSummaryRow, error) {
+	f, err := r.withCalc(f)
+	if err != nil {
+		return nil, err
+	}
 	where, args, err := f.traceSummaryWhere(minSpans)
 	if err != nil {
 		return nil, err

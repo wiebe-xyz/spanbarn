@@ -254,6 +254,10 @@ func (r *Repository) Analyze(ctx context.Context, q AnalyzeQuery) (*AnalyzeResul
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
+	var err error
+	if q.calc, err = r.calcResolver(q.ProjectID); err != nil {
+		return nil, err
+	}
 	sample, err := r.chooseSample(ctx, q)
 	if err != nil {
 		return nil, err
