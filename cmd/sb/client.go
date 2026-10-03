@@ -40,27 +40,15 @@ func (c *Client) get(path string) (json.RawMessage, error) {
 }
 
 func (c *Client) getRetry(path string, retried bool) (json.RawMessage, error) {
-	// Proactively refresh an OIDC access token that is known to be expired.
-	if !retried && c.cfg.APIKey == "" && c.cfg.AccessToken != "" &&
-		c.cfg.TokenExpiry > 0 && time.Now().Unix() >= c.cfg.TokenExpiry {
-		if err := refreshOIDCToken(&c.cfg); err == nil {
-			_ = saveConfig(c.cfg)
-		}
+	if !retried {
+		c.refreshIfExpired()
 	}
 
 	req, err := http.NewRequest(http.MethodGet, c.base+path, nil)
 	if err != nil {
 		return nil, err
 	}
-	// Precedence: API key, then OIDC access token, then session token.
-	switch {
-	case c.cfg.APIKey != "":
-		req.Header.Set("X-SpanBarn-Api-Key", c.cfg.APIKey)
-	case c.cfg.AccessToken != "":
-		req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
-	case c.cfg.SessionToken != "":
-		req.Header.Set("Authorization", "Bearer "+c.cfg.SessionToken)
-	}
+	c.setAuthHeader(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -74,30 +62,71 @@ func (c *Client) getRetry(path string, retried bool) (json.RawMessage, error) {
 	}
 
 	// Expired credentials? Re-authenticate once and retry.
-	if resp.StatusCode == http.StatusUnauthorized && !retried && c.cfg.APIKey == "" {
-		switch {
-		case c.cfg.AuthType == "oidc-device" || c.cfg.AuthType == "oidc-m2m":
-			if err := refreshOIDCToken(&c.cfg); err == nil {
-				_ = saveConfig(c.cfg)
-				return c.getRetry(path, true)
-			}
-		case c.cfg.Username != "" && c.cfg.Password != "":
-			if token, lerr := loginWithPassword(c.base, c.cfg.Username, c.cfg.Password); lerr == nil {
-				c.cfg.SessionToken = token
-				_ = saveConfig(c.cfg)
-				return c.getRetry(path, true)
-			}
-		}
+	if resp.StatusCode == http.StatusUnauthorized && !retried && c.cfg.APIKey == "" && c.reauthenticate() {
+		return c.getRetry(path, true)
 	}
 
 	if resp.StatusCode >= 400 {
-		msg := strings.TrimSpace(string(body))
-		if len(msg) > 300 {
-			msg = msg[:300]
-		}
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg)
+		return nil, httpStatusError(resp.StatusCode, body)
 	}
 	return json.RawMessage(body), nil
+}
+
+// refreshIfExpired proactively refreshes an OIDC access token that is known to
+// be expired.
+func (c *Client) refreshIfExpired() {
+	if c.cfg.APIKey != "" || c.cfg.AccessToken == "" || c.cfg.TokenExpiry <= 0 {
+		return
+	}
+	if time.Now().Unix() < c.cfg.TokenExpiry {
+		return
+	}
+	if err := refreshOIDCToken(&c.cfg); err == nil {
+		_ = saveConfig(c.cfg)
+	}
+}
+
+// setAuthHeader applies the credentials by precedence: API key, then OIDC
+// access token, then session token.
+func (c *Client) setAuthHeader(req *http.Request) {
+	switch {
+	case c.cfg.APIKey != "":
+		req.Header.Set("X-SpanBarn-Api-Key", c.cfg.APIKey)
+	case c.cfg.AccessToken != "":
+		req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
+	case c.cfg.SessionToken != "":
+		req.Header.Set("Authorization", "Bearer "+c.cfg.SessionToken)
+	}
+}
+
+// reauthenticate renews the credentials after a 401 and saves them. It reports
+// whether the request is worth retrying.
+func (c *Client) reauthenticate() bool {
+	switch {
+	case c.cfg.AuthType == "oidc-device" || c.cfg.AuthType == "oidc-m2m":
+		if err := refreshOIDCToken(&c.cfg); err != nil {
+			return false
+		}
+	case c.cfg.Username != "" && c.cfg.Password != "":
+		token, err := loginWithPassword(c.base, c.cfg.Username, c.cfg.Password)
+		if err != nil {
+			return false
+		}
+		c.cfg.SessionToken = token
+	default:
+		return false
+	}
+	_ = saveConfig(c.cfg)
+	return true
+}
+
+// httpStatusError formats an error response, truncating the body to 300 bytes.
+func httpStatusError(status int, body []byte) error {
+	msg := strings.TrimSpace(string(body))
+	if len(msg) > 300 {
+		msg = msg[:300]
+	}
+	return fmt.Errorf("HTTP %d: %s", status, msg)
 }
 
 // query performs a GET against a project-scoped endpoint, injecting project_id

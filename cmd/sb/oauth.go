@@ -78,6 +78,58 @@ func discoverOIDC(issuer string) (oidcDiscovery, error) {
 	return d, nil
 }
 
+// deviceAuthorization is the response to a device authorization request.
+type deviceAuthorization struct {
+	DeviceCode              string `json:"device_code"`
+	UserCode                string `json:"user_code"`
+	VerificationURI         string `json:"verification_uri"`
+	VerificationURIComplete string `json:"verification_uri_complete"`
+	ExpiresIn               int64  `json:"expires_in"`
+	Interval                int64  `json:"interval"`
+}
+
+// requestDeviceCode asks the issuer for a device and user code.
+func requestDeviceCode(endpoint, clientID string) (deviceAuthorization, error) {
+	var da deviceAuthorization
+	form := url.Values{"client_id": {clientID}, "scope": {oidcScope}}
+	resp, err := httpClient().PostForm(endpoint, form)
+	if err != nil {
+		return da, fmt.Errorf("device authorization: %w", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return da, fmt.Errorf("device authorization failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := json.Unmarshal(body, &da); err != nil {
+		return da, fmt.Errorf("decode device authorization: %w", err)
+	}
+	return da, nil
+}
+
+// printDeviceInstructions tells the user where to approve the login.
+func printDeviceInstructions(da deviceAuthorization) {
+	fmt.Fprintf(os.Stderr, "\nTo sign in, open:\n  %s\n", da.VerificationURI)
+	fmt.Fprintf(os.Stderr, "and enter code:  %s\n", da.UserCode)
+	if da.VerificationURIComplete != "" {
+		fmt.Fprintf(os.Stderr, "(or open directly: %s)\n", da.VerificationURIComplete)
+	}
+	fmt.Fprintln(os.Stderr, "\nWaiting for approval…")
+}
+
+// pollSettings returns the polling interval in seconds and the deadline of a
+// device authorization, applying the defaults for missing values.
+func (da deviceAuthorization) pollSettings(now time.Time) (interval int64, deadline time.Time) {
+	interval = da.Interval
+	if interval <= 0 {
+		interval = 5
+	}
+	if da.ExpiresIn == 0 {
+		return interval, now.Add(10 * time.Minute)
+	}
+	return interval, now.Add(time.Duration(da.ExpiresIn) * time.Second)
+}
+
 // deviceLogin runs the RFC 8628 device authorization grant against the SpanBarn
 // instance's IamBarn issuer and fills the OIDC fields of cfg on success.
 func deviceLogin(cfg *Config) error {
@@ -97,44 +149,14 @@ func deviceLogin(cfg *Config) error {
 	}
 
 	// 1. Request a device + user code.
-	form := url.Values{"client_id": {sc.CLIClientID}, "scope": {oidcScope}}
-	resp, err := httpClient().PostForm(disco.DeviceAuthEndpoint, form)
+	da, err := requestDeviceCode(disco.DeviceAuthEndpoint, sc.CLIClientID)
 	if err != nil {
-		return fmt.Errorf("device authorization: %w", err)
+		return err
 	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("device authorization failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var da struct {
-		DeviceCode              string `json:"device_code"`
-		UserCode                string `json:"user_code"`
-		VerificationURI         string `json:"verification_uri"`
-		VerificationURIComplete string `json:"verification_uri_complete"`
-		ExpiresIn               int64  `json:"expires_in"`
-		Interval                int64  `json:"interval"`
-	}
-	if err := json.Unmarshal(body, &da); err != nil {
-		return fmt.Errorf("decode device authorization: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "\nTo sign in, open:\n  %s\n", da.VerificationURI)
-	fmt.Fprintf(os.Stderr, "and enter code:  %s\n", da.UserCode)
-	if da.VerificationURIComplete != "" {
-		fmt.Fprintf(os.Stderr, "(or open directly: %s)\n", da.VerificationURIComplete)
-	}
-	fmt.Fprintln(os.Stderr, "\nWaiting for approval…")
+	printDeviceInstructions(da)
 
 	// 2. Poll the token endpoint.
-	interval := da.Interval
-	if interval <= 0 {
-		interval = 5
-	}
-	deadline := time.Now().Add(time.Duration(da.ExpiresIn) * time.Second)
-	if da.ExpiresIn == 0 {
-		deadline = time.Now().Add(10 * time.Minute)
-	}
+	interval, deadline := da.pollSettings(time.Now())
 	for time.Now().Before(deadline) {
 		time.Sleep(time.Duration(interval) * time.Second)
 		tok, err := postToken(disco.TokenEndpoint, url.Values{
