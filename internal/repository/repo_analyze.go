@@ -52,6 +52,10 @@ type AnalyzeQuery struct {
 	Sample int
 	// MaxSpans caps how many spans the scan reads, newest first.
 	MaxSpans int
+
+	// calc resolves the project's calculated fields in Expr, GroupBy and the
+	// count_distinct keys. Analyze sets it.
+	calc filter.Resolver
 }
 
 // AnalyzeRow is one group, or one group in one bucket. Values follow
@@ -85,7 +89,7 @@ func (q AnalyzeQuery) scanWhere(sample int) (string, []any, error) {
 	where := []string{"project_id = ?", "ingested_at >= ?", "ingested_at <= ?"}
 	args := []any{q.ProjectID, q.From, q.To}
 	if q.Expr != nil && len(q.Expr.Filters) > 0 {
-		pred, a, err := filter.Compile(q.Expr)
+		pred, a, err := filter.CompileWith(q.Expr, q.calc)
 		if err != nil {
 			return "", nil, err
 		}
@@ -107,13 +111,19 @@ func (q AnalyzeQuery) baseSelect(sample int) (string, []any, error) {
 	var cols []string
 	var args []any
 	for i, k := range q.GroupBy {
-		s, a := filter.TextSQL(k)
+		s, a, err := filter.TextSQLWith(k, q.calc)
+		if err != nil {
+			return "", nil, err
+		}
 		cols = append(cols, fmt.Sprintf("COALESCE(%s, '') AS g%d", s, i))
 		args = append(args, a...)
 	}
 	cols = append(cols, "duration_us AS d", "CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END AS e")
 	for i, k := range q.distinctKeys() {
-		s, a := filter.TextSQL(k)
+		s, a, err := filter.TextSQLWith(k, q.calc)
+		if err != nil {
+			return "", nil, err
+		}
 		cols = append(cols, fmt.Sprintf("%s AS c%d", s, i))
 		args = append(args, a...)
 	}
