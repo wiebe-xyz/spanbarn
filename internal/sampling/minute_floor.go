@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 )
 
 const (
@@ -38,7 +40,7 @@ type floorBucket struct {
 // NewMinuteFloor creates a floor tracker and starts its background GC loop.
 func NewMinuteFloor() *MinuteFloor {
 	f := &MinuteFloor{buckets: make(map[string]*floorBucket)}
-	go f.gcLoop()
+	observability.SafeGo("minute-floor-gc", nil, f.gcLoop)
 	return f
 }
 

@@ -224,8 +224,13 @@ func (s *Server) registerRoutes() {
 	if s.ingest != nil && s.sessions != nil {
 		sessionAuth := SessionMiddleware(s.sessions)
 		s.mux.Handle("/api/v1/telemetry", ingestRL(sessionAuth(http.HandlerFunc(s.handleIngest))))
-		s.mux.Handle("/api/v1/client-errors", ingestRL(sessionAuth(http.HandlerFunc(s.handleClientError))))
 	}
+
+	// Browser crash reports — rate limited but NOT session-authed: a crash on
+	// the login page happens before any session exists, and a 401 there would
+	// drop exactly the errors that stop operators from logging in. The handler
+	// truncates every field, and the global body cap bounds the request.
+	s.mux.Handle("/api/v1/client-errors", ingestRL(http.HandlerFunc(s.handleClientError)))
 
 	// Export endpoint — rate limited + session auth required, streams NDJSON.
 	if s.repo != nil && s.sessions != nil {

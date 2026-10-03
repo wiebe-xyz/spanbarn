@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestBugBarnHandler_ForwardsWarnAndError(t *testing.T) {
+func TestBugBarnHandler_ForwardsErrorOnly(t *testing.T) {
 	var mu sync.Mutex
 	var received []bugbarnEvent
 
@@ -50,17 +50,14 @@ func TestBugBarnHandler_ForwardsWarnAndError(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if len(received) != 2 {
-		t.Fatalf("expected 2 events forwarded, got %d", len(received))
+	if len(received) != 1 {
+		t.Fatalf("expected 1 event forwarded (WARN stays local), got %d", len(received))
 	}
-	if received[0].Level != "WARN" {
-		t.Errorf("expected WARN level, got %s", received[0].Level)
+	if received[0].Level != "ERROR" {
+		t.Errorf("expected ERROR level, got %s", received[0].Level)
 	}
-	if received[0].Message != "warning message" {
-		t.Errorf("expected 'warning message', got %s", received[0].Message)
-	}
-	if received[1].Level != "ERROR" {
-		t.Errorf("expected ERROR level, got %s", received[1].Level)
+	if received[0].Message != "error message" {
+		t.Errorf("expected 'error message', got %s", received[0].Message)
 	}
 }
 

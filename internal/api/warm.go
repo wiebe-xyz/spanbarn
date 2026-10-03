@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
@@ -55,6 +56,7 @@ func WarmLoginCaches(ctx context.Context, qs *service.QueryService, logger *slog
 		return
 	}
 	go func() {
+		defer observability.RecoverAndReport("warm-login", false)
 		_, rootSpan := apiTracer.Start(context.Background(), "api.warm.login")
 		defer rootSpan.End()
 
@@ -108,6 +110,7 @@ func warmEntry(
 	freshTTL, staleTTL time.Duration,
 	compute func(ctx context.Context) (any, error),
 ) {
+	defer observability.RecoverAndReport("warm-entry", false)
 	if _, already := statsRevalidating.LoadOrStore(key, true); already {
 		return
 	}

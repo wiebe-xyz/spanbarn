@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -82,6 +83,7 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 	if stale, found, _ := cache.GetStale[[]ServiceSummary](s.cache, ctx, cacheKey); found {
 		if _, already := revalidating.LoadOrStore(cacheKey, true); !already {
 			go func() {
+				defer observability.RecoverAndReport("services-revalidate", false)
 				defer revalidating.Delete(cacheKey)
 				if result, err := s.listServicesUncached(context.Background(), projectID, from, to, serverOnly); err == nil {
 					cache.Set(s.cache, context.Background(), cacheKey, result)

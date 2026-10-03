@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -41,6 +40,9 @@ var (
 )
 
 func main() {
+	// A panic on the main goroutine would exit before the 2s BugBarn flush
+	// tick, so report it synchronously and let the process still die.
+	defer observability.RecoverAndReport("main", true)
 	if err := run(); err != nil {
 		slog.Error("fatal", "error", err)
 		os.Exit(1)
@@ -922,20 +924,7 @@ func bootstrapAdmin(repo *repository.Repository, cfg config.Config, logger *slog
 }
 
 func safeGo(name string, wg *sync.WaitGroup, fn func()) {
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("goroutine panic",
-					"goroutine", name,
-					"panic", fmt.Sprint(r),
-					"stack", string(debug.Stack()),
-				)
-			}
-		}()
-		fn()
-	}()
+	observability.SafeGo(name, wg, fn)
 }
 
 // startSelfMetrics wires and launches the periodic self-metrics reporter, which

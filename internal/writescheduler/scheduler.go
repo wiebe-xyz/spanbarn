@@ -32,6 +32,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 )
 
 var tracer = otel.Tracer("spanbarn/writescheduler")
@@ -119,7 +121,7 @@ func (s *Scheduler) Submit(ctx context.Context, p Priority, label string, fn fun
 // Run is the scheduler loop. It must run in a dedicated goroutine and is the
 // only goroutine that executes DB writes. Exits when ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) {
-	go s.watchdog(ctx)
+	observability.SafeGo("write-scheduler-watchdog", nil, func() { s.watchdog(ctx) })
 	for {
 		// Always drain the high-priority channel before touching low-priority.
 		select {

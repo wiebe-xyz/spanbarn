@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,6 +24,8 @@ type BugBarnClient struct {
 	queue chan bugbarnEvent
 	done  chan struct{}
 	wg    sync.WaitGroup
+
+	dropped atomic.Int64
 }
 
 type bugbarnEvent struct {
@@ -121,8 +124,17 @@ func (c *BugBarnClient) enqueue(ev bugbarnEvent) {
 	select {
 	case c.queue <- ev:
 	default:
+		c.dropped.Add(1)
 	}
 }
+
+// Dropped returns how many events never reached BugBarn: queue overflow,
+// marshal failures, transport errors and non-2xx responses.
+func (c *BugBarnClient) Dropped() int64 { return c.dropped.Load() }
+
+// Flush sends everything queued so far, synchronously. Recovery paths call it
+// before the process exits so a fatal panic is not lost to the 2s flush tick.
+func (c *BugBarnClient) Flush() { c.flush() }
 
 func (c *BugBarnClient) flushLoop() {
 	defer c.wg.Done()
@@ -154,6 +166,7 @@ func (c *BugBarnClient) flush() {
 func (c *BugBarnClient) send(ev bugbarnEvent) {
 	body, err := json.Marshal(ev)
 	if err != nil {
+		c.dropped.Add(1)
 		return
 	}
 
@@ -163,6 +176,7 @@ func (c *BugBarnClient) send(ev bugbarnEvent) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
+		c.dropped.Add(1)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -171,9 +185,13 @@ func (c *BugBarnClient) send(ev bugbarnEvent) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
+		c.dropped.Add(1)
 		return
 	}
 	resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		c.dropped.Add(1)
+	}
 }
 
 // Shutdown flushes remaining events and stops the background loop.

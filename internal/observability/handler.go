@@ -6,7 +6,7 @@ import (
 )
 
 // BugBarnHandler is a slog.Handler that wraps another handler and forwards
-// WARN and ERROR level records to BugBarn as structured logs.
+// ERROR level records to BugBarn as structured logs.
 type BugBarnHandler struct {
 	inner  slog.Handler
 	client *BugBarnClient
@@ -15,7 +15,9 @@ type BugBarnHandler struct {
 }
 
 // NewBugBarnHandler creates a slog handler that tees log records to BugBarn.
-// Records at WARN level and above are sent as structured log events.
+// Records at ERROR level and above are sent as structured log events. WARN is
+// kept local: level-triggered conditions such as disk pressure log at WARN and
+// would otherwise file a ticket every few minutes.
 func NewBugBarnHandler(inner slog.Handler, client *BugBarnClient) *BugBarnHandler {
 	return &BugBarnHandler{
 		inner:  inner,
@@ -28,7 +30,7 @@ func (h *BugBarnHandler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h *BugBarnHandler) Handle(ctx context.Context, r slog.Record) error {
-	if r.Level >= slog.LevelWarn && h.client != nil {
+	if r.Level >= slog.LevelError && h.client != nil {
 		attrs := make(map[string]any)
 		for _, a := range h.attrs {
 			attrs[a.Key] = a.Value.Any()
@@ -43,12 +45,7 @@ func (h *BugBarnHandler) Handle(ctx context.Context, r slog.Record) error {
 			return true
 		})
 
-		level := "WARN"
-		if r.Level >= slog.LevelError {
-			level = "ERROR"
-		}
-
-		h.client.CaptureLog(level, r.Message, attrs)
+		h.client.CaptureLog("ERROR", r.Message, attrs)
 	}
 	return h.inner.Handle(ctx, r)
 }

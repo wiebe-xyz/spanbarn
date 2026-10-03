@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 )
 
 const (
@@ -169,7 +170,7 @@ func NewTraceBufferWithLimits(ttl time.Duration, maxSpans int, lookup SampleRati
 		out:      ch,
 		Out:      ch,
 	}
-	go tb.gcLoop()
+	observability.SafeGo("trace-buffer-gc", nil, tb.gcLoop)
 	return tb
 }
 
