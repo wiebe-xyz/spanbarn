@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/calcfield"
+	"github.com/wiebe-xyz/spanbarn/internal/calcresolve"
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
 )
 
@@ -129,7 +130,7 @@ func (r *Repository) calcResolver(projectID int64) (filter.Resolver, error) {
 	if err != nil || len(fields) == 0 {
 		return nil, err
 	}
-	return filter.CalcResolver(filter.NewCalcSet(calcFields(fields))), nil
+	return calcresolve.Resolver(calcresolve.NewSet(calcFields(fields))), nil
 }
 
 // CalculatedFieldSample is the value of a field for one recent span.
@@ -156,7 +157,7 @@ func (r *Repository) PreviewCalculatedField(ctx context.Context, projectID int64
 		}
 	}
 	fields = append(fields, calcfield.Field{Name: name, Expression: expression})
-	res, err := filter.CalcResolver(filter.NewCalcSet(fields))(name)
+	res, err := calcresolve.Resolver(calcresolve.NewSet(fields))(name)
 	if err != nil {
 		return nil, err
 	}

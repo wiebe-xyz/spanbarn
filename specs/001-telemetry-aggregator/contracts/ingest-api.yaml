@@ -852,6 +852,116 @@ paths:
         '404':
           description: No such panel on this board
 
+  /api/v1/calculated-fields:
+    get:
+      summary: List the calculated fields of a project by name
+      operationId: listCalculatedFields
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+      responses:
+        '200':
+          description: Calculated fields
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/CalculatedField'}
+        '400':
+          description: Missing project
+    post:
+      summary: Define a calculated field
+      description: >
+        A calculated field is a named expression that filters, group-bys and the attribute
+        comparison use like a span column or attribute key. The grammar is closed (see
+        specs/001-telemetry-aggregator/data-model.md, calculated_fields); no raw SQL is accepted.
+        A project holds at most 50 fields.
+      operationId: createCalculatedField
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CalculatedFieldBody'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, properties: {id: {type: integer}}}
+        '400':
+          description: >
+            Missing project, an invalid or duplicate name, a name that shadows a span column,
+            an expression that does not parse, is over the length (500 characters), depth (16),
+            term (200) or argument (8) cap, uses an unknown function, or closes a cycle between fields
+
+  /api/v1/calculated-fields/preview:
+    post:
+      summary: Evaluate an unsaved expression on the newest spans of a project
+      description: >
+        Validates like create and returns the value of the expression for up to 5 recent spans.
+        An empty name previews a new field. A name of an existing field previews an edit of it.
+      operationId: previewCalculatedField
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CalculatedFieldBody'}
+      responses:
+        '200':
+          description: Sample values
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  samples:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        spanId: {type: string}
+                        name: {type: string, description: 'Span name'}
+                        value: {description: 'Number, string or null'}
+        '400':
+          description: As create
+
+  /api/v1/calculated-fields/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    put:
+      summary: Replace the name and expression of a field
+      operationId: updateCalculatedField
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CalculatedFieldBody'}
+      responses:
+        '200':
+          description: Updated
+        '400':
+          description: As create
+        '404':
+          description: No such field
+    delete:
+      summary: Delete a field
+      description: A key that named the field reads as a plain attribute afterwards.
+      operationId: deleteCalculatedField
+      security:
+        - session: []
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          description: No such field
+
   /api/v1/releases:
     get:
       summary: Release markers of a project in a time range, oldest first
@@ -1223,6 +1333,26 @@ components:
                   id: {type: integer}
                   filters: {type: object, description: 'Filter model'}
                   definition: {$ref: '#/components/schemas/QueryDefinition'}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    CalculatedFieldBody:
+      type: object
+      required: [name, expression]
+      properties:
+        projectId: {type: integer, description: 'Create and preview only'}
+        name:
+          type: string
+          maxLength: 64
+          pattern: '^[A-Za-z_][A-Za-z0-9_.]*$'
+          description: 'Not a span column and not starting with "attributes."'
+        expression: {type: string, maxLength: 500}
+    CalculatedField:
+      type: object
+      properties:
+        id: {type: integer}
+        projectId: {type: integer}
+        name: {type: string}
+        expression: {type: string}
         createdAt: {type: string, format: date-time}
         updatedAt: {type: string, format: date-time}
     Release:
