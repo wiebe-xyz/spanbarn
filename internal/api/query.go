@@ -392,69 +392,83 @@ func (h *queryHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 
 	// parts[0]=api, parts[1]=v1, parts[2]=resource...
-	if len(parts) < 3 {
-		writeError(w, http.StatusNotFound, "not found", "")
-		return
+	if len(parts) >= 3 {
+		if handler := h.resolveRoute(parts); handler != nil {
+			handler(w, r)
+			return
+		}
 	}
+	writeError(w, http.StatusNotFound, "not found", "")
+}
 
-	resource := parts[2]
-
-	switch resource {
+// resolveRoute returns the handler for the path parts, or nil when no route
+// matches.
+func (h *queryHandlers) resolveRoute(parts []string) http.HandlerFunc {
+	switch parts[2] {
 	case "services":
-		switch {
-		case len(parts) == 3:
-			// GET /api/v1/services
-			h.handleServices(w, r)
-		case len(parts) == 5 && parts[4] == "operations":
-			// GET /api/v1/services/{service}/operations
-			h.handleOperations(w, r)
-		case len(parts) >= 7 && parts[4] == "operations" && parts[len(parts)-1] == "timeseries":
-			// GET /api/v1/services/{service}/operations/{operation}/timeseries
-			h.handleTimeseries(w, r)
-		default:
-			writeError(w, http.StatusNotFound, "not found", "")
-		}
+		return h.resolveServiceRoute(parts)
 	case "traces":
-		switch {
-		case len(parts) == 3:
-			// GET /api/v1/traces
-			h.handleTraces(w, r)
-		case len(parts) == 4 && parts[3] == "groups":
-			// GET /api/v1/traces/groups
-			h.handleTraceGroups(w, r)
-		case len(parts) == 4:
-			// GET /api/v1/traces/{traceId}
-			h.handleTraceDetail(w, r)
-		default:
-			writeError(w, http.StatusNotFound, "not found", "")
-		}
+		return h.resolveTraceRoute(parts)
 	case "dependencies":
-		switch {
-		case len(parts) == 3:
-			h.handleDependencies(w, r)
-		case len(parts) == 4 && parts[3] == "traces":
-			h.handleDependencyTraces(w, r)
-		default:
-			writeError(w, http.StatusNotFound, "not found", "")
-		}
+		return h.resolveDependencyRoute(parts)
 	case "database":
 		if len(parts) == 3 {
-			h.handleDatabaseQueries(w, r)
-		} else {
-			writeError(w, http.StatusNotFound, "not found", "")
+			return h.handleDatabaseQueries
 		}
 	case "prompts":
-		switch {
-		case len(parts) == 3:
-			h.handlePrompts(w, r)
-		case len(parts) == 4 && parts[3] == "detail":
-			h.handlePromptDetail(w, r)
-		default:
-			writeError(w, http.StatusNotFound, "not found", "")
-		}
-	default:
-		writeError(w, http.StatusNotFound, "not found", "")
+		return h.resolvePromptRoute(parts)
 	}
+	return nil
+}
+
+func (h *queryHandlers) resolveServiceRoute(parts []string) http.HandlerFunc {
+	switch {
+	case len(parts) == 3:
+		// GET /api/v1/services
+		return h.handleServices
+	case len(parts) == 5 && parts[4] == "operations":
+		// GET /api/v1/services/{service}/operations
+		return h.handleOperations
+	case len(parts) >= 7 && parts[4] == "operations" && parts[len(parts)-1] == "timeseries":
+		// GET /api/v1/services/{service}/operations/{operation}/timeseries
+		return h.handleTimeseries
+	}
+	return nil
+}
+
+func (h *queryHandlers) resolveTraceRoute(parts []string) http.HandlerFunc {
+	switch {
+	case len(parts) == 3:
+		// GET /api/v1/traces
+		return h.handleTraces
+	case len(parts) == 4 && parts[3] == "groups":
+		// GET /api/v1/traces/groups
+		return h.handleTraceGroups
+	case len(parts) == 4:
+		// GET /api/v1/traces/{traceId}
+		return h.handleTraceDetail
+	}
+	return nil
+}
+
+func (h *queryHandlers) resolveDependencyRoute(parts []string) http.HandlerFunc {
+	switch {
+	case len(parts) == 3:
+		return h.handleDependencies
+	case len(parts) == 4 && parts[3] == "traces":
+		return h.handleDependencyTraces
+	}
+	return nil
+}
+
+func (h *queryHandlers) resolvePromptRoute(parts []string) http.HandlerFunc {
+	switch {
+	case len(parts) == 3:
+		return h.handlePrompts
+	case len(parts) == 4 && parts[3] == "detail":
+		return h.handlePromptDetail
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
