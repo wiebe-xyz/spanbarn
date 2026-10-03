@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 type savedQueryHandlers struct {
-	repo *repository.Repository
+	svc *service.SavedQueryService
 }
 
 func (h *savedQueryHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +31,7 @@ func (h *savedQueryHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *savedQueryHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	projectID := parseInt64Param(r, "project_id", 1)
-	queries, err := h.repo.ListSavedQueries(projectID)
+	queries, err := h.svc.List(projectID)
 	writeListJSON(w, r, "saved queries", queries, err)
 }
 
@@ -67,7 +67,7 @@ func (h *savedQueryHandlers) handleCreate(w http.ResponseWriter, r *http.Request
 		expr = filter.FromLegacy(body.Service, body.Operation, body.Status, body.MinDurationUs)
 	}
 
-	id, err := h.repo.CreateSavedQuery(repository.SavedQuery{
+	id, err := h.svc.Create(service.SavedQuery{
 		ProjectID:     body.ProjectID,
 		Name:          body.Name,
 		Service:       body.Service,
@@ -95,7 +95,7 @@ func (h *savedQueryHandlers) handleDelete(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid id", "")
 		return
 	}
-	if err := h.repo.DeleteSavedQuery(id); err != nil {
+	if err := h.svc.Delete(id); err != nil {
 		writeServerError(w, r, "failed to delete saved query", err)
 		return
 	}

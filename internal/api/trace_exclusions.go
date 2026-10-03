@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 type traceExclusionHandlers struct {
-	repo *repository.Repository
+	svc *service.TraceExclusionService
 }
 
 func (h *traceExclusionHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +47,7 @@ func (h *traceExclusionHandlers) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 func (h *traceExclusionHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	projectID := parseInt64Param(r, "project_id", 1)
-	exclusions, err := h.repo.ListTraceExclusions(projectID)
+	exclusions, err := h.svc.List(projectID)
 	writeListJSON(w, r, "trace exclusions", exclusions, err)
 }
 
@@ -67,7 +67,7 @@ func (h *traceExclusionHandlers) handleCreate(w http.ResponseWriter, r *http.Req
 	if req.ProjectID == 0 {
 		req.ProjectID = 1
 	}
-	id, err := h.repo.CreateTraceExclusion(req.ProjectID, req.Operation)
+	id, err := h.svc.Create(req.ProjectID, req.Operation)
 	if err != nil {
 		writeServerError(w, r, "failed to create trace exclusion", err)
 		return
@@ -76,7 +76,7 @@ func (h *traceExclusionHandlers) handleCreate(w http.ResponseWriter, r *http.Req
 }
 
 func (h *traceExclusionHandlers) handleDelete(w http.ResponseWriter, r *http.Request, id int64) {
-	if err := h.repo.DeleteTraceExclusion(id); err != nil {
+	if err := h.svc.Delete(id); err != nil {
 		writeServerError(w, r, "failed to delete trace exclusion", err)
 		return
 	}

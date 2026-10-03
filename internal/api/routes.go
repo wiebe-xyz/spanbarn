@@ -153,7 +153,7 @@ func (s *Server) registerRoutes() {
 
 	// Metrics query endpoints — rate limited + session auth required.
 	if s.repo != nil && s.sessions != nil {
-		mqh := &metricsQueryHandlers{repo: s.repo}
+		mqh := &metricsQueryHandlers{svc: service.NewMetricsService(s.repo)}
 		readAuth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
 
 		s.mux.Handle("/api/v1/metrics/names", apiRL(readAuth(http.HandlerFunc(mqh.handleMetricNames))))
@@ -165,7 +165,7 @@ func (s *Server) registerRoutes() {
 	// Logs query endpoints — read auth (session or read key). Pinned-traces are
 	// per-user state, so they stay session-only.
 	if s.repo != nil && s.sessions != nil {
-		lqh := &logsQueryHandlers{repo: s.repo}
+		lqh := &logsQueryHandlers{svc: service.NewLogsService(s.repo)}
 		readAuth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
 		sessionAuth := SessionMiddleware(s.sessions)
 
@@ -177,7 +177,7 @@ func (s *Server) registerRoutes() {
 
 	// Alert endpoints — rate limited + session auth required.
 	if s.repo != nil && s.sessions != nil {
-		ah := &alertHandlers{repo: s.repo}
+		ah := &alertHandlers{svc: service.NewAlertService(s.repo)}
 		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/alerts", apiRL(sessionAuth(ah)))
@@ -186,7 +186,7 @@ func (s *Server) registerRoutes() {
 
 	// Settings + stats endpoints — rate limited + session auth required.
 	if s.repo != nil && s.sessions != nil {
-		sh := &settingsHandlers{repo: s.repo, dbPath: s.dbPath, spoolDir: s.spoolDir, cache: s.cache}
+		sh := &settingsHandlers{svc: service.NewSettingsService(s.repo), dbPath: s.dbPath, spoolDir: s.spoolDir, cache: s.cache}
 		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/settings", apiRL(sessionAuth(sh)))
@@ -197,7 +197,7 @@ func (s *Server) registerRoutes() {
 
 	// Saved queries endpoints — rate limited + session auth required.
 	if s.repo != nil && s.sessions != nil {
-		sqh := &savedQueryHandlers{repo: s.repo}
+		sqh := &savedQueryHandlers{svc: service.NewSavedQueryService(s.repo)}
 		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/saved-queries", apiRL(sessionAuth(sqh)))
@@ -213,7 +213,7 @@ func (s *Server) registerRoutes() {
 
 	// Trace exclusions — persistent operation-level filters per project.
 	if s.repo != nil && s.sessions != nil {
-		teh := &traceExclusionHandlers{repo: s.repo}
+		teh := &traceExclusionHandlers{svc: service.NewTraceExclusionService(s.repo)}
 		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/trace-exclusions", apiRL(sessionAuth(teh)))
@@ -234,7 +234,7 @@ func (s *Server) registerRoutes() {
 
 	// Export endpoint — rate limited + session auth required, streams NDJSON.
 	if s.repo != nil && s.sessions != nil {
-		eh := &exportHandlers{repo: s.repo}
+		eh := &exportHandlers{svc: service.NewExportService(s.repo)}
 		sessionAuth := SessionMiddleware(s.sessions)
 
 		s.mux.Handle("/api/v1/export", apiRL(sessionAuth(eh)))
@@ -255,7 +255,7 @@ func (s *Server) registerRoutes() {
 	// Project endpoints — read auth (session or read key) for listing; the
 	// middleware blocks mutating methods for API keys.
 	if s.repo != nil && s.sessions != nil {
-		ph := &projectHandlers{repo: s.repo, cache: s.cache}
+		ph := &projectHandlers{svc: s.projectService(), settings: service.NewSettingsService(s.repo), cache: s.cache}
 		readAuth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
 
 		s.mux.Handle("/api/v1/projects", apiRL(readAuth(ph)))

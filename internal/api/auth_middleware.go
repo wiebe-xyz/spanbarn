@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 type contextKey string
@@ -60,13 +60,13 @@ func GetUsername(ctx context.Context) string {
 
 // SetWebSession stores the authenticated web session row in the request
 // context (session-cookie auth only; API-key and JWT paths have no row).
-func SetWebSession(ctx context.Context, ws repository.WebSession) context.Context {
+func SetWebSession(ctx context.Context, ws service.WebSession) context.Context {
 	return context.WithValue(ctx, ctxWebSession, ws)
 }
 
 // GetWebSession retrieves the web session row from the request context.
-func GetWebSession(ctx context.Context) (repository.WebSession, bool) {
-	ws, ok := ctx.Value(ctxWebSession).(repository.WebSession)
+func GetWebSession(ctx context.Context) (service.WebSession, bool) {
+	ws, ok := ctx.Value(ctxWebSession).(service.WebSession)
 	return ws, ok
 }
 

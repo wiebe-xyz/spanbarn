@@ -49,13 +49,13 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	// needs to be read back; render it directly.
 	plaintext, keySHA := setupKey(s.sessionSecret, slug)
 
-	project, err := s.repo.GetProjectBySlug(slug)
+	project, err := s.projectService().BySlug(slug)
 	if errors.Is(err, sql.ErrNoRows) {
 		// First visit for this slug: create the pending project and register its
 		// setup key. Repeat visits skip both writes.
-		project, err = s.repo.EnsureProjectPending(slug, slug)
+		project, err = s.projectService().EnsurePending(slug, slug)
 		if err == nil {
-			err = s.repo.EnsureSetupAPIKey(project.ID, keySHA)
+			err = s.projectService().EnsureSetupAPIKey(project.ID, keySHA)
 		}
 	}
 	if err != nil {

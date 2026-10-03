@@ -11,11 +11,11 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 type settingsHandlers struct {
-	repo     *repository.Repository
+	svc      *service.SettingsService
 	dbPath   string
 	spoolDir string
 	cache    *cache.Cache
@@ -48,7 +48,7 @@ func (h *settingsHandlers) handleGetSettings(w http.ResponseWriter, r *http.Requ
 	_, span := apiTracer.Start(r.Context(), "api.settings.get")
 	defer span.End()
 
-	settings, err := h.repo.GetAllSettings()
+	settings, err := h.svc.All()
 	if err != nil {
 		writeServerError(w, r, "failed to read settings", err)
 		return
@@ -72,12 +72,12 @@ func (h *settingsHandlers) handleUpdateSettings(w http.ResponseWriter, r *http.R
 			return
 		}
 		if v == "" {
-			if err := h.repo.DeleteSetting(k); err != nil {
+			if err := h.svc.Delete(k); err != nil {
 				writeServerError(w, r, "failed to delete setting", err)
 				return
 			}
 		} else {
-			if err := h.repo.SetSetting(k, v); err != nil {
+			if err := h.svc.Set(k, v); err != nil {
 				writeServerError(w, r, "failed to save setting", err)
 				return
 			}
@@ -195,8 +195,8 @@ func (h *settingsHandlers) handleStatsDBSize(w http.ResponseWriter, r *http.Requ
 	defer span.End()
 
 	serveSWR(w, r, h.cache, "stats:db-size", statsDBSizeFresh, statsDBSizeStale,
-		func(_ context.Context) (*repository.DBSize, error) {
-			return h.repo.GetDBSize(h.dbPath, h.spoolDir)
+		func(_ context.Context) (*service.DBSize, error) {
+			return h.svc.DBSize(h.dbPath, h.spoolDir)
 		})
 }
 
@@ -205,8 +205,8 @@ func (h *settingsHandlers) handleStatsCounts(w http.ResponseWriter, r *http.Requ
 	defer span.End()
 
 	serveSWR(w, r, h.cache, "stats:counts", statsCountsFresh, statsCountsStale,
-		func(_ context.Context) (*repository.DBCounts, error) {
-			return h.repo.GetDBCounts()
+		func(_ context.Context) (*service.DBCounts, error) {
+			return h.svc.DBCounts()
 		})
 }
 

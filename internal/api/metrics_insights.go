@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/metrics"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 type metricInsightsResponse struct {
@@ -40,7 +40,7 @@ func (h *metricsQueryHandlers) handleMetricInsights(w http.ResponseWriter, r *ht
 		to = time.Now()
 	}
 
-	rows, err := h.repo.QueryProjectRollups(r.Context(), projectID, from, to, 0)
+	rows, err := h.svc.ProjectRollups(r.Context(), projectID, from, to, 0)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
 		return
@@ -66,7 +66,7 @@ func (h *metricsQueryHandlers) handleMetricInsights(w http.ResponseWriter, r *ht
 // detectInsights groups rollup rows into series (by name + fingerprint) and runs
 // change detection on each. Rows are already ordered by name, fingerprint and
 // bucket, so a series is a contiguous run.
-func detectInsights(rows []repository.MetricRollup, splitNano int64) []metrics.Insight {
+func detectInsights(rows []service.MetricRollup, splitNano int64) []metrics.Insight {
 	var out []metrics.Insight
 
 	flush := func(name, typ string, attrs string, pts []metrics.InputPoint) {
