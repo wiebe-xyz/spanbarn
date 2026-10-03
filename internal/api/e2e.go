@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 // handleE2ESession issues a browser session for an E2E test account without
@@ -22,7 +22,7 @@ import (
 //  2. Static admin key (project ID 0 / scope "full") — bypasses the
 //     e2e_enabled flag. Intended for CI pipelines on non-production instances.
 //
-// The E2E account expires after repository.E2EAccountTTL (7 days) and is
+// The E2E account expires after service.E2EAccountTTL (7 days) and is
 // deleted by the retention worker. The session row uses auth_method "e2e" so
 // it shares the same middleware and revocation story as every other session.
 func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +50,7 @@ func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
 		// Static admin key — no project lookup needed.
 		username = "e2e:admin"
 	} else {
-		project, err := s.repo.GetProjectByID(projectID)
+		project, err := s.projectService().ByID(projectID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "could not load project", "")
 			return
@@ -62,8 +62,8 @@ func (s *Server) handleE2ESession(w http.ResponseWriter, r *http.Request) {
 		username = fmt.Sprintf("e2e:%s", project.Slug)
 	}
 
-	expiresAt := time.Now().UTC().Add(repository.E2EAccountTTL)
-	if _, err := s.repo.UpsertE2EUser(username, expiresAt); err != nil {
+	expiresAt := time.Now().UTC().Add(service.E2EAccountTTL)
+	if _, err := s.projectService().UpsertE2EUser(username, expiresAt); err != nil {
 		s.logger.Error("e2e: upsert user", "username", username, "error", err)
 		writeError(w, http.StatusInternalServerError, "could not create e2e account", "")
 		return

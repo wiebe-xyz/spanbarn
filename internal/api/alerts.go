@@ -9,7 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/wiebe-xyz/spanbarn/internal/metrics"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 // validMetricAggs are the supported metric-threshold aggregations.
@@ -34,7 +34,7 @@ func validateAlertType(t string) bool {
 
 // alertHandlers holds session-authenticated alert endpoint handlers.
 type alertHandlers struct {
-	repo *repository.Repository
+	svc *service.AlertService
 }
 
 type alertRequest struct {
@@ -72,7 +72,7 @@ type alertResponse struct {
 	CreatedAt        string            `json:"createdAt"`
 }
 
-func toAlertResponse(a repository.Alert) alertResponse {
+func toAlertResponse(a service.Alert) alertResponse {
 	resp := alertResponse{
 		ID:               a.ID,
 		ProjectID:        a.ProjectID,
@@ -142,7 +142,7 @@ func (h *alertHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 
 	projectID := parseInt64Param(r, "project_id", 0)
 
-	alerts, err := h.repo.ListAlerts(projectID)
+	alerts, err := h.svc.List(projectID)
 	if err != nil {
 		writeServerError(w, r, "failed to list alerts", err)
 		return
@@ -197,7 +197,7 @@ func (h *alertHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		req.CooldownMinutes = 30
 	}
 
-	alert := repository.Alert{
+	alert := service.Alert{
 		ProjectID:        req.ProjectID,
 		Service:          req.Service,
 		Operation:        req.Operation,
@@ -213,14 +213,14 @@ func (h *alertHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		LabelFilters:     marshalLabelFilters(req.LabelFilters),
 	}
 
-	id, err := h.repo.CreateAlert(alert)
+	id, err := h.svc.Create(alert)
 	if err != nil {
 		writeServerError(w, r, "failed to create alert", err)
 		return
 	}
 
 	// Fetch the created alert to return full response.
-	alerts, err := h.repo.ListAlerts(req.ProjectID)
+	alerts, err := h.svc.List(req.ProjectID)
 	if err != nil {
 		writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
 		return
@@ -260,7 +260,7 @@ func (h *alertHandlers) handleUpdate(w http.ResponseWriter, r *http.Request, id 
 		}
 	}
 
-	alert := repository.Alert{
+	alert := service.Alert{
 		ID:               id,
 		Service:          req.Service,
 		Operation:        req.Operation,
@@ -276,7 +276,7 @@ func (h *alertHandlers) handleUpdate(w http.ResponseWriter, r *http.Request, id 
 		LabelFilters:     marshalLabelFilters(req.LabelFilters),
 	}
 
-	if err := h.repo.UpdateAlert(alert); err != nil {
+	if err := h.svc.Update(alert); err != nil {
 		writeServerError(w, r, "failed to update alert", err)
 		return
 	}
@@ -289,7 +289,7 @@ func (h *alertHandlers) handleDelete(w http.ResponseWriter, r *http.Request, id 
 	defer span.End()
 	span.SetAttributes(attribute.Int64("alert.id", id))
 
-	if err := h.repo.DeleteAlert(id); err != nil {
+	if err := h.svc.Delete(id); err != nil {
 		writeServerError(w, r, "failed to delete alert", err)
 		return
 	}

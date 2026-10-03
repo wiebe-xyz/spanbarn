@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/metrics"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 // metricsQueryHandlers holds session-authenticated metrics query handlers.
 type metricsQueryHandlers struct {
-	repo *repository.Repository
+	svc *service.MetricsService
 }
 
 type metricNamesResponse struct {
@@ -59,7 +59,7 @@ func (h *metricsQueryHandlers) handleMetricNames(w http.ResponseWriter, r *http.
 		to = time.Now()
 	}
 
-	names, err := h.repo.ListMetricNames(r.Context(), projectID, from, to)
+	names, err := h.svc.Names(r.Context(), projectID, from, to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
 		return
@@ -111,7 +111,7 @@ func (h *metricsQueryHandlers) handleMetricCatalog(w http.ResponseWriter, r *htt
 		to = time.Now()
 	}
 
-	entries, err := h.repo.ListMetricCatalog(r.Context(), projectID, from, to)
+	entries, err := h.svc.Catalog(r.Context(), projectID, from, to)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
 		return
@@ -122,7 +122,7 @@ func (h *metricsQueryHandlers) handleMetricCatalog(w http.ResponseWriter, r *htt
 
 // groupCatalog buckets entries by semantic prefix, preserving the alphabetical
 // metric order within each group and ordering groups by first appearance.
-func groupCatalog(entries []repository.MetricCatalogEntry) []catalogGroup {
+func groupCatalog(entries []service.MetricCatalogEntry) []catalogGroup {
 	order := []string{}
 	byPrefix := map[string]*catalogGroup{}
 	for _, e := range entries {
@@ -176,7 +176,7 @@ func (h *metricsQueryHandlers) handleMetricSeries(w http.ResponseWriter, r *http
 
 	labels := parseLabelParams(r)
 	for k := range labels {
-		if !repository.ValidLabelKey(k) {
+		if !service.ValidLabelKey(k) {
 			writeError(w, http.StatusBadRequest, "invalid label key", "")
 			return
 		}
@@ -221,7 +221,7 @@ const rollupQueryThreshold = 6 * time.Hour
 
 // rawInput loads raw metric data points and maps them to derivation input.
 func (h *metricsQueryHandlers) rawInput(r *http.Request, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, error) {
-	rows, err := h.repo.QueryMetricSeries(r.Context(), repository.MetricFilter{
+	rows, err := h.svc.Series(r.Context(), service.MetricFilter{
 		ProjectID: projectID, Name: name, From: from, To: to, Attributes: labels, Limit: limit,
 	})
 	if err != nil {
@@ -237,7 +237,7 @@ func (h *metricsQueryHandlers) rawInput(r *http.Request, projectID int64, name s
 			T:          row.TimeUnixNano,
 			Value:      row.Value,
 			Count:      row.Count,
-			Extra:      repository.MarshalMetricExtra(row),
+			Extra:      service.MarshalMetricExtra(row),
 			Attributes: parseAttrs(row.Attributes),
 		})
 	}
@@ -270,7 +270,7 @@ func rollupTierSteps(width time.Duration) []int64 {
 // the bucket-end cumulative value (so rate is derived across buckets),
 // distributions carry their merged extra.
 func (h *metricsQueryHandlers) rollupInput(r *http.Request, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, int64, error) {
-	filter := repository.MetricRollupFilter{
+	filter := service.MetricRollupFilter{
 		ProjectID: projectID, Name: name, From: from, To: to, Attributes: labels, Limit: limit,
 	}
 	for _, step := range rollupTierSteps(to.Sub(from)) {
@@ -296,11 +296,11 @@ func (h *metricsQueryHandlers) rollupInput(r *http.Request, projectID int64, nam
 
 // queryTier reads one resolution. The 5-minute tier is the accumulator's own
 // table; every coarser tier shares metric_rollups_coarse.
-func (h *metricsQueryHandlers) queryTier(r *http.Request, step int64, f repository.MetricRollupFilter) ([]repository.MetricRollup, error) {
-	if step == repository.Rollup5mStep {
-		return h.repo.QueryMetricRollups(r.Context(), f)
+func (h *metricsQueryHandlers) queryTier(r *http.Request, step int64, f service.MetricRollupFilter) ([]service.MetricRollup, error) {
+	if step == service.Rollup5mStep {
+		return h.svc.Rollups(r.Context(), f)
 	}
-	return h.repo.QueryCoarseRollups(r.Context(), repository.CoarseRollupFilter{
+	return h.svc.CoarseRollups(r.Context(), service.CoarseRollupFilter{
 		ProjectID:   f.ProjectID,
 		Name:        f.Name,
 		StepSeconds: step,
@@ -315,7 +315,7 @@ func (h *metricsQueryHandlers) queryTier(r *http.Request, step int64, f reposito
 // value choice keeps metrics.Derive working unchanged: gauges use the bucket
 // average, counters use the bucket-end cumulative value (so rate is derived
 // across buckets), distributions carry their merged extra.
-func rollupToInput(row repository.MetricRollup) metrics.InputPoint {
+func rollupToInput(row service.MetricRollup) metrics.InputPoint {
 	value := row.Last
 	if row.Type == "gauge" && row.Count > 0 {
 		value = row.Sum / float64(row.Count)

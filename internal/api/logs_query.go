@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 type logsQueryHandlers struct {
-	repo *repository.Repository
+	svc *service.LogsService
 }
 
 type logEntryJSON struct {
@@ -60,7 +60,7 @@ func (h *logsQueryHandlers) handleLogs(w http.ResponseWriter, r *http.Request) {
 		to = time.Now()
 	}
 
-	f := repository.LogFilter{
+	f := service.LogFilter{
 		ProjectID:   projectID,
 		TraceID:     r.URL.Query().Get("trace_id"),
 		SpanID:      r.URL.Query().Get("span_id"),
@@ -73,7 +73,7 @@ func (h *logsQueryHandlers) handleLogs(w http.ResponseWriter, r *http.Request) {
 		Offset:      parseIntParam(r, "offset", 0),
 	}
 
-	rows, total, err := h.repo.QueryLogs(r.Context(), f)
+	rows, total, err := h.svc.Query(r.Context(), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
 		return
@@ -145,7 +145,7 @@ func (h *logsQueryHandlers) handleLogsHistogram(w http.ResponseWriter, r *http.R
 		bucketSecs = 86400
 	}
 
-	f := repository.LogFilter{
+	f := service.LogFilter{
 		ProjectID:   projectID,
 		MinSeverity: int32(parseIntParam(r, "severity", 0)),
 		Service:     r.URL.Query().Get("service"),
@@ -154,7 +154,7 @@ func (h *logsQueryHandlers) handleLogsHistogram(w http.ResponseWriter, r *http.R
 		To:          to,
 	}
 
-	buckets, err := h.repo.LogHistogram(r.Context(), f, bucketSecs)
+	buckets, err := h.svc.Histogram(r.Context(), f, bucketSecs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "histogram query failed", err.Error())
 		return
@@ -186,7 +186,7 @@ func (h *logsQueryHandlers) handlePinnedTraces(w http.ResponseWriter, r *http.Re
 
 func (h *logsQueryHandlers) listPinnedTraces(w http.ResponseWriter, r *http.Request) {
 	projectID := parseInt64Param(r, "project_id", 0)
-	pins, err := h.repo.ListPinnedTraces(r.Context(), projectID)
+	pins, err := h.svc.ListPinned(r.Context(), projectID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
 		return
@@ -212,7 +212,7 @@ func (h *logsQueryHandlers) pinTrace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "trace_id required", "")
 		return
 	}
-	if err := h.repo.PinTrace(r.Context(), body.ProjectID, body.TraceID, body.Label); err != nil {
+	if err := h.svc.Pin(r.Context(), body.ProjectID, body.TraceID, body.Label); err != nil {
 		writeError(w, http.StatusInternalServerError, "pin failed", err.Error())
 		return
 	}
@@ -236,7 +236,7 @@ func (h *logsQueryHandlers) unpinTrace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "trace_id required", "")
 		return
 	}
-	if err := h.repo.UnpinTrace(r.Context(), projectID, traceID); err != nil {
+	if err := h.svc.Unpin(r.Context(), projectID, traceID); err != nil {
 		writeError(w, http.StatusInternalServerError, "unpin failed", err.Error())
 		return
 	}

@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 type exportHandlers struct {
-	repo *repository.Repository
+	svc *service.ExportService
 }
 
 func (h *exportHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +24,7 @@ func (h *exportHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter := repository.SpanFilter{
+	filter := service.SpanFilter{
 		From:    from,
 		To:      to,
 		Service: r.URL.Query().Get("service"),
@@ -44,7 +44,7 @@ func (h *exportHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	flusher, _ := w.(http.Flusher)
 	enc := json.NewEncoder(w)
 
-	_ = h.repo.StreamSpans(filter, func(s repository.Span) error {
+	_ = h.svc.StreamSpans(filter, func(s service.Span) error {
 		if err := enc.Encode(s); err != nil {
 			return err
 		}

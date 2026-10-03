@@ -10,14 +10,14 @@ import (
 	"golang.org/x/sync/singleflight"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 // WebSessionStore is the persistence surface SessionService needs. It is
 // implemented by *repository.Repository (repo_sessions.go).
 type WebSessionStore interface {
-	CreateWebSession(ws repository.WebSession) error
-	GetWebSessionByIDHash(idHash string) (repository.WebSession, error)
+	CreateWebSession(ws service.WebSession) error
+	GetWebSessionByIDHash(idHash string) (service.WebSession, error)
 	UpdateWebSessionTokens(idHash, idToken, accessToken, refreshToken string, accessExpiresAt int64, claimsJSON string, lastRefreshAt int64) error
 	MarkWebSessionRefreshFailing(idHash string, since int64) error
 	DeleteWebSession(idHash string) error
@@ -57,7 +57,7 @@ type OIDCSessionData struct {
 
 // AuthResult is a successfully authenticated request's session view.
 type AuthResult struct {
-	Session repository.WebSession
+	Session service.WebSession
 	// RefreshDue is set when the session was served with a stale access
 	// token because this replica cannot refresh (read-only store). The
 	// middleware surfaces it as an X-Session-Refresh-Due header so the SPA
@@ -126,7 +126,7 @@ func (s *SessionService) Create(username, method string, oidcData *OIDCSessionDa
 	token = auth.NewSessionToken()
 	now := s.now()
 	expires = now.Add(s.ttl)
-	ws := repository.WebSession{
+	ws := service.WebSession{
 		IDHash:            auth.HashSessionToken(token),
 		Username:          username,
 		AuthMethod:        method,
@@ -194,26 +194,26 @@ func (s *SessionService) Authenticate(ctx context.Context, token string) (AuthRe
 }
 
 // load resolves a token to its row and enforces the absolute cap.
-func (s *SessionService) load(token string) (repository.WebSession, error) {
+func (s *SessionService) load(token string) (service.WebSession, error) {
 	if token == "" || s.store == nil {
-		return repository.WebSession{}, errSessionInvalid
+		return service.WebSession{}, errSessionInvalid
 	}
 	ws, err := s.store.GetWebSessionByIDHash(auth.HashSessionToken(token))
 	if err != nil {
-		return repository.WebSession{}, errSessionInvalid
+		return service.WebSession{}, errSessionInvalid
 	}
 	if s.now().Unix() >= ws.AbsoluteExpiresAt {
 		if !s.store.ReadOnly() {
 			_ = s.store.DeleteWebSession(ws.IDHash)
 		}
-		return repository.WebSession{}, errSessionInvalid
+		return service.WebSession{}, errSessionInvalid
 	}
 	return ws, nil
 }
 
 // accessExpired reports whether an OIDC session's access token is past (or
 // within accessTokenSkew of) its expiry.
-func (s *SessionService) accessExpired(ws repository.WebSession) bool {
+func (s *SessionService) accessExpired(ws service.WebSession) bool {
 	if ws.AccessExpiresAt == 0 {
 		return false
 	}
@@ -226,7 +226,7 @@ func (s *SessionService) accessExpired(ws repository.WebSession) bool {
 // burning the single-use token and replay-revoking the family on the next
 // writer-side refresh. So the session is served stale within the grace
 // window, flagged RefreshDue so the SPA fires the writer-routed refresh.
-func (s *SessionService) serveStaleReadOnly(ws repository.WebSession) (AuthResult, error) {
+func (s *SessionService) serveStaleReadOnly(ws service.WebSession) (AuthResult, error) {
 	if s.now().Unix() <= ws.AccessExpiresAt+int64(s.grace.Seconds()) {
 		return AuthResult{Session: ws, RefreshDue: true}, nil
 	}
@@ -237,10 +237,10 @@ func (s *SessionService) serveStaleReadOnly(ws repository.WebSession) (AuthResul
 // expiry bookkeeping — used by POST /api/v1/session/refresh and by the IAM
 // proxy when the upstream rejects a stored access token with 401 before its
 // bookkept expiry (central revocation, clock drift).
-func (s *SessionService) RefreshNow(ctx context.Context, token, staleAccessToken string) (repository.WebSession, error) {
+func (s *SessionService) RefreshNow(ctx context.Context, token, staleAccessToken string) (service.WebSession, error) {
 	ws, err := s.load(token)
 	if err != nil {
-		return repository.WebSession{}, err
+		return service.WebSession{}, err
 	}
 	if ws.AuthMethod != "oidc" {
 		return ws, nil
@@ -269,7 +269,7 @@ func (s *SessionService) RefreshNow(ctx context.Context, token, staleAccessToken
 //     carries refresh_failing_since so the caller can apply grace;
 //   - (zero, errSessionInvalid) when the refresh token is dead
 //     (invalid_grant) or the session vanished — the row is deleted.
-func (s *SessionService) refreshSession(ctx context.Context, idHash, staleAccessToken string) (repository.WebSession, error) {
+func (s *SessionService) refreshSession(ctx context.Context, idHash, staleAccessToken string) (service.WebSession, error) {
 	v, err, _ := s.refresh.Do(idHash, func() (any, error) {
 		cur, gerr := s.store.GetWebSessionByIDHash(idHash)
 		if gerr != nil {
@@ -283,17 +283,17 @@ func (s *SessionService) refreshSession(ctx context.Context, idHash, staleAccess
 		return s.performRefresh(ctx, cur)
 	})
 	if err != nil {
-		if ws, ok := v.(repository.WebSession); ok {
+		if ws, ok := v.(service.WebSession); ok {
 			return ws, err
 		}
-		return repository.WebSession{}, err
+		return service.WebSession{}, err
 	}
-	return v.(repository.WebSession), nil
+	return v.(service.WebSession), nil
 }
 
 // performRefresh executes one refresh grant and persists the outcome. Runs
 // inside the singleflight; never called concurrently for one session.
-func (s *SessionService) performRefresh(ctx context.Context, cur repository.WebSession) (any, error) {
+func (s *SessionService) performRefresh(ctx context.Context, cur service.WebSession) (any, error) {
 	if cur.RefreshToken == "" {
 		// Nothing to renew with (offline_access not granted): the session's
 		// validity IS the access token's validity.
@@ -362,7 +362,7 @@ func (s *SessionService) performRefresh(ctx context.Context, cur repository.WebS
 
 // markRefreshFailing stamps the first-failure time (if not already set) and
 // returns the stale row with errRefreshUnavailable for grace handling.
-func (s *SessionService) markRefreshFailing(cur repository.WebSession) (any, error) {
+func (s *SessionService) markRefreshFailing(cur service.WebSession) (any, error) {
 	now := s.now().Unix()
 	_ = s.store.MarkWebSessionRefreshFailing(cur.IDHash, now)
 	if cur.RefreshFailingSince == 0 {

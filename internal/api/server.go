@@ -10,7 +10,6 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
@@ -59,7 +58,7 @@ type Server struct {
 	querySvc       *service.QueryService
 	sessions       *SessionService
 	authorizer     *auth.Authorizer
-	repo           *repository.Repository
+	repo           service.Store
 	dbPath         string
 	spoolDir       string
 	cache          *cache.Cache
@@ -99,7 +98,7 @@ type funnelBarnConfig struct {
 type ServerOption func(*Server)
 
 // WithRepository attaches a repository for alert CRUD endpoints.
-func WithRepository(repo *repository.Repository) ServerOption {
+func WithRepository(repo service.Store) ServerOption {
 	return func(s *Server) {
 		s.repo = repo
 	}
@@ -286,4 +285,9 @@ func (s *Server) ListenAndServeContext(ctx context.Context, addr string) error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// projectService builds the project service over the server store.
+func (s *Server) projectService() *service.ProjectService {
+	return service.NewProjectService(s.repo)
 }

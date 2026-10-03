@@ -11,7 +11,6 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
@@ -22,26 +21,22 @@ import (
 //
 // Each warmer runs in its own goroutine and writes directly to the cache —
 // the HTTP handlers will see populated entries on first hit.
-func WarmCaches(ctx context.Context, repo *repository.Repository, c *cache.Cache, logger *slog.Logger) {
+func WarmCaches(ctx context.Context, repo service.WarmRepository, c *cache.Cache, logger *slog.Logger) {
 	if repo == nil || c == nil {
 		return
 	}
 
+	projects := service.NewProjectService(repo)
+	settings := service.NewSettingsService(repo)
+
 	go warmEntry(ctx, c, logger, "projects:stats:24h", projectsStatsFresh, projectsStatsStale,
 		func(ctx context.Context) (any, error) {
-			s, err := repo.ProjectUsageStatsAll(24)
-			if err != nil {
-				return nil, err
-			}
-			if s == nil {
-				return []repository.ProjectUsageStats{}, nil
-			}
-			return s, nil
+			return projects.UsageStats(24)
 		})
 
 	go warmEntry(ctx, c, logger, "stats:counts", statsCountsFresh, statsCountsStale,
 		func(ctx context.Context) (any, error) {
-			return repo.GetDBCounts()
+			return settings.DBCounts()
 		})
 }
 

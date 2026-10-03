@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 const (
@@ -21,8 +21,9 @@ const (
 )
 
 type projectHandlers struct {
-	repo  *repository.Repository
-	cache *cache.Cache
+	svc      *service.ProjectService
+	settings *service.SettingsService
+	cache    *cache.Cache
 }
 
 func (h *projectHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +104,7 @@ func (h *projectHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	_, span := apiTracer.Start(r.Context(), "api.projects.list")
 	defer span.End()
 
-	projects, err := h.repo.ListProjects()
+	projects, err := h.svc.List()
 	writeListJSON(w, r, "projects", projects, err)
 }
 
@@ -112,7 +113,7 @@ func (h *projectHandlers) handleDelete(w http.ResponseWriter, r *http.Request, i
 	defer span.End()
 	span.SetAttributes(attribute.Int64("project.id", id))
 
-	if err := h.repo.DeleteProject(id); err != nil {
+	if err := h.svc.Delete(id); err != nil {
 		writeError(w, http.StatusNotFound, "project not found", "")
 		return
 	}
@@ -124,7 +125,7 @@ func (h *projectHandlers) handleApprove(w http.ResponseWriter, r *http.Request, 
 	defer span.End()
 	span.SetAttributes(attribute.Int64("project.id", id))
 
-	project, err := h.repo.ApproveProject(id)
+	project, err := h.svc.Approve(id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "project not found", "")
 		return
@@ -138,15 +139,8 @@ func (h *projectHandlers) handleStats(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 
 	serveSWR(w, r, h.cache, "projects:stats:24h", projectsStatsFresh, projectsStatsStale,
-		func(_ context.Context) ([]repository.ProjectUsageStats, error) {
-			stats, err := h.repo.ProjectUsageStatsAll(24)
-			if err != nil {
-				return nil, err
-			}
-			if stats == nil {
-				stats = []repository.ProjectUsageStats{}
-			}
-			return stats, nil
+		func(_ context.Context) ([]service.ProjectUsageStats, error) {
+			return h.svc.UsageStats(24)
 		})
 }
 
@@ -164,7 +158,7 @@ func (h *projectHandlers) handleListAPIKeys(w http.ResponseWriter, r *http.Reque
 	defer span.End()
 	span.SetAttributes(attribute.Int64("project.id", projectID))
 
-	keys, err := h.repo.ListAPIKeys(projectID)
+	keys, err := h.svc.APIKeys(projectID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list api keys", "")
 		return
@@ -219,7 +213,7 @@ func (h *projectHandlers) handleEnableVerbose(w http.ResponseWriter, r *http.Req
 
 	until := time.Now().Add(time.Duration(req.DurationMinutes) * time.Minute)
 	key := fmt.Sprintf("boring.verbose_until.project.%d", id)
-	if err := h.repo.SetSetting(key, strconv.FormatInt(until.Unix(), 10)); err != nil {
+	if err := h.settings.Set(key, strconv.FormatInt(until.Unix(), 10)); err != nil {
 		writeServerError(w, r, "failed to set verbose mode", err)
 		return
 	}
@@ -237,7 +231,7 @@ func (h *projectHandlers) handleDisableVerbose(w http.ResponseWriter, r *http.Re
 	span.SetAttributes(attribute.Int64("project.id", id))
 
 	key := fmt.Sprintf("boring.verbose_until.project.%d", id)
-	if err := h.repo.DeleteSetting(key); err != nil {
+	if err := h.settings.Delete(key); err != nil {
 		writeServerError(w, r, "failed to clear verbose mode", err)
 		return
 	}
@@ -249,11 +243,11 @@ func (h *projectHandlers) handleEnableE2E(w http.ResponseWriter, r *http.Request
 	defer span.End()
 	span.SetAttributes(attribute.Int64("project.id", id))
 
-	if err := h.repo.SetProjectE2E(id, true); err != nil {
+	if err := h.svc.SetE2E(id, true); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enable e2e", "")
 		return
 	}
-	p, err := h.repo.GetProjectByID(id)
+	p, err := h.svc.ByID(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load project", "")
 		return
@@ -267,11 +261,11 @@ func (h *projectHandlers) handleDisableE2E(w http.ResponseWriter, r *http.Reques
 	defer span.End()
 	span.SetAttributes(attribute.Int64("project.id", id))
 
-	if err := h.repo.SetProjectE2E(id, false); err != nil {
+	if err := h.svc.SetE2E(id, false); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to disable e2e", "")
 		return
 	}
-	p, err := h.repo.GetProjectByID(id)
+	p, err := h.svc.ByID(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load project", "")
 		return
