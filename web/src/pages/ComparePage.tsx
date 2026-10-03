@@ -86,6 +86,7 @@ export function ComparePage(): ReactElement {
         <h1 style={{ fontSize: 20, fontWeight: 600, margin: 0 }}>Compare attributes</h1>
         <Link to="/traces" style={{ fontSize: 13, color: '#93c5fd' }}>Back to traces</Link>
         <Link to="/attributes" style={{ fontSize: 13, color: '#93c5fd' }}>Attributes</Link>
+        <Link to="/heatmap" style={{ fontSize: 13, color: '#93c5fd' }}>Duration heatmap</Link>
       </div>
       <p style={{ color: '#9ca3af', fontSize: 13, margin: '0 0 16px' }}>
         Pick the spans to explain (the selection) and the spans to compare with (the baseline). Attributes are ranked

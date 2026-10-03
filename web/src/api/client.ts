@@ -25,6 +25,8 @@ import type {
   AttributeScope,
   AttributeCompareScope,
   AttributeComparison,
+  HeatmapScope,
+  HeatmapResult,
   AnalyzeParams,
   AnalyzeResponse,
   AnalyzeSeriesResponse,
@@ -183,6 +185,18 @@ function compareQs(s: AttributeCompareScope): string {
   })
 }
 
+function heatmapQs(s: HeatmapScope): string {
+  return qs({
+    project_id: s.projectId,
+    from: s.from,
+    to: s.to,
+    filter: s.filter,
+    time_buckets: s.timeBuckets,
+    duration_buckets: s.durationBuckets,
+    max_spans: s.maxSpans,
+  })
+}
+
 export const api = {
   getDashboardCounts: (f: DashboardFilter, groupBy: CountsGroup, rootOnly: boolean) =>
     fetchJSON<DashboardCounts>(
@@ -261,6 +275,8 @@ export const api = {
 
   getAttributes: (s: AttributeScope) =>
     fetchJSON<AttributeDiscovery>(`/api/v1/attributes${attributeQs(s)}`),
+
+  getHeatmap: (s: HeatmapScope) => fetchJSON<HeatmapResult>(`/api/v1/heatmap${heatmapQs(s)}`),
 
   compareAttributes: (s: AttributeCompareScope) =>
     fetchJSON<AttributeComparison>(`/api/v1/attributes/compare${compareQs(s)}`),

@@ -541,6 +541,60 @@ paths:
         '400':
           description: Missing project, range or selection, invalid filter, range over 7 days, or sample out of range
 
+  /api/v1/heatmap:
+    get:
+      summary: Span duration distribution over time for a filtered span selection
+      description: >
+        Counts spans per time bucket and log-scale duration bucket, the input of a duration heatmap whose drag
+        selection feeds /api/v1/attributes/compare. Project and range are required; the range is limited to 7
+        days. The scan covers spans ingested in the range, newest first, and stops at max_spans (default 20000,
+        at most 100000); capped says when it did. Time buckets divide the range evenly and use the span start
+        time, with spans that started before from counted in the first bucket. Duration edges run from the
+        shortest to the longest scanned duration, evenly spaced on a log scale. Bucket i holds durations in
+        [edges[i], edges[i+1]), and the last bucket includes its upper edge. Empty cells are left out.
+        Filter model: specs/001-telemetry-aggregator/data-model.md.
+      operationId: getHeatmap
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/TraceHealthProject'
+        - $ref: '#/components/parameters/DashboardFrom'
+        - $ref: '#/components/parameters/DashboardTo'
+        - {name: filter, in: query, description: 'Filter model as JSON; empty means every span of the project', schema: {type: string}}
+        - {name: time_buckets, in: query, description: Default 60, at most 200, schema: {type: integer}}
+        - {name: duration_buckets, in: query, description: Default 30, at most 100, schema: {type: integer}}
+        - {name: max_spans, in: query, description: Row cap on spans read, schema: {type: integer}}
+      responses:
+        '200':
+          description: Bucket counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  from: {type: string, format: date-time}
+                  to: {type: string, format: date-time}
+                  timeBuckets: {type: integer}
+                  durationBuckets: {type: integer}
+                  bucketMicros: {type: integer, description: Width of one time bucket in microseconds}
+                  durationEdgesUs:
+                    type: array
+                    description: durationBuckets + 1 ascending edges in microseconds, empty when no span matched
+                    items: {type: integer}
+                  cells:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        time: {type: integer, description: Time bucket index}
+                        duration: {type: integer, description: Duration bucket index}
+                        count: {type: integer}
+                  scanned: {type: integer}
+                  capped: {type: boolean, description: True when the scan stopped at maxSpans}
+                  maxSpans: {type: integer}
+        '400':
+          description: Missing project or range, invalid filter, or range over 7 days
+
   /api/v1/spans/search:
     get:
       summary: List spans matching a filter expression
