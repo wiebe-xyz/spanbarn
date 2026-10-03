@@ -37,54 +37,7 @@ type TraceSummaryRow struct {
 // their summaries are retained that long (see repo_trace_summaries.go), so
 // dropping the old spans∪error_samples UNION does not lose them.
 func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSummaryRow, error) {
-	var where []string
-	var args []any
-
-	if f.ProjectID != 0 {
-		where = append(where, "project_id = ?")
-		args = append(args, f.ProjectID)
-	}
-	if f.Service != "" {
-		where = append(where, "root_service = ?")
-		args = append(args, f.Service)
-	}
-	if f.Operation != "" {
-		where = append(where, "root_name = ?")
-		args = append(args, f.Operation)
-	}
-	if f.Status != "" {
-		if strings.EqualFold(f.Status, "error") {
-			where = append(where, "has_error = 1")
-		} else {
-			where = append(where, "has_error = 0")
-		}
-	}
-	if f.MinDuration > 0 {
-		where = append(where, "root_duration_us >= ?")
-		args = append(args, f.MinDuration)
-	}
-	if !f.From.IsZero() {
-		where = append(where, "ingested_at >= ?")
-		args = append(args, f.From)
-	}
-	if !f.To.IsZero() {
-		where = append(where, "ingested_at <= ?")
-		args = append(args, f.To)
-	}
-	if len(f.ExcludeOperations) > 0 {
-		placeholders := strings.Repeat("?,", len(f.ExcludeOperations))
-		placeholders = placeholders[:len(placeholders)-1]
-		where = append(where, "root_name NOT IN ("+placeholders+")")
-		for _, op := range f.ExcludeOperations {
-			args = append(args, op)
-		}
-	}
-	if minSpans > 0 {
-		where = append(where, "span_count >= ?")
-		args = append(args, minSpans)
-	}
-	where = f.appendStructureWhere(where)
-	where, args, err := f.appendTraceExprWhere(where, args)
+	where, args, err := f.traceSummaryWhere(minSpans)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +67,57 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 	if err != nil {
 		return nil, err
 	}
+	order, byTrace, err := scanTraceSummaryRows(rows, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(order) == 0 {
+		return nil, nil
+	}
+
+	r.attachPromptStats(order, byTrace)
+
+	out := make([]TraceSummaryRow, 0, len(order))
+	for _, t := range order {
+		out = append(out, *byTrace[t])
+	}
+	return out, nil
+}
+
+// traceSummaryWhere builds the trace_summaries WHERE conditions for a filter.
+func (f SpanFilter) traceSummaryWhere(minSpans int) ([]string, []any, error) {
+	b := &whereBuilder{}
+	if f.ProjectID != 0 {
+		b.add("project_id = ?", f.ProjectID)
+	}
+	if f.Service != "" {
+		b.add("root_service = ?", f.Service)
+	}
+	if f.Operation != "" {
+		b.add("root_name = ?", f.Operation)
+	}
+	if f.Status != "" {
+		if strings.EqualFold(f.Status, "error") {
+			b.add("has_error = 1")
+		} else {
+			b.add("has_error = 0")
+		}
+	}
+	if f.MinDuration > 0 {
+		b.add("root_duration_us >= ?", f.MinDuration)
+	}
+	b.addTimeRange("ingested_at", f.From, f.To)
+	b.addNotIn("root_name", f.ExcludeOperations)
+	if minSpans > 0 {
+		b.add("span_count >= ?", minSpans)
+	}
+	where := f.appendStructureWhere(b.where)
+	return f.appendTraceExprWhere(where, b.args)
+}
+
+// scanTraceSummaryRows reads the summary page and closes rows. It returns the
+// trace ids in result order and the rows keyed by trace id.
+func scanTraceSummaryRows(rows *sql.Rows, limit int) ([]string, map[string]*TraceSummaryRow, error) {
 	order := make([]string, 0, limit)
 	byTrace := make(map[string]*TraceSummaryRow, limit)
 	for rows.Next() {
@@ -123,7 +127,7 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 		if err := rows.Scan(&tr.TraceID, &tr.StartTimeUs, &tr.SpanCount, &hasErrorInt,
 			&tr.RootName, &tr.RootService, &tr.RootDuration, &hasRoot, &orphans); err != nil {
 			rows.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		tr.HasError = hasErrorInt == 1
 		tr.HasRoot, tr.OrphanCount = structureFromColumns(hasRoot, orphans)
@@ -133,41 +137,39 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if len(order) == 0 {
-		return nil, nil
-	}
+	return order, byTrace, nil
+}
 
-	// Enrich the page with model + prompt count from prompt_records.
-	prPlaceholders := strings.Repeat("?,", len(order))
-	prPlaceholders = prPlaceholders[:len(prPlaceholders)-1]
-	prArgs := make([]any, len(order))
+// attachPromptStats enriches the page with model and prompt count from
+// prompt_records. A failing enrichment query leaves the rows without them.
+func (r *Repository) attachPromptStats(order []string, byTrace map[string]*TraceSummaryRow) {
+	placeholders := strings.Repeat("?,", len(order))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(order))
 	for i, t := range order {
-		prArgs[i] = t
+		args[i] = t
 	}
-	prQ := fmt.Sprintf(`SELECT trace_id, MIN(model), COUNT(*) FROM prompt_records WHERE trace_id IN (%s) GROUP BY trace_id`, prPlaceholders)
-	prCtx, prCancel := r.queryContext()
-	defer prCancel()
-	if prRows, err := r.db.QueryContext(prCtx, prQ, prArgs...); err == nil {
-		for prRows.Next() {
-			var tid, model string
-			var cnt int
-			if err := prRows.Scan(&tid, &model, &cnt); err == nil {
-				if row := byTrace[tid]; row != nil {
-					row.RootModel = model
-					row.PromptCount = cnt
-				}
-			}
+	q := fmt.Sprintf(`SELECT trace_id, MIN(model), COUNT(*) FROM prompt_records WHERE trace_id IN (%s) GROUP BY trace_id`, placeholders)
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tid, model string
+		var cnt int
+		if err := rows.Scan(&tid, &model, &cnt); err != nil {
+			continue
 		}
-		prRows.Close()
+		if row := byTrace[tid]; row != nil {
+			row.RootModel = model
+			row.PromptCount = cnt
+		}
 	}
-
-	out := make([]TraceSummaryRow, 0, len(order))
-	for _, t := range order {
-		out = append(out, *byTrace[t])
-	}
-	return out, nil
 }
 
 func (r *Repository) StreamSpans(f SpanFilter, fn func(Span) error) error {

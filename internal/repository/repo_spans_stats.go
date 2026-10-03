@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -186,66 +187,49 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 // returning count, error count, and raw durations for percentile computation.
 // Uses the idx_spans_root_ingested partial index for efficient scanning.
 func (r *Repository) QueryRootSpanGroups(ctx context.Context, f SpanFilter) ([]RootSpanGroup, error) {
-	var where []string
-	var args []any
-
-	where = append(where, "COALESCE(parent_span_id,'') = ''")
-
-	if f.ProjectID != 0 {
-		where = append(where, "project_id = ?")
-		args = append(args, f.ProjectID)
-	}
-	if f.Service != "" {
-		where = append(where, "service = ?")
-		args = append(args, f.Service)
-	}
-	if f.Status != "" {
-		where = append(where, "status = ?")
-		args = append(args, f.Status)
-	}
-	if f.MinDuration > 0 {
-		where = append(where, "duration_us >= ?")
-		args = append(args, f.MinDuration)
-	}
-	if len(f.ExcludeOperations) > 0 {
-		placeholders := strings.Repeat("?,", len(f.ExcludeOperations))
-		placeholders = placeholders[:len(placeholders)-1]
-		where = append(where, "name NOT IN ("+placeholders+")")
-		for _, op := range f.ExcludeOperations {
-			args = append(args, op)
-		}
-	}
-	if !f.From.IsZero() {
-		where = append(where, "ingested_at >= ?")
-		args = append(args, f.From)
-	}
-	if !f.To.IsZero() {
-		where = append(where, "ingested_at <= ?")
-		args = append(args, f.To)
-	}
-
-	whereClause := "WHERE " + strings.Join(where, " AND ")
+	where, args := f.rootSpanGroupWhere()
 
 	q := fmt.Sprintf(`
 		SELECT name, service, duration_us,
 		       CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END AS is_error
 		FROM spans
-		%s
-		ORDER BY name, service, duration_us`, whereClause)
+		WHERE %s
+		ORDER BY name, service, duration_us`, strings.Join(where, " AND "))
 
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return groupRootSpanRows(rows)
+}
 
-	type groupKey struct{ operation, service string }
-	type groupVal struct {
-		count      int64
-		errorCount int64
-		durations  []int64
+// rootSpanGroupWhere builds the WHERE conditions for QueryRootSpanGroups.
+func (f SpanFilter) rootSpanGroupWhere() ([]string, []any) {
+	b := &whereBuilder{}
+	b.add("COALESCE(parent_span_id,'') = ''")
+	if f.ProjectID != 0 {
+		b.add("project_id = ?", f.ProjectID)
 	}
-	byOp := make(map[groupKey]*groupVal)
+	if f.Service != "" {
+		b.add("service = ?", f.Service)
+	}
+	if f.Status != "" {
+		b.add("status = ?", f.Status)
+	}
+	if f.MinDuration > 0 {
+		b.add("duration_us >= ?", f.MinDuration)
+	}
+	b.addNotIn("name", f.ExcludeOperations)
+	b.addTimeRange("ingested_at", f.From, f.To)
+	return b.where, b.args
+}
+
+// groupRootSpanRows folds the (name, service, duration, is_error) rows into one
+// group per operation and service, keeping first-seen order.
+func groupRootSpanRows(rows *sql.Rows) ([]RootSpanGroup, error) {
+	type groupKey struct{ operation, service string }
+	byOp := make(map[groupKey]*RootSpanGroup)
 	var order []groupKey
 	for rows.Next() {
 		var name, service string
@@ -255,16 +239,16 @@ func (r *Repository) QueryRootSpanGroups(ctx context.Context, f SpanFilter) ([]R
 			return nil, err
 		}
 		k := groupKey{name, service}
-		v, ok := byOp[k]
+		g, ok := byOp[k]
 		if !ok {
-			v = &groupVal{}
-			byOp[k] = v
+			g = &RootSpanGroup{Operation: name, Service: service}
+			byOp[k] = g
 			order = append(order, k)
 		}
-		v.count++
-		v.durations = append(v.durations, dur)
+		g.Count++
+		g.Durations = append(g.Durations, dur)
 		if isError == 1 {
-			v.errorCount++
+			g.ErrorCount++
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -273,14 +257,7 @@ func (r *Repository) QueryRootSpanGroups(ctx context.Context, f SpanFilter) ([]R
 
 	out := make([]RootSpanGroup, 0, len(order))
 	for _, k := range order {
-		v := byOp[k]
-		out = append(out, RootSpanGroup{
-			Operation:  k.operation,
-			Service:    k.service,
-			Count:      v.count,
-			ErrorCount: v.errorCount,
-			Durations:  v.durations,
-		})
+		out = append(out, *byOp[k])
 	}
 	return out, nil
 }
