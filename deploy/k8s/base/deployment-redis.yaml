@@ -32,3 +32,12 @@ spec:
               command: ["redis-cli", "ping"]
             initialDelaySeconds: 3
             periodSeconds: 10
+          # TCP check: redis answers PING with a LOADING error while it reads a
+          # large dataset, so an exec ping could kill a healthy but slow start.
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
