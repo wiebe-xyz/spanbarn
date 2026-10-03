@@ -95,6 +95,10 @@ func (f SpanFilter) appendCommonWhere(where []string, args []any) ([]string, []a
 }
 
 func (r *Repository) QuerySpans(f SpanFilter) ([]Span, error) {
+	f, err := r.withCalc(f)
+	if err != nil {
+		return nil, err
+	}
 	var where []string
 	var args []any
 
@@ -103,7 +107,7 @@ func (r *Repository) QuerySpans(f SpanFilter) ([]Span, error) {
 		where = append(where, "trace_id = ?")
 		args = append(args, f.TraceID)
 	}
-	where, args, err := f.appendExprWhere(where, args)
+	where, args, err = f.appendExprWhere(where, args)
 	if err != nil {
 		return nil, err
 	}

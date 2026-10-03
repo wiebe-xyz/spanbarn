@@ -96,9 +96,12 @@ type SpanFilter struct {
 	// query it ANDs with the fields above. On a trace query a trace matches when
 	// one of its spans satisfies the whole expression. A From bound is required
 	// with it, so the scan stays inside a time window.
-	Expr   *filter.Expr
-	From   time.Time
-	To     time.Time
+	Expr *filter.Expr
+	From time.Time
+	To   time.Time
+	// calc resolves the project's calculated fields in Expr. The query methods
+	// of Repository set it; callers leave it alone.
+	calc   filter.Resolver
 	Limit  int
 	Offset int
 }

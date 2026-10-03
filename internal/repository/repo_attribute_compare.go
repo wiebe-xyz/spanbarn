@@ -22,6 +22,10 @@ type AttributeSetWindow struct {
 	// ValueCap is how many distinct values are kept per key. The rest of a key's
 	// values are summed into AttributeSetValues.Other.
 	ValueCap int
+
+	// calc resolves the project's calculated fields in Expr. ScanAttributeSet
+	// sets it.
+	calc filter.Resolver
 }
 
 // AttributeSetValues is the value distribution of one key over a span set.
@@ -43,7 +47,7 @@ func attributeSetCTE(w AttributeSetWindow) (string, []any, error) {
 	if w.From.IsZero() {
 		return "", nil, fmt.Errorf("%w: a time range (from) is required", filter.ErrInvalid)
 	}
-	pred, predArgs, err := filter.Compile(w.Expr)
+	pred, predArgs, err := filter.CompileWith(w.Expr, w.calc)
 	if err != nil {
 		return "", nil, err
 	}
@@ -98,6 +102,12 @@ func (r *Repository) ScanAttributeSet(ctx context.Context, w AttributeSetWindow)
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
+	var err error
+	if w.Expr != nil && len(w.Expr.Filters) > 0 {
+		if w.calc, err = r.calcResolver(w.ProjectID); err != nil {
+			return nil, err
+		}
+	}
 	cte, args, err := attributeSetCTE(w)
 	if err != nil {
 		return nil, err
