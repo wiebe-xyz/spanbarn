@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
@@ -138,13 +139,6 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 	}
 }
 
-// RunOnce executes a single retention cycle:
-//  1. Fetch spans older than full_retention_hours in batches, sample errors, aggregate, delete
-//  2. Delete old error_samples and aggregates
-//
-// Each cycle is capped at maxSpansPerCycle deletions to keep write-lock hold
-// times short. If the cap is reached, backlog_remains is logged so operators
-// know the next tick will continue draining.
 // lockBatch runs fn then sleeps for yield, giving the write scheduler a window
 // to drain high-priority writes between retention deletion batches.
 func (w *RetentionWorker) lockBatch(ctx context.Context, yield time.Duration, fn func()) {
@@ -157,117 +151,223 @@ func (w *RetentionWorker) lockBatch(ctx context.Context, yield time.Duration, fn
 	}
 }
 
+// cycleCutoffs holds the age cutoffs of one retention cycle.
+type cycleCutoffs struct {
+	now         time.Time
+	interesting time.Time
+	errors      time.Time
+	aggregates  time.Time
+	metrics     time.Time
+	logs        time.Time
+	errorLogs   time.Time
+}
+
+func newCycleCutoffs(now time.Time, cfg Config) cycleCutoffs {
+	return cycleCutoffs{
+		now:         now,
+		interesting: now.Add(-time.Duration(cfg.InterestingRetentionHours) * time.Hour),
+		errors:      now.Add(-time.Duration(cfg.ErrorRetentionDays) * 24 * time.Hour),
+		aggregates:  now.Add(-time.Duration(cfg.AggregateRetentionDays) * 24 * time.Hour),
+		metrics:     now.Add(-time.Duration(cfg.MetricsRetentionDays) * 24 * time.Hour),
+		logs:        now.Add(-time.Duration(cfg.LogRetentionHours) * time.Hour),
+		errorLogs:   now.Add(-time.Duration(cfg.ErrorLogRetentionDays) * 24 * time.Hour),
+	}
+}
+
+// cycleStats counts what one retention cycle did.
+type cycleStats struct {
+	spansAggregated      int64
+	errorsSampled        int64
+	spansDeleted         int64
+	boringDeleted        int64
+	errorSamplesDeleted  int64
+	aggregatesDeleted    int64
+	metricsDeleted       int64
+	rollupRowsDeleted    int64
+	rollupBacklogRemains bool
+	logsDeleted          int64
+	e2eUsersDeleted      int64
+	webSessionsDeleted   int64
+	projectTracesEvicted int64
+	backlogRemains       bool
+}
+
+func (c *cycleStats) attributes() []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.Int64("spans_aggregated", c.spansAggregated),
+		attribute.Int64("errors_sampled", c.errorsSampled),
+		attribute.Int64("spans_deleted", c.spansDeleted),
+		attribute.Int64("boring_deleted", c.boringDeleted),
+		attribute.Int64("error_samples_deleted", c.errorSamplesDeleted),
+		attribute.Int64("aggregates_deleted", c.aggregatesDeleted),
+		attribute.Int64("metrics_deleted", c.metricsDeleted),
+		attribute.Int64("rollup_rows_deleted", c.rollupRowsDeleted),
+		attribute.Bool("rollup_backlog_remains", c.rollupBacklogRemains),
+		attribute.Int64("logs_deleted", c.logsDeleted),
+		attribute.Int64("e2e_users_deleted", c.e2eUsersDeleted),
+		attribute.Int64("web_sessions_deleted", c.webSessionsDeleted),
+		attribute.Int64("project_traces_evicted", c.projectTracesEvicted),
+		attribute.Bool("backlog_remains", c.backlogRemains),
+	}
+}
+
+func (c *cycleStats) logArgs() []any {
+	return []any{
+		"spans_aggregated", c.spansAggregated,
+		"errors_sampled", c.errorsSampled,
+		"spans_deleted", c.spansDeleted,
+		"boring_deleted", c.boringDeleted,
+		"error_samples_deleted", c.errorSamplesDeleted,
+		"aggregates_deleted", c.aggregatesDeleted,
+		"metrics_deleted", c.metricsDeleted,
+		"rollup_rows_deleted", c.rollupRowsDeleted,
+		"rollup_backlog_remains", c.rollupBacklogRemains,
+		"logs_deleted", c.logsDeleted,
+		"e2e_users_deleted", c.e2eUsersDeleted,
+		"web_sessions_deleted", c.webSessionsDeleted,
+		"project_traces_evicted", c.projectTracesEvicted,
+		"backlog_remains", c.backlogRemains,
+	}
+}
+
+// RunOnce executes a single retention cycle:
+//  1. Fetch spans older than full_retention_hours in batches, sample errors, aggregate, delete
+//  2. Delete old error_samples and aggregates
+//
+// Each cycle is capped at maxSpansPerCycle deletions to keep write-lock hold
+// times short. If the cap is reached, backlog_remains is logged so operators
+// know the next tick will continue draining.
 func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "retention.cycle")
 	defer span.End()
 
 	cfg := w.applyDiskPressure(ctx, w.effectiveConfig())
+	cut := newCycleCutoffs(time.Now().UTC(), cfg)
+	var st cycleStats
 
-	now := time.Now().UTC()
-	interestingCutoff := now.Add(-time.Duration(cfg.InterestingRetentionHours) * time.Hour)
-	errorCutoff := now.Add(-time.Duration(cfg.ErrorRetentionDays) * 24 * time.Hour)
-	aggCutoff := now.Add(-time.Duration(cfg.AggregateRetentionDays) * 24 * time.Hour)
-	metricsCutoff := now.Add(-time.Duration(cfg.MetricsRetentionDays) * 24 * time.Hour)
-	logCutoff := now.Add(-time.Duration(cfg.LogRetentionHours) * time.Hour)
-	errorLogCutoff := now.Add(-time.Duration(cfg.ErrorLogRetentionDays) * 24 * time.Hour)
-
-	// Count spans pending deletion and warn if the backlog is unexpectedly large.
-	if pending, err := w.repo.CountSpansOlderThan(interestingCutoff); err != nil {
-		w.logger.Warn("retention: count pending spans failed", "error", err)
-	} else {
-		w.logger.Info("retention: pending spans", "count", pending)
-		if pending > largeBacklogWarn {
-			w.logger.Warn("retention: large backlog detected, drain will span multiple cycles",
-				"pending_spans", pending, "per_cycle_cap", maxSpansPerCycle)
-		}
-	}
-
+	w.warnOnLargeBacklog(cut.interesting)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	// Aggregate-then-delete all old spans (error/slow included),
-	// capped at maxSpansPerCycle total to bound write-lock hold time.
-	// The write mutex is held only for the duration of one batch, then released
-	// for cfg.BatchYield so the span-insert worker can drain the Redis queue.
-	var totalAggregated, totalSampled, spansDeleted int64
-	var backlogRemains bool
-	var batchErr error
+	if err := w.drainOldSpans(ctx, span, cfg, cut.interesting, &st); err != nil {
+		return err
+	}
+	if err := w.purgeSpanDerived(ctx, cfg, cut, &st); err != nil {
+		return err
+	}
+	if err := w.purgeHousekeeping(ctx, cut, &st); err != nil {
+		return err
+	}
+
+	span.SetAttributes(st.attributes()...)
+	w.logger.Info("retention cycle complete", st.logArgs()...)
+	return nil
+}
+
+// warnOnLargeBacklog counts spans pending deletion and warns if the backlog is
+// unexpectedly large.
+func (w *RetentionWorker) warnOnLargeBacklog(cutoff time.Time) {
+	pending, err := w.repo.CountSpansOlderThan(cutoff)
+	if err != nil {
+		w.logger.Warn("retention: count pending spans failed", "error", err)
+		return
+	}
+	w.logger.Info("retention: pending spans", "count", pending)
+	if pending > largeBacklogWarn {
+		w.logger.Warn("retention: large backlog detected, drain will span multiple cycles",
+			"pending_spans", pending, "per_cycle_cap", maxSpansPerCycle)
+	}
+}
+
+// drainOldSpans aggregate-then-deletes all old spans (error/slow included),
+// capped at maxSpansPerCycle total to bound write-lock hold time. The write
+// mutex is held only for the duration of one batch, then released for
+// cfg.BatchYield so the span-insert worker can drain the Redis queue.
+func (w *RetentionWorker) drainOldSpans(ctx context.Context, span trace.Span, cfg Config, cutoff time.Time, st *cycleStats) error {
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		batch, err := w.repo.GetSpansForAggregation(interestingCutoff, defaultBatchSize)
+		batch, err := w.repo.GetSpansForAggregation(cutoff, defaultBatchSize)
 		if err != nil {
 			return err
 		}
 		if len(batch) == 0 {
-			break
+			return nil
 		}
 
+		var batchErr error
 		w.lockBatch(ctx, cfg.BatchYield, func() {
-			var samples []repository.Span
-			for _, s := range batch {
-				if s.Status == "error" || s.DurationUs > cfg.SlowThresholdUS {
-					samples = append(samples, s)
-				}
-			}
-			if len(samples) > 0 {
-				if err := w.repo.InsertErrorSamples(samples); err != nil {
-					batchErr = err
-					return
-				}
-				totalSampled += int64(len(samples))
-			}
-
-			aggs, err := w.aggregator.AggregateSpans(ctx, batch)
-			if err != nil {
-				batchErr = err
-				return
-			}
-			if err := w.aggregator.Persist(ctx, aggs); err != nil {
-				batchErr = err
-				return
-			}
-			totalAggregated += int64(len(batch))
-
-			maxID := batch[0].ID
-			for _, s := range batch[1:] {
-				if s.ID > maxID {
-					maxID = s.ID
-				}
-			}
-			deleted, err := w.repo.DeleteSpansByMaxIDRefreshing(ctx, maxID)
-			if err != nil {
-				batchErr = err
-				return
-			}
-			spansDeleted += deleted
-			w.logger.Info("retention: batch deleted", "deleted", deleted, "cycle_total", spansDeleted)
+			batchErr = w.aggregateAndDelete(ctx, cfg, batch, st)
 		})
-
 		if batchErr != nil {
 			span.RecordError(batchErr)
 			span.SetStatus(codes.Error, batchErr.Error())
 			return batchErr
 		}
 		if len(batch) < defaultBatchSize {
-			break
+			return nil
 		}
-		if spansDeleted >= maxSpansPerCycle {
-			backlogRemains = true
-			break
+		if st.spansDeleted >= maxSpansPerCycle {
+			st.backlogRemains = true
+			return nil
 		}
 	}
+}
+
+// aggregateAndDelete samples the error and slow spans of one batch, aggregates
+// the batch and deletes it.
+func (w *RetentionWorker) aggregateAndDelete(ctx context.Context, cfg Config, batch []repository.Span, st *cycleStats) error {
+	var samples []repository.Span
+	for _, s := range batch {
+		if s.Status == "error" || s.DurationUs > cfg.SlowThresholdUS {
+			samples = append(samples, s)
+		}
+	}
+	if len(samples) > 0 {
+		if err := w.repo.InsertErrorSamples(samples); err != nil {
+			return err
+		}
+		st.errorsSampled += int64(len(samples))
+	}
+
+	aggs, err := w.aggregator.AggregateSpans(ctx, batch)
+	if err != nil {
+		return err
+	}
+	if err := w.aggregator.Persist(ctx, aggs); err != nil {
+		return err
+	}
+	st.spansAggregated += int64(len(batch))
+
+	maxID := batch[0].ID
+	for _, s := range batch[1:] {
+		if s.ID > maxID {
+			maxID = s.ID
+		}
+	}
+	deleted, err := w.repo.DeleteSpansByMaxIDRefreshing(ctx, maxID)
+	if err != nil {
+		return err
+	}
+	st.spansDeleted += deleted
+	w.logger.Info("retention: batch deleted", "deleted", deleted, "cycle_total", st.spansDeleted)
+	return nil
+}
+
+// purgeSpanDerived deletes the data derived from spans once it ages out:
+// boring spans, trace summaries, error samples, aggregates, metrics and rollups.
+func (w *RetentionWorker) purgeSpanDerived(ctx context.Context, cfg Config, cut cycleCutoffs, st *cycleStats) error {
+	var err error
 
 	// Fast boring-span cleanup: delete sampled-boring spans whose stamped
 	// expires_at has passed. Classification writes expires_at (= ingested_at +
 	// boring retention) at storage time, so this is a bounded seek of the partial
 	// idx_spans_expires index — it no longer scans the table classifying by
 	// status/duration_us (which had wedged the writer for 30s+).
-	boringDeleted, err := w.repo.DeleteExpiredBoringSpans(ctx, now)
-	if err != nil {
+	if st.boringDeleted, err = w.repo.DeleteExpiredBoringSpans(ctx, cut.now); err != nil {
 		return err
 	}
 
@@ -275,87 +375,49 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	// for boring-sampled traces (stamped expires_at), then non-error at the
 	// interesting cutoff and error traces at the error cutoff (matching
 	// error_samples), so the trace list drops rows exactly when its spans go.
-	if _, err := w.repo.DeleteExpiredTraceSummaries(ctx, now); err != nil {
+	if _, err := w.repo.DeleteExpiredTraceSummaries(ctx, cut.now); err != nil {
 		return err
 	}
-	if _, err := w.repo.DeleteTraceSummariesOlderThan(ctx, interestingCutoff, errorCutoff); err != nil {
+	if _, err := w.repo.DeleteTraceSummariesOlderThan(ctx, cut.interesting, cut.errors); err != nil {
 		return err
 	}
 
 	w.backfillTraceStructure(ctx)
 
-	errorSamplesDeleted, err := w.repo.DeleteErrorSamplesOlderThan(ctx, errorCutoff)
-	if err != nil {
+	if st.errorSamplesDeleted, err = w.repo.DeleteErrorSamplesOlderThan(ctx, cut.errors); err != nil {
 		return err
 	}
-	aggregatesDeleted, err := w.repo.DeleteAggregatesOlderThan(ctx, aggCutoff)
-	if err != nil {
+	if st.aggregatesDeleted, err = w.repo.DeleteAggregatesOlderThan(ctx, cut.aggregates); err != nil {
 		return err
 	}
-	metricsDeleted, err := w.repo.DeleteMetricsOlderThan(ctx, metricsCutoff)
-	if err != nil {
+	if st.metricsDeleted, err = w.repo.DeleteMetricsOlderThan(ctx, cut.metrics); err != nil {
 		return err
 	}
-	rollupRowsDeleted, rollupBacklog, err := w.deleteRollupTiers(ctx, cfg, now, maxRollupRowsPerCycle)
-	if err != nil {
+	st.rollupRowsDeleted, st.rollupBacklogRemains, err = w.deleteRollupTiers(ctx, cfg, cut.now, maxRollupRowsPerCycle)
+	return err
+}
+
+// purgeHousekeeping deletes aged logs, E2E users and web sessions, then
+// enforces the per-project retention caps.
+func (w *RetentionWorker) purgeHousekeeping(ctx context.Context, cut cycleCutoffs, st *cycleStats) error {
+	var err error
+	if st.logsDeleted, err = w.repo.DeleteLogsOlderThan(ctx, cut.logs, cut.errorLogs); err != nil {
 		return err
 	}
-	logsDeleted, err := w.repo.DeleteLogsOlderThan(ctx, logCutoff, errorLogCutoff)
-	if err != nil {
-		return err
-	}
-	e2eUsersDeleted, err := w.repo.DeleteExpiredE2EUsers(now)
-	if err != nil {
+	if st.e2eUsersDeleted, err = w.repo.DeleteExpiredE2EUsers(cut.now); err != nil {
 		return err
 	}
 	// Web sessions past their absolute cap are already unusable (the session
 	// middleware enforces absolute_expires_at); this prunes the rows.
-	webSessionsDeleted, err := w.repo.DeleteExpiredWebSessions(now)
-	if err != nil {
+	if st.webSessionsDeleted, err = w.repo.DeleteExpiredWebSessions(cut.now); err != nil {
 		return err
 	}
 
 	// Enforce per-project retention caps (max age in hours and/or max non-error
 	// trace count). Only shortens retention; never touches errors, pinned traces,
 	// or metrics.
-	projectTracesEvicted, err := w.evictPerProjectCaps(ctx, now)
-	if err != nil {
-		return err
-	}
-
-	span.SetAttributes(
-		attribute.Int64("spans_aggregated", totalAggregated),
-		attribute.Int64("errors_sampled", totalSampled),
-		attribute.Int64("spans_deleted", spansDeleted),
-		attribute.Int64("boring_deleted", boringDeleted),
-		attribute.Int64("error_samples_deleted", errorSamplesDeleted),
-		attribute.Int64("aggregates_deleted", aggregatesDeleted),
-		attribute.Int64("metrics_deleted", metricsDeleted),
-		attribute.Int64("rollup_rows_deleted", rollupRowsDeleted),
-		attribute.Bool("rollup_backlog_remains", rollupBacklog),
-		attribute.Int64("logs_deleted", logsDeleted),
-		attribute.Int64("e2e_users_deleted", e2eUsersDeleted),
-		attribute.Int64("web_sessions_deleted", webSessionsDeleted),
-		attribute.Int64("project_traces_evicted", projectTracesEvicted),
-		attribute.Bool("backlog_remains", backlogRemains),
-	)
-	w.logger.Info("retention cycle complete",
-		"spans_aggregated", totalAggregated,
-		"errors_sampled", totalSampled,
-		"spans_deleted", spansDeleted,
-		"boring_deleted", boringDeleted,
-		"error_samples_deleted", errorSamplesDeleted,
-		"aggregates_deleted", aggregatesDeleted,
-		"metrics_deleted", metricsDeleted,
-		"rollup_rows_deleted", rollupRowsDeleted,
-		"rollup_backlog_remains", rollupBacklog,
-		"logs_deleted", logsDeleted,
-		"e2e_users_deleted", e2eUsersDeleted,
-		"web_sessions_deleted", webSessionsDeleted,
-		"project_traces_evicted", projectTracesEvicted,
-		"backlog_remains", backlogRemains,
-	)
-	return nil
+	st.projectTracesEvicted, err = w.evictPerProjectCaps(ctx, cut.now)
+	return err
 }
 
 // Per-project retention caps live in project_caps.go; disk-pressure tiering

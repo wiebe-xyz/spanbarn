@@ -26,6 +26,9 @@ type projectHandlers struct {
 	cache    *cache.Cache
 }
 
+// projectIDHandler handles a request addressed to one project.
+type projectIDHandler func(w http.ResponseWriter, r *http.Request, id int64)
+
 func (h *projectHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/projects")
 	path = strings.TrimPrefix(path, "/")
@@ -51,53 +54,45 @@ func (h *projectHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(parts) == 1 {
-		if r.Method == http.MethodDelete {
-			h.handleDelete(w, r, id)
-			return
-		}
+	sub := ""
+	if len(parts) == 2 {
+		sub = parts[1]
+	}
+	byMethod := h.idRoutes(sub)
+	if byMethod == nil {
+		writeError(w, http.StatusNotFound, "not found", "")
+		return
+	}
+	handler, ok := byMethod[r.Method]
+	if !ok {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
 	}
+	handler(w, r, id)
+}
 
-	switch parts[1] {
+// idRoutes returns the handlers by HTTP method for /projects/{id}/{sub}, or nil
+// when sub is not a known sub-resource. An empty sub is the project itself.
+func (h *projectHandlers) idRoutes(sub string) map[string]projectIDHandler {
+	switch sub {
+	case "":
+		return map[string]projectIDHandler{http.MethodDelete: h.handleDelete}
 	case "approve":
-		if r.Method == http.MethodPost {
-			h.handleApprove(w, r, id)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
+		return map[string]projectIDHandler{http.MethodPost: h.handleApprove}
 	case "apikeys":
-		if r.Method == http.MethodGet {
-			h.handleListAPIKeys(w, r, id)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
+		return map[string]projectIDHandler{http.MethodGet: h.handleListAPIKeys}
 	case "e2e":
-		switch r.Method {
-		case http.MethodPost:
-			h.handleEnableE2E(w, r, id)
-		case http.MethodDelete:
-			h.handleDisableE2E(w, r, id)
-		default:
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return map[string]projectIDHandler{
+			http.MethodPost:   h.handleEnableE2E,
+			http.MethodDelete: h.handleDisableE2E,
 		}
-		return
 	case "verbose":
-		switch r.Method {
-		case http.MethodPost:
-			h.handleEnableVerbose(w, r, id)
-		case http.MethodDelete:
-			h.handleDisableVerbose(w, r, id)
-		default:
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return map[string]projectIDHandler{
+			http.MethodPost:   h.handleEnableVerbose,
+			http.MethodDelete: h.handleDisableVerbose,
 		}
-		return
 	}
-
-	writeError(w, http.StatusNotFound, "not found", "")
+	return nil
 }
 
 func (h *projectHandlers) handleList(w http.ResponseWriter, r *http.Request) {

@@ -157,36 +157,10 @@ func (s *QueryService) GetDatabaseQuerySpans(ctx context.Context, projectID int6
 	var parentIDs []string
 
 	for _, sp := range spans {
-		if sp.Kind != "client" && sp.Kind != "CLIENT" {
+		errMsg, ok := matchDatabaseQuerySpan(sp, pattern)
+		if !ok {
 			continue
 		}
-		attrs := parseAttrs(sp.Attributes)
-		if attrs == nil {
-			continue
-		}
-		dbSystem, _ := getStringAttr(attrs, "db.system")
-		if dbSystem == "" {
-			continue
-		}
-		statement, _ := getStringAttr(attrs, "db.statement")
-		var p string
-		if statement != "" {
-			p = NormalizeSQL(statement)
-		} else {
-			p = strings.ToLower(sp.Name)
-		}
-		if p != pattern {
-			continue
-		}
-
-		errMsg, _ := getStringAttr(attrs, "exception.message")
-		if errMsg == "" {
-			errMsg, _ = getStringAttr(attrs, "error.message")
-		}
-		if errMsg == "" {
-			errMsg, _ = getStringAttr(attrs, "db.error.message")
-		}
-
 		matches = append(matches, match{sp: sp, errorMessage: errMsg})
 		if sp.ParentSpanID != "" {
 			parentIDs = append(parentIDs, sp.ParentSpanID)
@@ -194,15 +168,7 @@ func (s *QueryService) GetDatabaseQuerySpans(ctx context.Context, projectID int6
 	}
 
 	// Second pass: batch-fetch parent spans to get caller name + service.
-	callerBySpanID := make(map[string]repository.Span)
-	if len(parentIDs) > 0 {
-		parents, err := s.repo.GetSpansBySpanIDs(parentIDs)
-		if err == nil {
-			for _, p := range parents {
-				callerBySpanID[p.SpanID] = p
-			}
-		}
-	}
+	callerBySpanID := s.callerSpans(parentIDs)
 
 	result := make([]DatabaseQuerySpan, 0, len(matches))
 	for _, m := range matches {
@@ -224,6 +190,57 @@ func (s *QueryService) GetDatabaseQuerySpans(ctx context.Context, projectID int6
 		result = append(result, dqs)
 	}
 	return result, nil
+}
+
+// matchDatabaseQuerySpan reports whether sp is a database client span whose
+// normalized statement (or lowercased name without a statement) equals pattern,
+// and returns the error message the span carries, if any.
+func matchDatabaseQuerySpan(sp repository.Span, pattern string) (errorMessage string, ok bool) {
+	if !isClientKind(sp.Kind) {
+		return "", false
+	}
+	attrs := parseAttrs(sp.Attributes)
+	if attrs == nil {
+		return "", false
+	}
+	if dbSystem, _ := getStringAttr(attrs, "db.system"); dbSystem == "" {
+		return "", false
+	}
+	p := strings.ToLower(sp.Name)
+	if statement, _ := getStringAttr(attrs, "db.statement"); statement != "" {
+		p = NormalizeSQL(statement)
+	}
+	if p != pattern {
+		return "", false
+	}
+	return firstStringAttr(attrs, "exception.message", "error.message", "db.error.message"), true
+}
+
+// firstStringAttr returns the first non-empty string attribute among keys.
+func firstStringAttr(attrs map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, _ := getStringAttr(attrs, k); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// callerSpans fetches the spans with the given ids by span id. A failing lookup
+// leaves the callers empty.
+func (s *QueryService) callerSpans(spanIDs []string) map[string]repository.Span {
+	callers := make(map[string]repository.Span)
+	if len(spanIDs) == 0 {
+		return callers
+	}
+	parents, err := s.repo.GetSpansBySpanIDs(spanIDs)
+	if err != nil {
+		return callers
+	}
+	for _, p := range parents {
+		callers[p.SpanID] = p
+	}
+	return callers
 }
 
 func parseAttrs(attrJSON string) map[string]any {

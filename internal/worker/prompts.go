@@ -20,84 +20,88 @@ func extractPromptRecords(spans []repository.Span) []repository.PromptRecord {
 		if system == "" {
 			continue
 		}
-
-		rec := repository.PromptRecord{
-			ProjectID:    sp.ProjectID,
-			TraceID:      sp.TraceID,
-			SpanID:       sp.SpanID,
-			ParentSpanID: sp.ParentSpanID,
-			Service:      sp.Service,
-			Name:         sp.Name,
-			GenAISystem:  system,
-			Model:        strAttr(attrs, "gen_ai.response.model"),
-			DurationUs:   sp.DurationUs,
-			Status:       sp.Status,
-			FinishReason: strAttr(attrs, "gen_ai.response.finish_reasons"),
-			StartTimeUs:  sp.StartTimeUs,
-		}
-
-		if rec.Model == "" {
-			rec.Model = strAttr(attrs, "gen_ai.request.model")
-		}
-
-		if v, ok := floatAttr(attrs, "gen_ai.request.temperature"); ok {
-			rec.Temperature = &v
-		}
-		if v, ok := intAttr(attrs, "gen_ai.request.max_tokens"); ok {
-			rec.MaxTokens = &v
-		}
-
-		rec.InputTokens = intAttrDefault(attrs, "gen_ai.usage.input_tokens", 0)
-		rec.OutputTokens = intAttrDefault(attrs, "gen_ai.usage.output_tokens", 0)
-		rec.TotalTokens = intAttrDefault(attrs, "gen_ai.usage.total_tokens", 0)
-		if rec.TotalTokens == 0 {
-			rec.TotalTokens = rec.InputTokens + rec.OutputTokens
-		}
-		rec.CachedInputTokens = intAttrDefault(attrs, "gen_ai.usage.input_tokens.cached", 0)
-		rec.ReasoningOutputTokens = intAttrDefault(attrs, "gen_ai.usage.output_tokens.reasoning", 0)
-
-		rec.InputCostUSD = floatAttrDefault(attrs, "gen_ai.usage.input_cost", 0)
-		rec.OutputCostUSD = floatAttrDefault(attrs, "gen_ai.usage.output_cost", 0)
-		rec.CostUSD = floatAttrDefault(attrs, "gen_ai.usage.total_cost",
-			floatAttrDefault(attrs, "gen_ai.usage.cost", rec.InputCostUSD+rec.OutputCostUSD))
-
-		rec.PromptTemplate = strAttr(attrs, "gen_ai.prompt.template")
-		rec.Outcome = strAttr(attrs, "gen_ai.outcome")
-
-		if v, ok := floatAttr(attrs, "gen_ai.quality_score"); ok {
-			rec.QualityScore = &v
-		}
-
-		rec.FeatureFlagKey = strAttr(attrs, "feature_flag.key")
-		rec.FeatureFlagVariant = strAttr(attrs, "feature_flag.variant")
-
-		rec.PromptBody, rec.ResponseBody = extractBodies(sp.Events)
-		// Fall back to gen_ai.prompt / gen_ai.completion span attributes when
-		// the provider doesn't emit events (e.g. OpenRouter).
-		if rec.PromptBody == "" {
-			if v := strAttr(attrs, "gen_ai.prompt"); v != "" {
-				rec.PromptBody = v
-			} else if v := strAttr(attrs, "span.input"); v != "" {
-				rec.PromptBody = v
-			}
-		}
-		if rec.ResponseBody == "" {
-			if v := strAttr(attrs, "gen_ai.completion"); v != "" {
-				rec.ResponseBody = v
-			} else if v := strAttr(attrs, "span.output"); v != "" {
-				rec.ResponseBody = v
-			}
-		}
-
-		if rec.PromptTemplate != "" {
-			rec.PromptHash = hashString(rec.PromptTemplate)
-		} else if rec.PromptBody != "" {
-			rec.PromptHash = hashString(rec.Name)
-		}
-
-		records = append(records, rec)
+		records = append(records, promptRecordFromSpan(sp, attrs, system))
 	}
 	return records
+}
+
+// promptRecordFromSpan builds the prompt record for one gen_ai span.
+func promptRecordFromSpan(sp repository.Span, attrs map[string]any, system string) repository.PromptRecord {
+	rec := repository.PromptRecord{
+		ProjectID:    sp.ProjectID,
+		TraceID:      sp.TraceID,
+		SpanID:       sp.SpanID,
+		ParentSpanID: sp.ParentSpanID,
+		Service:      sp.Service,
+		Name:         sp.Name,
+		GenAISystem:  system,
+		Model:        firstStrAttr(attrs, "gen_ai.response.model", "gen_ai.request.model"),
+		DurationUs:   sp.DurationUs,
+		Status:       sp.Status,
+		FinishReason: strAttr(attrs, "gen_ai.response.finish_reasons"),
+		StartTimeUs:  sp.StartTimeUs,
+	}
+
+	if v, ok := floatAttr(attrs, "gen_ai.request.temperature"); ok {
+		rec.Temperature = &v
+	}
+	if v, ok := intAttr(attrs, "gen_ai.request.max_tokens"); ok {
+		rec.MaxTokens = &v
+	}
+	if v, ok := floatAttr(attrs, "gen_ai.quality_score"); ok {
+		rec.QualityScore = &v
+	}
+
+	fillPromptUsage(&rec, attrs)
+
+	rec.PromptTemplate = strAttr(attrs, "gen_ai.prompt.template")
+	rec.Outcome = strAttr(attrs, "gen_ai.outcome")
+	rec.FeatureFlagKey = strAttr(attrs, "feature_flag.key")
+	rec.FeatureFlagVariant = strAttr(attrs, "feature_flag.variant")
+
+	rec.PromptBody, rec.ResponseBody = extractBodies(sp.Events)
+	// Fall back to span attributes when the provider doesn't emit events
+	// (e.g. OpenRouter).
+	if rec.PromptBody == "" {
+		rec.PromptBody = firstStrAttr(attrs, "gen_ai.prompt", "span.input")
+	}
+	if rec.ResponseBody == "" {
+		rec.ResponseBody = firstStrAttr(attrs, "gen_ai.completion", "span.output")
+	}
+
+	if rec.PromptTemplate != "" {
+		rec.PromptHash = hashString(rec.PromptTemplate)
+	} else if rec.PromptBody != "" {
+		rec.PromptHash = hashString(rec.Name)
+	}
+	return rec
+}
+
+// fillPromptUsage sets the token counts and costs from the usage attributes.
+func fillPromptUsage(rec *repository.PromptRecord, attrs map[string]any) {
+	rec.InputTokens = intAttrDefault(attrs, "gen_ai.usage.input_tokens", 0)
+	rec.OutputTokens = intAttrDefault(attrs, "gen_ai.usage.output_tokens", 0)
+	rec.TotalTokens = intAttrDefault(attrs, "gen_ai.usage.total_tokens", 0)
+	if rec.TotalTokens == 0 {
+		rec.TotalTokens = rec.InputTokens + rec.OutputTokens
+	}
+	rec.CachedInputTokens = intAttrDefault(attrs, "gen_ai.usage.input_tokens.cached", 0)
+	rec.ReasoningOutputTokens = intAttrDefault(attrs, "gen_ai.usage.output_tokens.reasoning", 0)
+
+	rec.InputCostUSD = floatAttrDefault(attrs, "gen_ai.usage.input_cost", 0)
+	rec.OutputCostUSD = floatAttrDefault(attrs, "gen_ai.usage.output_cost", 0)
+	rec.CostUSD = floatAttrDefault(attrs, "gen_ai.usage.total_cost",
+		floatAttrDefault(attrs, "gen_ai.usage.cost", rec.InputCostUSD+rec.OutputCostUSD))
+}
+
+// firstStrAttr returns the first non-empty string attribute among keys.
+func firstStrAttr(attrs map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v := strAttr(attrs, k); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func parseAttrs(raw string) map[string]any {

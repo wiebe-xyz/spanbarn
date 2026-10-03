@@ -31,58 +31,91 @@ func (s *QueryService) GetServiceMap(ctx context.Context, projectID int64, from,
 		return nil, err
 	}
 
-	type nodeStats struct {
-		count, errorCount int64
-	}
-	nodes := make(map[string]*nodeStats)
+	b := newServiceMapBuilder()
+	b.addSpans(spans)
+	b.addCrossServiceCalls(spans)
+	result := b.build()
 
-	addNode := func(name string, sp repository.Span) {
-		n, ok := nodes[name]
-		if !ok {
-			n = &nodeStats{}
-			nodes[name] = n
-		}
-		n.count++
-		if sp.Status == "error" {
-			n.errorCount++
-		}
-	}
+	cache.Set(s.cache, ctx, cacheKey, result)
+	return result, nil
+}
 
-	type edgeKey struct{ source, target, targetType string }
-	type edgeStats struct {
-		count, errorCount int64
-	}
-	edges := make(map[edgeKey]*edgeStats)
+// callStats counts spans and the errors among them.
+type callStats struct {
+	count, errorCount int64
+}
 
-	addEdge := func(source, target, targetType string, sp repository.Span) {
-		k := edgeKey{source, target, targetType}
-		e, ok := edges[k]
-		if !ok {
-			e = &edgeStats{}
-			edges[k] = e
-		}
-		e.count++
-		if sp.Status == "error" {
-			e.errorCount++
-		}
+func (c *callStats) record(sp repository.Span) {
+	c.count++
+	if sp.Status == "error" {
+		c.errorCount++
 	}
+}
 
+// errorRate is the share of errors, or 0 without any call.
+func (c *callStats) errorRate() float64 {
+	if c.count == 0 {
+		return 0
+	}
+	return float64(c.errorCount) / float64(c.count)
+}
+
+type serviceMapEdgeKey struct{ source, target, targetType string }
+
+// serviceMapBuilder accumulates the nodes and edges of a service map.
+type serviceMapBuilder struct {
+	nodes map[string]*callStats
+	edges map[serviceMapEdgeKey]*callStats
+}
+
+func newServiceMapBuilder() *serviceMapBuilder {
+	return &serviceMapBuilder{
+		nodes: make(map[string]*callStats),
+		edges: make(map[serviceMapEdgeKey]*callStats),
+	}
+}
+
+func (b *serviceMapBuilder) node(name string) *callStats {
+	n, ok := b.nodes[name]
+	if !ok {
+		n = &callStats{}
+		b.nodes[name] = n
+	}
+	return n
+}
+
+func (b *serviceMapBuilder) addEdge(source, target, targetType string, sp repository.Span) {
+	k := serviceMapEdgeKey{source, target, targetType}
+	e, ok := b.edges[k]
+	if !ok {
+		e = &callStats{}
+		b.edges[k] = e
+	}
+	e.record(sp)
+}
+
+// addSpans counts every span against its service and turns client spans into
+// edges towards the dependency they call.
+func (b *serviceMapBuilder) addSpans(spans []repository.Span) {
 	for _, sp := range spans {
 		if sp.Service != "" {
-			addNode(sp.Service, sp)
+			b.node(sp.Service).record(sp)
 		}
-
-		if sp.Kind == "client" || sp.Kind == "CLIENT" {
-			target, targetType := extractDependencyTarget(sp.Attributes)
-			if target != "" && sp.Service != "" {
-				addEdge(sp.Service, target, targetType, sp)
-				if _, ok := nodes[target]; !ok {
-					nodes[target] = &nodeStats{}
-				}
-			}
+		if !isClientKind(sp.Kind) {
+			continue
 		}
+		target, targetType := extractDependencyTarget(sp.Attributes)
+		if target == "" || sp.Service == "" {
+			continue
+		}
+		b.addEdge(sp.Service, target, targetType, sp)
+		b.node(target) // make sure the dependency exists as a node
 	}
+}
 
+// addCrossServiceCalls adds an edge for every span whose parent belongs to
+// another service.
+func (b *serviceMapBuilder) addCrossServiceCalls(spans []repository.Span) {
 	spanByID := make(map[string]*repository.Span, len(spans))
 	for i := range spans {
 		spanByID[spans[i].SpanID] = &spans[i]
@@ -95,45 +128,38 @@ func (s *QueryService) GetServiceMap(ctx context.Context, projectID int64, from,
 		if !ok || parent.Service == "" || sp.Service == "" || parent.Service == sp.Service {
 			continue
 		}
-		addEdge(parent.Service, sp.Service, "service", *parent)
+		b.addEdge(parent.Service, sp.Service, "service", *parent)
 	}
+}
 
+// build returns the map with nodes and edges ordered by volume.
+func (b *serviceMapBuilder) build() *ServiceMap {
 	result := &ServiceMap{}
 
-	for name, st := range nodes {
-		var errorRate float64
-		if st.count > 0 {
-			errorRate = float64(st.errorCount) / float64(st.count)
-		}
+	for name, st := range b.nodes {
 		result.Nodes = append(result.Nodes, ServiceMapNode{
 			ID:         name,
 			SpanCount:  st.count,
 			ErrorCount: st.errorCount,
-			ErrorRate:  errorRate,
+			ErrorRate:  st.errorRate(),
 		})
 	}
 	sort.Slice(result.Nodes, func(i, j int) bool {
 		return result.Nodes[i].SpanCount > result.Nodes[j].SpanCount
 	})
 
-	for k, st := range edges {
-		var errorRate float64
-		if st.count > 0 {
-			errorRate = float64(st.errorCount) / float64(st.count)
-		}
+	for k, st := range b.edges {
 		result.Edges = append(result.Edges, ServiceMapEdge{
 			Source:     k.source,
 			Target:     k.target,
 			TargetType: k.targetType,
 			CallCount:  st.count,
 			ErrorCount: st.errorCount,
-			ErrorRate:  errorRate,
+			ErrorRate:  st.errorRate(),
 		})
 	}
 	sort.Slice(result.Edges, func(i, j int) bool {
 		return result.Edges[i].CallCount > result.Edges[j].CallCount
 	})
-
-	cache.Set(s.cache, ctx, cacheKey, result)
-	return result, nil
+	return result
 }

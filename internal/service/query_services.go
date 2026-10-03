@@ -118,71 +118,56 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 		return nil, err
 	}
 
-	type svcStats struct {
-		count, errorCount, p50Sum, p95Sum, p99Sum, buckets int64
-	}
-	byService := make(map[string]*svcStats)
-	for _, a := range aggs {
-		st, ok := byService[a.Service]
-		if !ok {
-			st = &svcStats{}
-			byService[a.Service] = st
-		}
-		st.count += a.Count
-		st.errorCount += a.ErrorCount
-		st.p50Sum += a.P50Us * a.Count
-		st.p95Sum += a.P95Us * a.Count
-		st.p99Sum += a.P99Us * a.Count
-		st.buckets += a.Count
-	}
-
 	merged := make(map[string]*aggStats)
-
-	for svc, st := range byService {
-		merged[svc] = &aggStats{
-			count:      st.count,
-			errorCount: st.errorCount,
-			aggP50Sum:  st.p50Sum,
-			aggP95Sum:  st.p95Sum,
-			aggP99Sum:  st.p99Sum,
-			aggCount:   st.buckets,
-		}
+	for _, a := range aggs {
+		statsFor(merged, a.Service).foldAggregate(a.Count, a.ErrorCount, a.P50Us, a.P95Us, a.P99Us)
 	}
 
 	// Merge recent in-memory aggregates (or fall back to raw spans when no
 	// accumulator is wired — reader pods and standalone mode).
 	if fbFrom, ok := narrowFallback(from, to); ok {
-		if s.accumulator != nil {
-			for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
-				ProjectID: projectID, Kind: kind, From: fbFrom, To: to,
-			}) {
-				ms := merged[a.Service]
-				if ms == nil {
-					ms = &aggStats{}
-					merged[a.Service] = ms
-				}
-				ms.foldAggregate(a.Count, a.ErrorCount, a.P50Us, a.P95Us, a.P99Us)
-			}
-		} else {
-			spanStats, err := s.repo.QueryServiceStatsFromSpans(projectID, fbFrom, to, kind)
-			if err != nil {
-				s.logger.Warn("failed to query service stats from spans", "error", err)
-			}
-			for _, ss := range spanStats {
-				ms := merged[ss.Service]
-				if ms == nil {
-					ms = &aggStats{}
-					merged[ss.Service] = ms
-				}
-				ms.foldSpanFallback(ss.Count, ss.ErrorCount, ss.P50Us, ss.P95Us, ss.P99Us)
-			}
-		}
+		s.foldRecentServiceStats(merged, projectID, kind, fbFrom, to)
 	}
 
-	sr := s.projectSampleRate(ctx, projectID)
+	return serviceSummaries(merged, s.projectSampleRate(ctx, projectID)), nil
+}
+
+// statsFor returns the stats entry for key, creating it when missing.
+func statsFor(m map[string]*aggStats, key string) *aggStats {
+	st := m[key]
+	if st == nil {
+		st = &aggStats{}
+		m[key] = st
+	}
+	return st
+}
+
+// foldRecentServiceStats adds the not yet persisted window into merged, from
+// the in-memory accumulator or, without one, from the raw spans.
+func (s *QueryService) foldRecentServiceStats(merged map[string]*aggStats, projectID int64, kind string, from, to time.Time) {
+	if s.accumulator != nil {
+		for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
+			ProjectID: projectID, Kind: kind, From: from, To: to,
+		}) {
+			statsFor(merged, a.Service).foldAggregate(a.Count, a.ErrorCount, a.P50Us, a.P95Us, a.P99Us)
+		}
+		return
+	}
+	spanStats, err := s.repo.QueryServiceStatsFromSpans(projectID, from, to, kind)
+	if err != nil {
+		s.logger.Warn("failed to query service stats from spans", "error", err)
+	}
+	for _, ss := range spanStats {
+		statsFor(merged, ss.Service).foldSpanFallback(ss.Count, ss.ErrorCount, ss.P50Us, ss.P95Us, ss.P99Us)
+	}
+}
+
+// serviceSummaries turns the per-service stats into summaries, inflating counts
+// for the project's sample rate and ordering by span count.
+func serviceSummaries(merged map[string]*aggStats, sampleRate float64) []ServiceSummary {
 	result := make([]ServiceSummary, 0, len(merged))
 	for svc, ms := range merged {
-		effective := inflateCount(ms.count, ms.errorCount, sr)
+		effective := inflateCount(ms.count, ms.errorCount, sampleRate)
 		var errorRate float64
 		if effective > 0 {
 			errorRate = float64(ms.errorCount) / float64(effective)
@@ -209,8 +194,7 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].SpanCount > result[j].SpanCount
 	})
-
-	return result, nil
+	return result
 }
 
 // ListOperations returns aggregated metrics per operation for a service.

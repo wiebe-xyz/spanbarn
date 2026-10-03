@@ -11,61 +11,62 @@ var (
 	BuildTime = "unknown"
 )
 
+// commandTable maps each subcommand to its implementation.
+var commandTable = map[string]func(args []string) error{
+	"login":       cmdLogin,
+	"init":        cmdInit,
+	"projects":    cmdProjects,
+	"services":    cmdServices,
+	"flows":       cmdFlows,
+	"traces":      cmdTraces,
+	"trace":       cmdTrace,
+	"logs":        cmdLogs,
+	"metrics":     cmdMetrics,
+	"prompts":     cmdPrompts,
+	"deps":        cmdDeps,
+	"database":    cmdDatabase,
+	"service-map": cmdServiceMap,
+	"tui":         cmdTUI,
+}
+
 func main() {
-	if len(os.Args) < 2 {
+	if code := run(os.Args[1:]); code != 0 {
+		os.Exit(code)
+	}
+}
+
+// run executes the subcommand named by args[0] and returns the process exit
+// code.
+func run(args []string) int {
+	if len(args) < 1 {
 		printUsage()
-		os.Exit(1)
+		return 1
 	}
 
-	var err error
-	switch os.Args[1] {
-	case "login":
-		err = cmdLogin(os.Args[2:])
-	case "init":
-		err = cmdInit(os.Args[2:])
-	case "projects":
-		err = cmdProjects(os.Args[2:])
-	case "services":
-		err = cmdServices(os.Args[2:])
-	case "flows":
-		err = cmdFlows(os.Args[2:])
-	case "traces":
-		err = cmdTraces(os.Args[2:])
-	case "trace":
-		err = cmdTrace(os.Args[2:])
-	case "logs":
-		err = cmdLogs(os.Args[2:])
-	case "metrics":
-		err = cmdMetrics(os.Args[2:])
-	case "prompts":
-		err = cmdPrompts(os.Args[2:])
-	case "deps":
-		err = cmdDeps(os.Args[2:])
-	case "database":
-		err = cmdDatabase(os.Args[2:])
-	case "service-map":
-		err = cmdServiceMap(os.Args[2:])
-	case "tui":
-		err = cmdTUI(os.Args[2:])
+	switch args[0] {
 	case "version", "--version", "-v":
 		fmt.Printf("sb %s (built %s)\n", Version, BuildTime)
-		return
+		return 0
 	case "help", "--help", "-h":
 		printUsage()
-		return
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
-		printUsage()
-		os.Exit(1)
+		return 0
 	}
 
-	if err != nil {
+	command, ok := commandTable[args[0]]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", args[0])
+		printUsage()
+		return 1
+	}
+
+	if err := command(args[1:]); err != nil {
 		if err == flag.ErrHelp {
-			return
+			return 0
 		}
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func printUsage() {

@@ -166,35 +166,9 @@ func (h *alertHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.ProjectID == 0 || req.Type == "" {
-		writeError(w, http.StatusBadRequest, "projectId and type are required", "")
+	if msg := normalizeCreateAlertRequest(&req); msg != "" {
+		writeError(w, http.StatusBadRequest, msg, "")
 		return
-	}
-	if !validateAlertType(req.Type) {
-		writeError(w, http.StatusBadRequest, "type must be 'latency', 'error_rate', or 'metric_threshold'", "")
-		return
-	}
-	if req.Type == "metric_threshold" {
-		if req.MetricName == "" {
-			writeError(w, http.StatusBadRequest, "metricName is required for metric_threshold alerts", "")
-			return
-		}
-		if req.MetricAgg == "" {
-			req.MetricAgg = "last"
-		}
-		if !validMetricAggs[req.MetricAgg] {
-			writeError(w, http.StatusBadRequest, "metricAgg must be one of rate, avg, p95, last", "")
-			return
-		}
-	} else if req.Service == "" {
-		writeError(w, http.StatusBadRequest, "service is required for this alert type", "")
-		return
-	}
-	if req.ComparisonWindow <= 0 {
-		req.ComparisonWindow = 10
-	}
-	if req.CooldownMinutes <= 0 {
-		req.CooldownMinutes = 30
 	}
 
 	alert := service.Alert{
@@ -220,19 +194,56 @@ func (h *alertHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch the created alert to return full response.
-	alerts, err := h.svc.List(req.ProjectID)
-	if err != nil {
-		writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
+	if created, ok := h.findAlert(req.ProjectID, id); ok {
+		writeJSON(w, http.StatusCreated, toAlertResponse(created))
 		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
+}
+
+// findAlert looks up one alert of a project by id.
+func (h *alertHandlers) findAlert(projectID, id int64) (service.Alert, bool) {
+	alerts, err := h.svc.List(projectID)
+	if err != nil {
+		return service.Alert{}, false
 	}
 	for _, a := range alerts {
 		if a.ID == id {
-			writeJSON(w, http.StatusCreated, toAlertResponse(a))
-			return
+			return a, true
 		}
 	}
+	return service.Alert{}, false
+}
 
-	writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
+// normalizeCreateAlertRequest validates a create request and fills in its
+// defaults. It returns the client error message, or "" when the request is valid.
+func normalizeCreateAlertRequest(req *alertRequest) string {
+	if req.ProjectID == 0 || req.Type == "" {
+		return "projectId and type are required"
+	}
+	if !validateAlertType(req.Type) {
+		return "type must be 'latency', 'error_rate', or 'metric_threshold'"
+	}
+	if req.Type == "metric_threshold" {
+		if req.MetricName == "" {
+			return "metricName is required for metric_threshold alerts"
+		}
+		if req.MetricAgg == "" {
+			req.MetricAgg = "last"
+		}
+		if !validMetricAggs[req.MetricAgg] {
+			return "metricAgg must be one of rate, avg, p95, last"
+		}
+	} else if req.Service == "" {
+		return "service is required for this alert type"
+	}
+	if req.ComparisonWindow <= 0 {
+		req.ComparisonWindow = 10
+	}
+	if req.CooldownMinutes <= 0 {
+		req.CooldownMinutes = 30
+	}
+	return ""
 }
 
 func (h *alertHandlers) handleUpdate(w http.ResponseWriter, r *http.Request, id int64) {

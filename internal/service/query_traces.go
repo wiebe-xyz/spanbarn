@@ -188,60 +188,14 @@ func (s *QueryService) GetTrace(ctx context.Context, traceID string, projectID i
 		spans = append(spans, errorSpans...)
 	}
 
-	if projectID != 0 {
-		filtered := make([]repository.Span, 0, len(spans))
-		for _, sp := range spans {
-			if sp.ProjectID == projectID {
-				filtered = append(filtered, sp)
-			}
-		}
-		spans = filtered
-	}
-
-	seen := make(map[string]bool)
-	var unique []repository.Span
-	for _, sp := range spans {
-		if !seen[sp.SpanID] {
-			seen[sp.SpanID] = true
-			unique = append(unique, sp)
-		}
-	}
-	spans = unique
-
+	spans = dedupeSpansByID(filterSpansByProject(spans, projectID))
 	if len(spans) == 0 {
 		return nil, nil
 	}
 
-	var root *repository.Span
-	for i := range spans {
-		if spans[i].ParentSpanID == "" {
-			root = &spans[i]
-			break
-		}
-	}
-	if root == nil {
-		root = &spans[0]
-	}
-
+	root := traceRootSpan(spans)
 	totalSpans := len(spans)
-	truncated := false
-	if totalSpans > MaxTraceDetailSpans {
-		// Always keep the root in the truncated view; otherwise the UI loses
-		// the trace's identity. Stable order is start_time_us (set by repo).
-		rootID := root.SpanID
-		spans = spans[:MaxTraceDetailSpans]
-		hasRoot := false
-		for i := range spans {
-			if spans[i].SpanID == rootID {
-				hasRoot = true
-				break
-			}
-		}
-		if !hasRoot {
-			spans[0] = *root
-		}
-		truncated = true
-	}
+	spans, truncated := truncateTraceSpans(spans, root)
 
 	return &TraceDetail{
 		TraceID:    traceID,
@@ -252,4 +206,61 @@ func (s *QueryService) GetTrace(ctx context.Context, traceID string, projectID i
 		TotalSpans: totalSpans,
 		Truncated:  truncated,
 	}, nil
+}
+
+// filterSpansByProject keeps the spans of one project. A zero projectID keeps
+// all spans.
+func filterSpansByProject(spans []repository.Span, projectID int64) []repository.Span {
+	if projectID == 0 {
+		return spans
+	}
+	filtered := make([]repository.Span, 0, len(spans))
+	for _, sp := range spans {
+		if sp.ProjectID == projectID {
+			filtered = append(filtered, sp)
+		}
+	}
+	return filtered
+}
+
+// dedupeSpansByID keeps the first span of each span id.
+func dedupeSpansByID(spans []repository.Span) []repository.Span {
+	seen := make(map[string]bool, len(spans))
+	var unique []repository.Span
+	for _, sp := range spans {
+		if !seen[sp.SpanID] {
+			seen[sp.SpanID] = true
+			unique = append(unique, sp)
+		}
+	}
+	return unique
+}
+
+// traceRootSpan returns the first span without a parent, or the first span when
+// every span has one. spans must not be empty.
+func traceRootSpan(spans []repository.Span) *repository.Span {
+	for i := range spans {
+		if spans[i].ParentSpanID == "" {
+			return &spans[i]
+		}
+	}
+	return &spans[0]
+}
+
+// truncateTraceSpans caps spans at MaxTraceDetailSpans and reports whether it
+// cut any. The root always stays in the truncated view; otherwise the UI loses
+// the trace's identity. Stable order is start_time_us (set by repo).
+func truncateTraceSpans(spans []repository.Span, root *repository.Span) ([]repository.Span, bool) {
+	if len(spans) <= MaxTraceDetailSpans {
+		return spans, false
+	}
+	rootSpan := *root
+	spans = spans[:MaxTraceDetailSpans]
+	for i := range spans {
+		if spans[i].SpanID == rootSpan.SpanID {
+			return spans, true
+		}
+	}
+	spans[0] = rootSpan
+	return spans, true
 }

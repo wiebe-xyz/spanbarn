@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -371,90 +370,6 @@ func (h *queryHandlers) handleWebVitalsTimeseries(w http.ResponseWriter, r *http
 	}
 
 	writeJSON(w, http.StatusOK, ts)
-}
-
-// routeQuery is a handler that dispatches query routes based on URL path pattern.
-// It handles the following patterns:
-//
-//	/api/v1/services
-//	/api/v1/services/{service}/operations
-//	/api/v1/services/{service}/operations/{operation}/timeseries
-//	/api/v1/traces
-//	/api/v1/traces/{traceId}
-//	/api/v1/dependencies
-func (h *queryHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Use RawPath to preserve %2F in operation names; fall back to Path
-	path := r.URL.RawPath
-	if path == "" {
-		path = r.URL.Path
-	}
-	path = strings.TrimSuffix(path, "/")
-	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-
-	// parts[0]=api, parts[1]=v1, parts[2]=resource...
-	if len(parts) < 3 {
-		writeError(w, http.StatusNotFound, "not found", "")
-		return
-	}
-
-	resource := parts[2]
-
-	switch resource {
-	case "services":
-		switch {
-		case len(parts) == 3:
-			// GET /api/v1/services
-			h.handleServices(w, r)
-		case len(parts) == 5 && parts[4] == "operations":
-			// GET /api/v1/services/{service}/operations
-			h.handleOperations(w, r)
-		case len(parts) >= 7 && parts[4] == "operations" && parts[len(parts)-1] == "timeseries":
-			// GET /api/v1/services/{service}/operations/{operation}/timeseries
-			h.handleTimeseries(w, r)
-		default:
-			writeError(w, http.StatusNotFound, "not found", "")
-		}
-	case "traces":
-		switch {
-		case len(parts) == 3:
-			// GET /api/v1/traces
-			h.handleTraces(w, r)
-		case len(parts) == 4 && parts[3] == "groups":
-			// GET /api/v1/traces/groups
-			h.handleTraceGroups(w, r)
-		case len(parts) == 4:
-			// GET /api/v1/traces/{traceId}
-			h.handleTraceDetail(w, r)
-		default:
-			writeError(w, http.StatusNotFound, "not found", "")
-		}
-	case "dependencies":
-		switch {
-		case len(parts) == 3:
-			h.handleDependencies(w, r)
-		case len(parts) == 4 && parts[3] == "traces":
-			h.handleDependencyTraces(w, r)
-		default:
-			writeError(w, http.StatusNotFound, "not found", "")
-		}
-	case "database":
-		if len(parts) == 3 {
-			h.handleDatabaseQueries(w, r)
-		} else {
-			writeError(w, http.StatusNotFound, "not found", "")
-		}
-	case "prompts":
-		switch {
-		case len(parts) == 3:
-			h.handlePrompts(w, r)
-		case len(parts) == 4 && parts[3] == "detail":
-			h.handlePromptDetail(w, r)
-		default:
-			writeError(w, http.StatusNotFound, "not found", "")
-		}
-	default:
-		writeError(w, http.StatusNotFound, "not found", "")
-	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
