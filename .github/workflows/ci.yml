@@ -85,9 +85,17 @@ jobs:
           export PATH="$RUNNER_TEMP/corepack-bin:$PATH"
           echo "$RUNNER_TEMP/corepack-bin" >> "$GITHUB_PATH"
           pnpm install --frozen-lockfile
+          pnpm --filter @spanbarn/web --if-present run lint:ratchet-test
           pnpm -r --if-present run lint
           pnpm -r --if-present run test
           pnpm -r --if-present run build
+
+      - name: TypeScript typecheck
+        if: steps.detect.outputs.node_manifests != '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm -r --if-present run typecheck
 
       - name: Python checks
         if: steps.detect.outputs.python_manifests != '0'
