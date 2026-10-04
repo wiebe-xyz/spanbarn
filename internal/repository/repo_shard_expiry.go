@@ -34,6 +34,9 @@ type ShardExpiry struct {
 	Retired     int
 	Deleted     int
 	RowsTrimmed int64
+	// MainTablesDropped counts the heavy tables main dropped after row
+	// retention emptied them.
+	MainTablesDropped int
 }
 
 // ExpireShards applies retention to the shard files. A shard whose whole
@@ -41,7 +44,8 @@ type ShardExpiry struct {
 // error-trace and pinned logs are copied to kept_logs; a shard retiring for
 // shardDeleteDelay is deleted. A window shorter than one period (the disk
 // ladder cut it) also deletes the rows older than the cutoff inside the shard
-// that straddles it. Without shards it does nothing.
+// that straddles it. Main's copy of a sharded family's table is dropped once
+// it is empty. Without shards it does nothing.
 func (r *Repository) ExpireShards(ctx context.Context, now time.Time, c ShardCutoffs) (ShardExpiry, error) {
 	var out ShardExpiry
 	m := r.shards
@@ -60,7 +64,8 @@ func (r *Repository) ExpireShards(ctx context.Context, now time.Time, c ShardCut
 			return out, err
 		}
 	}
-	return out, nil
+	out.MainTablesDropped, err = r.retireMainTables(ctx, now)
+	return out, err
 }
 
 // expireShard applies retention to one shard and counts what it did in out.

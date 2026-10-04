@@ -221,6 +221,12 @@ func (r *Repository) SetDeleteBatchYield(d time.Duration) { r.deleteBatchYield =
 // and — unlike reading the projects table — also covers rows of deleted
 // projects. table is a trusted internal constant, never user input.
 func (r *Repository) distinctProjectIDs(ctx context.Context, table string) ([]int64, error) {
+	if heavyFamily(TableFamily(table)) {
+		// Main drops a sharded family's table once it is empty.
+		if has, err := hasTable(ctx, r.db, table); err != nil || !has {
+			return nil, err
+		}
+	}
 	rows, err := r.db.QueryContext(ctx, `
 		WITH RECURSIVE dp(pid) AS (
 			SELECT MIN(project_id) FROM `+table+`
