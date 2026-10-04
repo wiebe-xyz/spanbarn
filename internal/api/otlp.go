@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
@@ -73,6 +74,26 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 		span.SetAttributes(attribute.Int("span_count", len(records)))
 	}
 
+	s.acceptSpans(ctx, records)
+
+	writeOTLPResponse(w, r, &collectorpb.ExportTraceServiceResponse{})
+}
+
+// countIngestedSpans adds n spans accepted from a client to
+// spans_ingested_total. Every client-facing trace endpoint (OTLP HTTP, OTLP
+// gRPC, the JSON ingest API) calls it. Spans forwarded by ingest pods to
+// /internal/v1/ingest are left out: the ingest pod already counted them.
+func (s *Server) countIngestedSpans(n int) {
+	if s.metrics != nil && n > 0 {
+		s.metrics.SpansIngested.Add(float64(n))
+	}
+}
+
+// acceptSpans counts OTLP spans and hands them to the trace buffer, or straight
+// to the ingest queue when tail sampling is off.
+func (s *Server) acceptSpans(ctx context.Context, records []model.SpanRecord) {
+	s.countIngestedSpans(len(records))
+
 	if s.traceBuffer != nil {
 		// Tail-based sampling: add to the trace buffer and let it decide
 		// per-trace after the configured TTL. Error traces always pass.
@@ -86,15 +107,16 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 		for _, rec := range records {
 			s.traceBuffer.Add(rec)
 		}
-	} else {
-		_, enqueueSpan := apiTracer.Start(ctx, "api.otlp.enqueue")
-		for _, rec := range records {
-			s.ingest.Enqueue(rec)
-		}
-		enqueueSpan.End()
+		return
 	}
-
-	writeOTLPResponse(w, r, &collectorpb.ExportTraceServiceResponse{})
+	if s.ingest == nil {
+		return
+	}
+	_, enqueueSpan := apiTracer.Start(ctx, "api.otlp.enqueue")
+	for _, rec := range records {
+		s.ingest.Enqueue(rec)
+	}
+	enqueueSpan.End()
 }
 
 // otlpToSpanRecords converts an OTLP ExportTraceServiceRequest into SpanRecords

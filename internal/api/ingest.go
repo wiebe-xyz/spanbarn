@@ -80,6 +80,9 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 
 	span.SetAttributes(attribute.Int("span_count", len(records)))
 
+	// The JSON API enqueues directly and skips the trace buffer, as it always
+	// has; it still counts toward spans_ingested_total.
+	s.countIngestedSpans(len(records))
 	for _, rec := range records {
 		s.ingest.Enqueue(rec)
 	}

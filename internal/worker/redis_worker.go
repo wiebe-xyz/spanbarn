@@ -220,6 +220,7 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 	}
 
 	if len(interesting) == 0 {
+		w.countProcessed(len(spans))
 		return
 	}
 
@@ -249,9 +250,11 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 		return
 	}
 
-	w.metrics.mu.Lock()
-	w.metrics.ProcessedCount += int64(len(interesting))
-	w.metrics.mu.Unlock()
+	// Boring spans that classification skipped were handled too: aggregated
+	// and deliberately not stored. Counting the whole batch keeps
+	// spans_processed_total comparable with staging mode, which counts every
+	// span it stages.
+	w.countProcessed(len(spans))
 
 	if promptRecs := extractPromptRecords(interesting); len(promptRecs) > 0 {
 		if err := w.repo.InsertPromptRecords(ctx, promptRecs); err != nil {
@@ -292,7 +295,19 @@ func (w *RedisWorker) stageSpans(ctx context.Context, spans []repository.Span) {
 		w.metrics.mu.Unlock()
 		return
 	}
+	w.countProcessed(len(spans))
+}
+
+func (w *RedisWorker) countProcessed(n int) {
 	w.metrics.mu.Lock()
-	w.metrics.ProcessedCount += int64(len(spans))
+	w.metrics.ProcessedCount += int64(n)
 	w.metrics.mu.Unlock()
+}
+
+// Counts returns the spans handled and the spans dropped after retries since
+// start. Writer mode exports them as spans_processed_total and
+// spans_failed_total.
+func (w *RedisWorker) Counts() (processed, failed int64) {
+	processed, failed, _ = w.metrics.Snapshot()
+	return processed, failed
 }

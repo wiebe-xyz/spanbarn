@@ -173,6 +173,10 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		api.WithMetricsHandler(metricsHandler),
 		api.WithLogsHandler(logsHandler),
 	)
+	apiServer.RegisterWorkerCounters(func() (int64, int64) {
+		processed, failed, _ := w.GetMetrics()
+		return processed, failed
+	})
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
 	}

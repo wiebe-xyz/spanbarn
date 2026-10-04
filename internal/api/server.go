@@ -74,6 +74,14 @@ func (s *Server) SetSelfMetricsRecorder(rec *selfmetrics.Recorder) {
 	s.selfMetrics = rec
 }
 
+// RegisterWorkerCounters exposes the span worker's processed and failed counts
+// on /metrics. Writer mode calls it with the redis worker's snapshot.
+func (s *Server) RegisterWorkerCounters(read func() (processed, failed int64)) {
+	if s.metrics != nil {
+		s.metrics.RegisterWorkerCounters(read)
+	}
+}
+
 // SetOIDCClient wires the optional iambarn OIDC login adapter. When set, the
 // frontend's client-config reports oidc.enabled=true and the SPA redirects to
 // /api/v1/oidc/login on the login screen. Local single-user login still works.

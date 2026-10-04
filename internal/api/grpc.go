@@ -95,16 +95,7 @@ type grpcTraceServer struct {
 
 func (t *grpcTraceServer) Export(ctx context.Context, req *collectortracepb.ExportTraceServiceRequest) (*collectortracepb.ExportTraceServiceResponse, error) {
 	projectID := GetProjectID(ctx)
-	records := otlpToSpanRecords(req, projectID)
-	if t.s.traceBuffer != nil {
-		for _, rec := range records {
-			t.s.traceBuffer.Add(rec)
-		}
-	} else if t.s.ingest != nil {
-		for _, rec := range records {
-			t.s.ingest.Enqueue(rec)
-		}
-	}
+	t.s.acceptSpans(ctx, otlpToSpanRecords(req, projectID))
 	return &collectortracepb.ExportTraceServiceResponse{}, nil
 }
 
