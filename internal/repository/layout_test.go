@@ -28,7 +28,7 @@ func openTestStorage(t *testing.T, path string) *Storage {
 
 func openTestReadRepo(t *testing.T, path string) *Repository {
 	t.Helper()
-	db, err := OpenReadDB(context.Background(), path, 2, 0)
+	db, err := OpenReadDB(path, 2, 0)
 	if err != nil {
 		t.Fatalf("open read db: %v", err)
 	}
@@ -315,4 +315,23 @@ func familySchema(t *testing.T, db *sql.DB) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// A reader that opens before the writer has created the database fails its
+// queries until the files exist, then serves without being reopened.
+func TestReadDBRecoversWhenWriterStartsLater(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spanbarn.db")
+	read := openTestReadRepo(t, path)
+	var n int
+	if err := read.DB().QueryRow(`SELECT count(*) FROM spans`).Scan(&n); err == nil {
+		t.Fatal("query succeeded before the database existed")
+	}
+
+	store := openTestStorage(t, path)
+	if err := store.Repository().InsertSpans([]Span{makeSpan(1, "t", "s", "web", "GET /", "ok", 5)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := read.DB().QueryRow(`SELECT count(*) FROM spans`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("read after writer start: n=%d err=%v", n, err)
+	}
 }

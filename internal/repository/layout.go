@@ -162,23 +162,16 @@ func (s *Storage) Close() error {
 	return errors.Join(errs...)
 }
 
-// OpenReadDB opens the database at dbPath read-only, attaching the spans file
-// when the database uses the split layout.
-//
-// A reader that starts on a new install before the writer has created the
-// spans file still picks the split layout, because main has no spans table.
-// Its connections then fail to open until the file exists, and the pool opens
-// new ones on the next query, so it recovers without a restart.
-func OpenReadDB(ctx context.Context, dbPath string, cacheMB, mmapMB int) (*DB, error) {
-	split, err := splitLayoutRO(ctx, dbPath)
-	if err != nil {
-		return nil, err
-	}
-	o := OpenOptions{ReadOnly: true, CacheMB: cacheMB, MmapMB: mmapMB}
-	if split {
-		o.Attach = []Attachment{{Schema: SpansSchema, Path: SpansPath(dbPath), CacheMB: cacheMB, MmapMB: mmapMB}}
-	}
-	return Open(dbPath, o)
+// OpenReadDB opens the database at dbPath read-only. Each connection attaches
+// the spans file, unless the file is absent and main holds the spans table
+// (the single-file layout). The decision is made per connection, when it
+// opens, so a reader that starts before the writer has created or migrated the
+// database recovers without a restart: connections fail to open until the
+// files are there, and the pool opens new ones on the next query.
+func OpenReadDB(dbPath string, cacheMB, mmapMB int) (*DB, error) {
+	return Open(dbPath, OpenOptions{ReadOnly: true, CacheMB: cacheMB, MmapMB: mmapMB, Attach: []Attachment{{
+		Schema: SpansSchema, Path: SpansPath(dbPath), CacheMB: cacheMB, MmapMB: mmapMB, UnlessMainHas: "spans",
+	}}})
 }
 
 func splitLayoutRW(ctx context.Context, main *sql.DB, dbPath string) (bool, error) {
@@ -189,19 +182,6 @@ func splitLayoutRW(ctx context.Context, main *sql.DB, dbPath string) (bool, erro
 		return true, nil
 	}
 	has, err := hasTable(ctx, main, "spans")
-	return !has, err
-}
-
-func splitLayoutRO(ctx context.Context, dbPath string) (bool, error) {
-	if fileExists(SpansPath(dbPath)) || !fileExists(dbPath) {
-		return true, nil
-	}
-	db, err := Open(dbPath, OpenOptions{ReadOnly: true})
-	if err != nil {
-		return false, err
-	}
-	defer db.Close()
-	has, err := hasTable(ctx, db.DB, "spans")
 	return !has, err
 }
 

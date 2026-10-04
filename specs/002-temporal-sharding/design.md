@@ -111,7 +111,7 @@ Three migration tracks, each with its own goose version table:
 
 ### Layout detection (step 1)
 
-`repository.OpenStorage` decides the layout once, before migrating: the split layout when the spans file exists or main has no `spans` table (a new install or a restored settings snapshot), the single-file layout when main already holds `spans`. For a split database it creates and migrates the spans file first (with `auto_vacuum=INCREMENTAL`), then migrates main and drops the empty span tables main's migrations created. It refuses to open when main still has span rows next to a spans file. Readers (`repository.OpenReadDB`) apply the same rule; a reader that starts before the writer created the spans file fails to open connections until the file exists, and recovers without a restart.
+`repository.OpenStorage` decides the layout once, before migrating: the split layout when the spans file exists or main has no `spans` table (a new install or a restored settings snapshot), the single-file layout when main already holds `spans`. For a split database it creates and migrates the spans file first (with `auto_vacuum=INCREMENTAL`), then migrates main and drops the empty span tables main's migrations created. It refuses to open when main still has span rows next to a spans file. Readers (`repository.OpenReadDB`) decide per connection, when it opens: attach the spans file, unless it is absent and main holds `spans`. A reader that starts before the writer has created the files fails to open connections until they exist, and recovers without a restart.
 
 ### Writer and readers
 

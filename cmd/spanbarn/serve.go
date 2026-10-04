@@ -180,7 +180,7 @@ func startWriteSchedulers(ctx context.Context, wg *sync.WaitGroup, store *reposi
 
 // openReadDB opens the read-only handle dashboard reads use.
 func openReadDB(cfg config.Config) (*repository.DB, error) {
-	return repository.OpenReadDB(context.Background(), cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
+	return repository.OpenReadDB(cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
 }
 
 // openQueryRepo opens the read-only DB used for dashboard reads.
