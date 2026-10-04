@@ -189,6 +189,47 @@ type TraceSearchFilter struct {
 	Offset int
 }
 
+// HeatmapQuery scopes a duration heatmap. ProjectID, From and To are required
+// and the range is limited like the attribute queries. A nil Filter reads every
+// span of the project in the range.
+type HeatmapQuery struct {
+	ProjectID int64
+	From, To  time.Time
+	Filter    *filter.Expr
+	// TimeBuckets and DurationBuckets size the grid. 0 takes the default.
+	TimeBuckets     int
+	DurationBuckets int
+	// MaxSpans is the row cap on spans read, newest first. 0 takes the default.
+	MaxSpans int
+}
+
+// HeatmapCell is the span count of one grid cell. Empty cells are left out.
+type HeatmapCell struct {
+	Time     int   `json:"time"`
+	Duration int   `json:"duration"`
+	Count    int64 `json:"count"`
+}
+
+// HeatmapResult is the duration distribution of a span set over time.
+type HeatmapResult struct {
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+	// TimeBuckets and DurationBuckets are the grid size. Time bucket i starts at
+	// From + i*BucketMicros, on the span start time.
+	TimeBuckets     int   `json:"timeBuckets"`
+	DurationBuckets int   `json:"durationBuckets"`
+	BucketMicros    int64 `json:"bucketMicros"`
+	// DurationEdgesUs holds DurationBuckets+1 ascending log-scale edges in
+	// microseconds. It is empty when no span matched.
+	DurationEdgesUs []int64       `json:"durationEdgesUs"`
+	Cells           []HeatmapCell `json:"cells"`
+	Scanned         int64         `json:"scanned"`
+	// Capped is true when the scan stopped at MaxSpans, so older spans of the
+	// range are missing from the grid.
+	Capped   bool `json:"capped"`
+	MaxSpans int  `json:"maxSpans"`
+}
+
 // TraceGroupSummary holds aggregated metrics for a group of traces sharing the same root operation.
 type TraceGroupSummary struct {
 	Operation  string  `json:"operation"`

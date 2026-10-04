@@ -593,6 +593,37 @@ export type AttributeComparison = {
   attributes: AttributeDifference[]
 }
 
+/** Project, range and filter (JSON) for a duration heatmap. */
+export type HeatmapScope = {
+  projectId: number
+  from: string
+  to: string
+  /** The spans to plot, as serialized filter JSON. Empty plots every span of the project. */
+  filter?: string
+  timeBuckets?: number
+  durationBuckets?: number
+  maxSpans?: number
+}
+
+export type HeatmapCell = { time: number; duration: number; count: number }
+
+export type HeatmapResult = {
+  from: string
+  to: string
+  timeBuckets: number
+  durationBuckets: number
+  /** Width of one time bucket in microseconds, on the span start time. */
+  bucketMicros: number
+  /** durationBuckets + 1 ascending log-scale edges in microseconds. Empty when no span matched. */
+  durationEdgesUs: number[]
+  /** Non-empty cells only. */
+  cells: HeatmapCell[]
+  scanned: number
+  /** True when the scan stopped at maxSpans, so older spans are missing. */
+  capped: boolean
+  maxSpans: number
+}
+
 /** Query of the group-by view. The wire names of calcs are listed in analyze/model.ts. */
 export type AnalyzeParams = {
   projectId: number

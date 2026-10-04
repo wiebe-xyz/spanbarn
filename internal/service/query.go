@@ -41,6 +41,7 @@ type QueryRepository interface {
 	RootlessTraceCount(ctx context.Context, w repository.HealthWindow) (int64, error)
 	ScanAttributes(ctx context.Context, w repository.AttributeWindow) (*repository.AttributeScan, error)
 	ScanAttributeSet(ctx context.Context, w repository.AttributeSetWindow) (*repository.AttributeSetScan, error)
+	ScanHeatmap(ctx context.Context, w repository.HeatmapWindow) (*repository.HeatmapScan, error)
 	Analyze(ctx context.Context, q repository.AnalyzeQuery) (*repository.AnalyzeResult, error)
 }
 
