@@ -4,7 +4,6 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 // mockKeyLookup implements KeyLookup for testing.
@@ -102,30 +101,20 @@ func TestAuthorizeEmptyKey(t *testing.T) {
 	}
 }
 
-func TestAuthorizeTimingSafe(t *testing.T) {
-	hash := HashKey("timing-test-key")
-	a := NewAuthorizer(hash, nil, nil)
+// The static key is compared with subtle.ConstantTimeCompare on the SHA-256
+// of the key. Wall-clock timing of microsecond calls cannot check that on a
+// shared CI host (a loaded runner failed a 10x ratio bound), so this test
+// checks the outcomes instead, including a key that matches the static key in
+// everything but its last byte.
+func TestAuthorizeStaticKeyMatchesExactly(t *testing.T) {
+	a := NewAuthorizer(HashKey("timing-test-key"), nil, nil)
 
-	// Basic timing check: both valid and invalid should complete in similar time.
-	// This is a basic sanity check, not a rigorous timing analysis.
-	iterations := 100
-
-	start := time.Now()
-	for range iterations {
-		a.Authorize("timing-test-key")
+	if _, scope, err := a.Authorize("timing-test-key"); err != nil || scope != "full" {
+		t.Fatalf("valid static key: scope=%q err=%v", scope, err)
 	}
-	validDuration := time.Since(start)
-
-	start = time.Now()
-	for range iterations {
-		a.Authorize("wrong-key-value!")
-	}
-	invalidDuration := time.Since(start)
-
-	// Allow 10x ratio -- we're just checking constant-time compare is used,
-	// not doing a rigorous timing analysis.
-	ratio := float64(validDuration) / float64(invalidDuration)
-	if ratio > 10 || ratio < 0.1 {
-		t.Errorf("suspicious timing difference: valid=%v invalid=%v ratio=%.2f", validDuration, invalidDuration, ratio)
+	for _, key := range []string{"timing-test-kez", "wrong-key-value!", "timing-test-key-longer"} {
+		if _, _, err := a.Authorize(key); !errors.Is(err, ErrUnauthorized) {
+			t.Errorf("Authorize(%q) = %v, want ErrUnauthorized", key, err)
+		}
 	}
 }
