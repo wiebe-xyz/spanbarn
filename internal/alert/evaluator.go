@@ -95,10 +95,15 @@ func (e *Evaluator) SetTriggerWriter(w AlertTriggerWriter) {
 }
 
 func (e *Evaluator) projectSampleRate(ctx context.Context, projectID int64) float64 {
-	if e.ratioLookup == nil {
+	return sampleRateFor(ctx, e.ratioLookup, projectID)
+}
+
+// sampleRateFor returns the kept share (1/N) of a project's ok spans.
+func sampleRateFor(ctx context.Context, lookup SampleRatioLookup, projectID int64) float64 {
+	if lookup == nil {
 		return 1.0
 	}
-	ratio := e.ratioLookup.Ratio(ctx, projectID, "")
+	ratio := lookup.Ratio(ctx, projectID, "")
 	if ratio <= 1 {
 		return 1.0
 	}
