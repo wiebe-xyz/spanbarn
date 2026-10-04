@@ -91,6 +91,9 @@ type RetentionWorker struct {
 	// pressured is set when the last cycle found the volume critical, so Run
 	// tightens its interval instead of waiting a full period to look again.
 	pressured atomic.Bool
+
+	// stats backs Stats(), which the storage self-metrics read.
+	stats statsState
 }
 
 // NewRetentionWorker creates a new retention worker.
@@ -277,6 +280,7 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 
 	span.SetAttributes(st.attributes()...)
 	w.logger.Info("retention cycle complete", st.logArgs()...)
+	w.recordCycle(&st)
 	return nil
 }
 

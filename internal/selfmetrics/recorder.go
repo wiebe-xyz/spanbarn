@@ -27,9 +27,10 @@ type Recorder struct {
 }
 
 type gaugeSrc struct {
-	name  string
-	attrs map[string]string
-	fn    func() float64
+	name    string
+	attrs   map[string]string
+	fn      func() (float64, bool)
+	counter bool // exported as a cumulative monotonic sum instead of a gauge
 }
 
 // NewRecorder returns a ready Recorder.
@@ -74,12 +75,82 @@ func (r *Recorder) AddRollups(n int64) {
 // RegisterGauge adds a sampled gauge read on each snapshot. fn is invoked
 // without the recorder lock held, so it may safely do I/O (e.g. a redis LLEN).
 func (r *Recorder) RegisterGauge(name string, attrs map[string]string, fn func() float64) {
-	if r == nil || fn == nil {
+	if fn == nil {
+		return
+	}
+	r.register(gaugeSrc{name: name, attrs: attrs, fn: always(fn)})
+}
+
+// RegisterOptionalGauge is RegisterGauge for a value that is not always known.
+// When fn reports false the snapshot leaves the point out, so a reading that
+// has not been taken yet (disk usage before the first retention cycle, say) is
+// absent rather than a zero that looks real.
+func (r *Recorder) RegisterOptionalGauge(name string, attrs map[string]string, fn func() (float64, bool)) {
+	if fn == nil {
+		return
+	}
+	r.register(gaugeSrc{name: name, attrs: attrs, fn: fn})
+}
+
+// RegisterCounter adds a cumulative, monotonic counter read on each snapshot,
+// for totals another component already keeps (rows retention has deleted).
+func (r *Recorder) RegisterCounter(name string, attrs map[string]string, fn func() float64) {
+	if fn == nil {
+		return
+	}
+	r.register(gaugeSrc{name: name, attrs: attrs, fn: always(fn), counter: true})
+}
+
+func (r *Recorder) register(g gaugeSrc) {
+	if r == nil {
 		return
 	}
 	r.mu.Lock()
-	r.gauges = append(r.gauges, gaugeSrc{name: name, attrs: attrs, fn: fn})
+	r.gauges = append(r.gauges, g)
 	r.mu.Unlock()
+}
+
+// Reading is one registered gauge or counter value at a point in time.
+type Reading struct {
+	Name  string
+	Attrs map[string]string
+	Value float64
+}
+
+// Readings samples every registered gauge and counter, leaving out optional
+// gauges that have no value yet. It does not touch the request counters or
+// the latency histogram, so calling it does not disturb the next export.
+func (r *Recorder) Readings() []Reading {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	gauges := make([]gaugeSrc, len(r.gauges))
+	copy(gauges, r.gauges)
+	r.mu.Unlock()
+
+	sampled := sample(gauges)
+	out := make([]Reading, 0, len(sampled))
+	for _, g := range sampled {
+		out = append(out, Reading{Name: g.name, Attrs: g.attrs, Value: g.value})
+	}
+	return out
+}
+
+// sample reads each source, skipping optional gauges with no value. Call it
+// without the recorder lock: a source may do I/O.
+func sample(gauges []gaugeSrc) []gaugeReading {
+	var out []gaugeReading
+	for _, g := range gauges {
+		if v, ok := g.fn(); ok {
+			out = append(out, gaugeReading{name: g.name, attrs: g.attrs, value: v, counter: g.counter})
+		}
+	}
+	return out
+}
+
+func always(fn func() float64) func() (float64, bool) {
+	return func() (float64, bool) { return fn(), true }
 }
 
 // snapshot captures the current values, resetting the delta histogram. Gauge
@@ -95,9 +166,10 @@ type snapshot struct {
 }
 
 type gaugeReading struct {
-	name  string
-	attrs map[string]string
-	value float64
+	name    string
+	attrs   map[string]string
+	value   float64
+	counter bool
 }
 
 func (r *Recorder) snapshot() snapshot {
@@ -129,8 +201,6 @@ func (r *Recorder) snapshot() snapshot {
 	copy(gauges, r.gauges)
 	r.mu.Unlock()
 
-	for _, g := range gauges {
-		snap.gauges = append(snap.gauges, gaugeReading{name: g.name, attrs: g.attrs, value: g.fn()})
-	}
+	snap.gauges = sample(gauges)
 	return snap
 }

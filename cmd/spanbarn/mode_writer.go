@@ -199,6 +199,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	warnObsoleteRetentionEnv(cfg, logger)
 	retentionCfg := retentionConfigFrom(cfg)
 	retentionWorker := retention.NewRetentionWorker(retentionRepo, accumulator, retentionCfg, logger)
+	registerStorageMetrics(writerSelfRec, retentionWorker.Stats)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
