@@ -1,6 +1,6 @@
 import { type ReactElement, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Table2, LayoutGrid, BarChart2, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe, ScrollText } from 'lucide-react'
+import { Activity, LayoutDashboard, Table2, LayoutGrid, BarChart2, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe, ScrollText, Target } from 'lucide-react'
 import { useIambarnSession, iambarnLogout, useIambarnProfile } from '../api/iambarnWidget'
 import { isOIDCSession } from '../api/clientConfig'
 import { IambarnProfileModal } from './IambarnProfileModal'
@@ -22,6 +22,7 @@ const navItems = [
   { to: '/pages', icon: Globe, label: 'Pages' },
   { to: '/metrics', icon: BarChart2, label: 'Metrics' },
   { to: '/alerts', icon: Bell, label: 'Alerts' },
+  { to: '/slos', icon: Target, label: 'SLOs' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 

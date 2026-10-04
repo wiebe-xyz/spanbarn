@@ -29,6 +29,7 @@ const PromptDetailPage = lazy(() => import('./pages/PromptDetailPage').then(m =>
 const PagesPage = lazy(() => import('./pages/PagesPage').then(m => ({ default: m.PagesPage })))
 const PageDetailPage = lazy(() => import('./pages/PageDetailPage').then(m => ({ default: m.PageDetailPage })))
 const AlertsPage = lazy(() => import('./pages/AlertsPage').then(m => ({ default: m.AlertsPage })))
+const SlosPage = lazy(() => import('./pages/SlosPage').then(m => ({ default: m.SlosPage })))
 const MetricsPage = lazy(() => import('./pages/MetricsPage').then(m => ({ default: m.MetricsPage })))
 const LogsPage = lazy(() => import('./pages/LogsPage').then(m => ({ default: m.LogsPage })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })))
@@ -65,6 +66,7 @@ function App() {
               <Route path="pages" element={<PagesPage />} />
               <Route path="pages/:page" element={<PageDetailPage />} />
               <Route path="alerts" element={<AlertsPage />} />
+              <Route path="slos" element={<SlosPage />} />
               <Route path="metrics" element={<MetricsPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="account" element={<ProfilePage />} />
