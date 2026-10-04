@@ -36,6 +36,12 @@ data:
   # the hot path, so the Redis write-queue never backs up to the cap. Validated
   # on staging 2026-07-09. Window/GC use code defaults (90s / 900s).
   SPANBARN_SPAN_STAGING_ENABLED: "1"
+  # Time shards (specs/002-temporal-sharding/design.md): the writer puts logs and
+  # metrics in daily files and prompts in weekly files under spanbarn.db.d/, and
+  # expires them by deleting the file. Rows written to main before this was on
+  # age out under row retention, after which the writer drops main's tables;
+  # deploy/docs/compact-main.md returns that space once.
+  SPANBARN_SHARDS: "1"
   SPANBARN_BUGBARN_ENDPOINT: "https://bugbarn.wiebe.xyz"
   SPANBARN_SELF_ENDPOINT: "http://spanbarn-ingest:8080"
   SPANBARN_REDIS_URL: "redis://spanbarn-redis:6379"
