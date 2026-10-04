@@ -23,9 +23,10 @@ type Attachment struct {
 	CacheMB int
 	MmapMB  int
 	// UnlessMainHas skips the attachment on a connection whose main file
-	// already holds this table and the attached file does not exist: the
-	// single-file layout. Without the file and without the table the ATTACH
-	// fails, the connection is not pooled, and the next query tries again.
+	// holds this table: the single-file layout, where a spans file next to it
+	// is a leftover the writer replaces. Without the file and without the
+	// table the ATTACH fails, the connection is not pooled, and the next query
+	// tries again.
 	UnlessMainHas string
 }
 
@@ -96,7 +97,7 @@ func runConnSetup(conn sqlite.ExecQuerierContext, dsn string) error {
 }
 
 func skipAttachment(conn sqlite.ExecQuerierContext, a Attachment) (bool, error) {
-	if a.UnlessMainHas == "" || fileExists(a.Path) {
+	if a.UnlessMainHas == "" {
 		return false, nil
 	}
 	arg := []driver.NamedValue{{Ordinal: 1, Value: a.UnlessMainHas}}

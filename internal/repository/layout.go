@@ -61,10 +61,11 @@ func (o StorageOptions) logger() *slog.Logger {
 // OpenStorage opens the database at dbPath for writing, runs both migration
 // tracks and returns its handles.
 //
-// The layout is decided once, before any migration: a database whose spans
-// file exists, or whose main file has no spans table yet (a new install, or a
-// restored settings snapshot), uses the split layout. A main file that already
-// holds a spans table keeps the single-file layout.
+// The layout is decided once, before any migration, by main alone: a main
+// file without a spans table (a new install, a restored settings snapshot, or
+// a database after its cut-over) uses the split layout. A main file that holds
+// a spans table keeps the single-file layout until the cut-over moves it; a
+// spans file next to it is a leftover the cut-over replaces.
 func OpenStorage(ctx context.Context, dbPath string, o StorageOptions) (*Storage, error) {
 	plain, err := Open(dbPath, OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB})
 	if err != nil {
@@ -91,7 +92,10 @@ func OpenStorage(ctx context.Context, dbPath string, o StorageOptions) (*Storage
 		plain.Close()
 		return openSplit(dbPath, o)
 	}
-	err = prepareSplit(ctx, plain.DB, dbPath, o)
+	err = finishCutover(ctx, dbPath, o)
+	if err == nil {
+		err = prepareSplit(ctx, plain.DB, dbPath, o)
+	}
 	plain.Close()
 	if err != nil {
 		return nil, err
@@ -109,10 +113,8 @@ func migrateSingleFile(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// prepareSplit creates and migrates the spans file before main is migrated, so
-// a new install never has a moment where main holds span tables and the spans
-// file is missing (a reader starting then would pick the single-file layout).
-// Then it migrates main and drops the span tables main's migrations created.
+// prepareSplit creates and migrates the spans file, then migrates main and
+// drops the empty span tables main's migrations created on a new install.
 func prepareSplit(ctx context.Context, main *sql.DB, dbPath string, o StorageOptions) error {
 	spans, err := Open(SpansPath(dbPath), OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB})
 	if err != nil {
@@ -128,13 +130,7 @@ func prepareSplit(ctx context.Context, main *sql.DB, dbPath string, o StorageOpt
 	if err := Migrate(main); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
-	// A spans file written by a cut-over that stopped before the drop: main
-	// still holds the copied rows, and dropping them finishes the cut-over.
-	finished, err := cutoverComplete(ctx, spans.DB)
-	if err != nil {
-		return err
-	}
-	return dropMovedTables(ctx, main, finished)
+	return dropMovedTables(ctx, main, false)
 }
 
 func openSplit(dbPath string, o StorageOptions) (*Storage, error) {
@@ -193,11 +189,11 @@ func (s *Storage) Close() error {
 }
 
 // OpenReadDB opens the database at dbPath read-only. Each connection attaches
-// the spans file, unless the file is absent and main holds the spans table
-// (the single-file layout). The decision is made per connection, when it
-// opens, so a reader that starts before the writer has created or migrated the
-// database recovers without a restart: connections fail to open until the
-// files are there, and the pool opens new ones on the next query.
+// the spans file unless main holds the spans table (the single-file layout).
+// The decision is made per connection, when it opens, so a reader that starts
+// before the writer has created or migrated the database recovers without a
+// restart: connections fail to open until the files are there, and the pool
+// opens new ones on the next query.
 //
 // Connections are recycled after readConnMaxLifetime, so a reader that opened
 // its connections before the writer cut a single-file database over picks up
@@ -218,9 +214,6 @@ const readConnMaxLifetime = 2 * time.Minute
 func splitLayoutRW(ctx context.Context, main *sql.DB, dbPath string) (bool, error) {
 	if dbPath == ":memory:" {
 		return false, nil
-	}
-	if fileExists(SpansPath(dbPath)) {
-		return true, nil
 	}
 	has, err := hasTable(ctx, main, "spans")
 	return !has, err

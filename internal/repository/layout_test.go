@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -146,32 +145,6 @@ func TestOpenStorageKeepsSingleFile(t *testing.T) {
 		t.Errorf("spans track version in main = %d, want 1", v)
 	}
 	insertAndReadSpan(t, store, path)
-}
-
-// A spans file next to a main that still holds span rows means a half-done
-// or hand-made layout. Opening must refuse: main's tables would shadow the
-// spans file and hide every span written to it.
-func TestOpenStorageRefusesSpanRowsInMain(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "spanbarn.db")
-	legacy, err := NewDB(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := Migrate(legacy.DB); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := legacy.Exec(`INSERT INTO spans (project_id, trace_id, span_id, name, service, start_time_us, duration_us)
-		VALUES (1, 't', 's', 'n', 'svc', 1, 1)`); err != nil {
-		t.Fatal(err)
-	}
-	legacy.Close()
-	if err := os.WriteFile(SpansPath(path), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := OpenStorage(context.Background(), path, testStorageOptions); err == nil ||
-		!strings.Contains(err.Error(), "cut-over") {
-		t.Fatalf("OpenStorage = %v, want a cut-over error", err)
-	}
 }
 
 func TestStorageCheckpointsEveryFile(t *testing.T) {
