@@ -830,7 +830,7 @@ paths:
               required: [definition]
               properties:
                 title: {type: string, maxLength: 200}
-                view: {type: string, enum: [table, chart], default: table}
+                view: {type: string, enum: [table, chart, metric], default: table}
                 filters: {type: object, description: 'Filter model'}
                 definition: {$ref: '#/components/schemas/QueryDefinition'}
       responses:
@@ -887,7 +887,7 @@ paths:
               required: [title, view]
               properties:
                 title: {type: string, maxLength: 200}
-                view: {type: string, enum: [table, chart]}
+                view: {type: string, enum: [table, chart, metric], description: 'A metric panel stays a metric panel'}
       responses:
         '200':
           description: Updated
@@ -1345,8 +1345,10 @@ components:
   schemas:
     QueryDefinition:
       type: object
-      required: [calcs]
-      description: The part of a board query the filter model does not carry. Names match the /api/v1/analyze parameters.
+      description: >-
+        The part of a board query the filter model does not carry. Names match the /api/v1/analyze
+        parameters. A table or chart panel needs calcs and no metric; a metric panel needs metric and
+        ignores the span fields.
       properties:
         groupBy: {type: array, items: {type: string}, maxItems: 4}
         calcs: {type: array, items: {type: string}, minItems: 1, maxItems: 9}
@@ -1355,6 +1357,13 @@ components:
         limit: {type: integer, maximum: 100}
         sample: {type: integer}
         chartCalc: {type: string, description: 'One of calcs. The calculation a chart panel draws, default the first'}
+        metric:
+          type: object
+          required: [name]
+          description: The query of a metric panel. Names match the /api/v1/metrics/series parameters.
+          properties:
+            name: {type: string, maxLength: 200}
+            groupBy: {type: array, items: {type: string}, description: 'One line per value of these attributes'}
     BoardSettings:
       type: object
       properties:
@@ -1379,7 +1388,7 @@ components:
               boardId: {type: integer}
               savedQueryId: {type: integer}
               title: {type: string}
-              view: {type: string, enum: [table, chart]}
+              view: {type: string, enum: [table, chart, metric]}
               position: {type: integer}
               query:
                 type: object

@@ -13,6 +13,7 @@ import {
 } from '../../boards/model'
 import { SeriesChart } from '../dashboard/SeriesChart'
 import { ResultTable } from '../analyze/ResultTable'
+import { MetricPanelBody } from './MetricPanelBody'
 import { errorStyle, iconButton, mutedText } from './styles'
 
 type Props = {
@@ -43,7 +44,11 @@ export function PanelCard(p: Props): ReactElement {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(panel.title)
 
+  const isMetric = panel.view === 'metric'
+
   useEffect(() => {
+    // A metric panel loads its own series in MetricPanelBody.
+    if (isMetric) return
     let cancelled = false
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     setLoading(true)
@@ -67,7 +72,7 @@ export function PanelCard(p: Props): ReactElement {
     return () => { cancelled = true }
     // The panel object changes identity on every board reload, its query and view do not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panel.id, panel.savedQueryId, panel.view, board.projectId, win.fromMs, win.toMs, p.tick, sort])
+  }, [panel.id, panel.savedQueryId, panel.view, isMetric, board.projectId, win.fromMs, win.toMs, p.tick, sort])
 
   const def = panel.query.definition
   const sortBy = (calc: string) => {
@@ -101,17 +106,21 @@ export function PanelCard(p: Props): ReactElement {
             {panel.title}
           </h2>
         )}
-        <button type="button" style={iconButton} onClick={() => p.onView(panel.view === 'table' ? 'chart' : 'table')}>
-          {panel.view === 'table' ? 'Show chart' : 'Show table'}
-        </button>
+        {!isMetric && (
+          <button type="button" style={iconButton} onClick={() => p.onView(panel.view === 'table' ? 'chart' : 'table')}>
+            {panel.view === 'table' ? 'Show chart' : 'Show table'}
+          </button>
+        )}
         <button type="button" style={iconButton} aria-label={`Rename ${panel.title}`} onClick={() => { setDraft(panel.title); setEditing(true) }}>Rename</button>
         <button type="button" style={iconButton} aria-label={`Move ${panel.title} earlier`} disabled={p.first} onClick={() => p.onMove(-1)}>&uarr;</button>
         <button type="button" style={iconButton} aria-label={`Move ${panel.title} later`} disabled={p.last} onClick={() => p.onMove(1)}>&darr;</button>
-        <Link to={panelQueryHref(panel, board)} style={{ ...iconButton, textDecoration: 'none' }}>Open in Query</Link>
+        {!isMetric && <Link to={panelQueryHref(panel, board)} style={{ ...iconButton, textDecoration: 'none' }}>Open in Query</Link>}
         <button type="button" style={iconButton} aria-label={`Remove ${panel.title}`} onClick={p.onRemove}>Remove</button>
       </header>
-      {error && <div role="alert" style={errorStyle}>{error}</div>}
-      {!error && <PanelBody {...p} table={table} series={series} loading={loading} sort={sort} onSort={sortBy} chartCalc={chartCalcOf(def ?? { groupBy: [], calcs: ['count'] })} />}
+      {isMetric && def?.metric && <MetricPanelBody projectId={board.projectId} metric={def.metric} win={win} tick={p.tick} />}
+      {isMetric && !def?.metric && <div role="alert" style={errorStyle}>This metric panel has no metric.</div>}
+      {!isMetric && error && <div role="alert" style={errorStyle}>{error}</div>}
+      {!isMetric && !error && <PanelBody {...p} table={table} series={series} loading={loading} sort={sort} onSort={sortBy} chartCalc={chartCalcOf(def ?? { groupBy: [], calcs: ['count'] })} />}
     </section>
   )
 }

@@ -84,7 +84,7 @@ export function panelToState(panel: BoardPanel, board: Pick<Board, 'projectId' |
     asc: def?.asc ?? false,
     limit: def?.limit || base.limit,
     sample: def?.sample ? String(def.sample) : '',
-    view: panel.view,
+    view: panel.view === 'chart' ? 'chart' : 'table',
     chartCalc: def?.chartCalc ?? '',
   }
 }

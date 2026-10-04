@@ -274,9 +274,18 @@ export type QueryDefinition = {
   sample?: number
   /** The calculation a chart panel draws. Defaults to the first. */
   chartCalc?: string
+  /** The query of a metric panel, which has no span calculations. */
+  metric?: MetricPanelQuery
 }
 
-export type PanelView = 'table' | 'chart'
+/** One OTLP metric, optionally one line per value of the group-by attributes. */
+export type MetricPanelQuery = {
+  name: string
+  groupBy?: string[]
+}
+
+/** How a panel draws: a span query as a table or chart, or a metric series. */
+export type PanelView = 'table' | 'chart' | 'metric'
 
 export type BoardPanel = {
   id: number

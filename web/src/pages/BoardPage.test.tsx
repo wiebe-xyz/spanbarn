@@ -16,7 +16,14 @@ vi.mock('../api/client', () => ({
     createRelease: vi.fn(),
     analyze: vi.fn(),
     analyzeSeries: vi.fn(),
+    getMetricSeries: vi.fn(),
   },
+}))
+
+vi.mock('../components/metrics/MetricLines', () => ({
+  MetricLines: ({ resp }: { resp: { series: { labels: Record<string, string> }[] } }) => (
+    <div data-testid="metric-chart">{resp.series.map((s) => Object.values(s.labels).join('/')).join(',')}</div>
+  ),
 }))
 
 // Recharts needs layout the test DOM lacks, so the chart is replaced by a probe.
@@ -38,6 +45,7 @@ const mocked = {
   createRelease: vi.mocked(api.createRelease),
   analyze: vi.mocked(api.analyze),
   analyzeSeries: vi.mocked(api.analyzeSeries),
+  getMetricSeries: vi.mocked(api.getMetricSeries),
 }
 
 const query = (id: number, def: Record<string, unknown>, filters: unknown = null) => ({
@@ -102,6 +110,31 @@ afterEach(() => {
 })
 
 describe('BoardPage', () => {
+  it('draws a metric panel from the metric series of the board project', async () => {
+    const metricPanel: BoardPanel = {
+      id: 21, boardId: 5, savedQueryId: 9, title: 'Rows deleted', view: 'metric', position: 0,
+      query: query(9, { groupBy: [], calcs: [], metric: { name: 'spanbarn.retention.deleted', groupBy: ['table'] } }) as BoardPanel['query'],
+    }
+    mocked.getBoard.mockResolvedValue(board({ name: 'SpanBarn storage', panels: [metricPanel] }))
+    mocked.getMetricSeries.mockResolvedValue({
+      name: 'spanbarn.retention.deleted', type: 'sum', unit: '', render: 'line', step_seconds: 0,
+      series: [{ labels: { table: 'logs' }, points: [{ t: 1, value: 4, count: 1 }] }],
+    })
+
+    renderBoard()
+    const card = await screen.findByTestId('panel')
+    expect(await within(card).findByTestId('metric-chart')).toHaveTextContent('logs')
+
+    const [name, from, to, , , projectId, groupBy] = mocked.getMetricSeries.mock.calls[0]
+    expect([name, projectId, groupBy]).toEqual(['spanbarn.retention.deleted', 7, ['table']])
+    expect(Date.parse(to) - Date.parse(from)).toBe(24 * 3600_000)
+    expect(mocked.analyze).not.toHaveBeenCalled()
+    expect(mocked.analyzeSeries).not.toHaveBeenCalled()
+    // Span-only actions do not apply to a metric.
+    expect(within(card).queryByRole('button', { name: /Show (chart|table)/ })).toBeNull()
+    expect(within(card).queryByRole('link', { name: 'Open in Query' })).toBeNull()
+  })
+
   it('shows three panels that run their saved queries over one window', async () => {
     renderBoard()
     const cards = await screen.findAllByTestId('panel')
