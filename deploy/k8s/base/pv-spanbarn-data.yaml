@@ -1,18 +1,25 @@
 # One-time cluster-setup resource — apply manually, NOT part of the rolling deploy.
 #
-# Production SQLite lives on a HARD-CAPPED 5 GB ext4 loopback on the layer7-prod
+# Production SQLite lives on a HARD-CAPPED 10 GB ext4 loopback on the layer7-prod
 # ROOT SSD (vda), not the slow vdb network volume. The loopback both makes SQLite
 # fast (SSD random I/O) and hard-bounds spanbarn's disk use so a Litestream local
-# cache runaway (cf. the 117 GB staging incident) can only fill its own 5 GB, never
+# cache runaway (cf. the 117 GB staging incident) can only fill its own 10 GB, never
 # the node.
 #
 # Node-level setup on layer7-prod (host mount namespace; survives reboot via fstab):
-#   fallocate -l 5G /var/lib/rancher/k3s/storage/spanbarn-fast.img
+#   fallocate -l 10G /var/lib/rancher/k3s/storage/spanbarn-fast.img
 #   mkfs.ext4 -m 0 /var/lib/rancher/k3s/storage/spanbarn-fast.img
 #   mkdir -p /var/lib/rancher/k3s/storage/spanbarn-fast
 #   echo '/var/lib/rancher/k3s/storage/spanbarn-fast.img /var/lib/rancher/k3s/storage/spanbarn-fast ext4 loop,rw 0 0' >> /etc/fstab
 #   mount /var/lib/rancher/k3s/storage/spanbarn-fast
 #   chown 100:101 /var/lib/rancher/k3s/storage/spanbarn-fast   # spanbarn uid:gid
+#
+# Growing it (online, no pod restart; done 2026-10-04 to go from 5 GB to 10 GB):
+#   fallocate -l <new>G /var/lib/rancher/k3s/storage/spanbarn-fast.img   # non-sparse
+#   losetup -c $(losetup -j /var/lib/rancher/k3s/storage/spanbarn-fast.img | cut -d: -f1)
+#   resize2fs <that loop device>
+#   kubectl patch pv spanbarn-fast-storage --type=merge -p '{"spec":{"capacity":{"storage":"<new>Gi"}}}'
+# The PVC request stays as it is: spanbarn-local cannot expand a claim (see pvc.yaml).
 #
 # The previous vdb PV (spanbarn-data-storage, /mnt/storage/spanbarn, 200Gi, Retain)
 # is kept as rollback — its data is retained on delete. To roll back, clear its
@@ -23,7 +30,7 @@ metadata:
   name: spanbarn-fast-storage
 spec:
   capacity:
-    storage: 5Gi
+    storage: 10Gi
   volumeMode: Filesystem
   accessModes:
     - ReadWriteOnce

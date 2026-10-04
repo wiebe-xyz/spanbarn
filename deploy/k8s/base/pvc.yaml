@@ -7,6 +7,8 @@ spec:
     - ReadWriteOnce
   storageClassName: spanbarn-local
   volumeName: spanbarn-fast-storage
+  # The request is a minimum. The bound PV and the filesystem are 10 GB. spanbarn-local
+  # (no-provisioner, no allowVolumeExpansion) rejects a larger request on the live claim.
   resources:
     requests:
       storage: 5Gi
