@@ -71,3 +71,52 @@ func TestDurableSummarySticks(t *testing.T) {
 		t.Fatal("summary lost durable after a non-durable batch")
 	}
 }
+
+// A durable summary outlives the interesting cutoff and goes at the error
+// cutoff, like an error summary; a plain clean summary goes at the interesting
+// cutoff.
+func TestDurableSummaryKeptUntilErrorCutoff(t *testing.T) {
+	repo := setupTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	ingested := now.Add(-100 * time.Hour)
+	durable := tsSpan("D", "d1", "", "commitment-sweep", "cron", "ok", 1000, 50)
+	durable.Durable = true
+	durable.IngestedAt = ingested
+	plain := tsSpan("P", "p1", "", "GET /health", "web", "ok", 1000, 50)
+	plain.IngestedAt = ingested
+	if err := repo.InsertSpans([]Span{durable, plain}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	summaries := func() map[string]bool {
+		t.Helper()
+		rows, err := repo.SearchTraceSummaries(SpanFilter{ProjectID: 1}, 0)
+		if err != nil {
+			t.Fatalf("search: %v", err)
+		}
+		got := map[string]bool{}
+		for _, r := range rows {
+			got[r.TraceID] = true
+		}
+		return got
+	}
+
+	// interestingCutoff = -50h is past both rows; errorCutoff = -200h is not.
+	if _, err := repo.DeleteTraceSummariesOlderThan(ctx, now.Add(-50*time.Hour), now.Add(-200*time.Hour)); err != nil {
+		t.Fatalf("delete at interesting cutoff: %v", err)
+	}
+	got := summaries()
+	if !got["D"] || got["P"] || len(got) != 1 {
+		t.Fatalf("after interesting cutoff want only D, got %v", got)
+	}
+
+	// errorCutoff = -50h is past the durable row too.
+	if _, err := repo.DeleteTraceSummariesOlderThan(ctx, now.Add(-50*time.Hour), now.Add(-50*time.Hour)); err != nil {
+		t.Fatalf("delete at error cutoff: %v", err)
+	}
+	if got := summaries(); len(got) != 0 {
+		t.Fatalf("after error cutoff want no summaries, got %v", got)
+	}
+}

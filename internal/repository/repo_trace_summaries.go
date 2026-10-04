@@ -174,9 +174,10 @@ func (r *Repository) DeleteExpiredTraceSummaries(ctx context.Context, now time.T
 }
 
 // DeleteTraceSummariesOlderThan drops indefinitely-kept summaries once their
-// spans are gone: non-error traces at interestingCutoff (matching the span
-// aggregate-then-delete pass) and error traces at errorCutoff (matching
-// error_samples retention, so errors keep listing for exactly as long).
+// spans are gone: plain traces (no error, not durable) at interestingCutoff
+// (matching the span aggregate-then-delete pass), and error or durable traces
+// at errorCutoff. Retention copies error and durable spans to error_samples,
+// so those traces keep listing for exactly as long as their spans can be read.
 func (r *Repository) DeleteTraceSummariesOlderThan(ctx context.Context, interestingCutoff, errorCutoff time.Time) (int64, error) {
 	ic, ec := interestingCutoff.UTC(), errorCutoff.UTC()
 	return r.batchedDelete(ctx, func() (int64, error) {
@@ -184,7 +185,8 @@ func (r *Repository) DeleteTraceSummariesOlderThan(ctx context.Context, interest
 			`DELETE FROM trace_summaries WHERE rowid IN (
 				SELECT rowid FROM trace_summaries
 				WHERE expires_at IS NULL
-				  AND ((has_error = 0 AND ingested_at < ?) OR (has_error = 1 AND ingested_at < ?))
+				  AND ((has_error = 0 AND durable = 0 AND ingested_at < ?)
+				    OR ((has_error = 1 OR durable = 1) AND ingested_at < ?))
 				LIMIT ?)`,
 			ic, ec, retentionDeleteBatch)
 		if e != nil {

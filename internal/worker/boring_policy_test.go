@@ -50,3 +50,44 @@ func TestMinTracesPerMinuteZeroAllowed(t *testing.T) {
 		t.Fatalf("explicit zero: want 0, got %d", got)
 	}
 }
+
+func TestMinTracesPerHourDefault(t *testing.T) {
+	p := NewCachedBoringPolicy(mapSettingsReader{}, 0)
+	if got := p.MinTracesPerHour(7); got != DefaultMinTracesPerHour {
+		t.Fatalf("default: want %d, got %d", DefaultMinTracesPerHour, got)
+	}
+}
+
+func TestMinTracesPerHourGlobal(t *testing.T) {
+	p := NewCachedBoringPolicy(mapSettingsReader{"boring.min_traces_per_hour": "5"}, 0)
+	if got := p.MinTracesPerHour(7); got != 5 {
+		t.Fatalf("global: want 5, got %d", got)
+	}
+}
+
+func TestMinTracesPerHourProjectOverridesGlobal(t *testing.T) {
+	p := NewCachedBoringPolicy(mapSettingsReader{
+		"boring.min_traces_per_hour":           "5",
+		"boring.min_traces_per_hour.project.7": "2",
+	}, 0)
+	if got := p.MinTracesPerHour(7); got != 2 {
+		t.Fatalf("project override: want 2, got %d", got)
+	}
+	if got := p.MinTracesPerHour(9); got != 5 {
+		t.Fatalf("fallback to global: want 5, got %d", got)
+	}
+}
+
+func TestMinTracesPerHourNegativeFallsToDefault(t *testing.T) {
+	p := NewCachedBoringPolicy(mapSettingsReader{"boring.min_traces_per_hour": "-3"}, 0)
+	if got := p.MinTracesPerHour(7); got != DefaultMinTracesPerHour {
+		t.Fatalf("negative: want default %d, got %d", DefaultMinTracesPerHour, got)
+	}
+}
+
+func TestMinTracesPerHourZeroAllowed(t *testing.T) {
+	p := NewCachedBoringPolicy(mapSettingsReader{"boring.min_traces_per_hour.project.7": "0"}, 0)
+	if got := p.MinTracesPerHour(7); got != 0 {
+		t.Fatalf("explicit zero: want 0, got %d", got)
+	}
+}

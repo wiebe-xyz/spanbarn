@@ -43,6 +43,7 @@ type RedisWorker struct {
 	accumulator  SpanAccumulator
 	boringPolicy BoringPolicyReader
 	floor        *sampling.MinuteFloor
+	hourFloor    *sampling.MinuteFloor
 	logger       *slog.Logger
 	metrics      Metrics
 	cfg          WorkerConfig
@@ -90,6 +91,12 @@ func (w *RedisWorker) SetBoringPolicy(p BoringPolicyReader) {
 // count accurately.
 func (w *RedisWorker) SetMinuteFloor(f *sampling.MinuteFloor) {
 	w.floor = f
+}
+
+// SetHourFloor wires in the hourly rarity floor: the first clean trace per
+// (project, operation, hour) is stored durably. Nil disables the tier.
+func (w *RedisWorker) SetHourFloor(f *sampling.MinuteFloor) {
+	w.hourFloor = f
 }
 
 // Run loops on BRPOP until ctx is cancelled.

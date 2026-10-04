@@ -63,8 +63,9 @@ type Repository interface {
 	ProjectNonErrorTraceCountCutoff(ctx context.Context, projectID int64, keepN int) (time.Time, bool, error)
 }
 
-// RetentionWorker manages span lifecycle: aggregate old spans, sample
-// errors/slow spans, and delete data past its retention window.
+// RetentionWorker manages span lifecycle: aggregate old spans, copy error,
+// slow and durable spans to error_samples, and delete data past its retention
+// window.
 type RetentionWorker struct {
 	repo       Repository
 	aggregator Aggregator
@@ -317,12 +318,15 @@ func (w *RetentionWorker) drainOldSpans(ctx context.Context, span trace.Span, cf
 	}
 }
 
-// aggregateAndDelete samples the error and slow spans of one batch, aggregates
-// the batch and deletes it.
+// aggregateAndDelete copies the error, slow and durable spans of one batch to
+// error_samples, aggregates the batch and deletes it. A durable span is one
+// the ingest floor kept as an operation's clean example; copying it keeps that
+// trace readable until the error cutoff, matching its trace summary. A span
+// that is both error/slow and durable is copied once.
 func (w *RetentionWorker) aggregateAndDelete(ctx context.Context, cfg Config, batch []repository.Span, st *cycleStats) error {
 	var samples []repository.Span
 	for _, s := range batch {
-		if s.Status == "error" || s.DurationUs > cfg.SlowThresholdUS {
+		if s.Status == "error" || s.DurationUs > cfg.SlowThresholdUS || s.Durable {
 			samples = append(samples, s)
 		}
 	}
@@ -373,8 +377,9 @@ func (w *RetentionWorker) purgeSpanDerived(ctx context.Context, cfg Config, cut 
 
 	// Clean up trace_summaries in lockstep with the spans they describe: early
 	// for boring-sampled traces (stamped expires_at), then non-error at the
-	// interesting cutoff and error traces at the error cutoff (matching
-	// error_samples), so the trace list drops rows exactly when its spans go.
+	// interesting cutoff, and error or durable traces at the error cutoff
+	// (matching error_samples, which holds their spans), so the trace list drops
+	// rows exactly when its spans go.
 	if _, err := w.repo.DeleteExpiredTraceSummaries(ctx, cut.now); err != nil {
 		return err
 	}
