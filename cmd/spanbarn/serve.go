@@ -146,6 +146,7 @@ func openWriteRepo(cfg config.Config, logger *slog.Logger) (*repository.Storage,
 		AttachCacheMB: cfg.SQLiteROCacheMB,
 		AttachMmapMB:  cfg.SQLiteROMmapMB,
 		CutOver:       true,
+		Shards:        shardRetention(cfg),
 		Logger:        logger,
 	})
 	if err != nil {
@@ -157,10 +158,27 @@ func openWriteRepo(cfg config.Config, logger *slog.Logger) (*repository.Storage,
 	return store, repo, nil
 }
 
-// startCheckpoints runs a WAL checkpoint loop for every file of store.
+// shardRetention returns the retention window of each family the writer
+// shards, or nil when SPANBARN_SHARDS is off.
+func shardRetention(cfg config.Config) repository.ShardRetention {
+	if !cfg.Shards {
+		return nil
+	}
+	return repository.ShardRetention{
+		repository.FamilyLogs:    time.Duration(cfg.Retention.LogHours) * time.Hour,
+		repository.FamilyMetrics: time.Duration(cfg.Retention.MetricsDays) * 24 * time.Hour,
+		repository.FamilyPrompts: time.Duration(cfg.Retention.PromptDays) * 24 * time.Hour,
+	}
+}
+
+// startCheckpoints runs a WAL checkpoint loop for every file of store. The
+// shard manager checkpoints its own files, next to creating them.
 func startCheckpoints(ctx context.Context, wg *sync.WaitGroup, store *repository.Storage, logger *slog.Logger) {
 	for _, h := range store.Handles() {
 		safeGo("wal-checkpoint", wg, func() { h.RunPeriodicCheckpoint(ctx, 30*time.Second, logger) })
+	}
+	if store.Shards != nil {
+		safeGo("shard-manager", wg, func() { store.Shards.Run(ctx, 30*time.Second) })
 	}
 }
 
@@ -171,13 +189,20 @@ func startWriteSchedulers(ctx context.Context, wg *sync.WaitGroup, store *reposi
 	main.SetLogger(logger)
 	repo.SetWriteScheduler(main)
 	safeGo("write-scheduler", wg, func() { main.Run(ctx) })
-	if store.Spans == nil {
-		return
+	if store.Spans != nil {
+		spans := writescheduler.New()
+		spans.SetLogger(logger)
+		repo.SetFamilyWriter(repository.FamilySpans, store.Spans.DB, spans)
+		safeGo("write-scheduler-spans", wg, func() { spans.Run(ctx) })
 	}
-	spans := writescheduler.New()
-	spans.SetLogger(logger)
-	repo.SetFamilyWriter(repository.FamilySpans, store.Spans.DB, spans)
-	safeGo("write-scheduler-spans", wg, func() { spans.Run(ctx) })
+	if store.Shards != nil {
+		for _, f := range store.Shards.Families() {
+			s := writescheduler.New()
+			s.SetLogger(logger)
+			store.Shards.SetScheduler(f, s)
+			safeGo("write-scheduler-"+f.String(), wg, func() { s.Run(ctx) })
+		}
+	}
 }
 
 // openReadDB opens the read-only handle dashboard reads use.

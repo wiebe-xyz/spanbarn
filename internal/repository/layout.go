@@ -30,9 +30,12 @@ func SpansPath(dbPath string) string { return dbPath + ".spans" }
 // handle, and each handle attaches the other file read-only. In the single-file
 // layout (databases created before the split, until the cut-over moves their
 // spans) Spans is nil and every family writes through Main.
+//
+// Shards, when set, holds the time-shard files of the heavy families.
 type Storage struct {
-	Main  *DB
-	Spans *DB
+	Main   *DB
+	Spans  *DB
+	Shards *ShardManager
 }
 
 // StorageOptions sizes the handles of a Storage. CacheMB and MmapMB apply to
@@ -42,12 +45,16 @@ type Storage struct {
 // CutOver moves the spans family of a single-file database into its own file
 // (see cutover.go). Only the writer sets it: the copy needs every other writer
 // stopped, and a CLI command can run next to a live writer.
+//
+// Shards turns on time shards for the families it lists, with their retention
+// windows (see shards.go). Only the writer sets it.
 type StorageOptions struct {
 	CacheMB       int
 	MmapMB        int
 	AttachCacheMB int
 	AttachMmapMB  int
 	CutOver       bool
+	Shards        ShardRetention
 	Logger        *slog.Logger
 }
 
@@ -66,7 +73,23 @@ func (o StorageOptions) logger() *slog.Logger {
 // a database after its cut-over) uses the split layout. A main file that holds
 // a spans table keeps the single-file layout until the cut-over moves it; a
 // spans file next to it is a leftover the cut-over replaces.
+//
+// With o.Shards set it then opens the shard manager on the main handle.
 func OpenStorage(ctx context.Context, dbPath string, o StorageOptions) (*Storage, error) {
+	s, err := openLayout(ctx, dbPath, o)
+	if err != nil || len(o.Shards) == 0 || dbPath == ":memory:" {
+		return s, err
+	}
+	m, err := openShardManager(ctx, s.Main.DB, dbPath, o.Shards, o)
+	if err != nil {
+		s.Close()
+		return nil, err
+	}
+	s.Shards = m
+	return s, nil
+}
+
+func openLayout(ctx context.Context, dbPath string, o StorageOptions) (*Storage, error) {
 	plain, err := Open(dbPath, OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB})
 	if err != nil {
 		return nil, err
@@ -169,10 +192,14 @@ func (s *Storage) Repository() *Repository {
 	if s.Spans != nil {
 		repo.SetFamilyWriter(FamilySpans, s.Spans.DB, nil)
 	}
+	if s.Shards != nil {
+		repo.SetShards(s.Shards)
+	}
 	return repo
 }
 
-// FinalCheckpoint checkpoints every file. Call after all writers stopped.
+// FinalCheckpoint checkpoints every file but the shards, which Close
+// checkpoints. Call after all writers stopped.
 func (s *Storage) FinalCheckpoint(log *slog.Logger) {
 	for _, h := range s.Handles() {
 		h.FinalCheckpoint(log)
@@ -182,6 +209,9 @@ func (s *Storage) FinalCheckpoint(log *slog.Logger) {
 // Close closes every handle.
 func (s *Storage) Close() error {
 	var errs []error
+	if s.Shards != nil {
+		errs = append(errs, s.Shards.Close())
+	}
 	for _, h := range s.Handles() {
 		errs = append(errs, h.Close())
 	}
