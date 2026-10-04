@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
+	"time"
 )
 
 // Attached schema names. A handle on the main file sees the spans file as
@@ -36,11 +38,24 @@ type Storage struct {
 // StorageOptions sizes the handles of a Storage. CacheMB and MmapMB apply to
 // each file's own handle; AttachCacheMB and AttachMmapMB to the other file as
 // seen through an attachment, which only serves reads.
+//
+// CutOver moves the spans family of a single-file database into its own file
+// (see cutover.go). Only the writer sets it: the copy needs every other writer
+// stopped, and a CLI command can run next to a live writer.
 type StorageOptions struct {
 	CacheMB       int
 	MmapMB        int
 	AttachCacheMB int
 	AttachMmapMB  int
+	CutOver       bool
+	Logger        *slog.Logger
+}
+
+func (o StorageOptions) logger() *slog.Logger {
+	if o.Logger == nil {
+		return slog.Default()
+	}
+	return o.Logger
 }
 
 // OpenStorage opens the database at dbPath for writing, runs both migration
@@ -65,7 +80,16 @@ func OpenStorage(ctx context.Context, dbPath string, o StorageOptions) (*Storage
 			plain.Close()
 			return nil, err
 		}
-		return &Storage{Main: plain}, nil
+		moved, err := o.cutOver(ctx, plain.DB, dbPath)
+		if err != nil {
+			plain.Close()
+			return nil, err
+		}
+		if !moved {
+			return &Storage{Main: plain}, nil
+		}
+		plain.Close()
+		return openSplit(dbPath, o)
 	}
 	err = prepareSplit(ctx, plain.DB, dbPath, o)
 	plain.Close()
@@ -104,7 +128,13 @@ func prepareSplit(ctx context.Context, main *sql.DB, dbPath string, o StorageOpt
 	if err := Migrate(main); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
-	return dropMovedTables(ctx, main)
+	// A spans file written by a cut-over that stopped before the drop: main
+	// still holds the copied rows, and dropping them finishes the cut-over.
+	finished, err := cutoverComplete(ctx, spans.DB)
+	if err != nil {
+		return err
+	}
+	return dropMovedTables(ctx, main, finished)
 }
 
 func openSplit(dbPath string, o StorageOptions) (*Storage, error) {
@@ -168,11 +198,22 @@ func (s *Storage) Close() error {
 // opens, so a reader that starts before the writer has created or migrated the
 // database recovers without a restart: connections fail to open until the
 // files are there, and the pool opens new ones on the next query.
+//
+// Connections are recycled after readConnMaxLifetime, so a reader that opened
+// its connections before the writer cut a single-file database over picks up
+// the spans file within that time.
 func OpenReadDB(dbPath string, cacheMB, mmapMB int) (*DB, error) {
-	return Open(dbPath, OpenOptions{ReadOnly: true, CacheMB: cacheMB, MmapMB: mmapMB, Attach: []Attachment{{
+	db, err := Open(dbPath, OpenOptions{ReadOnly: true, CacheMB: cacheMB, MmapMB: mmapMB, Attach: []Attachment{{
 		Schema: SpansSchema, Path: SpansPath(dbPath), CacheMB: cacheMB, MmapMB: mmapMB, UnlessMainHas: "spans",
 	}}})
+	if err != nil {
+		return nil, err
+	}
+	db.SetConnMaxLifetime(readConnMaxLifetime)
+	return db, nil
 }
+
+const readConnMaxLifetime = 2 * time.Minute
 
 func splitLayoutRW(ctx context.Context, main *sql.DB, dbPath string) (bool, error) {
 	if dbPath == ":memory:" {
@@ -201,17 +242,18 @@ func hasTable(ctx context.Context, db *sql.DB, table string) (bool, error) {
 	return n > 0, nil
 }
 
-// dropMovedTables drops the spans family's tables from main. They shadow the
-// attached spans file (main resolves first), so a split database must not
-// have them. Only empty tables are dropped: rows in them mean a single-file
-// database that the cut-over has to move first.
-func dropMovedTables(ctx context.Context, db *sql.DB) error {
+// dropMovedTables drops the spans family's tables, and the spans migration
+// track, from main. They shadow the attached spans file (main resolves first),
+// so a split database must not have them. Unless copied is set (the cut-over
+// has moved the rows), only empty tables are dropped: rows in them mean a
+// single-file database that the cut-over has to move first.
+func dropMovedTables(ctx context.Context, db *sql.DB, copied bool) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, table := range FamilySpans.Tables() {
+	for _, table := range slices.Concat(FamilySpans.Tables(), []string{spansVersionTable}) {
 		var n int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT count(*) FROM main.sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n); err != nil {
@@ -224,7 +266,7 @@ func dropMovedTables(ctx context.Context, db *sql.DB) error {
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM main.`+table+` LIMIT 1)`).Scan(&rows); err != nil {
 			return err
 		}
-		if rows > 0 {
+		if rows > 0 && !copied && table != spansVersionTable {
 			return fmt.Errorf("main database still holds rows in %s; a single-file database needs the spans cut-over before it gets a spans file", table)
 		}
 		if _, err := tx.ExecContext(ctx, `DROP TABLE main.`+table); err != nil {

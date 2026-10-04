@@ -87,7 +87,7 @@ The spike's plans show index SEARCH per shard through the views, and the heavy r
 
 `INDEXED BY` in `repo_dashboard.go` and `repo_trace_structure.go` names span indexes. Spans stay in one real table in an attached file, where `INDEXED BY` works unchanged. No heavy-table query uses `INDEXED BY` today, and views reject it, so a test asserts none is added for a sharded family.
 
-In step 1, readers attach `spans.db` and rely on unqualified-name resolution (temp, main, then attached in order). Main must not hold a table named `spans` after cut-over, or it shadows the attached one. The cut-over migration drops them.
+In step 1, readers attach `spans.db` and rely on unqualified-name resolution (temp, main, then attached in order). Main must not hold a table named `spans` after cut-over, or it shadows the attached one. The cut-over drops them.
 
 ### Traces across a boundary
 
@@ -111,7 +111,7 @@ Three migration tracks, each with its own goose version table:
 
 ### Layout detection (step 1)
 
-`repository.OpenStorage` decides the layout once, before migrating: the split layout when the spans file exists or main has no `spans` table (a new install or a restored settings snapshot), the single-file layout when main already holds `spans`. For a split database it creates and migrates the spans file first (with `auto_vacuum=INCREMENTAL`), then migrates main and drops the empty span tables main's migrations created. It refuses to open when main still has span rows next to a spans file. Readers (`repository.OpenReadDB`) decide per connection, when it opens: attach the spans file, unless it is absent and main holds `spans`. A reader that starts before the writer has created the files fails to open connections until they exist, and recovers without a restart.
+`repository.OpenStorage` decides the layout once, before migrating: the split layout when the spans file exists or main has no `spans` table (a new install or a restored settings snapshot), the single-file layout when main already holds `spans`. For a split database it creates and migrates the spans file first (with `auto_vacuum=INCREMENTAL`), then migrates main and drops the empty span tables main's migrations created. It refuses to open when main still has span rows next to a spans file, unless that file carries the cut-over marker (see Migration path). Readers (`repository.OpenReadDB`) decide per connection, when it opens: attach the spans file, unless it is absent and main holds `spans`. A reader that starts before the writer has created the files fails to open connections until they exist, and recovers without a restart.
 
 ### Writer and readers
 
@@ -139,9 +139,15 @@ Deletion is two-phase so no reader holds a deleted inode, which kept space alloc
 
 ### Migration path
 
-Prod cannot hold two copies of the heavy tables, so no step copies them.
+Prod cannot hold two copies of the heavy tables (logs, metrics, prompts), so no step copies them. Step 1 copies only the spans family.
 
-- **Step 1 (split).** Spans are under 2% of prod's file at the 48h window. The cut-over migration copies `spans`, `trace_summaries`, `spans_staging` and `aggregates` into `spans.db` in batches of 20k rows on the low-priority queue, then drops them from main. The copy runs while ingest keeps writing to main; the last batch and the switch of the write handle run under the scheduler, which holds new span writes for the length of one batch.
+- **Step 1 (split).** The spans family is a fraction of prod's file (about 1M rows, mostly `aggregates`). The writer copies it at startup (`repository/cutover.go`), after migrations and before any worker runs, so nothing writes to the span tables during the copy; ingest waits in the Redis write queue. Every writer deployment uses the Recreate strategy, so no second writer runs. The copy needs free space at least the size of main, otherwise it is postponed to the next start with a warning.
+  1. Create and migrate `$SPANBARN_DB_PATH.spans-cutover` (without main attached: goose names its version table unqualified, and main's `goose_spans_version` would answer for the new file).
+  2. Attach main read-only and copy each table in rowid batches of 20k with an explicit column list (generated columns excluded), checking row counts per table. Copy the `sqlite_sequence` counters so ids keep growing from main's.
+  3. Write a `spans_cutover` marker row, checkpoint, and rename the file to `$SPANBARN_DB_PATH.spans`. The rename is the commit point.
+  4. Drop the span tables and `goose_spans_version` from main in one transaction and open the split layout.
+
+  A failure before the rename is logged at error level, removes the temporary file and keeps the single-file layout. A stop between the rename and the drop leaves a spans file with the marker next to main's rows; the next start drops them. On a 3.7 GB copy of prod's data the copy took 49 s for 984k rows on a loaded host. Readers recycle their connections every 2 minutes (`SetConnMaxLifetime`), so a reader that opened connections before the cut-over attaches the spans file within that time.
 - **Step 2 (shards).** Shards start empty on deploy. Reads union the old main table with the shard views (the view definition includes `main.logs` while main still holds rows). Existing row retention keeps deleting from main. When a family's table in main is empty, the writer drops it and removes it from the view. After the 30-day families empty, main is small, and one `VACUUM INTO` plus swap (the existing snapshot-restore procedure) returns the space.
 
 ## Not covered
