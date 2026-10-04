@@ -86,6 +86,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 			if cfg.QueryTimeoutSeconds > 0 {
 				roRepo.SetQueryTimeout(time.Duration(cfg.QueryTimeoutSeconds) * time.Second)
 			}
+			defer startShardReaders(readerCtx, &wg, cfg, db, roRepo, logger).Close()
 			keyLookup = newReadOnlyKeyLookup(roRepo, writeQueue, logger)
 
 			sessions = newSessionService(roRepo, cfg, logger)

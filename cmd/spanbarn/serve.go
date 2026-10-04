@@ -221,6 +221,17 @@ func openQueryRepo(cfg config.Config) (*repository.DB, *repository.Repository, e
 	return roDB, queryRepo, nil
 }
 
+// startShardReaders gives repo a read pool per time-sharded family, refreshed
+// from the shards table so new shards show up within the interval. A family
+// without shards keeps reading through db. Close the result after the
+// goroutines in wg have stopped.
+func startShardReaders(ctx context.Context, wg *sync.WaitGroup, cfg config.Config, db *repository.DB, repo *repository.Repository, logger *slog.Logger) *repository.ShardReaders {
+	rs := repository.NewShardReaders(db.DB, cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB, logger)
+	repo.SetShardReaders(rs)
+	safeGo("shard-readers", wg, func() { rs.Run(ctx, 30*time.Second) })
+	return rs
+}
+
 // registerQueueDepthGauges exposes the write queue depths as self-metrics.
 func registerQueueDepthGauges(ctx context.Context, rec *selfmetrics.Recorder, q *queue.RedisQueue) {
 	for _, lbl := range []string{"spans", "metrics", "logs"} {

@@ -39,8 +39,12 @@ type Attachment struct {
 // that reaches a table in another family's file fails with "attempt to write a
 // readonly database" instead of taking that file's write lock behind its own
 // writer's back.
+//
+// Statements run after the attachments, in order: the TEMP views a shard read
+// pool puts over its family's files.
 type ConnSetup struct {
-	Attach []Attachment
+	Attach     []Attachment
+	Statements []string
 }
 
 // handleParam carries a handle's registry key in its DSN. SQLite ignores URI
@@ -91,6 +95,11 @@ func runConnSetup(conn sqlite.ExecQuerierContext, dsn string) error {
 		}
 		if err := sizeAttachment(conn, a); err != nil {
 			return err
+		}
+	}
+	for _, stmt := range setup.Statements {
+		if _, err := conn.ExecContext(context.Background(), stmt, nil); err != nil {
+			return fmt.Errorf("connection setup: %w", err)
 		}
 	}
 	return nil

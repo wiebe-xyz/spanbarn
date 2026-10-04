@@ -140,6 +140,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	logger.Info("write queue connected")
 
 	var wg sync.WaitGroup
+	defer startShardReaders(ctx, &wg, cfg, roDB, queryRepo, logger).Close()
 
 	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
 	accumulator := aggregation.NewAccumulator(repo, aggInterval, 30*time.Second, logger)

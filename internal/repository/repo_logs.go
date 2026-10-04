@@ -127,7 +127,8 @@ func (r *Repository) QueryLogs(ctx context.Context, f LogFilter) ([]LogRow, int,
 	cond := strings.Join(where, " AND ")
 
 	var total int
-	if err := r.db.QueryRowContext(ctx,
+	db := r.reader(FamilyLogs)
+	if err := db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT COUNT(*) FROM logs WHERE %s`, cond),
 		args...,
 	).Scan(&total); err != nil {
@@ -139,7 +140,7 @@ func (r *Repository) QueryLogs(ctx context.Context, f LogFilter) ([]LogRow, int,
 		limit = 200
 	}
 	pageArgs := append(args, limit, f.Offset)
-	rows, err := r.db.QueryContext(ctx, fmt.Sprintf(
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(
 		`SELECT id, project_id, COALESCE(trace_id,''), COALESCE(span_id,''),
 		        severity_number, severity_text,
 		        time_unix_nano, observed_time_unix_nano, body, attributes, ingested_at
@@ -203,7 +204,7 @@ func (r *Repository) LogHistogram(ctx context.Context, f LogFilter, bucketSecs i
 	// Prepend bucketSecs twice: once for the division, once for the multiply.
 	qargs := append([]any{bucketSecs, bucketSecs}, args...)
 
-	rows, err := r.db.QueryContext(ctx, fmt.Sprintf(`
+	rows, err := r.reader(FamilyLogs).QueryContext(ctx, fmt.Sprintf(`
 		SELECT CAST(strftime('%%s', ingested_at) / ? AS INTEGER) * ? AS bucket_ts, COUNT(*)
 		FROM logs WHERE %s
 		GROUP BY bucket_ts ORDER BY bucket_ts`, cond), qargs...)

@@ -38,7 +38,7 @@ func (m *ShardManager) reconcile(ctx context.Context) error {
 		m.logger.Warn("shard row without a file removed", "file", file)
 	}
 	for file, key := range onDisk {
-		h, err := m.openShard(ctx, key.family, file)
+		h, err := m.openShard(ctx, key.family, key.start, file)
 		if err != nil {
 			return err
 		}

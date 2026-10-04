@@ -150,7 +150,7 @@ func (m *ShardManager) shard(ctx context.Context, spec shardSpec, start time.Tim
 		return h, nil
 	}
 	file := spec.file(start)
-	h, err := m.openShard(ctx, spec.family, file)
+	h, err := m.openShard(ctx, spec.family, start, file)
 	if err != nil {
 		return nil, err
 	}
@@ -174,8 +174,9 @@ func (m *ShardManager) record(ctx context.Context, spec shardSpec, start time.Ti
 	return nil
 }
 
-// openShard opens and migrates the shard file named file.
-func (m *ShardManager) openShard(ctx context.Context, f Family, file string) (*DB, error) {
+// openShard opens and migrates the shard file named file, whose period starts
+// at start, and seeds its id sequences.
+func (m *ShardManager) openShard(ctx context.Context, f Family, start time.Time, file string) (*DB, error) {
 	h, err := Open(filepath.Join(m.dir, file), m.open)
 	if err != nil {
 		return nil, err
@@ -184,7 +185,34 @@ func (m *ShardManager) openShard(ctx context.Context, f Family, file string) (*D
 		h.Close()
 		return nil, fmt.Errorf("migrate shard %s: %w", file, err)
 	}
+	if err := seedShardIDs(ctx, h.DB, f, start); err != nil {
+		h.Close()
+		return nil, fmt.Errorf("seed shard %s: %w", file, err)
+	}
 	return h, nil
+}
+
+// seedShardIDs starts the AUTOINCREMENT ids of a new shard at
+// shardIDBase(start). Every shard would otherwise count from 1, and the read
+// views union the shards, so two rows would share an id. A sequence that
+// already has a row (the shard holds or held rows) is left alone.
+func seedShardIDs(ctx context.Context, db *sql.DB, f Family, start time.Time) error {
+	for _, table := range f.Tables() {
+		if _, err := db.ExecContext(ctx, `INSERT INTO sqlite_sequence (name, seq)
+			SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = ?)`,
+			table, shardIDBase(start), table); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// shardIDBase is the first id of the shard whose period starts at start: the
+// day number since the Unix epoch, shifted left 32 bits. A shard holds up to
+// 2^32 rows before it reaches the next day's base, main's ids stay below the
+// first base, and every id stays under 2^53, so JSON clients read it exactly.
+func shardIDBase(start time.Time) int64 {
+	return int64(start.Sub(time.Unix(0, 0)) / day) << 32
 }
 
 // Maintain creates the shards of the current period and of the period that

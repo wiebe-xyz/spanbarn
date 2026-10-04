@@ -144,14 +144,16 @@ type OpenOptions struct {
 	// sees their tables under their unqualified names (SQLite resolves a name
 	// in temp, then main, then each attached database in attach order).
 	Attach []Attachment
+	// Setup lists statements every connection runs after its attachments.
+	Setup []string
 }
 
 // Open opens dbPath with the given sizing and attachments. A writable handle
 // is capped at one connection (see NewDBWithCache); a read-only one is not.
 func Open(dbPath string, o OpenOptions) (*DB, error) {
 	var key string
-	if len(o.Attach) > 0 {
-		key = registerConnSetup(&ConnSetup{Attach: o.Attach})
+	if len(o.Attach) > 0 || len(o.Setup) > 0 {
+		key = registerConnSetup(&ConnSetup{Attach: o.Attach, Statements: o.Setup})
 	}
 	mode := "sqlite"
 	if o.ReadOnly {

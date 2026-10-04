@@ -53,6 +53,8 @@ type Repository struct {
 	deleteBatchYield time.Duration
 	// shards, when set, takes the inserts of the families it shards.
 	shards *ShardManager
+	// shardReaders, when set, serves the reads of every family with shards.
+	shardReaders *ShardReaders
 }
 
 // retentionDeleteBatch caps the rows touched by a single batched retention
@@ -113,6 +115,18 @@ func (r *Repository) SetFamilyWriter(f Family, db *sql.DB, s *writescheduler.Sch
 // Everything else those families write (retention deletes) stays on main,
 // which still holds their older rows.
 func (r *Repository) SetShards(m *ShardManager) { r.shards = m }
+
+// SetShardReaders reads every sharded family through its pool in rs.
+func (r *Repository) SetShardReaders(rs *ShardReaders) { r.shardReaders = rs }
+
+// reader returns the handle f's reads run on: f's shard pool when f has
+// shards, otherwise db.
+func (r *Repository) reader(f Family) *sql.DB {
+	if p := r.shardReaders.pool(f); p != nil {
+		return p.db.DB
+	}
+	return r.db
+}
 
 // WithQueryTimeout returns a copy of r that shares its handles and schedulers
 // and uses timeout for its queries.
