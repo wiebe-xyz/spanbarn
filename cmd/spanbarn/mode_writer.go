@@ -204,6 +204,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	alertEval := alert.NewEvaluator(queryRepo, alertNotifier, logger, writerRatioLookup)
 	alertEval.SetTriggerWriter(repo)
 	alertRunner := alert.NewRunner(alertEval, queryRepo, time.Minute, logger)
+	// SLO counting scans spans on the read-only connection; counts and burn
+	// state are written on the writable repo.
+	alertRunner.SetSLOEvaluator(alert.NewSLOEvaluator(queryRepo, repo, alertNotifier, logger, writerRatioLookup))
 	alertCtx, alertCancel := context.WithCancel(ctx)
 	defer alertCancel()
 	safeGo("alert-runner", &wg, func() { alertRunner.Run(alertCtx) })

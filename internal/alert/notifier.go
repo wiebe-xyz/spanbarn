@@ -55,6 +55,15 @@ func NewDefaultNotifier(cfg NotifierConfig, logger *slog.Logger) *DefaultNotifie
 
 // SendWebhook POSTs the alert payload as JSON to the given URL.
 func (n *DefaultNotifier) SendWebhook(ctx context.Context, url string, payload AlertPayload) error {
+	return n.postJSON(ctx, url, payload)
+}
+
+// SendSLOWebhook POSTs the SLO burn payload as JSON to the given URL.
+func (n *DefaultNotifier) SendSLOWebhook(ctx context.Context, url string, payload SLOPayload) error {
+	return n.postJSON(ctx, url, payload)
+}
+
+func (n *DefaultNotifier) postJSON(ctx context.Context, url string, payload any) error {
 	_, span := alertTracer.Start(ctx, "alert.send_webhook", trace.WithSpanKind(trace.SpanKindClient))
 	defer span.End()
 

@@ -20,7 +20,12 @@ type Runner struct {
 	projects  ProjectLister
 	interval  time.Duration
 	logger    *slog.Logger
+	slo       *SLOEvaluator
 }
+
+// SetSLOEvaluator makes every tick count SLOs and evaluate burn alerts after
+// the threshold alert pass.
+func (r *Runner) SetSLOEvaluator(e *SLOEvaluator) { r.slo = e }
 
 // NewRunner creates a Runner that evaluates alerts at the given interval.
 func NewRunner(evaluator *Evaluator, projects ProjectLister, interval time.Duration, logger *slog.Logger) *Runner {
@@ -77,5 +82,9 @@ func (r *Runner) tick(ctx context.Context) {
 		if err := r.evaluator.Evaluate(ctx, id); err != nil {
 			r.logger.Error("evaluate alerts", "projectID", id, "error", err)
 		}
+	}
+
+	if r.slo != nil {
+		r.slo.Run(ctx, ids)
 	}
 }
