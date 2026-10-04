@@ -77,8 +77,15 @@ func (o StorageOptions) logger() *slog.Logger {
 // With o.Shards set it then opens the shard manager on the main handle.
 func OpenStorage(ctx context.Context, dbPath string, o StorageOptions) (*Storage, error) {
 	s, err := openLayout(ctx, dbPath, o)
-	if err != nil || len(o.Shards) == 0 || dbPath == ":memory:" {
+	if err != nil || dbPath == ":memory:" {
 		return s, err
+	}
+	if err := restoreMainTables(ctx, s.Main.DB, o.Shards); err != nil {
+		s.Close()
+		return nil, err
+	}
+	if len(o.Shards) == 0 {
+		return s, nil
 	}
 	m, err := openShardManager(ctx, s.Main.DB, dbPath, o.Shards, o)
 	if err != nil {

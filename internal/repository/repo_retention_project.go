@@ -70,6 +70,10 @@ func (r *Repository) deleteOtherTraceRows(ctx context.Context, ids []any) error 
 	q := " WHERE trace_id IN (" + placeholderList(len(ids)) + ")"
 	for _, table := range evictCascadeOtherTables {
 		if err := r.execLow(TableFamily(table), func(db *sql.DB) error {
+			// Main drops a sharded family's table once it is empty.
+			if has, err := hasTable(ctx, db, table); err != nil || !has {
+				return err
+			}
 			_, err := db.ExecContext(ctx, "DELETE FROM "+table+q, ids...)
 			return err
 		}); err != nil {

@@ -103,7 +103,7 @@ func (s *ShardReaders) refreshFamily(ctx context.Context, f Family, files []stri
 			"family", f.String(), "shards", len(files), "attached", maxAttached)
 		files = files[:maxAttached]
 	}
-	mainHas, err := hasTable(ctx, s.main, f.Tables()[0])
+	mainHas, err := mainHolds(ctx, s.main, f.Tables()[0])
 	if err != nil {
 		return err
 	}
