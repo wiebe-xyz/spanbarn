@@ -194,6 +194,28 @@ Indexes: `idx_boards_project` ON (project_id), `idx_board_panels_board` ON (boar
 - Releases are recorded with `POST /api/v1/releases` (a version and an optional time, default now) from the board page or a script with a session. Nothing derives them from `service.version` on spans.
 - The tables are small (a handful of rows per project), so no backfill or special retention applies.
 
+### calculated_fields (named expressions)
+
+Migration 040. A calculated field is a named expression over span columns and attributes that a filter or group-by uses like a normal key.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | INTEGER | PK |
+| project_id | INTEGER | FK → projects |
+| name | TEXT | 1 to 64 characters of `[A-Za-z0-9_.]`, not starting with a digit. Unique per project. Not a span column (`duration_us`, `name`, `operation` ...) and not starting with `attributes.` |
+| expression | TEXT | At most 500 characters, parsed by `internal/calcfield` |
+| created_at, updated_at | DATETIME | |
+
+Index: unique `idx_calculated_fields_project_name` ON (project_id, name). A project holds at most 50 fields.
+
+**Grammar.** Closed. Literals (`12`, `1.5`, `'text'` with `''` for a quote), identifiers (`http.route`, or `` `app.user-id` `` in backticks), `+ - * / %`, `= == != <> < <= > >=`, `and or not`, parentheses and four functions: `coalesce(a, b, ...)`, `if(cond, a, b)`, `concat(a, b, ...)`, `lower(a)`. `/` is real division and a zero divisor gives NULL. A missing attribute is NULL, `concat` reads it as an empty string. Caps: 500 characters, 16 levels of nesting, 200 terms, 8 arguments per call, and 2000 terms after other fields are expanded into it.
+
+**Resolution.** A key in a filter, group-by or `count_distinct` resolves in this order: the `attributes.` prefix (an attribute), a span column, a calculated field of the query's project, an attribute of that name. A field may use other fields. A cycle is rejected on write and, for a row stored by other means, fails the queries that use it with a 400, never a NULL. A field named like an attribute replaces it for filters and group-bys. The expression reads the attribute with `attributes.<name>`. Fields are read once per query for the query's project, so a field never applies to another project.
+
+**No user text reaches SQL.** Literals and attribute paths are bound parameters. Operators and functions come from a fixed table. The lexer refuses every character outside the grammar (double quotes, semicolons, backslashes, NUL). The compiler emits `(0 - x)` for negation so generated SQL never contains `--`.
+
+**Values.** A calculated number compares as a number (`= 2` matches 2 and 2.0), reads as text for `contains`, `starts-with`, `in` and group labels, with a whole number written without a fraction (`3`, not `3.0`).
+
 ### aggregates (long-term metrics)
 
 | Column | Type | Notes |

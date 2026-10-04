@@ -13,7 +13,17 @@ func ValidateKey(key string) error {
 // reads as itself, an attribute as its JSON value (booleans as true/false) and
 // NULL when the attribute is missing.
 func TextSQL(key string) (string, []any) {
-	return resolve(key).text()
+	return resolveBuiltinOrAttr(key).text()
+}
+
+// TextSQLWith is TextSQL with a Resolver, so a key can name a calculated field.
+func TextSQLWith(key string, r Resolver) (string, []any, error) {
+	o, err := resolve(key, r)
+	if err != nil {
+		return "", nil, err
+	}
+	s, a := o.text()
+	return s, a, nil
 }
 
 // GroupCondition is the filter condition that selects spans whose key reads as

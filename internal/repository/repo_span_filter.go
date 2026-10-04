@@ -16,7 +16,18 @@ func (f SpanFilter) exprPredicate() (string, []any, error) {
 	if f.From.IsZero() {
 		return "", nil, fmt.Errorf("%w: a time range (from) is required", filter.ErrInvalid)
 	}
-	return filter.Compile(f.Expr)
+	return filter.CompileWith(f.Expr, f.calc)
+}
+
+// withCalc returns f with the calculated fields of its project, loaded once for
+// the query. A filter without an expression needs none.
+func (r *Repository) withCalc(f SpanFilter) (SpanFilter, error) {
+	if f.Expr == nil || len(f.Expr.Filters) == 0 {
+		return f, nil
+	}
+	calc, err := r.calcResolver(f.ProjectID)
+	f.calc = calc
+	return f, err
 }
 
 // appendExprWhere ANDs the filter expression onto a span query.

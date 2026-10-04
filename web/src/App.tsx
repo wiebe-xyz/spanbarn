@@ -14,6 +14,7 @@ const OperationDetailPage = lazy(() => import('./pages/OperationDetailPage').the
 const TracesPage = lazy(() => import('./pages/TracesPage').then(m => ({ default: m.TracesPage })))
 const TraceHealthPage = lazy(() => import('./pages/TraceHealthPage').then(m => ({ default: m.TraceHealthPage })))
 const AttributesPage = lazy(() => import('./pages/AttributesPage').then(m => ({ default: m.AttributesPage })))
+const CalculatedFieldsPage = lazy(() => import('./pages/CalculatedFieldsPage').then(m => ({ default: m.CalculatedFieldsPage })))
 const ComparePage = lazy(() => import('./pages/ComparePage').then(m => ({ default: m.ComparePage })))
 const BoardsPage = lazy(() => import('./pages/BoardsPage').then(m => ({ default: m.BoardsPage })))
 const BoardPage = lazy(() => import('./pages/BoardPage').then(m => ({ default: m.BoardPage })))
@@ -49,6 +50,7 @@ function App() {
               <Route path="traces" element={<TracesPage />} />
               <Route path="trace-health" element={<TraceHealthPage />} />
               <Route path="attributes" element={<AttributesPage />} />
+              <Route path="calculated-fields" element={<CalculatedFieldsPage />} />
               <Route path="compare" element={<ComparePage />} />
               <Route path="analyze" element={<AnalyzePage />} />
               <Route path="boards" element={<BoardsPage />} />
