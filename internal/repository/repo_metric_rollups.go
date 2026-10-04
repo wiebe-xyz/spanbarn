@@ -56,8 +56,8 @@ func (r *Repository) UpsertMetricRollups(rollups []MetricRollup) error {
 	}
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx := WithoutSpanTracing(context.Background())
-	return r.execLow(func() error {
-		tx, err := r.db.BeginTx(ctx, nil)
+	return r.execLow(FamilyCore, func(db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}

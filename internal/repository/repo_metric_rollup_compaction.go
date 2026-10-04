@@ -191,8 +191,8 @@ func (r *Repository) MetricRollupWatermark(ctx context.Context, step int64) (tim
 // licence to delete less than it already could.
 func (r *Repository) SetMetricRollupWatermark(ctx context.Context, step int64, through time.Time) error {
 	ctx = WithoutSpanTracing(ctx)
-	return r.execLow(func() error {
-		_, err := r.db.ExecContext(ctx,
+	return r.execLow(FamilyCore, func(db *sql.DB) error {
+		_, err := db.ExecContext(ctx,
 			`INSERT INTO metric_rollup_compaction (step_seconds, compacted_through, updated_at)
 			 VALUES (?, ?, CURRENT_TIMESTAMP)
 			 ON CONFLICT(step_seconds) DO UPDATE SET

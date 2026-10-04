@@ -10,8 +10,19 @@ import (
 	"time"
 )
 
-// setupTestDB creates an in-memory SQLite database with migrations applied.
+// setupTestDB creates an in-memory SQLite database with migrations applied, or
+// the split layout when SPANBARN_TEST_LAYOUT=split.
 func setupTestDB(t *testing.T) *Repository {
+	t.Helper()
+	if splitTestLayout() {
+		return setupSplitTestRepo(t)
+	}
+	return setupCombinedTestDB(t)
+}
+
+// setupCombinedTestDB is setupTestDB's single-file layout, for tests about the
+// file itself (migrations) that hold in either layout.
+func setupCombinedTestDB(t *testing.T) *Repository {
 	t.Helper()
 	db, err := NewDB(":memory:")
 	if err != nil {
@@ -670,7 +681,7 @@ func TestProjectUsageStatsAll(t *testing.T) {
 	// row per (project, bucket) carrying the relevant count/error_count for the
 	// bucket window we want to test.
 	addAgg := func(projectID, count, errors int64, ago string) {
-		_, err := repo.db.Exec(
+		_, err := repo.writer(FamilySpans).Exec(
 			`INSERT INTO aggregates (project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
 			 VALUES (?, 'svc', 'op', '', 'server', datetime('now', ?), ?, ?, 0, 0, 0, 0, 0)`,
 			projectID, ago, count, errors)
@@ -741,7 +752,7 @@ func insertBoringSpans(t *testing.T, repo *Repository, projectID int64, count in
 	if err := repo.InsertSpans(spans); err != nil {
 		t.Fatalf("InsertSpans: %v", err)
 	}
-	if _, err := repo.DB().Exec("UPDATE spans SET ingested_at = ?", ingestedAt); err != nil {
+	if _, err := repo.writer(FamilySpans).Exec("UPDATE spans SET ingested_at = ?", ingestedAt); err != nil {
 		t.Fatalf("backdate ingested_at: %v", err)
 	}
 }

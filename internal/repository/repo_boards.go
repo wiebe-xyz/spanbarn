@@ -40,8 +40,8 @@ const boardColumns = `id, project_id, name, time_range, refresh_seconds, created
 
 func (r *Repository) CreateBoard(projectID int64, name, timeRange string, refreshSeconds int) (int64, error) {
 	var id int64
-	err := r.execHigh(func() error {
-		res, e := r.db.Exec(
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec(
 			`INSERT INTO boards (project_id, name, time_range, refresh_seconds) VALUES (?, ?, ?, ?)`,
 			projectID, name, timeRange, refreshSeconds,
 		)
@@ -56,8 +56,8 @@ func (r *Repository) CreateBoard(projectID int64, name, timeRange string, refres
 
 // UpdateBoard replaces the name, shared time range and refresh interval.
 func (r *Repository) UpdateBoard(id int64, name, timeRange string, refreshSeconds int) error {
-	return r.execHigh(func() error {
-		res, err := r.db.Exec(
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, err := db.Exec(
 			`UPDATE boards SET name = ?, time_range = ?, refresh_seconds = ?, updated_at = datetime('now') WHERE id = ?`,
 			name, timeRange, refreshSeconds, id,
 		)
@@ -146,8 +146,8 @@ func (r *Repository) boardPanels(where string, args ...any) ([]BoardPanel, error
 // DeleteBoard removes a board, its panels and the saved queries only those
 // panels used.
 func (r *Repository) DeleteBoard(id int64) error {
-	return r.execHigh(func() error {
-		return r.inTx(func(tx *sql.Tx) error {
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		return r.inTx(db, func(tx *sql.Tx) error {
 			var n int
 			if err := tx.QueryRow(`SELECT COUNT(*) FROM boards WHERE id = ?`, id).Scan(&n); err != nil {
 				return err
@@ -174,8 +174,8 @@ func deleteOrphanBoardQueries(tx *sql.Tx) error {
 	return err
 }
 
-func (r *Repository) inTx(fn func(tx *sql.Tx) error) error {
-	tx, err := r.db.Begin()
+func (r *Repository) inTx(db *sql.DB, fn func(tx *sql.Tx) error) error {
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
@@ -190,8 +190,8 @@ func (r *Repository) inTx(fn func(tx *sql.Tx) error) error {
 // one transaction ("save to board"). The query takes the board's project.
 func (r *Repository) AddPanelWithQuery(boardID int64, q SavedQuery, title, view string) (int64, error) {
 	var panelID int64
-	err := r.execHigh(func() error {
-		return r.inTx(func(tx *sql.Tx) error {
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		return r.inTx(db, func(tx *sql.Tx) error {
 			var projectID int64
 			if err := tx.QueryRow(`SELECT project_id FROM boards WHERE id = ?`, boardID).Scan(&projectID); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
@@ -225,16 +225,16 @@ func (r *Repository) AddPanelWithQuery(boardID int64, q SavedQuery, title, view 
 
 // UpdatePanel changes the title and view of a panel on a board.
 func (r *Repository) UpdatePanel(boardID, panelID int64, title, view string) error {
-	return r.execHigh(func() error {
-		res, err := r.db.Exec(`UPDATE board_panels SET title = ?, view = ? WHERE id = ? AND board_id = ?`, title, view, panelID, boardID)
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, err := db.Exec(`UPDATE board_panels SET title = ?, view = ? WHERE id = ? AND board_id = ?`, title, view, panelID, boardID)
 		return expectRow(res, err)
 	})
 }
 
 // DeletePanel removes a panel and its query when nothing else uses it.
 func (r *Repository) DeletePanel(boardID, panelID int64) error {
-	return r.execHigh(func() error {
-		return r.inTx(func(tx *sql.Tx) error {
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		return r.inTx(db, func(tx *sql.Tx) error {
 			res, err := tx.Exec(`DELETE FROM board_panels WHERE id = ? AND board_id = ?`, panelID, boardID)
 			if err := expectRow(res, err); err != nil {
 				return err
@@ -246,8 +246,8 @@ func (r *Repository) DeletePanel(boardID, panelID int64) error {
 
 // ReorderPanels sets the panel order. ids must name exactly the panels of the board.
 func (r *Repository) ReorderPanels(boardID int64, ids []int64) error {
-	return r.execHigh(func() error {
-		return r.inTx(func(tx *sql.Tx) error {
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		return r.inTx(db, func(tx *sql.Tx) error {
 			existing, err := panelIDs(tx, boardID)
 			if err != nil {
 				return err

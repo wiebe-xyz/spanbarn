@@ -1,9 +1,11 @@
 package repository
 
+import "database/sql"
+
 func (r *Repository) CreateAPIKey(projectID int64, name, keyHash, scope string) (int64, error) {
 	var id int64
-	err := r.execHigh(func() error {
-		res, e := r.db.Exec(
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec(
 			"INSERT INTO api_keys (project_id, name, key_hash, scope) VALUES (?, ?, ?, ?)",
 			projectID, name, keyHash, scope,
 		)
@@ -24,8 +26,8 @@ func (r *Repository) CreateAPIKey(projectID int64, name, keyHash, scope string) 
 // previous key keeps working until it is explicitly revoked, so a rotation
 // cannot lock out a client that has not picked up the new value yet.
 func (r *Repository) EnsureAPIKey(projectID int64, name, keyHash, scope string) (inserted bool, err error) {
-	err = r.execHigh(func() error {
-		res, e := r.db.Exec(
+	err = r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec(
 			"INSERT OR IGNORE INTO api_keys (project_id, name, key_hash, scope) VALUES (?, ?, ?, ?)",
 			projectID, name, keyHash, scope,
 		)
@@ -49,8 +51,8 @@ func (r *Repository) GetAPIKeyByHash(keyHash string) (APIKey, error) {
 }
 
 func (r *Repository) TouchAPIKey(id int64) error {
-	return r.execLow(func() error {
-		_, err := r.db.Exec("UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+	return r.execLow(FamilyCore, func(db *sql.DB) error {
+		_, err := db.Exec("UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?", id)
 		return err
 	})
 }
@@ -95,5 +97,5 @@ func (r *Repository) ListAllAPIKeys() ([]APIKey, error) {
 }
 
 func (r *Repository) RevokeAPIKey(id int64) error {
-	return r.execHighExpectingRows("DELETE FROM api_keys WHERE id = ?", id)
+	return r.execHighExpectingRows(FamilyCore, "DELETE FROM api_keys WHERE id = ?", id)
 }

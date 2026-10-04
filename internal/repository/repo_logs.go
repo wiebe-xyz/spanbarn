@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -53,8 +54,8 @@ func (r *Repository) InsertLogs(ctx context.Context, recs []model.LogRecord) err
 	}
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx = WithoutSpanTracing(ctx)
-	return r.execLow(func() error {
-		tx, err := r.db.BeginTx(ctx, nil)
+	return r.execLow(FamilyLogs, func(db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -248,8 +249,8 @@ func (r *Repository) DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCu
 	var total int64
 	for _, pid := range pids {
 		pid := pid
-		n, err := r.batchedDelete(ctx, func() (int64, error) {
-			res, e := r.db.ExecContext(ctx, `
+		n, err := r.batchedDelete(ctx, FamilyLogs, func(db *sql.DB) (int64, error) {
+			res, e := db.ExecContext(ctx, `
 				DELETE FROM logs WHERE rowid IN (
 				    SELECT rowid FROM logs
 				    WHERE project_id = ? AND ingested_at < ?
@@ -286,8 +287,8 @@ func (r *Repository) DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCu
 // --- Pinned Traces ---
 
 func (r *Repository) PinTrace(ctx context.Context, projectID int64, traceID, label string) error {
-	return r.execHigh(func() error {
-		_, err := r.db.ExecContext(ctx,
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		_, err := db.ExecContext(ctx,
 			`INSERT INTO pinned_traces (project_id, trace_id, label) VALUES (?, ?, ?)
 			 ON CONFLICT(project_id, trace_id) DO UPDATE SET label = excluded.label`,
 			projectID, traceID, label,
@@ -297,8 +298,8 @@ func (r *Repository) PinTrace(ctx context.Context, projectID int64, traceID, lab
 }
 
 func (r *Repository) UnpinTrace(ctx context.Context, projectID int64, traceID string) error {
-	return r.execHigh(func() error {
-		_, err := r.db.ExecContext(ctx,
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		_, err := db.ExecContext(ctx,
 			`DELETE FROM pinned_traces WHERE project_id = ? AND trace_id = ?`,
 			projectID, traceID,
 		)

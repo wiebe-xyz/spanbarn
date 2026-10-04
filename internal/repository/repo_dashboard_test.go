@@ -20,7 +20,7 @@ func dashSpan(t *testing.T, repo *Repository, id, parent, name, service, attrs s
 	if err := repo.InsertSpans([]Span{s}); err != nil {
 		t.Fatalf("insert %s: %v", id, err)
 	}
-	if _, err := repo.DB().Exec(`UPDATE spans SET ingested_at = ? WHERE span_id = ?`, at.UTC().String(), id); err != nil {
+	if _, err := repo.writer(FamilySpans).Exec(`UPDATE spans SET ingested_at = ? WHERE span_id = ?`, at.UTC().String(), id); err != nil {
 		t.Fatalf("pin %s: %v", id, err)
 	}
 }

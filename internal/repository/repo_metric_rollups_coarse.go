@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -34,8 +35,8 @@ func (r *Repository) UpsertCoarseRollups(ctx context.Context, rollups []MetricRo
 	}
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx = WithoutSpanTracing(ctx)
-	return r.execLow(func() error {
-		tx, err := r.db.BeginTx(ctx, nil)
+	return r.execLow(FamilyCore, func(db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -159,8 +160,8 @@ func (r *Repository) DeleteCoarseRollupsOlderThanLimited(ctx context.Context, st
 	var total int64
 	for _, pid := range pids {
 		pid := pid
-		n, _, err := r.batchedDeleteLimited(ctx, max-total, func(limit int64) (int64, error) {
-			res, e := r.db.ExecContext(ctx, q, pid, step, cutoff, limit)
+		n, _, err := r.batchedDeleteLimited(ctx, FamilyCore, max-total, func(db *sql.DB, limit int64) (int64, error) {
+			res, e := db.ExecContext(ctx, q, pid, step, cutoff, limit)
 			if e != nil {
 				return 0, e
 			}
@@ -193,8 +194,8 @@ func (r *Repository) DeleteCoarseRollupsOlderThan(ctx context.Context, step int6
 	var total int64
 	for _, pid := range pids {
 		pid := pid
-		n, err := r.batchedDelete(ctx, func() (int64, error) {
-			res, e := r.db.ExecContext(ctx, q, pid, step, cutoff, retentionDeleteBatch)
+		n, err := r.batchedDelete(ctx, FamilyCore, func(db *sql.DB) (int64, error) {
+			res, e := db.ExecContext(ctx, q, pid, step, cutoff, retentionDeleteBatch)
 			if e != nil {
 				return 0, e
 			}

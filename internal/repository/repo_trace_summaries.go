@@ -160,8 +160,8 @@ func upsertTraceSummariesTx(ctx context.Context, tx *sql.Tx, sums []traceSummary
 // backlog never holds the write connection for long.
 func (r *Repository) DeleteExpiredTraceSummaries(ctx context.Context, now time.Time) (int64, error) {
 	n := now.UTC()
-	return r.batchedDelete(ctx, func() (int64, error) {
-		res, e := r.db.ExecContext(ctx,
+	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
+		res, e := db.ExecContext(ctx,
 			`DELETE FROM trace_summaries WHERE rowid IN (
 				SELECT rowid FROM trace_summaries WHERE expires_at IS NOT NULL AND expires_at < ? LIMIT ?)`,
 			n, retentionDeleteBatch)
@@ -180,8 +180,8 @@ func (r *Repository) DeleteExpiredTraceSummaries(ctx context.Context, now time.T
 // so those traces keep listing for exactly as long as their spans can be read.
 func (r *Repository) DeleteTraceSummariesOlderThan(ctx context.Context, interestingCutoff, errorCutoff time.Time) (int64, error) {
 	ic, ec := interestingCutoff.UTC(), errorCutoff.UTC()
-	return r.batchedDelete(ctx, func() (int64, error) {
-		res, e := r.db.ExecContext(ctx,
+	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
+		res, e := db.ExecContext(ctx,
 			`DELETE FROM trace_summaries WHERE rowid IN (
 				SELECT rowid FROM trace_summaries
 				WHERE expires_at IS NULL

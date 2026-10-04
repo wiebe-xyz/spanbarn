@@ -238,7 +238,7 @@ func sloTableCount(t *testing.T, repo *Repository) int {
 }
 
 func TestSLOMigrationDownReverses(t *testing.T) {
-	repo := setupTestDB(t)
+	repo := setupCombinedTestDB(t) // migrations run on one file
 	if n := sloTableCount(t, repo); n != 3 {
 		t.Fatalf("tables after up = %d", n)
 	}

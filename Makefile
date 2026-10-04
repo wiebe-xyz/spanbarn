@@ -73,6 +73,9 @@ test: spec-check
 		if find "$$dir" -name '*.go' -print -quit | grep -q .; then \
 			echo "[test] go $$dir"; \
 			(cd "$$dir" && go test ./...); \
+			if [ -d "$$dir/internal/repository" ]; then \
+				(cd "$$dir" && SPANBARN_TEST_LAYOUT=split go test ./internal/repository/...); \
+			fi; \
 		fi; \
 	done; \
 	if [ -f pnpm-workspace.yaml ]; then \

@@ -18,6 +18,7 @@ import (
 // DB wraps a *sql.DB connection to SQLite.
 type DB struct {
 	*sql.DB
+	setupKey string // connSetups key, "" when the handle attaches nothing
 }
 
 func sqliteSpanName(_ context.Context, _ otelsql.Method, query string) string {
@@ -80,7 +81,7 @@ const (
 // db.Exec("PRAGMA …") only configures the single connection that handled the
 // Exec call; later connections spawned under load inherit no pragmas, so
 // busy_timeout defaults to 0 and any contention surfaces as SQLITE_BUSY.
-func buildDSN(dbPath string, readOnly bool, cacheMB, mmapMB int) string {
+func buildDSN(dbPath string, readOnly bool, cacheMB, mmapMB int, setupKey string) string {
 	q := url.Values{}
 	q.Add("_pragma", "busy_timeout(30000)")
 	q.Add("_pragma", "foreign_keys(ON)")
@@ -107,6 +108,9 @@ func buildDSN(dbPath string, readOnly bool, cacheMB, mmapMB int) string {
 	// both to fit under the pod's GOMEMLIMIT / memory limit.
 	q.Add("_pragma", fmt.Sprintf("cache_size(-%d)", cacheMB*1024)) // negative = KiB
 	q.Add("_pragma", fmt.Sprintf("mmap_size(%d)", mmapMB*1024*1024))
+	if setupKey != "" {
+		q.Set(handleParam, setupKey)
+	}
 	prefix := "file:"
 	if !strings.HasPrefix(dbPath, "file:") && dbPath != ":memory:" {
 		dbPath = prefix + dbPath
@@ -128,14 +132,44 @@ func NewDB(dbPath string) (*DB, error) {
 // deadlock each other — SQLite returns SQLITE_BUSY immediately, before busy_timeout can help.
 // Serialising through one connection means the second writer waits in Go's pool (not in SQLite).
 func NewDBWithCache(dbPath string, cacheMB, mmapMB int) (*DB, error) {
-	db, err := otelsql.Open("sqlite", buildDSN(dbPath, false, cacheMB, mmapMB), otelOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite %s: %w", dbPath, err)
+	return Open(dbPath, OpenOptions{CacheMB: cacheMB, MmapMB: mmapMB})
+}
+
+// OpenOptions configures one database handle.
+type OpenOptions struct {
+	ReadOnly bool
+	CacheMB  int
+	MmapMB   int
+	// Attach lists files every connection attaches read-only, so the handle
+	// sees their tables under their unqualified names (SQLite resolves a name
+	// in temp, then main, then each attached database in attach order).
+	Attach []Attachment
+}
+
+// Open opens dbPath with the given sizing and attachments. A writable handle
+// is capped at one connection (see NewDBWithCache); a read-only one is not.
+func Open(dbPath string, o OpenOptions) (*DB, error) {
+	var key string
+	if len(o.Attach) > 0 {
+		key = registerConnSetup(&ConnSetup{Attach: o.Attach})
 	}
-	db.SetMaxOpenConns(1)
-	// Expose connection pool stats as OTel metrics (best-effort).
-	_, _ = otelsql.RegisterDBStatsMetrics(db, otelsql.WithAttributes(semconv.DBSystemSqlite))
-	return &DB{DB: db}, nil
+	mode := "sqlite"
+	if o.ReadOnly {
+		mode = "sqlite read-only"
+	}
+	db, err := otelsql.Open("sqlite", buildDSN(dbPath, o.ReadOnly, o.CacheMB, o.MmapMB, key), otelOpts...)
+	if err != nil {
+		if key != "" {
+			connSetups.Delete(key)
+		}
+		return nil, fmt.Errorf("open %s %s: %w", mode, dbPath, err)
+	}
+	if !o.ReadOnly {
+		db.SetMaxOpenConns(1)
+		// Expose connection pool stats as OTel metrics (best-effort).
+		_, _ = otelsql.RegisterDBStatsMetrics(db, otelsql.WithAttributes(semconv.DBSystemSqlite))
+	}
+	return &DB{DB: db, setupKey: key}, nil
 }
 
 // NewReadOnlyDB opens an existing SQLite database at dbPath in read-only mode
@@ -150,15 +184,14 @@ func NewReadOnlyDB(dbPath string) (*DB, error) {
 // NewReadOnlyDBWithCache is NewReadOnlyDB with an explicit page cache / mmap
 // window size (MiB).
 func NewReadOnlyDBWithCache(dbPath string, cacheMB, mmapMB int) (*DB, error) {
-	db, err := otelsql.Open("sqlite", buildDSN(dbPath, true, cacheMB, mmapMB), otelOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite read-only %s: %w", dbPath, err)
-	}
-	return &DB{DB: db}, nil
+	return Open(dbPath, OpenOptions{ReadOnly: true, CacheMB: cacheMB, MmapMB: mmapMB})
 }
 
 // Close closes the underlying database connection.
 func (d *DB) Close() error {
+	if d.setupKey != "" {
+		connSetups.Delete(d.setupKey)
+	}
 	return d.DB.Close()
 }
 

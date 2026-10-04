@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -17,8 +18,8 @@ func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error
 	}
 	// Writing spans must not emit spans. See WithoutSpanTracing.
 	ctx = WithoutSpanTracing(ctx)
-	return r.execLow(func() error {
-		tx, err := r.db.BeginTx(ctx, nil)
+	return r.execLow(FamilySpans, func(db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -158,7 +159,7 @@ func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
 		return 0, nil
 	}
 	var n int64
-	err := r.execLow(func() error {
+	err := r.execLow(FamilySpans, func(db *sql.DB) error {
 		placeholders := make([]string, len(ids))
 		args := make([]any, len(ids))
 		for i, id := range ids {
@@ -166,7 +167,7 @@ func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
 			args[i] = id
 		}
 		q := "DELETE FROM spans WHERE id IN (" + strings.Join(placeholders, ",") + ")"
-		res, e := r.db.Exec(q, args...)
+		res, e := db.Exec(q, args...)
 		if e != nil {
 			return e
 		}
@@ -177,15 +178,15 @@ func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
 }
 
 func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
-	return r.execLowAffecting("DELETE FROM spans WHERE id <= ?", maxID)
+	return r.execLowAffecting(FamilySpans, "DELETE FROM spans WHERE id <= ?", maxID)
 }
 
 func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThresholdUS int64) (int64, error) {
 	var total int64
 	for {
 		var n int64
-		err := r.execLow(func() error {
-			res, e := r.db.Exec(`DELETE FROM spans WHERE trace_id IN (
+		err := r.execLow(FamilySpans, func(db *sql.DB) error {
+			res, e := db.Exec(`DELETE FROM spans WHERE trace_id IN (
 				SELECT trace_id FROM spans
 				WHERE ingested_at < ? AND ingested_at >= ?
 				GROUP BY trace_id
@@ -211,7 +212,7 @@ func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThre
 }
 
 func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
-	return r.execLowAffecting("DELETE FROM spans WHERE ingested_at < ?", cutoff)
+	return r.execLowAffecting(FamilySpans, "DELETE FROM spans WHERE ingested_at < ?", cutoff)
 }
 
 // DeleteExpiredBoringSpans deletes sampled-boring spans whose stamped expires_at
@@ -223,8 +224,8 @@ func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
 // that same way.
 func (r *Repository) DeleteExpiredBoringSpans(ctx context.Context, now time.Time) (int64, error) {
 	cutoff := now.UTC()
-	return r.batchedDelete(ctx, func() (int64, error) {
-		res, e := r.db.ExecContext(ctx,
+	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
+		res, e := db.ExecContext(ctx,
 			`DELETE FROM spans WHERE rowid IN (
 				SELECT rowid FROM spans
 				WHERE expires_at IS NOT NULL AND expires_at < ?

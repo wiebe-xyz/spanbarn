@@ -61,12 +61,12 @@ func normalizeLabelFilters(s string) string {
 
 func (r *Repository) CreateAlert(a Alert) (int64, error) {
 	var id int64
-	err := r.execHigh(func() error {
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
 		enabled := 0
 		if a.Enabled {
 			enabled = 1
 		}
-		res, e := r.db.Exec(
+		res, e := db.Exec(
 			`INSERT INTO alerts (project_id, service, operation, type, threshold,
 				comparison_window, cooldown_minutes, webhook_url, email, enabled,
 				metric_name, metric_agg, label_filters)
@@ -85,12 +85,12 @@ func (r *Repository) CreateAlert(a Alert) (int64, error) {
 }
 
 func (r *Repository) UpdateAlert(a Alert) error {
-	return r.execHigh(func() error {
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
 		enabled := 0
 		if a.Enabled {
 			enabled = 1
 		}
-		res, err := r.db.Exec(
+		res, err := db.Exec(
 			`UPDATE alerts SET service = ?, operation = ?, type = ?, threshold = ?,
 				comparison_window = ?, cooldown_minutes = ?, webhook_url = ?, email = ?, enabled = ?,
 				metric_name = ?, metric_agg = ?, label_filters = ?
@@ -112,8 +112,8 @@ func (r *Repository) UpdateAlert(a Alert) error {
 }
 
 func (r *Repository) DeleteAlert(id int64) error {
-	return r.execHigh(func() error {
-		res, err := r.db.Exec("DELETE FROM alerts WHERE id = ?", id)
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, err := db.Exec("DELETE FROM alerts WHERE id = ?", id)
 		if err != nil {
 			return err
 		}
@@ -126,8 +126,8 @@ func (r *Repository) DeleteAlert(id int64) error {
 }
 
 func (r *Repository) UpdateAlertLastTriggered(id int64, at time.Time) error {
-	return r.execLow(func() error {
-		_, err := r.db.Exec("UPDATE alerts SET last_triggered_at = ? WHERE id = ?", at, id)
+	return r.execLow(FamilyCore, func(db *sql.DB) error {
+		_, err := db.Exec("UPDATE alerts SET last_triggered_at = ? WHERE id = ?", at, id)
 		return err
 	})
 }
@@ -138,8 +138,8 @@ func (r *Repository) InsertErrorSamples(spans []Span) error {
 	if len(spans) == 0 {
 		return nil
 	}
-	return r.execLow(func() error {
-		tx, err := r.db.Begin()
+	return r.execLow(FamilySpans, func(db *sql.DB) error {
+		tx, err := db.Begin()
 		if err != nil {
 			return err
 		}
@@ -222,8 +222,8 @@ func (r *Repository) QueryErrorSamples(f SpanFilter) ([]Span, error) {
 }
 
 func (r *Repository) DeleteErrorSamplesOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
-	return r.batchedDelete(ctx, func() (int64, error) {
-		res, e := r.db.ExecContext(ctx,
+	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
+		res, e := db.ExecContext(ctx,
 			"DELETE FROM error_samples WHERE rowid IN (SELECT rowid FROM error_samples WHERE sampled_at < ? LIMIT ?)",
 			cutoff, retentionDeleteBatch)
 		if e != nil {

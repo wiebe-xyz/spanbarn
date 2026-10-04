@@ -59,6 +59,12 @@ jobs:
             if find "$dir" -name '*.go' -print -quit | grep -q .; then
               echo "[go] $dir"
               (cd "$dir" && go test ./...)
+              # Repository tests again with every table family in its own file
+              # (internal/repository/split_test.go), so a write routed to the
+              # wrong file fails here.
+              if [ -d "$dir/internal/repository" ]; then
+                (cd "$dir" && SPANBARN_TEST_LAYOUT=split go test ./internal/repository/...)
+              fi
               (cd "$dir" && go vet ./...)
               # Layering rules (depguard) from .golangci.yml. Pinned like gocyclo/dupl.
               # --allow-parallel-runners: every self-hosted runner on the host runs as

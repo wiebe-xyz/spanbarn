@@ -51,8 +51,8 @@ func savedQueryArgs(q SavedQuery) []any {
 
 func (r *Repository) CreateSavedQuery(q SavedQuery) (int64, error) {
 	var id int64
-	err := r.execHigh(func() error {
-		res, e := r.db.Exec(insertSavedQuery, savedQueryArgs(q)...)
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec(insertSavedQuery, savedQueryArgs(q)...)
 		if e != nil {
 			return e
 		}
@@ -84,8 +84,8 @@ func (r *Repository) ListSavedQueries(projectID int64) ([]SavedQuery, error) {
 }
 
 func (r *Repository) DeleteSavedQuery(id int64) error {
-	return r.execHigh(func() error {
-		return r.inTx(func(tx *sql.Tx) error {
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		return r.inTx(db, func(tx *sql.Tx) error {
 			// A panel without its query cannot render, so it goes with it.
 			if _, err := tx.Exec("DELETE FROM board_panels WHERE saved_query_id = ?", id); err != nil {
 				return err

@@ -99,10 +99,10 @@ func TestBackfillTraceStructure(t *testing.T) {
 	})
 	// An error trace whose spans are all gone keeps listing; it is also legacy.
 	_ = repo.InsertSpans([]Span{tsSpan("c", "c1", "", "gone root", "web", "error", 1, 1)})
-	if _, err := repo.DB().Exec(`DELETE FROM spans WHERE trace_id = 'c'`); err != nil {
+	if _, err := repo.writer(FamilySpans).Exec(`DELETE FROM spans WHERE trace_id = 'c'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.DB().Exec(`UPDATE trace_summaries SET has_root = NULL, orphan_count = NULL`); err != nil {
+	if _, err := repo.writer(FamilySpans).Exec(`UPDATE trace_summaries SET has_root = NULL, orphan_count = NULL`); err != nil {
 		t.Fatal(err)
 	}
 

@@ -29,8 +29,8 @@ type WebSession struct {
 // CreateWebSession inserts a session row. IDHash must be unique (it derives
 // from a fresh random token, so collisions do not occur in practice).
 func (r *Repository) CreateWebSession(ws WebSession) error {
-	return r.execHigh(func() error {
-		_, err := r.db.Exec(`
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		_, err := db.Exec(`
 			INSERT INTO web_sessions (
 				id_hash, username, auth_method, idp_sub, idp_sid,
 				id_token, access_token, refresh_token, access_expires_at,
@@ -83,7 +83,7 @@ func (r *Repository) GetWebSessionByIDHash(idHash string) (WebSession, error) {
 // idToken/claimsJSON keeps the previous value (a refresh response without an
 // id_token must not wipe the claims snapshot).
 func (r *Repository) UpdateWebSessionTokens(idHash, idToken, accessToken, refreshToken string, accessExpiresAt int64, claimsJSON string, lastRefreshAt int64) error {
-	return r.execHighExpectingRows(`
+	return r.execHighExpectingRows(FamilyCore, `
 		UPDATE web_sessions SET
 			id_token = COALESCE(NULLIF(?, ''), id_token),
 			access_token = ?,
@@ -100,8 +100,8 @@ func (r *Repository) UpdateWebSessionTokens(idHash, idToken, accessToken, refres
 // outage. It only sets the stamp when none is present, so the grace window is
 // measured from the FIRST failure, not the latest retry.
 func (r *Repository) MarkWebSessionRefreshFailing(idHash string, since int64) error {
-	return r.execHigh(func() error {
-		_, err := r.db.Exec(`
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		_, err := db.Exec(`
 			UPDATE web_sessions SET refresh_failing_since = ?
 			WHERE id_hash = ? AND refresh_failing_since IS NULL`, since, idHash)
 		return err
@@ -111,8 +111,8 @@ func (r *Repository) MarkWebSessionRefreshFailing(idHash string, since int64) er
 // DeleteWebSession removes one session row (logout, invalid_grant, absolute
 // expiry). Deleting an already-gone row is not an error.
 func (r *Repository) DeleteWebSession(idHash string) error {
-	return r.execHigh(func() error {
-		_, err := r.db.Exec(`DELETE FROM web_sessions WHERE id_hash = ?`, idHash)
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		_, err := db.Exec(`DELETE FROM web_sessions WHERE id_hash = ?`, idHash)
 		return err
 	})
 }
@@ -121,8 +121,8 @@ func (r *Repository) DeleteWebSession(idHash string) error {
 // (back-channel logout with sid). Returns the number of rows deleted.
 func (r *Repository) DeleteWebSessionsByIdpSid(sid string) (int64, error) {
 	var n int64
-	err := r.execHigh(func() error {
-		res, e := r.db.Exec(`DELETE FROM web_sessions WHERE idp_sid = ?`, sid)
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec(`DELETE FROM web_sessions WHERE idp_sid = ?`, sid)
 		if e != nil {
 			return e
 		}
@@ -136,8 +136,8 @@ func (r *Repository) DeleteWebSessionsByIdpSid(sid string) (int64, error) {
 // (back-channel logout without sid, user suspension). Returns rows deleted.
 func (r *Repository) DeleteWebSessionsByIdpSub(sub string) (int64, error) {
 	var n int64
-	err := r.execHigh(func() error {
-		res, e := r.db.Exec(`DELETE FROM web_sessions WHERE idp_sub = ?`, sub)
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec(`DELETE FROM web_sessions WHERE idp_sub = ?`, sub)
 		if e != nil {
 			return e
 		}
@@ -152,6 +152,6 @@ func (r *Repository) DeleteWebSessionsByIdpSub(sub string) (int64, error) {
 // middleware enforces absolute_expires_at at request time), this just keeps
 // the table from accumulating.
 func (r *Repository) DeleteExpiredWebSessions(now time.Time) (int64, error) {
-	return r.execLowAffecting(
+	return r.execLowAffecting(FamilyCore,
 		`DELETE FROM web_sessions WHERE absolute_expires_at < ?`, now.Unix())
 }

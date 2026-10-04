@@ -7,8 +7,8 @@ import (
 
 func (r *Repository) CreateProject(slug, name string) (Project, error) {
 	var id int64
-	err := r.execHigh(func() error {
-		res, e := r.db.Exec("INSERT INTO projects (slug, name) VALUES (?, ?)", slug, name)
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec("INSERT INTO projects (slug, name) VALUES (?, ?)", slug, name)
 		if e != nil {
 			return e
 		}
@@ -68,7 +68,7 @@ func (r *Repository) SetProjectE2E(id int64, enabled bool) error {
 	if enabled {
 		v = 1
 	}
-	return r.execHighExpectingRows("UPDATE projects SET e2e_enabled = ? WHERE id = ?", v, id)
+	return r.execHighExpectingRows(FamilyCore, "UPDATE projects SET e2e_enabled = ? WHERE id = ?", v, id)
 }
 
 func (r *Repository) ListProjectIDs() ([]int64, error) {
@@ -97,8 +97,8 @@ func (r *Repository) ListProjectIDs() ([]int64, error) {
 // is left untouched — seeding never renames or re-activates a project an
 // operator has since edited or suspended.
 func (r *Repository) EnsureProject(slug, name string) (Project, error) {
-	err := r.execHigh(func() error {
-		_, e := r.db.Exec(
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		_, e := db.Exec(
 			"INSERT OR IGNORE INTO projects (slug, name, status) VALUES (?, ?, 'active')",
 			slug, name,
 		)
@@ -113,8 +113,8 @@ func (r *Repository) EnsureProject(slug, name string) (Project, error) {
 func (r *Repository) EnsureProjectPending(slug, name string) (Project, error) {
 	// With the write scheduler serialising all writes, SQLITE_BUSY cannot occur
 	// here, so the retry loop is no longer needed.
-	err := r.execLow(func() error {
-		_, e := r.db.Exec(
+	err := r.execLow(FamilyCore, func(db *sql.DB) error {
+		_, e := db.Exec(
 			"INSERT OR IGNORE INTO projects (slug, name, status) VALUES (?, ?, 'pending')",
 			slug, name,
 		)
@@ -127,15 +127,15 @@ func (r *Repository) EnsureProjectPending(slug, name string) (Project, error) {
 }
 
 func (r *Repository) ApproveProject(id int64) (Project, error) {
-	if err := r.execHighExpectingRows("UPDATE projects SET status = 'active' WHERE id = ?", id); err != nil {
+	if err := r.execHighExpectingRows(FamilyCore, "UPDATE projects SET status = 'active' WHERE id = ?", id); err != nil {
 		return Project{}, err
 	}
 	return r.getProjectByID(id)
 }
 
 func (r *Repository) DeleteProject(id int64) error {
-	return r.execHigh(func() error {
-		tx, err := r.db.Begin()
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		tx, err := db.Begin()
 		if err != nil {
 			return err
 		}
@@ -205,8 +205,8 @@ func (r *Repository) ProjectUsageStatsAll(hours int) ([]ProjectUsageStats, error
 }
 
 func (r *Repository) EnsureSetupAPIKey(projectID int64, keySHA256 string) error {
-	return r.execLow(func() error {
-		_, err := r.db.Exec(
+	return r.execLow(FamilyCore, func(db *sql.DB) error {
+		_, err := db.Exec(
 			`INSERT OR IGNORE INTO api_keys (project_id, name, key_hash, scope) VALUES (?, 'setup', ?, 'ingest')`,
 			projectID, keySHA256,
 		)
