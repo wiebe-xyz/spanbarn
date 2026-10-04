@@ -897,6 +897,186 @@ paths:
         '400':
           description: Missing project or version
 
+  /api/v1/slos:
+    parameters:
+      - $ref: '#/components/parameters/TraceHealthProject'
+    get:
+      summary: List the SLOs of a project
+      operationId: listSLOs
+      security:
+        - session: []
+      responses:
+        '200':
+          description: SLOs, empty when the project has none
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/SLO'}
+        '400':
+          description: Missing project
+    post:
+      summary: Create an SLO
+      description: >
+        The SLO is the share of spans matching goodFilter among those matching totalFilter,
+        held to target over a rolling window of windowDays.
+      operationId: createSLO
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SLOSettings'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, properties: {id: {type: integer}}}
+        '400':
+          description: Missing project or name, target outside (0, 1), window outside 1 to 90 days, or an invalid filter
+        '409':
+          description: The name is already used in the project
+
+  /api/v1/slos/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - $ref: '#/components/parameters/TraceHealthProject'
+    get:
+      summary: Get an SLO
+      operationId: getSLO
+      security:
+        - session: []
+      responses:
+        '200':
+          description: The SLO
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SLO'}
+        '404':
+          description: No such SLO in this project
+    put:
+      summary: Replace the editable fields of an SLO
+      operationId: updateSLO
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SLOSettings'}
+      responses:
+        '200':
+          description: Updated
+        '400':
+          description: As createSLO
+        '404':
+          description: No such SLO in this project
+        '409':
+          description: The name is already used in the project
+    delete:
+      summary: Delete an SLO with its burn alerts and counts
+      operationId: deleteSLO
+      security:
+        - session: []
+      responses:
+        '200':
+          description: Deleted
+        '404':
+          description: No such SLO in this project
+
+  /api/v1/slos/{id}/status:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - $ref: '#/components/parameters/TraceHealthProject'
+    get:
+      summary: Error budget remaining, good and total counts, and the burn of each alert window
+      operationId: getSLOStatus
+      security:
+        - session: []
+      responses:
+        '200':
+          description: Status. With no traffic the budget is 1 and every burn is 0
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SLOStatus'}
+        '404':
+          description: No such SLO in this project
+
+  /api/v1/slos/{id}/burn-alerts:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - $ref: '#/components/parameters/TraceHealthProject'
+    get:
+      summary: List the burn alerts of an SLO
+      operationId: listSLOBurnAlerts
+      security:
+        - session: []
+      responses:
+        '200':
+          description: Burn alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/SLOBurnAlert'}
+        '404':
+          description: No such SLO in this project
+    post:
+      summary: Add a burn alert to an SLO
+      operationId: createSLOBurnAlert
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SLOBurnAlertSettings'}
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: {type: object, properties: {id: {type: integer}}}
+        '400':
+          description: Window not shorter than the SLO window, burn rate not above 0, or an invalid webhook URL or email
+        '404':
+          description: No such SLO in this project
+
+  /api/v1/slos/{id}/burn-alerts/{alertId}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+      - {name: alertId, in: path, required: true, schema: {type: integer}}
+      - $ref: '#/components/parameters/TraceHealthProject'
+    put:
+      summary: Replace the editable fields of a burn alert
+      operationId: updateSLOBurnAlert
+      security:
+        - session: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SLOBurnAlertSettings'}
+      responses:
+        '200':
+          description: Updated
+        '400':
+          description: As createSLOBurnAlert
+        '404':
+          description: No such burn alert on this SLO in this project
+    delete:
+      summary: Remove a burn alert
+      operationId: deleteSLOBurnAlert
+      security:
+        - session: []
+      responses:
+        '200':
+          description: Removed
+        '404':
+          description: No such burn alert on this SLO in this project
+
   /api/v1/traces/{traceId}:
     get:
       summary: Get full trace by ID
@@ -1052,6 +1232,74 @@ components:
         projectId: {type: integer}
         version: {type: string}
         releasedAt: {type: string, format: date-time}
+    SLOSettings:
+      type: object
+      required: [name, target, windowDays]
+      properties:
+        name: {type: string, maxLength: 120, description: 'Unique within the project'}
+        goodFilter: {type: object, description: 'Filter model. Spans that count as good. Empty matches every span'}
+        totalFilter: {type: object, description: 'Filter model. Spans that count at all. Empty matches every span'}
+        target: {type: number, exclusiveMinimum: 0, exclusiveMaximum: 1, example: 0.995}
+        windowDays: {type: integer, minimum: 1, maximum: 90}
+    SLO:
+      type: object
+      properties:
+        id: {type: integer}
+        projectId: {type: integer}
+        name: {type: string}
+        goodFilter: {type: object, description: 'Filter model'}
+        totalFilter: {type: object, description: 'Filter model'}
+        target: {type: number}
+        windowDays: {type: integer}
+        createdAt: {type: string, format: date-time}
+    SLOBurnAlertSettings:
+      type: object
+      required: [windowMinutes, burnRate]
+      properties:
+        windowMinutes: {type: integer, minimum: 1, description: 'Shorter than the SLO window'}
+        burnRate: {type: number, exclusiveMinimum: 0, description: 'Fires when the burn over the window reaches this. 1 spends the budget exactly on pace'}
+        webhookUrl: {type: string, description: 'http or https URL. Empty for none'}
+        email: {type: string}
+        cooldownMinutes: {type: integer, minimum: 0, default: 30, description: '0 means the default'}
+        enabled: {type: boolean, default: true}
+    SLOBurnAlert:
+      type: object
+      properties:
+        id: {type: integer}
+        sloId: {type: integer}
+        windowMinutes: {type: integer}
+        burnRate: {type: number}
+        webhookUrl: {type: string}
+        email: {type: string}
+        cooldownMinutes: {type: integer}
+        enabled: {type: boolean}
+        firing: {type: boolean, description: 'True between the crossing and the recovery'}
+        lastTriggeredAt: {type: [string, 'null'], format: date-time}
+    SLOStatus:
+      type: object
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        target: {type: number}
+        windowDays: {type: integer}
+        good: {type: integer, description: 'Good events in the SLO window'}
+        total: {type: integer, description: 'All events in the SLO window'}
+        budgetRemaining:
+          type: number
+          description: '1 is untouched, 0 is spent, below 0 is overspent. 1 with no traffic'
+        alerts:
+          type: array
+          items:
+            type: object
+            properties:
+              id: {type: integer}
+              windowMinutes: {type: integer}
+              burnRate: {type: number, description: 'The alert threshold'}
+              enabled: {type: boolean}
+              currentBurn: {type: number, description: 'Burn rate over the alert window. 0 with no traffic'}
+              good: {type: integer}
+              total: {type: integer}
+              firing: {type: boolean}
     TraceSummary:
       type: object
       properties:
