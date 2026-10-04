@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -113,36 +114,51 @@ func (r *Repository) QueryPromptRecords(f PromptFilter) ([]PromptRecord, error) 
 		args = append(args, f.To)
 	}
 
-	q := `SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), service, name,
-		gen_ai_system, model, temperature, max_tokens,
-		prompt_body, response_body,
-		input_tokens, output_tokens, total_tokens,
-		cached_input_tokens, reasoning_output_tokens,
-		cost_usd, input_cost_usd, output_cost_usd, duration_us,
-		status, finish_reason,
-		prompt_template, prompt_hash, outcome, quality_score,
-		feature_flag_key, feature_flag_variant, start_time_us, ingested_at
-		FROM prompt_records`
-	if len(where) > 0 {
-		q += " WHERE " + strings.Join(where, " AND ")
+	query := func(table string) string {
+		q := promptRecordColumns + ` FROM ` + table
+		if len(where) > 0 {
+			q += " WHERE " + strings.Join(where, " AND ")
+		}
+		return q + " ORDER BY ingested_at DESC"
 	}
-	q += " ORDER BY ingested_at DESC"
 
 	limit := f.Limit
 	if limit <= 0 {
 		limit = 100
 	}
-	q += fmt.Sprintf(" LIMIT %d", limit)
+	if p := r.shardReaders.pool(FamilyPrompts); p != nil {
+		return r.promptRecordsBySegment(p, query, args, limit, f.Offset)
+	}
+	q := query("prompt_records") + fmt.Sprintf(" LIMIT %d", limit)
 	if f.Offset > 0 {
 		q += fmt.Sprintf(" OFFSET %d", f.Offset)
 	}
-
-	return r.scanPromptRecords(q, args...)
+	return r.scanPromptRecords(r.db, q, args...)
 }
 
-func (r *Repository) GetPromptRecordsByTraceID(traceID string) ([]PromptRecord, error) {
-	return r.scanPromptRecords(
-		`SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), service, name,
+// promptRecordsBySegment is the prompts list over a sharded family. Through
+// the family's UNION ALL view, ORDER BY ... LIMIT would sort every matching
+// row of every shard, bodies included. Instead each shard, and main, returns
+// its own newest offset+limit rows along its ingested_at index, and the
+// segments are merged here.
+func (r *Repository) promptRecordsBySegment(p *familyPool, query func(table string) string, args []any, limit, offset int) ([]PromptRecord, error) {
+	need := limit + offset
+	var all []PromptRecord
+	for _, schema := range p.segments {
+		recs, err := r.scanPromptRecords(p.db.DB, query(schema+".prompt_records")+fmt.Sprintf(" LIMIT %d", need), args...)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, recs...)
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].IngestedAt.After(all[j].IngestedAt) })
+	if offset >= len(all) {
+		return nil, nil
+	}
+	return all[offset:min(len(all), need)], nil
+}
+
+const promptRecordColumns = `SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), service, name,
 		gen_ai_system, model, temperature, max_tokens,
 		prompt_body, response_body,
 		input_tokens, output_tokens, total_tokens,
@@ -150,8 +166,11 @@ func (r *Repository) GetPromptRecordsByTraceID(traceID string) ([]PromptRecord, 
 		cost_usd, input_cost_usd, output_cost_usd, duration_us,
 		status, finish_reason,
 		prompt_template, prompt_hash, outcome, quality_score,
-		feature_flag_key, feature_flag_variant, start_time_us, ingested_at
-		FROM prompt_records WHERE trace_id = ? ORDER BY start_time_us`,
+		feature_flag_key, feature_flag_variant, start_time_us, ingested_at`
+
+func (r *Repository) GetPromptRecordsByTraceID(traceID string) ([]PromptRecord, error) {
+	return r.scanPromptRecords(r.reader(FamilyPrompts),
+		promptRecordColumns+` FROM prompt_records WHERE trace_id = ? ORDER BY start_time_us`,
 		traceID,
 	)
 }
@@ -166,8 +185,8 @@ func (r *Repository) DeletePromptRecordsOlderThanLimited(ctx context.Context, cu
 	return r.deleteOlderThanPerProjectLimited(ctx, "prompt_records", "ingested_at", cutoff, max)
 }
 
-func (r *Repository) scanPromptRecords(query string, args ...any) ([]PromptRecord, error) {
-	rows, err := r.db.Query(query, args...)
+func (r *Repository) scanPromptRecords(db *sql.DB, query string, args ...any) ([]PromptRecord, error) {
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

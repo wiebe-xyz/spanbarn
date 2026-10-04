@@ -94,6 +94,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	ingestHandler.Start(ctx)
 
 	var wg sync.WaitGroup
+	defer startShardReaders(ctx, &wg, cfg, roDB, queryRepo, logger).Close()
 
 	metricsCtx, metricsCancel := context.WithCancel(ctx)
 	defer metricsCancel()

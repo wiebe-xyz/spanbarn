@@ -89,7 +89,7 @@ func (r *Repository) ListMetricNames(ctx context.Context, projectID int64, from,
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	rows, err := r.db.QueryContext(ctx,
+	rows, err := r.reader(FamilyMetrics).QueryContext(ctx,
 		`SELECT DISTINCT name FROM metrics
 		 WHERE project_id = ? AND ingested_at >= ? AND ingested_at <= ?
 		 ORDER BY name LIMIT 1000`,
@@ -126,7 +126,7 @@ func (r *Repository) ListMetricCatalog(ctx context.Context, projectID int64, fro
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	rows, err := r.db.QueryContext(ctx,
+	rows, err := r.reader(FamilyMetrics).QueryContext(ctx,
 		`SELECT name, type, unit, COUNT(DISTINCT attributes) AS series
 		 FROM metrics
 		 WHERE project_id = ? AND ingested_at >= ? AND ingested_at <= ?
@@ -174,7 +174,7 @@ func (r *Repository) QueryMetricSeries(ctx context.Context, f MetricFilter) ([]M
 		FROM metrics WHERE %s ORDER BY time_unix_nano ASC LIMIT ?`,
 		strings.Join(where, " AND "))
 
-	rows, err := r.db.QueryContext(ctx, q, args...)
+	rows, err := r.reader(FamilyMetrics).QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
