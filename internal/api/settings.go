@@ -176,6 +176,7 @@ func isAllowedSettingKey(k string) bool {
 		"boring_retention_minutes", "boring.sample_ratio",
 		"boring.min_traces_per_minute",
 		"metrics_retention_days", "log_retention_hours", "error_log_retention_days",
+		"prompt_retention_days",
 		"metric_rollup_retention_days", "metric_rollup_hourly_days",
 		"metric_rollup_daily_days", "metric_rollup_weekly_days",
 		"metric_rollup_monthly_days",

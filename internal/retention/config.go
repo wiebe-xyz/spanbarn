@@ -11,6 +11,7 @@ type Config struct {
 	MetricsRetentionDays      int           // days to keep raw metric data points (default 7). Raw points are only ever read for ranges <= rollupQueryThreshold (6h); longer ranges read the rollup tiers.
 	LogRetentionHours         int           // hours to keep log records (default 24)
 	ErrorLogRetentionDays     int           // days to keep logs for error-sampled traces (default 30)
+	PromptRetentionDays       int           // days to keep LLM prompt records (default 30). They carry full prompt and response bodies, so per row they are the largest thing stored.
 	SlowThresholdUS           int64         // microseconds above which a span is "slow"
 	Interval                  time.Duration // how often to run (default 5m)
 
@@ -55,6 +56,7 @@ func (c Config) withDefaults() Config {
 		{&c.MetricsRetentionDays, 7},
 		{&c.LogRetentionHours, 24},
 		{&c.ErrorLogRetentionDays, 30},
+		{&c.PromptRetentionDays, 30},
 		{&c.MetricRollupRetentionDays, 2},
 		{&c.HourlyRollupDays, 30},
 		{&c.DailyRollupDays, 365},
@@ -114,6 +116,7 @@ func (w *RetentionWorker) effectiveConfig() Config {
 		{"metrics_retention_days", &cfg.MetricsRetentionDays},
 		{"log_retention_hours", &cfg.LogRetentionHours},
 		{"error_log_retention_days", &cfg.ErrorLogRetentionDays},
+		{"prompt_retention_days", &cfg.PromptRetentionDays},
 		{"metric_rollup_retention_days", &cfg.MetricRollupRetentionDays},
 		{"metric_rollup_hourly_days", &cfg.HourlyRollupDays},
 		{"metric_rollup_daily_days", &cfg.DailyRollupDays},

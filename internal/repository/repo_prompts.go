@@ -155,8 +155,14 @@ func (r *Repository) GetPromptRecordsByTraceID(traceID string) ([]PromptRecord, 
 	)
 }
 
-func (r *Repository) DeletePromptRecordsOlderThan(cutoff time.Time) (int64, error) {
-	return r.execLowAffecting("DELETE FROM prompt_records WHERE ingested_at < ?", cutoff)
+// DeletePromptRecordsOlderThanLimited removes at most max prompt records
+// ingested before cutoff, reporting whether more were left for the next cycle.
+// It deletes per project in bounded batches so each batch seeks
+// idx_prompt_records_project_ingested and the write lock is released between
+// batches; the rows carry full prompt and response bodies, so a single
+// unbounded DELETE over weeks of them would hold the writer for minutes.
+func (r *Repository) DeletePromptRecordsOlderThanLimited(ctx context.Context, cutoff time.Time, max int64) (int64, bool, error) {
+	return r.deleteOlderThanPerProjectLimited(ctx, "prompt_records", "ingested_at", cutoff, max)
 }
 
 func (r *Repository) scanPromptRecords(query string, args ...any) ([]PromptRecord, error) {

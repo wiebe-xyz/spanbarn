@@ -61,8 +61,12 @@ jobs:
               (cd "$dir" && go test ./...)
               (cd "$dir" && go vet ./...)
               # Layering rules (depguard) from .golangci.yml. Pinned like gocyclo/dupl.
+              # --allow-parallel-runners: every self-hosted runner on the host runs as
+              # one user and golangci-lint locks a file in that user's temp dir, so a
+              # lint job in another PR made this one exit with "parallel golangci-lint
+              # is running".
               if [ -f "$dir/.golangci.yml" ]; then
-                (cd "$dir" && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...)
+                (cd "$dir" && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run --allow-parallel-runners ./...)
               fi
               (cd "$dir" && go build ./...)
             fi

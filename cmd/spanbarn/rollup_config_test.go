@@ -35,6 +35,7 @@ func TestRetentionConfigFromMapsEveryWindow(t *testing.T) {
 			MetricsDays:           15,
 			LogHours:              16,
 			ErrorLogDays:          17,
+			PromptDays:            23,
 			RollupDays:            18,
 			RollupHourlyDays:      19,
 			RollupDailyDays:       20,
