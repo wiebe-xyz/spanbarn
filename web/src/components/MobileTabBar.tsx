@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, LayoutDashboard, BarChart2, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut, ScrollText } from 'lucide-react'
+import { Activity, LayoutDashboard, BarChart2, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut, ScrollText, Target } from 'lucide-react'
 import { useIambarnSession, iambarnLogout, useIambarnProfile } from '../api/iambarnWidget'
 import { isOIDCSession } from '../api/clientConfig'
 import { IambarnProfileModal } from './IambarnProfileModal'
@@ -210,6 +210,25 @@ export function MobileTabBar(): ReactElement {
           >
             <Bell size={18} />
             Alerts
+          </NavLink>
+          <NavLink
+            to="/slos"
+            onClick={() => setMoreOpen(false)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.625rem',
+              width: '100%',
+              padding: '0.625rem 0.75rem',
+              borderRadius: '0.5rem',
+              fontSize: '0.875rem',
+              fontWeight: 500,
+              color: 'var(--text-muted)',
+              textDecoration: 'none',
+            }}
+          >
+            <Target size={18} />
+            SLOs
           </NavLink>
           <NavLink
             to="/settings"
