@@ -17,6 +17,11 @@ import (
 type Attachment struct {
 	Schema string
 	Path   string
+	// CacheMB and MmapMB size the attached file's page cache and mmap window.
+	// The handle's own cache_size and mmap_size pragmas apply to main only.
+	// Zero leaves SQLite's defaults.
+	CacheMB int
+	MmapMB  int
 }
 
 // ConnSetup is what a handle runs on every new pooled connection: it attaches
@@ -70,6 +75,25 @@ func runConnSetup(conn sqlite.ExecQuerierContext, dsn string) error {
 		arg := []driver.NamedValue{{Ordinal: 1, Value: "file:" + a.Path + "?mode=ro"}}
 		if _, err := conn.ExecContext(context.Background(), "ATTACH DATABASE ? AS "+a.Schema, arg); err != nil {
 			return fmt.Errorf("attach %s as %s: %w", a.Path, a.Schema, err)
+		}
+		if err := sizeAttachment(conn, a); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sizeAttachment(conn sqlite.ExecQuerierContext, a Attachment) error {
+	var pragmas []string
+	if a.CacheMB > 0 {
+		pragmas = append(pragmas, fmt.Sprintf("PRAGMA %s.cache_size = -%d", a.Schema, a.CacheMB*1024))
+	}
+	if a.MmapMB > 0 {
+		pragmas = append(pragmas, fmt.Sprintf("PRAGMA %s.mmap_size = %d", a.Schema, int64(a.MmapMB)*1024*1024))
+	}
+	for _, p := range pragmas {
+		if _, err := conn.ExecContext(context.Background(), p, nil); err != nil {
+			return fmt.Errorf("size attachment %s: %w", a.Schema, err)
 		}
 	}
 	return nil

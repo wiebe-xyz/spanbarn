@@ -64,37 +64,52 @@ func (s Space) UsedFraction() float64 {
 // that gate behaviour on pressure must not act on an unmeasured Space.
 func (s Space) Measured() bool { return s.VolumeBytes > 0 && s.PageSize > 0 }
 
-// DBSpace samples the database's space usage. It is cheap — three pragmas that
-// read the header plus one statfs — and safe to call on every retention cycle.
+// DBSpace samples the database's space usage. It is cheap — a few pragmas
+// that read each file's header plus one statfs — and safe to call on every
+// retention cycle.
+//
+// It covers every file the handle has open: main plus each attached file (the
+// spans file in the split layout). Pages, file and WAL sizes are summed over
+// them, so the ladder reacts to the total the database occupies on the volume.
+// PageSize is main's; PageCount and FreelistCount are in main-sized pages.
+// AutoVacuum is the lowest mode of any file, so a file that cannot return
+// freed pages still raises the warning.
 //
 // dbPath may be ":memory:" or empty, in which case the filesystem figures are
 // left at zero and Measured() reports false.
 func (r *Repository) DBSpace(ctx context.Context, dbPath string) (Space, error) {
+	files, err := r.databaseFiles(ctx)
+	if err != nil {
+		return Space{}, err
+	}
 	var s Space
-
-	for _, p := range []struct {
-		pragma string
-		dest   *int64
-	}{
-		{"page_size", &s.PageSize},
-		{"page_count", &s.PageCount},
-		{"freelist_count", &s.FreelistCount},
-		{"auto_vacuum", &s.AutoVacuum},
-	} {
-		if err := r.db.QueryRowContext(ctx, "PRAGMA "+p.pragma).Scan(p.dest); err != nil {
+	for i, f := range files {
+		fs, err := r.fileSpace(ctx, f.schema)
+		if err != nil {
 			return s, err
 		}
+		if i == 0 {
+			s.PageSize, s.AutoVacuum = fs.PageSize, fs.AutoVacuum
+		}
+		s.PageCount += fs.PageCount * fs.PageSize / s.PageSize
+		s.FreelistCount += fs.FreelistCount * fs.PageSize / s.PageSize
+		s.AutoVacuum = min(s.AutoVacuum, fs.AutoVacuum)
 	}
 
 	if dbPath == "" || dbPath == ":memory:" {
 		return s, nil
 	}
 
-	if info, err := os.Stat(dbPath); err == nil {
-		s.FileBytes = info.Size()
-	}
-	if info, err := os.Stat(dbPath + "-wal"); err == nil {
-		s.WALBytes = info.Size()
+	for _, f := range files {
+		if f.path == "" {
+			continue
+		}
+		if info, err := os.Stat(f.path); err == nil {
+			s.FileBytes += info.Size()
+		}
+		if info, err := os.Stat(f.path + "-wal"); err == nil {
+			s.WALBytes += info.Size()
+		}
 	}
 
 	var st syscall.Statfs_t
@@ -107,6 +122,51 @@ func (r *Repository) DBSpace(ctx context.Context, dbPath string) (Space, error) 
 	s.VolumeBytes = int64(st.Blocks) * bs
 	s.VolumeFreeBytes = int64(st.Bavail) * bs
 
+	return s, nil
+}
+
+type databaseFile struct {
+	schema string
+	path   string
+}
+
+// databaseFiles lists main and the attached files, main first. The temp
+// database is left out.
+func (r *Repository) databaseFiles(ctx context.Context) ([]databaseFile, error) {
+	rows, err := r.db.QueryContext(ctx, `PRAGMA database_list`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []databaseFile
+	for rows.Next() {
+		var seq int
+		var f databaseFile
+		if err := rows.Scan(&seq, &f.schema, &f.path); err != nil {
+			return nil, err
+		}
+		if f.schema != "temp" {
+			out = append(out, f)
+		}
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) fileSpace(ctx context.Context, schema string) (Space, error) {
+	var s Space
+	for _, p := range []struct {
+		pragma string
+		dest   *int64
+	}{
+		{"page_size", &s.PageSize},
+		{"page_count", &s.PageCount},
+		{"freelist_count", &s.FreelistCount},
+		{"auto_vacuum", &s.AutoVacuum},
+	} {
+		if err := r.db.QueryRowContext(ctx, "PRAGMA "+schema+"."+p.pragma).Scan(p.dest); err != nil {
+			return s, err
+		}
+	}
 	return s, nil
 }
 

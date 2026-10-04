@@ -103,13 +103,15 @@ The copy runs as one write per file on the spans family queue. If the process di
 
 ### Migrations
 
-Three migration tracks, each with its own `schema_migrations` table in the file it owns:
+Three migration tracks, each with its own goose version table:
 
-- main: the existing track, minus the moved tables after cut-over.
-- spans: `spans`, `trace_summaries`, `spans_staging`, `aggregates` and their indexes.
+- main: the existing track (`goose_db_version`), minus the moved tables after cut-over. Main-track migrations no longer touch span-family tables; `TestMainTrackLeavesSpanTablesAlone` fails if one does.
+- spans (`goose_spans_version`, `repository.MigrateSpans`): `spans`, `trace_summaries`, `spans_staging`, `aggregates`, `error_samples` and their indexes. It lives in whichever file holds the family: the spans file in the split layout, main in the single-file layout. Its migration 1 is the baseline: it builds a scratch database to main-track version 41, reads the span-family DDL back and runs it with `IF NOT EXISTS`, so on a single-file database it changes nothing. Spans migrations run inside goose's transaction (`GoFunc.RunTx`), because goose pins the handle's only connection.
 - shard: one track per family. A new shard file is created at the current version of its track. On startup the writer migrates every live shard; old shards of a family that only adds an index can be left behind, because they expire within the retention window.
 
-`repository.Migrate` gets the track as an argument. The existing migrations stay in the main track, and the moved tables' DDL is copied into the new tracks as their migration 001.
+### Layout detection (step 1)
+
+`repository.OpenStorage` decides the layout once, before migrating: the split layout when the spans file exists or main has no `spans` table (a new install or a restored settings snapshot), the single-file layout when main already holds `spans`. For a split database it creates and migrates the spans file first (with `auto_vacuum=INCREMENTAL`), then migrates main and drops the empty span tables main's migrations created. It refuses to open when main still has span rows next to a spans file. Readers (`repository.OpenReadDB`) apply the same rule; a reader that starts before the writer created the spans file fails to open connections until the file exists, and recovers without a restart.
 
 ### Writer and readers
 

@@ -1,8 +1,8 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -18,19 +18,14 @@ import (
 )
 
 // openDB opens the SQLite database, runs migrations, and returns a Repository.
-func openDB(dbPath string) (*repository.Repository, *sql.DB, error) {
-	db, err := repository.NewDB(dbPath)
+func openDB(dbPath string) (*repository.Repository, *repository.Storage, error) {
+	store, err := repository.OpenStorage(context.Background(), dbPath, repository.StorageOptions{
+		CacheMB: repository.DefaultWriterCacheMB, MmapMB: repository.DefaultWriterMmapMB,
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)
 	}
-
-	if err := repository.Migrate(db.DB); err != nil {
-		db.Close()
-		return nil, nil, fmt.Errorf("run migrations: %w", err)
-	}
-
-	repo := repository.NewRepository(db.DB)
-	return repo, db.DB, nil
+	return store.Repository(), store, nil
 }
 
 // printTable prints a simple aligned table to stdout.

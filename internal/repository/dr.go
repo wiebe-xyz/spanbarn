@@ -28,11 +28,12 @@ var settingsTables = []string{
 }
 
 // SnapshotSettings builds a fresh, ready-to-serve SQLite database at destPath
-// containing only the settings tables copied from srcPath — every telemetry
-// table (spans, aggregates, metrics, logs, prompt records, ...) is present
-// (via a normal Migrate) but empty. The result can be dropped in directly as
-// SPANBARN_DB_PATH for disaster recovery: no further restore or migration
-// step is needed.
+// containing only the settings tables copied from srcPath. The telemetry
+// tables that stay in main (metrics, logs, prompt records, ...) are present
+// (via a normal Migrate) but empty; the spans family is absent, and the writer
+// creates an empty spans file on first start. The result can be dropped in
+// directly as SPANBARN_DB_PATH for disaster recovery: no further restore or
+// migration step is needed.
 //
 // Returns per-table row counts copied into the snapshot, for the CLI to
 // report as a sanity check.
@@ -61,6 +62,11 @@ func SnapshotSettings(ctx context.Context, srcPath, destPath string) (map[string
 
 	if err := Migrate(dest.DB); err != nil {
 		return nil, fmt.Errorf("migrate snapshot database: %w", err)
+	}
+	// The snapshot uses the split layout: the writer creates an empty spans
+	// file next to it on first start.
+	if err := dropMovedTables(ctx, dest.DB); err != nil {
+		return nil, fmt.Errorf("prepare snapshot layout: %w", err)
 	}
 
 	if _, err := dest.ExecContext(ctx, `ATTACH DATABASE ? AS src`, srcPath); err != nil {

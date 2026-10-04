@@ -17,6 +17,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
+	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
 // newHTTPServer builds the http.Server every serving mode uses.
@@ -136,26 +137,55 @@ func applyQueryTimeout(repo *repository.Repository, cfg config.Config) {
 	}
 }
 
-// openWriteRepo opens the single-connection write DB, runs migrations and
-// returns the repository on top of it.
-func openWriteRepo(cfg config.Config, logger *slog.Logger) (*repository.DB, *repository.Repository, error) {
-	db, err := repository.NewDBWithCache(cfg.DBPath, cfg.SQLiteCacheMB, cfg.SQLiteMmapMB)
+// openWriteRepo opens the write handles (one single-connection handle per
+// file), runs migrations and returns the repository on top of them.
+func openWriteRepo(cfg config.Config, logger *slog.Logger) (*repository.Storage, *repository.Repository, error) {
+	store, err := repository.OpenStorage(context.Background(), cfg.DBPath, repository.StorageOptions{
+		CacheMB:       cfg.SQLiteCacheMB,
+		MmapMB:        cfg.SQLiteMmapMB,
+		AttachCacheMB: cfg.SQLiteROCacheMB,
+		AttachMmapMB:  cfg.SQLiteROMmapMB,
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)
 	}
-	if err := repository.Migrate(db.DB); err != nil {
-		db.Close()
-		return nil, nil, fmt.Errorf("run migrations: %w", err)
-	}
-	logger.Info("storage", "path", cfg.DBPath)
-	repo := repository.NewRepository(db.DB)
+	logger.Info("storage", "path", cfg.DBPath, "spans_file", store.Split())
+	repo := store.Repository()
 	applyQueryTimeout(repo, cfg)
-	return db, repo, nil
+	return store, repo, nil
+}
+
+// startCheckpoints runs a WAL checkpoint loop for every file of store.
+func startCheckpoints(ctx context.Context, wg *sync.WaitGroup, store *repository.Storage, logger *slog.Logger) {
+	for _, h := range store.Handles() {
+		safeGo("wal-checkpoint", wg, func() { h.RunPeriodicCheckpoint(ctx, 30*time.Second, logger) })
+	}
+}
+
+// startWriteSchedulers gives every file of store its own write scheduler:
+// writes to different files do not wait on each other.
+func startWriteSchedulers(ctx context.Context, wg *sync.WaitGroup, store *repository.Storage, repo *repository.Repository, logger *slog.Logger) {
+	main := writescheduler.New()
+	main.SetLogger(logger)
+	repo.SetWriteScheduler(main)
+	safeGo("write-scheduler", wg, func() { main.Run(ctx) })
+	if store.Spans == nil {
+		return
+	}
+	spans := writescheduler.New()
+	spans.SetLogger(logger)
+	repo.SetFamilyWriter(repository.FamilySpans, store.Spans.DB, spans)
+	safeGo("write-scheduler-spans", wg, func() { spans.Run(ctx) })
+}
+
+// openReadDB opens the read-only handle dashboard reads use.
+func openReadDB(cfg config.Config) (*repository.DB, error) {
+	return repository.OpenReadDB(context.Background(), cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
 }
 
 // openQueryRepo opens the read-only DB used for dashboard reads.
 func openQueryRepo(cfg config.Config) (*repository.DB, *repository.Repository, error) {
-	roDB, err := repository.NewReadOnlyDBWithCache(cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
+	roDB, err := openReadDB(cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open read-only database: %w", err)
 	}

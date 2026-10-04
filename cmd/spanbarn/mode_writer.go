@@ -18,13 +18,11 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/worker"
-	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
 // runWriterMode drains the Redis write queue, writes spans to SQLite, and runs
@@ -63,11 +61,11 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	httpErrCh := listenAsync(httpServer, logger, "writer listening")
 
 	// Step 2: write DB — MaxOpenConns(1), used by worker/retention/aggregation/alerts.
-	db, repo, err := openWriteRepo(cfg, logger)
+	store, repo, err := openWriteRepo(cfg, logger)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer store.Close()
 
 	if err := applySeedKeys(repo, cfg, logger); err != nil {
 		return err
@@ -138,9 +136,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	registerQueueDepthGauges(ctx, writerSelfRec, writeQueue)
 	startSelfMetrics(ctx, cfg, &wg, writerSelfRec, logger)
 
-	scheduler := writescheduler.New()
-	scheduler.SetLogger(logger)
-	repo.SetWriteScheduler(scheduler)
+	workerCtx, workerCancel := context.WithCancel(ctx)
+	defer workerCancel()
+	startWriteSchedulers(workerCtx, &wg, store, repo, logger)
 
 	boringPolicy := worker.NewCachedBoringPolicy(repo, 30*time.Second)
 
@@ -159,9 +157,6 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	rw.SetMinuteFloor(minuteFloor)
 	rw.SetHourFloor(hourFloor)
 	rw.SetStagingMode(cfg.SpanStagingEnabled)
-	workerCtx, workerCancel := context.WithCancel(ctx)
-	safeGo("write-scheduler", &wg, func() { scheduler.Run(workerCtx) })
-	defer workerCancel()
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
 
 	// Span staging (opt-in): the redis worker only appends to spans_staging; this
@@ -176,16 +171,14 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	safeGo("metrics-consumer", &wg, func() { runMetricsConsumer(workerCtx, writeQueue, metricAccumulator, repo, logger) })
 	safeGo("logs-consumer", &wg, func() { runLogsConsumer(workerCtx, writeQueue, repo, logger) })
 	safeGo("apikey-touch-consumer", &wg, func() { runTouchConsumer(workerCtx, writeQueue, repo, logger) })
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	startCheckpoints(workerCtx, &wg, store, logger)
 
 	// Retention queries (DELETE/SELECT on the full spans table) can take
-	// several minutes when the backlog is large. Give it a separate repo
-	// instance with a longer timeout so individual queries don't abort
-	// mid-cycle. Both repos share the same *sql.DB connection and write
-	// scheduler, so all writes are correctly serialised and prioritised.
-	retentionRepo := repository.NewRepository(db.DB)
-	retentionRepo.SetQueryTimeout(5 * time.Minute)
-	retentionRepo.SetWriteScheduler(scheduler)
+	// several minutes when the backlog is large. Give it a copy of repo with a
+	// longer timeout so individual queries don't abort mid-cycle. The copy
+	// shares repo's handles and write schedulers, so all writes are still
+	// serialised and prioritised per file.
+	retentionRepo := repo.WithQueryTimeout(5 * time.Minute)
 	retentionRepo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
 
 	warnObsoleteRetentionEnv(cfg, logger)
@@ -225,7 +218,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionCancel()
 	workerCancel()
 	wg.Wait()
-	db.FinalCheckpoint(logger)
+	store.FinalCheckpoint(logger)
 
 	logger.Info("writer shutdown complete")
 	return nil

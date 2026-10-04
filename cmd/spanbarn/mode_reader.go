@@ -77,7 +77,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		queryCache *cache.Cache
 	)
 	if cfg.DBPath != "" {
-		db, dbErr := repository.NewReadOnlyDBWithCache(cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
+		db, dbErr := openReadDB(cfg)
 		if dbErr != nil {
 			logger.Warn("read-only DB unavailable, dashboard reads disabled", "error", dbErr)
 		} else {

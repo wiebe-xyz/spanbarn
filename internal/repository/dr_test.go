@@ -94,7 +94,16 @@ func TestSnapshotSettingsCopiesSettingsOnly(t *testing.T) {
 		t.Fatalf("user missing from snapshot: %v", err)
 	}
 
-	for _, telemetryTable := range []string{"spans", "aggregates", "error_samples", "metrics", "logs", "prompt_records"} {
+	for _, moved := range FamilySpans.Tables() {
+		var n int
+		if err := destDB.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, moved).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("snapshot main has %s; the spans family belongs in the spans file", moved)
+		}
+	}
+	for _, telemetryTable := range []string{"metrics", "logs", "prompt_records"} {
 		var count int
 		if err := destDB.QueryRow("SELECT count(*) FROM " + telemetryTable).Scan(&count); err != nil {
 			t.Fatalf("count %s: %v", telemetryTable, err)
