@@ -19,12 +19,20 @@ import (
 // ingest waits in the write queue. Every writer deployment uses the Recreate
 // strategy, so no other writer runs at that point.
 //
-// The copy goes into cutoverPath and is renamed to SpansPath once it is
-// complete and verified. The rename is the commit point: before it, main is
-// untouched and a failed or interrupted copy only leaves a temporary file that
-// the next start removes; after it, the spans file carries a spans_cutover row,
-// and a start that finds the file next to span rows in main drops those rows'
-// tables to finish the job.
+// Steps, and what a stop after each one leaves:
+//
+//  1. Copy the family into cutoverPath and write a spans_cutover row. Main is
+//     untouched; the next start removes the copy and starts over.
+//  2. Drop the family's tables from main in one transaction. This is the
+//     commit point: from here the copy is the only one, and an image that
+//     predates the split can no longer write spans into main.
+//  3. Rename the copy to SpansPath. A start that finds main without span
+//     tables and a finished copy at cutoverPath renames it (finishCutover).
+//
+// A spans file next to a main that still holds span tables was never
+// committed (a stop before step 2 under an earlier order of these steps, or
+// a new install stopped mid-migration). The cut-over deletes it and copies
+// again, because a writer may have written to main since.
 const cutoverMarkerTable = "spans_cutover"
 
 // cutoverBatchRows is the number of rows one INSERT copies. A variable so
@@ -44,39 +52,23 @@ var volumeFreeBytes = func(path string) (int64, error) {
 }
 
 // cutOver runs the cut-over when the options ask for it and reports whether
-// the spans family now has its own file. A failed copy is logged and leaves
-// the single-file layout in place, so the writer starts as before. An error
-// is returned only after the rename: the spans file then holds the family,
-// writes must not go to main any more, and the next start finishes the drop.
+// the spans family now has its own file. A failure before the drop commits
+// is logged and leaves the single-file layout in place, so the writer starts
+// as before. An error is returned only after the drop: main then has no span
+// tables, and the next start finishes the rename.
 func (o StorageOptions) cutOver(ctx context.Context, main *sql.DB, dbPath string) (bool, error) {
 	if !o.CutOver {
 		return false, nil
 	}
-	moved, err := cutOverSpans(ctx, dbPath, o)
-	if err != nil {
-		o.logger().Error("spans cut-over failed; keeping the single-file layout", "error", err)
-		return false, nil
-	}
-	if !moved {
-		return false, nil
-	}
-	if err := dropMovedTables(ctx, main, true); err != nil {
-		return false, fmt.Errorf("spans cut-over: drop the moved tables from main: %w", err)
-	}
-	return true, nil
-}
-
-// cutOverSpans copies the spans family from main into a new spans file. It
-// returns false without error when it decides not to run (not enough room).
-// Main is never written; the caller drops the moved tables after it returns
-// true.
-func cutOverSpans(ctx context.Context, dbPath string, o StorageOptions) (bool, error) {
 	log := o.logger()
 	tmp := cutoverPath(dbPath)
 	removeDBFiles(tmp)
-
+	removeDBFiles(SpansPath(dbPath))
 	if ok, err := cutoverHasRoom(dbPath, log); err != nil || !ok {
-		return false, err
+		if err != nil {
+			log.Error("spans cut-over failed; keeping the single-file layout", "error", err)
+		}
+		return false, nil
 	}
 
 	start := time.Now()
@@ -84,15 +76,59 @@ func cutOverSpans(ctx context.Context, dbPath string, o StorageOptions) (bool, e
 	rows, err := copySpansFamily(ctx, dbPath, tmp, o)
 	if err != nil {
 		removeDBFiles(tmp)
-		return false, err
+		log.Error("spans cut-over failed; keeping the single-file layout", "error", err)
+		return false, nil
 	}
-	if err := os.Rename(tmp, SpansPath(dbPath)); err != nil {
+	log.Info("spans cut-over: copy complete, dropping the span tables from main",
+		"rows", rows, "elapsed", time.Since(start).Round(time.Millisecond))
+
+	if err := dropMovedTables(ctx, main, true); err != nil {
 		removeDBFiles(tmp)
-		return false, fmt.Errorf("rename %s: %w", tmp, err)
+		log.Error("spans cut-over failed; keeping the single-file layout", "error", err)
+		return false, nil
+	}
+	if err := commitCutover(dbPath); err != nil {
+		return false, fmt.Errorf("spans cut-over: %w", err)
+	}
+	log.Info("spans cut-over: done", "elapsed", time.Since(start).Round(time.Millisecond))
+	return true, nil
+}
+
+// finishCutover completes a cut-over that stopped between the drop and the
+// rename. Call it only when main has no span tables. A copy without the
+// marker never finished and is removed.
+func finishCutover(ctx context.Context, dbPath string, o StorageOptions) error {
+	tmp := cutoverPath(dbPath)
+	if !fileExists(tmp) {
+		return nil
+	}
+	db, err := Open(tmp, OpenOptions{ReadOnly: true, CacheMB: o.CacheMB})
+	if err != nil {
+		return err
+	}
+	done, err := cutoverComplete(ctx, db.DB)
+	db.Close()
+	if err != nil {
+		return err
+	}
+	if !done {
+		removeDBFiles(tmp)
+		return nil
+	}
+	o.logger().Info("spans cut-over: finishing an interrupted cut-over", "to", SpansPath(dbPath))
+	return commitCutover(dbPath)
+}
+
+func commitCutover(dbPath string) error {
+	tmp := cutoverPath(dbPath)
+	if err := os.Rename(tmp, SpansPath(dbPath)); err != nil {
+		return fmt.Errorf("rename %s: %w", tmp, err)
 	}
 	syncDir(filepath.Dir(dbPath))
-	log.Info("spans cut-over: copy complete", "rows", rows, "elapsed", time.Since(start).Round(time.Millisecond))
-	return true, nil
+	// The copy was checkpointed and closed, so its -wal is empty or gone;
+	// what is left would be mistaken for the WAL of the next copy.
+	removeDBFiles(tmp)
+	return nil
 }
 
 // cutoverHasRoom checks that the volume can hold a second copy of the spans

@@ -74,7 +74,7 @@ jobs:
   deploy:
     needs: preflight
     runs-on: [self-hosted, build]
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       HOME: /Users/wiebe
       PATH: /Users/wiebe/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
@@ -131,7 +131,9 @@ jobs:
             set -euo pipefail
             kubectl -n ${NAMESPACE} delete ingress.networking.k8s.io/spanbarn --ignore-not-found
             kubectl apply -k /tmp/spanbarn-deploy/deploy/k8s/production
-            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn --timeout=360s
+            # The writer is Ready only once its API is wired. A one-time spans
+            # cut-over runs before that and took about 7 minutes on prod's data.
+            kubectl -n ${NAMESPACE} rollout status deployment/spanbarn --timeout=1200s
             kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-ingest --timeout=360s
             kubectl -n ${NAMESPACE} rollout status deployment/spanbarn-web --timeout=360s
           "

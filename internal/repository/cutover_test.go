@@ -114,20 +114,87 @@ func TestCutOverMovesSpansFamily(t *testing.T) {
 	}
 }
 
-// A writer that stops after the rename leaves the spans file next to a main
-// that still holds the copied rows. The next start drops them.
-func TestCutOverFinishesAfterRename(t *testing.T) {
+// A writer that stops after the drop leaves main without span tables and the
+// finished copy at its temporary path. The next start renames it into place.
+func TestCutOverFinishesAfterDrop(t *testing.T) {
 	path := legacyDatabase(t)
-	moved, err := cutOverSpans(context.Background(), path, cutoverOptions())
-	if err != nil || !moved {
-		t.Fatalf("cutOverSpans = %v, %v", moved, err)
+	o := cutoverOptions()
+	if _, err := copySpansFamily(context.Background(), path, cutoverPath(path), o); err != nil {
+		t.Fatal(err)
 	}
+	main, err := NewDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dropMovedTables(context.Background(), main.DB, true); err != nil {
+		t.Fatal(err)
+	}
+	main.Close()
+
 	store, err := OpenStorage(context.Background(), path, testStorageOptions)
 	if err != nil {
 		t.Fatalf("open after an interrupted cut-over: %v", err)
 	}
 	defer store.Close()
 	assertSplitWithSpans(t, store, path)
+}
+
+// staleSpansFile reproduces the state an earlier order of the cut-over left in
+// production: a finished copy renamed to the spans file, the pod stopped
+// before main's tables were dropped, and the previous image then writing span
+// 6 into main.
+func staleSpansFile(t *testing.T) string {
+	t.Helper()
+	path := legacyDatabase(t)
+	if _, err := copySpansFamily(context.Background(), path, cutoverPath(path), cutoverOptions()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(cutoverPath(path), SpansPath(path)); err != nil {
+		t.Fatal(err)
+	}
+	main, err := NewDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer main.Close()
+	if _, err := main.Exec(`INSERT INTO spans (project_id, trace_id, span_id, name, service, start_time_us, duration_us)
+		VALUES (1, 't6', 's6', 'GET /x', 'web', 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestCutOverReplacesUncommittedSpansFile(t *testing.T) {
+	path := staleSpansFile(t)
+	store, err := OpenStorage(context.Background(), path, cutoverOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if !store.Split() {
+		t.Fatal("the cut-over did not run")
+	}
+	var ids string
+	if err := store.Spans.QueryRow(`SELECT group_concat(id) FROM (SELECT id FROM main.spans ORDER BY id)`).Scan(&ids); err != nil {
+		t.Fatal(err)
+	}
+	if ids != "1,2,3,4,6" {
+		t.Errorf("span ids = %q, want 1,2,3,4,6 (span 6 was written to main after the stale copy)", ids)
+	}
+}
+
+// Without the cut-over (the CLI), a stale spans file changes nothing: main
+// keeps serving writes and reads.
+func TestStaleSpansFileIgnoredWithoutCutOver(t *testing.T) {
+	path := staleSpansFile(t)
+	store := openTestStorage(t, path)
+	if store.Split() {
+		t.Fatal("a stale spans file switched the layout")
+	}
+	var n int
+	if err := openTestReadRepo(t, path).DB().QueryRow(`SELECT count(*) FROM spans`).Scan(&n); err != nil || n != 5 {
+		t.Errorf("spans through a read handle = %d (%v), want main's 5", n, err)
+	}
 }
 
 func assertSingleFile(t *testing.T, store *Storage, path string) {
