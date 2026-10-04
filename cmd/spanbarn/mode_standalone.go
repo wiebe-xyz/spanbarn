@@ -189,6 +189,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	})
 	registerTraceBufferGauges(selfRec, standaloneBuffer)
 	registerStorageMetrics(selfRec, retentionWorker.Stats)
+	safeGo("self-boards", &wg, func() { ensureSelfBoards(cfg, repo, logger) })
 	metricAccumulator.SetOnPersist(selfRec.AddRollups)
 	apiServer.SetSelfMetricsRecorder(selfRec)
 	startSelfMetrics(ctx, cfg, &wg, selfRec, logger)

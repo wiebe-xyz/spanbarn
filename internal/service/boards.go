@@ -30,8 +30,9 @@ var BoardRanges = []string{"1h", "24h", "7d", "30d"}
 // BoardRefreshSeconds are the refresh intervals a board offers. 0 is off.
 var BoardRefreshSeconds = []int{0, 30, 60, 300, 900}
 
-// PanelViews are the two ways a panel draws its query.
-var PanelViews = []string{"table", "chart"}
+// PanelViews are the ways a panel draws its query: a span query as a table or
+// a chart, or a metric series (PanelViewMetric).
+var PanelViews = []string{"table", "chart", PanelViewMetric}
 
 // BoardRepository is the storage BoardService needs.
 type BoardRepository interface {
@@ -66,6 +67,8 @@ type QueryDefinition struct {
 	Sample  int      `json:"sample,omitempty"`
 	// ChartCalc is the calculation a chart panel draws. It defaults to the first.
 	ChartCalc string `json:"chartCalc,omitempty"`
+	// Metric is the query of a metric panel, which has no span calculations.
+	Metric *MetricPanel `json:"metric,omitempty"`
 }
 
 // PanelRequest adds a query to a board ("save to board").
@@ -209,16 +212,21 @@ func (r PanelRequest) validate() error {
 		return analyzeInvalid("title is limited to %d characters", maxPanelTitle)
 	}
 	if !oneOf(r.View, PanelViews) {
-		return analyzeInvalid("view must be table or chart")
+		return analyzeInvalid("view must be table, chart or metric")
 	}
-	return r.Definition.validate()
+	return validatePanelDefinition(r.View, r.Definition)
+}
+
+func (r PanelRequest) withDefaults() PanelRequest {
+	if r.View == "" {
+		r.View = "table"
+	}
+	return r
 }
 
 // AddPanel saves a query and appends it to the board as a panel.
 func (s *BoardService) AddPanel(boardID int64, req PanelRequest) (int64, error) {
-	if req.View == "" {
-		req.View = "table"
-	}
+	req = req.withDefaults()
 	if err := req.validate(); err != nil {
 		return 0, err
 	}
@@ -248,17 +256,34 @@ func (s *BoardService) AddPanel(boardID int64, req PanelRequest) (int64, error) 
 	return id, nil
 }
 
-// UpdatePanel renames a panel and switches it between table and chart.
+// UpdatePanel renames a panel and switches it between table and chart. A
+// metric panel stays a metric panel: its query has no span calculations.
 func (s *BoardService) UpdatePanel(boardID, panelID int64, title, view string) error {
 	title = strings.TrimSpace(title)
 	if title == "" || len(title) > maxPanelTitle {
 		return analyzeInvalid("title is required and limited to %d characters", maxPanelTitle)
 	}
 	if !oneOf(view, PanelViews) {
-		return analyzeInvalid("view must be table or chart")
+		return analyzeInvalid("view must be table, chart or metric")
+	}
+	if err := s.checkViewSwitch(boardID, panelID, view); err != nil {
+		return err
 	}
 	if err := s.repo.UpdatePanel(boardID, panelID, title, view); err != nil {
 		return s.fail("update panel failed", err, "board_id", boardID, "panel_id", panelID)
+	}
+	return nil
+}
+
+func (s *BoardService) checkViewSwitch(boardID, panelID int64, view string) error {
+	board, err := s.repo.GetBoard(boardID)
+	if err != nil {
+		return s.fail("update panel failed", err, "board_id", boardID, "panel_id", panelID)
+	}
+	for _, p := range board.Panels {
+		if p.ID == panelID && (p.View == PanelViewMetric) != (view == PanelViewMetric) {
+			return analyzeInvalid("a metric panel cannot switch to a span view, or back")
+		}
 	}
 	return nil
 }
