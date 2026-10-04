@@ -30,6 +30,7 @@ const (
 type MinuteFloor struct {
 	mu      sync.Mutex
 	buckets map[string]*floorBucket
+	bucket  time.Duration // width of one bucket; one minute for NewMinuteFloor
 }
 
 type floorBucket struct {
@@ -39,9 +40,23 @@ type floorBucket struct {
 
 // NewMinuteFloor creates a floor tracker and starts its background GC loop.
 func NewMinuteFloor() *MinuteFloor {
-	f := &MinuteFloor{buckets: make(map[string]*floorBucket)}
+	f := &MinuteFloor{buckets: make(map[string]*floorBucket), bucket: time.Minute}
 	observability.SafeGo("minute-floor-gc", nil, f.gcLoop)
 	return f
+}
+
+// NewBucketFloor creates a floor tracker whose buckets are bucket wide instead
+// of one minute. TODO(#171 workstream A): GC retention proportional to bucket.
+func NewBucketFloor(bucket time.Duration) *MinuteFloor {
+	f := &MinuteFloor{buckets: make(map[string]*floorBucket), bucket: bucket}
+	observability.SafeGo("bucket-floor-gc", nil, f.gcLoop)
+	return f
+}
+
+// BucketOf returns the bucket index of a trace whose root span starts at
+// startTimeUs (microseconds since epoch). Pass it to ShouldKeep.
+func (f *MinuteFloor) BucketOf(startTimeUs int64) int64 {
+	return startTimeUs / f.bucket.Microseconds()
 }
 
 // ShouldKeep records a keep decision for one boring trace and reports whether it
