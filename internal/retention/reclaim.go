@@ -57,16 +57,17 @@ func (w *RetentionWorker) reclaimToTarget(ctx context.Context, cfg Config, space
 	w.releaseBallast(ballast)
 
 	target := reclaimTarget(cfg)
-	res, err := w.evictUntilUnderTarget(ctx, cfg, reporter, space.UsedFraction(), target)
+	used, pending := w.retireShardsForReclaim(ctx, cfg, space, target)
+	res, err := w.evictUntilUnderTarget(ctx, cfg, reporter, used, target, pending)
 	if err != nil {
 		return err
 	}
 	w.reportReclaim(res, target)
 
 	// Restore the reserve so the next emergency has a way out too — but only
-	// once we are actually back under target. Re-taking it while still full
-	// would just re-create the condition we escaped.
-	if res.used <= target {
+	// once we are actually back under target, retiring shards deleted. Re-taking
+	// it while still full would just re-create the condition we escaped.
+	if res.used <= target && pending == 0 {
 		if err := ballast.Ensure(); err != nil {
 			w.logger.Warn("retention: could not restore ballast", "error", err)
 		}
@@ -113,9 +114,11 @@ func (w *RetentionWorker) releaseBallast(ballast *repository.Ballast) {
 }
 
 // evictUntilUnderTarget halves the retention window and evicts, re-measuring
-// each round, until the volume is under target or the floor is reached.
+// each round, until the volume is under target or the floor is reached. Each
+// measurement counts the pending bytes of retiring shards as free: their
+// files go within minutes.
 func (w *RetentionWorker) evictUntilUnderTarget(
-	ctx context.Context, cfg Config, reporter spaceReporter, used, target float64,
+	ctx context.Context, cfg Config, reporter spaceReporter, used, target float64, pending int64,
 ) (reclaimResult, error) {
 	res := reclaimResult{used: used, windowMinutes: startWindowMinutes(cfg)}
 
@@ -134,6 +137,9 @@ func (w *RetentionWorker) evictUntilUnderTarget(
 			return res, err
 		}
 		res.used = space.UsedFraction()
+		if space.VolumeBytes > 0 {
+			res.used -= float64(pending) / float64(space.VolumeBytes)
+		}
 		w.logger.Warn("retention: emergency eviction round",
 			"round", res.rounds+1,
 			"window_minutes", res.windowMinutes,

@@ -69,7 +69,7 @@ func (s Space) Measured() bool { return s.VolumeBytes > 0 && s.PageSize > 0 }
 // retention cycle.
 //
 // It covers every file the handle has open: main plus each attached file (the
-// spans file in the split layout). Pages, file and WAL sizes are summed over
+// spans file in the split layout), and every time-shard file. Pages, file and WAL sizes are summed over
 // them, so the ladder reacts to the total the database occupies on the volume.
 // PageSize is main's; PageCount and FreelistCount are in main-sized pages.
 // AutoVacuum is the lowest mode of any file, so a file that cannot return
@@ -98,6 +98,11 @@ func (r *Repository) DBSpace(ctx context.Context, dbPath string) (Space, error) 
 
 	if dbPath == "" || dbPath == ":memory:" {
 		return s, nil
+	}
+	if r.shards != nil {
+		if err := r.shards.addSpace(ctx, &s); err != nil {
+			return s, err
+		}
 	}
 
 	for _, f := range files {

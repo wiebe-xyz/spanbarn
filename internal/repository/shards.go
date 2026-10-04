@@ -123,21 +123,14 @@ func (m *ShardManager) SetScheduler(f Family, s *writescheduler.Scheduler) {
 // the time fn runs. The shard is picked inside the queued write, so a write
 // queued before midnight and run after it lands in the new day.
 func (m *ShardManager) submit(f Family, label string, fn func(db *sql.DB) error) error {
-	run := func() error {
+	return m.onQueue(f, label, func() error {
 		spec := m.specs[f]
 		h, err := m.shard(context.Background(), spec, spec.start(m.now()))
 		if err != nil {
 			return err
 		}
 		return fn(h.DB)
-	}
-	m.mu.Lock()
-	s := m.schedulers[f]
-	m.mu.Unlock()
-	if s == nil {
-		return run()
-	}
-	return s.Submit(context.Background(), writescheduler.Low, label, run)
+	})
 }
 
 // shard returns the open handle of the period of spec that starts at start,
@@ -180,6 +173,13 @@ func (m *ShardManager) openShard(ctx context.Context, f Family, start time.Time,
 	h, err := Open(filepath.Join(m.dir, file), m.open)
 	if err != nil {
 		return nil, err
+	}
+	// Row deletes inside a shard (the disk ladder's trim) return their pages
+	// to the volume only with incremental vacuum, which a file takes while it
+	// is empty.
+	if err := enableIncrementalVacuum(ctx, h.DB); err != nil {
+		h.Close()
+		return nil, fmt.Errorf("shard %s auto_vacuum: %w", file, err)
 	}
 	if err := MigrateShard(ctx, h.DB, f); err != nil {
 		h.Close()
