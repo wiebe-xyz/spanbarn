@@ -7,6 +7,8 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test-setup.ts'],
+    // Per-test ceiling above the 10s asyncUtilTimeout set in test-setup.ts.
+    testTimeout: 20_000,
     exclude: ['**/node_modules/**', '**/dist/**', 'scripts/**'],
   },
   server: {
