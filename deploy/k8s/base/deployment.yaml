@@ -68,9 +68,11 @@ spec:
               port: 8080
             periodSeconds: 20
             failureThreshold: 3
+          # Ready only once the API is wired: /api/v1/health answers during
+          # migrations and the one-time spans cut-over, before any API route.
           readinessProbe:
             httpGet:
-              path: /api/v1/health
+              path: /api/v1/ready
               port: 8080
             periodSeconds: 5
             failureThreshold: 3

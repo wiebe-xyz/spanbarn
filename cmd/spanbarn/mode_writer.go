@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -31,7 +32,8 @@ import (
 // that routes writes to the spanbarn service continues to work.
 //
 // Startup order:
-//  1. Health endpoint starts immediately (k8s probes pass during migrations)
+//  1. Health endpoint starts immediately (k8s probes pass during migrations);
+//     /api/v1/ready answers 503 until step 4
 //  2. DB open + migrations
 //  3. Read-only DB for query service (reads don't block the write connection)
 //  4. Full API server wired into the same mux (mutations + login now available)
@@ -55,6 +57,17 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"status":"ok","mode":"writer"}`)
+	})
+	// Readiness turns true once the API is wired (step 4). Startup can take
+	// minutes (migrations, the one-time spans cut-over), and a Ready pod before
+	// then would let a rollout finish while every API route still 404s.
+	var apiReady atomic.Bool
+	mux.HandleFunc("/api/v1/ready", func(w http.ResponseWriter, _ *http.Request) {
+		if !apiReady.Load() {
+			http.Error(w, "starting", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 	})
 
 	httpServer := newHTTPServer(cfg, mux)
@@ -109,6 +122,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	}
 	registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
 	mux.Handle("/", apiServer.Handler())
+	apiReady.Store(true)
 	logger.Info("writer API ready")
 
 	// Self-metrics recorder wired to the API server now; gauges and reporter are

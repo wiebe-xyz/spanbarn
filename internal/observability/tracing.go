@@ -123,7 +123,7 @@ func TracingMiddleware(next http.Handler) http.Handler {
 	otelHandler := otelhttp.NewHandler(next, "http.request")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if path == "/api/v1/health" || path == "/metrics" {
+		if path == "/api/v1/health" || path == "/api/v1/ready" || path == "/metrics" {
 			next.ServeHTTP(w, r)
 			return
 		}
