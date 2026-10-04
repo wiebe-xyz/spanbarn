@@ -135,6 +135,7 @@ func retentionConfigFrom(cfg config.Config) retention.Config {
 		MetricsRetentionDays:      cfg.Retention.MetricsDays,
 		LogRetentionHours:         cfg.Retention.LogHours,
 		ErrorLogRetentionDays:     cfg.Retention.ErrorLogDays,
+		PromptRetentionDays:       cfg.Retention.PromptDays,
 		// Every rollup tier is mapped here. The tier that filled production's
 		// disk had a config field and a default but no line in this function, so
 		// it sat at 365 days no matter what anyone set; TestRetentionConfigFrom

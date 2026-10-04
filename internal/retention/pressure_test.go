@@ -59,6 +59,7 @@ func TestTierApplyShortensRawTelemetryOnly(t *testing.T) {
 		BoringRetentionMinutes:    30,
 		MetricsRetentionDays:      8,
 		LogRetentionHours:         24,
+		PromptRetentionDays:       30,
 		// Derived data — must survive untouched at every tier.
 		ErrorRetentionDays:     30,
 		AggregateRetentionDays: 365,
@@ -82,6 +83,9 @@ func TestTierApplyShortensRawTelemetryOnly(t *testing.T) {
 	if elevated.BoringRetentionMinutes != 15 {
 		t.Errorf("elevated BoringRetentionMinutes = %d, want 15", elevated.BoringRetentionMinutes)
 	}
+	if elevated.PromptRetentionDays != 15 {
+		t.Errorf("elevated PromptRetentionDays = %d, want 15", elevated.PromptRetentionDays)
+	}
 
 	critical := TierCritical.Apply(cfg)
 	if critical.InterestingRetentionHours != 12 {
@@ -89,6 +93,9 @@ func TestTierApplyShortensRawTelemetryOnly(t *testing.T) {
 	}
 	if critical.MetricsRetentionDays != 2 {
 		t.Errorf("critical MetricsRetentionDays = %d, want 2", critical.MetricsRetentionDays)
+	}
+	if critical.PromptRetentionDays != 7 {
+		t.Errorf("critical PromptRetentionDays = %d, want 7", critical.PromptRetentionDays)
 	}
 
 	// The whole point of leaving these alone: an operator investigating the
@@ -116,6 +123,7 @@ func TestTierApplyNeverCollapsesToZero(t *testing.T) {
 		BoringRetentionMinutes:    1,
 		MetricsRetentionDays:      1,
 		LogRetentionHours:         1,
+		PromptRetentionDays:       1,
 	}
 	got := TierCritical.Apply(tiny)
 	if got.InterestingRetentionHours < 1 {
@@ -129,6 +137,9 @@ func TestTierApplyNeverCollapsesToZero(t *testing.T) {
 	}
 	if got.LogRetentionHours < 1 {
 		t.Errorf("LogRetentionHours = %d, want >= 1", got.LogRetentionHours)
+	}
+	if got.PromptRetentionDays < 1 {
+		t.Errorf("PromptRetentionDays = %d, want >= 1", got.PromptRetentionDays)
 	}
 }
 

@@ -95,8 +95,8 @@ func scale(v int, factor float64, floor int) int {
 
 // Apply shortens the raw-telemetry retention windows according to the tier.
 //
-// Only raw telemetry is shortened — spans, boring spans, metrics, logs and the
-// 5-minute rollup tier. The
+// Only raw telemetry is shortened — spans, boring spans, metrics, logs, prompt
+// records and the 5-minute rollup tier. The
 // derived data (aggregates, error samples, error logs) is deliberately left
 // alone: it is what the product is actually for, it is far smaller per unit
 // time, and dropping it would mean an operator investigating the incident that
@@ -117,6 +117,11 @@ func (t Tier) Apply(cfg Config) Config {
 	// same reason aggregates and error samples are: they are what survives an
 	// incident, and a year of them is smaller than a day of the 5-minute tier.
 	cfg.MetricRollupRetentionDays = scale(cfg.MetricRollupRetentionDays, f, 1)
+	// Prompt records shorten too. They are raw payloads (full prompt and
+	// response bodies, several KB a row), and before they had a window at all
+	// they grew to the largest table in production while this ladder cut traces
+	// to a few hours around them.
+	cfg.PromptRetentionDays = scale(cfg.PromptRetentionDays, f, 1)
 	return cfg
 }
 

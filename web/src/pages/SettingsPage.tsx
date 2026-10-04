@@ -95,6 +95,7 @@ const RETENTION_FIELDS: RetentionField[] = [
   { key: 'metrics_retention_days', label: 'Raw metrics retention (days)', placeholder: '7' },
   { key: 'log_retention_hours', label: 'Log retention (hours)', placeholder: '24' },
   { key: 'error_log_retention_days', label: 'Error log retention (days)', placeholder: '30' },
+  { key: 'prompt_retention_days', label: 'Prompt retention (days)', placeholder: '30' },
 ]
 
 const ROLLUP_FIELDS: RetentionField[] = [

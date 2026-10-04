@@ -34,6 +34,11 @@ const (
 	// largeBacklogWarn is the span count above which we emit a warning so
 	// operators know the table has grown unexpectedly large.
 	largeBacklogWarn = 1_000_000
+	// maxPromptRowsPerCycle caps the prompt records one cycle deletes. The rows
+	// are several KB each, and the first cycle after this window was introduced
+	// faces weeks of backlog; draining that in one call would hold the cycle open
+	// instead of letting it re-measure the disk and run the other deletes.
+	maxPromptRowsPerCycle = 20_000
 )
 
 // Repository defines the data-access methods the retention worker needs.
@@ -57,6 +62,7 @@ type Repository interface {
 	DeleteCoarseRollupsOlderThanLimited(ctx context.Context, step int64, cutoff time.Time, max int64) (int64, bool, error)
 	MetricRollupWatermark(ctx context.Context, step int64) (time.Time, bool, error)
 	DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error)
+	DeletePromptRecordsOlderThanLimited(ctx context.Context, cutoff time.Time, max int64) (int64, bool, error)
 	GetSetting(key string) (string, error)
 	ListProjectIDs() ([]int64, error)
 	EvictProjectTracesOlderThan(ctx context.Context, projectID int64, cutoff time.Time) (int64, error)
@@ -160,6 +166,7 @@ type cycleCutoffs struct {
 	metrics     time.Time
 	logs        time.Time
 	errorLogs   time.Time
+	prompts     time.Time
 }
 
 func newCycleCutoffs(now time.Time, cfg Config) cycleCutoffs {
@@ -171,6 +178,7 @@ func newCycleCutoffs(now time.Time, cfg Config) cycleCutoffs {
 		metrics:     now.Add(-time.Duration(cfg.MetricsRetentionDays) * 24 * time.Hour),
 		logs:        now.Add(-time.Duration(cfg.LogRetentionHours) * time.Hour),
 		errorLogs:   now.Add(-time.Duration(cfg.ErrorLogRetentionDays) * 24 * time.Hour),
+		prompts:     now.Add(-time.Duration(cfg.PromptRetentionDays) * 24 * time.Hour),
 	}
 }
 
@@ -186,6 +194,8 @@ type cycleStats struct {
 	rollupRowsDeleted    int64
 	rollupBacklogRemains bool
 	logsDeleted          int64
+	promptsDeleted       int64
+	promptBacklogRemains bool
 	e2eUsersDeleted      int64
 	webSessionsDeleted   int64
 	projectTracesEvicted int64
@@ -204,6 +214,8 @@ func (c *cycleStats) attributes() []attribute.KeyValue {
 		attribute.Int64("rollup_rows_deleted", c.rollupRowsDeleted),
 		attribute.Bool("rollup_backlog_remains", c.rollupBacklogRemains),
 		attribute.Int64("logs_deleted", c.logsDeleted),
+		attribute.Int64("prompts_deleted", c.promptsDeleted),
+		attribute.Bool("prompt_backlog_remains", c.promptBacklogRemains),
 		attribute.Int64("e2e_users_deleted", c.e2eUsersDeleted),
 		attribute.Int64("web_sessions_deleted", c.webSessionsDeleted),
 		attribute.Int64("project_traces_evicted", c.projectTracesEvicted),
@@ -223,6 +235,8 @@ func (c *cycleStats) logArgs() []any {
 		"rollup_rows_deleted", c.rollupRowsDeleted,
 		"rollup_backlog_remains", c.rollupBacklogRemains,
 		"logs_deleted", c.logsDeleted,
+		"prompts_deleted", c.promptsDeleted,
+		"prompt_backlog_remains", c.promptBacklogRemains,
 		"e2e_users_deleted", c.e2eUsersDeleted,
 		"web_sessions_deleted", c.webSessionsDeleted,
 		"project_traces_evicted", c.projectTracesEvicted,
@@ -397,11 +411,14 @@ func (w *RetentionWorker) purgeSpanDerived(ctx context.Context, cfg Config, cut 
 	return err
 }
 
-// purgeHousekeeping deletes aged logs, E2E users and web sessions, then
-// enforces the per-project retention caps.
+// purgeHousekeeping deletes aged logs, prompt records, E2E users and web
+// sessions, then enforces the per-project retention caps.
 func (w *RetentionWorker) purgeHousekeeping(ctx context.Context, cut cycleCutoffs, st *cycleStats) error {
 	var err error
 	if st.logsDeleted, err = w.repo.DeleteLogsOlderThan(ctx, cut.logs, cut.errorLogs); err != nil {
+		return err
+	}
+	if st.promptsDeleted, st.promptBacklogRemains, err = w.repo.DeletePromptRecordsOlderThanLimited(ctx, cut.prompts, maxPromptRowsPerCycle); err != nil {
 		return err
 	}
 	if st.e2eUsersDeleted, err = w.repo.DeleteExpiredE2EUsers(cut.now); err != nil {

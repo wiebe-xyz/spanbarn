@@ -364,12 +364,12 @@ func TestPromptRecords(t *testing.T) {
 	}
 
 	// Delete with future cutoff.
-	n, err := repo.DeletePromptRecordsOlderThan(time.Now().Add(time.Hour))
+	n, more, err := repo.DeletePromptRecordsOlderThanLimited(context.Background(), time.Now().UTC().Add(time.Hour), 100)
 	if err != nil {
-		t.Fatalf("DeletePromptRecordsOlderThan: %v", err)
+		t.Fatalf("DeletePromptRecordsOlderThanLimited: %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("expected 2 deleted, got %d", n)
+	if n != 2 || more {
+		t.Fatalf("expected 2 deleted and no backlog, got %d (more=%v)", n, more)
 	}
 }
 

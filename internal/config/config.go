@@ -22,6 +22,7 @@ type RetentionConfig struct {
 	MetricsDays        int // SPANBARN_METRICS_RETENTION_DAYS — how long to keep raw metric data points
 	LogHours           int // SPANBARN_LOG_RETENTION_HOURS — how long to keep log records (default 24)
 	ErrorLogDays       int // SPANBARN_ERROR_LOG_RETENTION_DAYS — how long to keep logs for error traces (default 30)
+	PromptDays         int // SPANBARN_PROMPT_RETENTION_DAYS — how long to keep LLM prompt records (default 30)
 	DeleteBatchYieldMS int // SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS — pause between batched retention deletes so the WAL checkpoint and reads aren't starved (default 200)
 	// Rollup tier windows. Metric rollups are compacted 5m → 1h → 1d → 1w → 1mo
 	// by internal/rollup, and each tier keeps its own window. Storage is bounded
@@ -217,6 +218,7 @@ func Load() Config {
 			MetricsDays:        getenvInt("SPANBARN_METRICS_RETENTION_DAYS", 7),
 			LogHours:           getenvInt("SPANBARN_LOG_RETENTION_HOURS", 24),
 			ErrorLogDays:       getenvInt("SPANBARN_ERROR_LOG_RETENTION_DAYS", 30),
+			PromptDays:         getenvInt("SPANBARN_PROMPT_RETENTION_DAYS", 30),
 			DeleteBatchYieldMS: getenvInt("SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS", 200),
 			DiskElevatedPct:    getenvInt("SPANBARN_RETENTION_DISK_ELEVATED_PCT", 75),
 			DiskCriticalPct:    getenvInt("SPANBARN_RETENTION_DISK_CRITICAL_PCT", 90),
