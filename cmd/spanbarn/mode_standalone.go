@@ -183,6 +183,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		return float64(eventSpool.Size())
 	})
 	registerTraceBufferGauges(selfRec, standaloneBuffer)
+	registerStorageMetrics(selfRec, retentionWorker.Stats)
 	metricAccumulator.SetOnPersist(selfRec.AddRollups)
 	apiServer.SetSelfMetricsRecorder(selfRec)
 	startSelfMetrics(ctx, cfg, &wg, selfRec, logger)

@@ -199,24 +199,46 @@ func (rp *Reporter) buildRequest(snap snapshot, nowNano uint64) *collectormetric
 		}},
 	})
 
-	// Sampled gauges (spool size, queue depth).
+	// Sampled gauges (spool size, queue depth) and registered counters.
 	for _, g := range snap.gauges {
-		metrics = append(metrics, &metricspb.Metric{
-			Name: g.name,
-			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{
-				DataPoints: []*metricspb.NumberDataPoint{{
-					TimeUnixNano: nowNano,
-					Attributes:   kv(g.attrs),
-					Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: g.value},
-				}},
-			}},
-		})
+		metrics = append(metrics, rp.sampledMetric(g, nowNano))
 	}
 
 	return &collectormetricspb.ExportMetricsServiceRequest{
 		ResourceMetrics: []*metricspb.ResourceMetrics{{
 			Resource:     &resourcepb.Resource{Attributes: kv(rp.resource)},
 			ScopeMetrics: []*metricspb.ScopeMetrics{{Metrics: metrics}},
+		}},
+	}
+}
+
+// sampledMetric exports one registered reading: a gauge, or a cumulative
+// monotonic sum for a registered counter.
+func (rp *Reporter) sampledMetric(g gaugeReading, nowNano uint64) *metricspb.Metric {
+	if g.counter {
+		return &metricspb.Metric{
+			Name: g.name,
+			Unit: "1",
+			Data: &metricspb.Metric_Sum{Sum: &metricspb.Sum{
+				AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+				IsMonotonic:            true,
+				DataPoints: []*metricspb.NumberDataPoint{{
+					StartTimeUnixNano: rp.startNano,
+					TimeUnixNano:      nowNano,
+					Attributes:        kv(g.attrs),
+					Value:             &metricspb.NumberDataPoint_AsDouble{AsDouble: g.value},
+				}},
+			}},
+		}
+	}
+	return &metricspb.Metric{
+		Name: g.name,
+		Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{
+			DataPoints: []*metricspb.NumberDataPoint{{
+				TimeUnixNano: nowNano,
+				Attributes:   kv(g.attrs),
+				Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: g.value},
+			}},
 		}},
 	}
 }
