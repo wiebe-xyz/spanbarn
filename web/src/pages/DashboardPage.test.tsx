@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { DashboardPage } from './DashboardPage'
@@ -162,6 +162,12 @@ describe('DashboardPage', () => {
   })
 
   it('moves the window back and forward with the arrows', async () => {
+    // Freeze Date only (waitFor keeps real timers): the live and the previous
+    // window are computed from Date.now() at different renders, which a loaded
+    // CI host can put seconds apart.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-04T12:00:00Z'))
+    onTestFinished(() => { vi.useRealTimers() })
     renderPage()
     await waitFor(() => expect(counts).toHaveBeenCalledTimes(2))
     const live = counts.mock.calls[0][0]
@@ -169,8 +175,7 @@ describe('DashboardPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Previous window' }))
     await waitFor(() => expect(counts).toHaveBeenCalledTimes(4))
     const earlier = counts.mock.calls[2][0]
-    expect(Date.parse(live.from) - Date.parse(earlier.to)).toBeLessThan(5000)
-    expect(Date.parse(earlier.to)).toBeLessThan(Date.parse(live.from) + 5000)
+    expect(earlier.to).toBe(live.from)
     expect(screen.getByRole('button', { name: 'Next window' })).toBeEnabled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Next window' }))
