@@ -147,6 +147,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// The writer is the single SQLite writer, so an in-memory per-minute floor
 	// counts boring-trace survivals accurately across batches.
 	minuteFloor := sampling.NewMinuteFloor()
+	hourFloor := sampling.NewBucketFloor(time.Hour)
 
 	rw := worker.NewRedisWorker(writeQueue, &workerRepoAdapter{repo: repo}, logger)
 	rw.SetAccumulator(accumulator)
@@ -156,6 +157,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	})
 	rw.SetBoringPolicy(boringPolicy)
 	rw.SetMinuteFloor(minuteFloor)
+	rw.SetHourFloor(hourFloor)
 	rw.SetStagingMode(cfg.SpanStagingEnabled)
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	safeGo("write-scheduler", &wg, func() { scheduler.Run(workerCtx) })
@@ -166,7 +168,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// flusher does accumulation + classification + indexed storage per complete
 	// trace off the hot path, with a hard-age GC so staging can't grow unbounded.
 	if cfg.SpanStagingEnabled {
-		flusher := newStagingFlusher(cfg, queryRepo, repo, accumulator, boringPolicy, minuteFloor, logger)
+		flusher := newStagingFlusher(cfg, queryRepo, repo, accumulator, boringPolicy, minuteFloor, hourFloor, logger)
 		safeGo("staging-flusher", &wg, func() { flusher.Run(workerCtx) })
 	}
 	safeGo("accumulator", &wg, func() { accumulator.Run(workerCtx) })

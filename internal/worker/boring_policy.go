@@ -25,6 +25,9 @@ type BoringPolicyReader interface {
 	// MinTracesPerMinute returns the minimum number of boring traces that must
 	// survive sampling per (project, operation) each minute. Default 1.
 	MinTracesPerMinute(projectID int64) int
+	// MinTracesPerHour returns the number of clean traces kept durably per
+	// (project, operation) each hour. Default 1, 0 disables the tier.
+	MinTracesPerHour(projectID int64) int
 }
 
 // CachedBoringPolicy reads boring span policy from the settings table with a TTL
@@ -37,6 +40,8 @@ type BoringPolicyReader interface {
 //	boring.verbose_until.project.{id}    → Unix timestamp (seconds) until project is verbose
 //	boring.min_traces_per_minute         → global floor: min boring traces kept per (project, op) per minute
 //	boring.min_traces_per_minute.project.{id} → per-project override (default 1 when absent)
+//	boring.min_traces_per_hour           → global hourly rarity tier: clean traces kept durably per (project, op) per hour (0 disables)
+//	boring.min_traces_per_hour.project.{id}   → per-project override (default 1 when absent)
 type CachedBoringPolicy struct {
 	repo     BoringSettingsReader
 	cacheTTL time.Duration
@@ -91,6 +96,25 @@ func (p *CachedBoringPolicy) MinTracesPerMinute(projectID int64) int {
 		}
 	}
 	return DefaultMinTracesPerMinute
+}
+
+// DefaultMinTracesPerHour is the hourly rarity tier default: the first clean
+// trace per (project, operation, hour) is kept durably.
+const DefaultMinTracesPerHour = 1
+
+func (p *CachedBoringPolicy) MinTracesPerHour(projectID int64) int {
+	projKey := fmt.Sprintf("boring.min_traces_per_hour.project.%d", projectID)
+	if s := p.get(projKey); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			return n
+		}
+	}
+	if s := p.get("boring.min_traces_per_hour"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return DefaultMinTracesPerHour
 }
 
 func (p *CachedBoringPolicy) VerboseUntil(projectID int64) time.Time {

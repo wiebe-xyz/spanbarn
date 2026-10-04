@@ -25,8 +25,8 @@ func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error
 		defer tx.Rollback()
 
 		stmt, err := tx.PrepareContext(ctx, `INSERT INTO spans
-			(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events, expires_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+			(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events, expires_at, durable)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		if err != nil {
 			return err
 		}
@@ -40,7 +40,7 @@ func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error
 			if _, err := stmt.ExecContext(ctx,
 				s.ProjectID, s.TraceID, s.SpanID, parentID,
 				s.Name, s.Service, s.Resource, s.Kind, s.Status,
-				s.StartTimeUs, s.DurationUs, s.Attributes, s.Events, s.ExpiresAt,
+				s.StartTimeUs, s.DurationUs, s.Attributes, s.Events, s.ExpiresAt, s.Durable,
 			); err != nil {
 				return err
 			}
@@ -247,12 +247,33 @@ func (r *Repository) CountSpansOlderThan(cutoff time.Time) (int64, error) {
 	return n, err
 }
 
+// GetSpansForAggregation returns the oldest spans ingested at or before cutoff,
+// with their Durable flag so retention can copy durable spans to error_samples.
 func (r *Repository) GetSpansForAggregation(cutoff time.Time, limit int) ([]Span, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
-	return r.scanSpans(
-		"SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at FROM spans WHERE ingested_at <= ? ORDER BY ingested_at LIMIT ?",
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at, durable FROM spans WHERE ingested_at <= ? ORDER BY ingested_at LIMIT ?",
 		cutoff, limit,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Span
+	for rows.Next() {
+		var s Span
+		if err := rows.Scan(
+			&s.ID, &s.ProjectID, &s.TraceID, &s.SpanID, &s.ParentSpanID,
+			&s.Name, &s.Service, &s.Resource, &s.Kind, &s.Status,
+			&s.StartTimeUs, &s.DurationUs, &s.Attributes, &s.Events, &s.IngestedAt, &s.Durable,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }

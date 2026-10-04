@@ -55,6 +55,10 @@ type Span struct {
 	// delete this span (set by classification for sampled-boring spans). Interesting
 	// spans leave it nil and are removed by the aggregate-then-delete pass instead.
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	// Durable marks a span of the first clean trace of its (project, operation)
+	// hour. It carries no ExpiresAt, and retention copies it to error_samples at
+	// the interesting cutoff so the trace outlives the raw span window.
+	Durable bool `json:"durable,omitempty"`
 }
 
 type Aggregate struct {

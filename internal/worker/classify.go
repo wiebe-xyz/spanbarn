@@ -14,7 +14,7 @@ import (
 // are sampled whole at the per-project ratio — the die is rolled once per
 // trace_id, and either all spans in that trace are kept or none are.
 func (w *RedisWorker) classifyForStorage(spans []repository.Span) []repository.Span {
-	return classifySpansForStorage(spans, w.cfg.SlowThresholdUs, w.cfg.BoringRetention, w.boringPolicy, w.floor)
+	return classifySpansForStorage(spans, w.cfg.SlowThresholdUs, w.cfg.BoringRetention, w.boringPolicy, w.floor, w.hourFloor)
 }
 
 // boringTrace groups the spans of one trace that has no error, slow or verbose
@@ -27,7 +27,7 @@ type boringTrace struct {
 // classifySpansForStorage builds the set of spans to persist from a set of spans
 // that ideally covers whole traces. Extracted so the staging flusher can reuse
 // the exact same trace-level classification the inline worker path uses.
-func classifySpansForStorage(spans []repository.Span, slowThresholdUs int64, boringRetention time.Duration, boringPolicy BoringPolicyReader, floor *sampling.MinuteFloor) []repository.Span {
+func classifySpansForStorage(spans []repository.Span, slowThresholdUs int64, boringRetention time.Duration, boringPolicy BoringPolicyReader, floor, hourly *sampling.MinuteFloor) []repository.Span {
 	if slowThresholdUs <= 0 {
 		return spans
 	}
@@ -37,12 +37,21 @@ func classifySpansForStorage(spans []repository.Span, slowThresholdUs int64, bor
 	interesting := interestingTraceIDs(spans, verbose, slowThresholdUs)
 	result, order, boringTraces := splitBoringTraces(spans, interesting)
 
+	tier := newHourlyTier(boringPolicy, hourly)
+	tier.markVerboseClean(result, verbose, slowThresholdUs)
+
 	if boringPolicy == nil || len(order) == 0 {
 		return result
 	}
 	sampler := newBoringSampler(boringPolicy, floor)
 	for _, traceID := range order {
 		bt := boringTraces[traceID]
+		// A clean trace the hourly rarity tier admits is durable: it is kept
+		// without an expiry and never touches the ratio sampler or minute floor.
+		if tier.admit(bt.projectID, bt.spans) {
+			result = append(result, bt.spans...)
+			continue
+		}
 		if !sampler.keep(bt) {
 			continue
 		}
@@ -50,6 +59,85 @@ func classifySpansForStorage(spans []repository.Span, slowThresholdUs int64, bor
 		result = append(result, bt.spans...)
 	}
 	return result
+}
+
+// hourlyTier is the hourly rarity tier: the first clean trace per (project,
+// operation, hour) is marked durable so it outlives boring expiry. It is
+// disabled by a nil policy or a nil floor.
+type hourlyTier struct {
+	policy   BoringPolicyReader
+	floor    *sampling.MinuteFloor
+	minCache map[int64]int
+}
+
+func newHourlyTier(policy BoringPolicyReader, floor *sampling.MinuteFloor) *hourlyTier {
+	if policy == nil || floor == nil {
+		return nil
+	}
+	return &hourlyTier{policy: policy, floor: floor, minCache: make(map[int64]int, 2)}
+}
+
+// admit consults the hourly floor for one clean trace. When it admits the trace,
+// every span is marked Durable and true is returned. A nil tier admits nothing.
+func (h *hourlyTier) admit(projectID int64, spans []repository.Span) bool {
+	if h == nil || len(spans) == 0 {
+		return false
+	}
+	min, ok := h.minCache[projectID]
+	if !ok {
+		min = h.policy.MinTracesPerHour(projectID)
+		h.minCache[projectID] = min
+	}
+	root := traceRoot(spans)
+	if !h.floor.ShouldKeep(projectID, root.Name, h.floor.BucketOf(root.StartTimeUs), min, false) {
+		return false
+	}
+	for i := range spans {
+		spans[i].Durable = true
+	}
+	return true
+}
+
+// markVerboseClean marks durable the traces in result that are interesting only
+// because their project is verbose (no error span, no slow span) and that the
+// hourly floor admits. Those traces are stored regardless; this only flags them.
+func (h *hourlyTier) markVerboseClean(result []repository.Span, verbose map[int64]bool, slowThresholdUs int64) {
+	if h == nil {
+		return
+	}
+	type group struct {
+		idx   []int
+		dirty bool
+	}
+	groups := make(map[string]*group, 8)
+	var order []string
+	for i, s := range result {
+		g := groups[s.TraceID]
+		if g == nil {
+			g = &group{}
+			groups[s.TraceID] = g
+			order = append(order, s.TraceID)
+		}
+		g.idx = append(g.idx, i)
+		if s.Status == "error" || s.DurationUs > slowThresholdUs {
+			g.dirty = true
+		}
+	}
+	for _, id := range order {
+		g := groups[id]
+		if g.dirty || !verbose[result[g.idx[0]].ProjectID] {
+			continue
+		}
+		spans := make([]repository.Span, len(g.idx))
+		for j, i := range g.idx {
+			spans[j] = result[i]
+		}
+		if h.admit(spans[0].ProjectID, spans) {
+			for _, i := range g.idx {
+				result[i].Durable = true
+			}
+		}
+	}
 }
 
 // verboseProjects reports which projects in spans are in verbose mode, meaning
@@ -177,14 +265,20 @@ func (b *boringSampler) ratioVerdict(projectID int64) bool {
 // group a boring trace for the survival floor. It prefers the root span (no
 // parent), falling back to the first span in the batch.
 func boringTraceKey(spans []repository.Span) (string, int64) {
-	root := spans[0]
+	root := traceRoot(spans)
+	return root.Name, root.StartTimeUs / 60_000_000
+}
+
+// traceRoot returns the root span (no parent) of a trace, falling back to the
+// first span in the batch. It supplies the operation name and start time for
+// both the minute floor and the hourly tier.
+func traceRoot(spans []repository.Span) repository.Span {
 	for _, s := range spans {
 		if s.ParentSpanID == "" {
-			root = s
-			break
+			return s
 		}
 	}
-	return root.Name, root.StartTimeUs / 60_000_000
+	return spans[0]
 }
 
 // classifyInteresting returns only the spans that should be written to SQLite:

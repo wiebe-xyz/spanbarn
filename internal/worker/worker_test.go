@@ -385,11 +385,13 @@ type mockBoringPolicy struct {
 	ratio        int
 	verboseUntil time.Time
 	minPerMinute int
+	minPerHour   int
 }
 
 func (m *mockBoringPolicy) SampleRatio(_ int64) int        { return m.ratio }
 func (m *mockBoringPolicy) VerboseUntil(_ int64) time.Time { return m.verboseUntil }
 func (m *mockBoringPolicy) MinTracesPerMinute(_ int64) int { return m.minPerMinute }
+func (m *mockBoringPolicy) MinTracesPerHour(_ int64) int   { return m.minPerHour }
 
 func TestClassifyForStorageBoringPolicy(t *testing.T) {
 	spans := []repository.Span{

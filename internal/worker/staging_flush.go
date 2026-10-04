@@ -50,6 +50,7 @@ type StagingFlusher struct {
 	accumulator  SpanAccumulator
 	boringPolicy BoringPolicyReader
 	floor        *sampling.MinuteFloor
+	hourFloor    *sampling.MinuteFloor
 	cfg          StagingFlusherConfig
 	logger       *slog.Logger
 }
@@ -87,6 +88,9 @@ const maxFlushIterationsPerTick = 8
 func (f *StagingFlusher) SetAccumulator(a SpanAccumulator)        { f.accumulator = a }
 func (f *StagingFlusher) SetBoringPolicy(p BoringPolicyReader)    { f.boringPolicy = p }
 func (f *StagingFlusher) SetMinuteFloor(fl *sampling.MinuteFloor) { f.floor = fl }
+
+// SetHourFloor wires in the hourly rarity floor. Nil disables the tier.
+func (f *StagingFlusher) SetHourFloor(fl *sampling.MinuteFloor) { f.hourFloor = fl }
 
 // Run flushes ready traces and GCs the staging table until ctx is cancelled. The
 // GC runs in its own goroutine so a busy flush loop can never starve it — that is
@@ -161,7 +165,7 @@ func (f *StagingFlusher) flushOnce(ctx context.Context) (int, error) {
 			f.accumulator.Add(spans[i])
 		}
 	}
-	interesting := classifySpansForStorage(spans, f.cfg.SlowThresholdUs, f.cfg.BoringRetention, f.boringPolicy, f.floor)
+	interesting := classifySpansForStorage(spans, f.cfg.SlowThresholdUs, f.cfg.BoringRetention, f.boringPolicy, f.floor, f.hourFloor)
 
 	// Atomically move interesting spans to the indexed table and delete all
 	// processed rows for these traces.

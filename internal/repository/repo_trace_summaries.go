@@ -18,6 +18,7 @@ type traceSummaryAgg struct {
 	startTimeUs int64
 	spanCount   int64
 	hasError    bool
+	durable     bool // any span is Durable: keep the summary until the error cutoff
 	ingestedAt  time.Time
 	expiresAt   *time.Time // nil when any span in the trace is kept indefinitely (interesting)
 }
@@ -69,6 +70,9 @@ func buildTraceSummaries(spans []Span, now time.Time) []traceSummaryAgg {
 		if strings.EqualFold(s.Status, "error") {
 			agg.hasError = true
 		}
+		if s.Durable {
+			agg.durable = true
+		}
 		// expires_at: nil wins (an indefinitely-kept span means the whole trace is
 		// kept), otherwise take the latest expiry so the summary lives as long as
 		// its last span.
@@ -119,12 +123,13 @@ func upsertTraceSummariesTx(ctx context.Context, tx *sql.Tx, sums []traceSummary
 		return nil
 	}
 	stmt, err := tx.PrepareContext(ctx, `INSERT INTO trace_summaries
-		(project_id, trace_id, root_name, root_service, root_duration_us, start_time_us, span_count, has_error, ingested_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(project_id, trace_id, root_name, root_service, root_duration_us, start_time_us, span_count, has_error, ingested_at, expires_at, durable)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(project_id, trace_id) DO UPDATE SET
 			start_time_us    = MIN(start_time_us, excluded.start_time_us),
 			span_count       = span_count + excluded.span_count,
 			has_error        = MAX(has_error, excluded.has_error),
+			durable          = MAX(durable, excluded.durable),
 			ingested_at      = MIN(ingested_at, excluded.ingested_at),
 			root_name        = CASE WHEN excluded.root_name != '' THEN excluded.root_name        ELSE root_name        END,
 			root_service     = CASE WHEN excluded.root_name != '' THEN excluded.root_service     ELSE root_service     END,
@@ -137,13 +142,9 @@ func upsertTraceSummariesTx(ctx context.Context, tx *sql.Tx, sums []traceSummary
 	defer stmt.Close()
 
 	for _, s := range sums {
-		hasErr := 0
-		if s.hasError {
-			hasErr = 1
-		}
 		if _, err := stmt.ExecContext(ctx,
 			s.projectID, s.traceID, s.rootName, s.rootService, s.rootDurUs,
-			s.startTimeUs, s.spanCount, hasErr, s.ingestedAt, s.expiresAt,
+			s.startTimeUs, s.spanCount, s.hasError, s.ingestedAt, s.expiresAt, s.durable,
 		); err != nil {
 			return err
 		}
@@ -173,9 +174,10 @@ func (r *Repository) DeleteExpiredTraceSummaries(ctx context.Context, now time.T
 }
 
 // DeleteTraceSummariesOlderThan drops indefinitely-kept summaries once their
-// spans are gone: non-error traces at interestingCutoff (matching the span
-// aggregate-then-delete pass) and error traces at errorCutoff (matching
-// error_samples retention, so errors keep listing for exactly as long).
+// spans are gone: plain traces (no error, not durable) at interestingCutoff
+// (matching the span aggregate-then-delete pass), and error or durable traces
+// at errorCutoff. Retention copies error and durable spans to error_samples,
+// so those traces keep listing for exactly as long as their spans can be read.
 func (r *Repository) DeleteTraceSummariesOlderThan(ctx context.Context, interestingCutoff, errorCutoff time.Time) (int64, error) {
 	ic, ec := interestingCutoff.UTC(), errorCutoff.UTC()
 	return r.batchedDelete(ctx, func() (int64, error) {
@@ -183,7 +185,8 @@ func (r *Repository) DeleteTraceSummariesOlderThan(ctx context.Context, interest
 			`DELETE FROM trace_summaries WHERE rowid IN (
 				SELECT rowid FROM trace_summaries
 				WHERE expires_at IS NULL
-				  AND ((has_error = 0 AND ingested_at < ?) OR (has_error = 1 AND ingested_at < ?))
+				  AND ((has_error = 0 AND durable = 0 AND ingested_at < ?)
+				    OR ((has_error = 1 OR durable = 1) AND ingested_at < ?))
 				LIMIT ?)`,
 			ic, ec, retentionDeleteBatch)
 		if e != nil {

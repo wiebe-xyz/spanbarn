@@ -105,3 +105,68 @@ func TestGCEvictsOldBuckets(t *testing.T) {
 		t.Fatal("fresh bucket should survive gc")
 	}
 }
+
+// newHourFloorNoGC builds an hourly floor without starting the GC goroutine.
+func newHourFloorNoGC() *MinuteFloor {
+	return &MinuteFloor{buckets: make(map[string]*floorBucket), bucket: time.Hour}
+}
+
+func TestHourlyFloorAdmitsOnePerHourBucket(t *testing.T) {
+	f := newHourFloorNoGC()
+	hourUs := time.Hour.Microseconds()
+	h1 := f.BucketOf(5 * hourUs)
+	h2 := f.BucketOf(6*hourUs + 10)
+
+	if !f.ShouldKeep(1, "op", h1, 1, false) {
+		t.Fatal("first trace in the hour must be admitted")
+	}
+	// A different minute of the same hour maps to the same bucket.
+	if f.ShouldKeep(1, "op", f.BucketOf(5*hourUs+30*time.Minute.Microseconds()), 1, false) {
+		t.Fatal("second trace in the same hour must be refused")
+	}
+	if !f.ShouldKeep(1, "op", h2, 1, false) {
+		t.Fatal("first trace in the next hour must be admitted")
+	}
+}
+
+func TestBucketOfHourlyFloor(t *testing.T) {
+	f := newHourFloorNoGC()
+	hourUs := time.Hour.Microseconds()
+	cases := []struct{ us, want int64 }{
+		{0, 0},
+		{hourUs - 1, 0},
+		{hourUs, 1},
+		{7*hourUs + 123, 7},
+	}
+	for _, c := range cases {
+		if got := f.BucketOf(c.us); got != c.want {
+			t.Fatalf("BucketOf(%d) = %d, want %d", c.us, got, c.want)
+		}
+	}
+}
+
+func TestGCHourlyFloorKeepsCurrentAndPrevious(t *testing.T) {
+	f := newHourFloorNoGC()
+	now := time.Unix(1_000*3600+120, 0) // hour index 1000
+	cur := int64(1000)
+
+	f.ShouldKeep(1, "cur", cur, 1, false)
+	f.ShouldKeep(1, "prev", cur-1, 1, false)
+	f.ShouldKeep(1, "old", cur-2, 1, false)
+	f.ShouldKeep(1, "older", cur-10, 1, false)
+
+	f.gc(now)
+
+	if len(f.buckets) != 2 {
+		t.Fatalf("expected 2 buckets after gc, got %d", len(f.buckets))
+	}
+	for _, op := range []string{"cur", "prev"} {
+		idx := cur
+		if op == "prev" {
+			idx = cur - 1
+		}
+		if _, ok := f.buckets[bucketKey(1, op, idx)]; !ok {
+			t.Fatalf("%s bucket should survive gc", op)
+		}
+	}
+}

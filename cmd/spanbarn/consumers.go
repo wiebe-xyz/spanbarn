@@ -70,7 +70,7 @@ func runLogsConsumer(ctx context.Context, q *queue.RedisQueue, repo *repository.
 // only appends to spans_staging; the flusher does accumulation, classification
 // and indexed storage per complete trace off the hot path, with a hard-age GC so
 // staging can't grow unbounded.
-func newStagingFlusher(cfg config.Config, queryRepo, repo *repository.Repository, acc *aggregation.Accumulator, policy worker.BoringPolicyReader, floor *sampling.MinuteFloor, logger *slog.Logger) *worker.StagingFlusher {
+func newStagingFlusher(cfg config.Config, queryRepo, repo *repository.Repository, acc *aggregation.Accumulator, policy worker.BoringPolicyReader, floor, hourFloor *sampling.MinuteFloor, logger *slog.Logger) *worker.StagingFlusher {
 	flusher := worker.NewStagingFlusher(queryRepo, repo, worker.StagingFlusherConfig{
 		Window:          time.Duration(cfg.TraceBufferWindowSeconds) * time.Second,
 		MaxAge:          time.Duration(cfg.StagingMaxAgeSeconds) * time.Second,
@@ -80,6 +80,7 @@ func newStagingFlusher(cfg config.Config, queryRepo, repo *repository.Repository
 	flusher.SetAccumulator(acc)
 	flusher.SetBoringPolicy(policy)
 	flusher.SetMinuteFloor(floor)
+	flusher.SetHourFloor(hourFloor)
 	logger.Info("span staging enabled: worker stages spans, flusher classifies per trace",
 		"window_s", cfg.TraceBufferWindowSeconds, "max_age_s", cfg.StagingMaxAgeSeconds)
 	return flusher

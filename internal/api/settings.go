@@ -163,7 +163,8 @@ func serveSWR[T any](
 // ingest.sample_ratio.project.{id}.op.{operation}.
 // Boring span keys: boring.sample_ratio, boring.sample_ratio.project.{id},
 // boring_retention_minutes, boring.verbose_until.project.{id},
-// boring.min_traces_per_minute, boring.min_traces_per_minute.project.{id}.
+// boring.min_traces_per_minute, boring.min_traces_per_minute.project.{id},
+// boring.min_traces_per_hour, boring.min_traces_per_hour.project.{id}.
 // Per-project retention caps: retention.max_hours.project.{id},
 // retention.max_traces.project.{id}.
 // Rollup tiers: metric_rollup_retention_days (the 5-minute tier) plus
@@ -174,7 +175,7 @@ func isAllowedSettingKey(k string) bool {
 	case "retention_full_hours", "retention_interesting_hours",
 		"retention_aggregated_days", "retention_error_days",
 		"boring_retention_minutes", "boring.sample_ratio",
-		"boring.min_traces_per_minute",
+		"boring.min_traces_per_minute", "boring.min_traces_per_hour",
 		"metrics_retention_days", "log_retention_hours", "error_log_retention_days",
 		"prompt_retention_days",
 		"metric_rollup_retention_days", "metric_rollup_hourly_days",
@@ -186,6 +187,7 @@ func isAllowedSettingKey(k string) bool {
 	return strings.HasPrefix(k, "ingest.sample_ratio.") ||
 		strings.HasPrefix(k, "boring.sample_ratio.") ||
 		strings.HasPrefix(k, "boring.min_traces_per_minute.") ||
+		strings.HasPrefix(k, "boring.min_traces_per_hour.") ||
 		strings.HasPrefix(k, "boring.verbose_until.") ||
 		strings.HasPrefix(k, "retention.max_hours.project.") ||
 		strings.HasPrefix(k, "retention.max_traces.project.")
