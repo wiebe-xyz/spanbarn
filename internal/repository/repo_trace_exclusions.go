@@ -1,6 +1,9 @@
 package repository
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 func (r *Repository) ListTraceExclusions(projectID int64) ([]TraceExclusion, error) {
 	rows, err := r.db.Query(
@@ -24,8 +27,8 @@ func (r *Repository) ListTraceExclusions(projectID int64) ([]TraceExclusion, err
 
 func (r *Repository) CreateTraceExclusion(projectID int64, operation string) (int64, error) {
 	var id int64
-	err := r.execHigh(func() error {
-		res, e := r.db.Exec(
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec(
 			`INSERT OR IGNORE INTO trace_exclusions (project_id, operation, created_at) VALUES (?, ?, ?)`,
 			projectID, operation, time.Now().UTC(),
 		)
@@ -39,8 +42,8 @@ func (r *Repository) CreateTraceExclusion(projectID int64, operation string) (in
 }
 
 func (r *Repository) DeleteTraceExclusion(id int64) error {
-	return r.execHigh(func() error {
-		_, err := r.db.Exec(`DELETE FROM trace_exclusions WHERE id = ?`, id)
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		_, err := db.Exec(`DELETE FROM trace_exclusions WHERE id = ?`, id)
 		return err
 	})
 }

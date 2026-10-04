@@ -80,8 +80,8 @@ func (r *Repository) GetSLO(projectID, id int64) (*SLO, error) {
 // CreateSLO inserts an SLO. A name already used in the project returns ErrConflict.
 func (r *Repository) CreateSLO(s SLO) (int64, error) {
 	var id int64
-	err := r.execHigh(func() error {
-		res, e := r.db.Exec(
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec(
 			`INSERT INTO slos (project_id, name, good_filter, total_filter, target, window_days)
 			VALUES (?, ?, ?, ?, ?, ?)`,
 			s.ProjectID, s.Name, jsonOrEmpty(s.GoodFilter), jsonOrEmpty(s.TotalFilter), s.Target, s.WindowDays,
@@ -97,8 +97,8 @@ func (r *Repository) CreateSLO(s SLO) (int64, error) {
 
 // UpdateSLO replaces the editable fields of an SLO of the project.
 func (r *Repository) UpdateSLO(s SLO) error {
-	err := r.execHigh(func() error {
-		res, e := r.db.Exec(
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec(
 			`UPDATE slos SET name = ?, good_filter = ?, total_filter = ?, target = ?, window_days = ?
 			WHERE project_id = ? AND id = ?`,
 			s.Name, jsonOrEmpty(s.GoodFilter), jsonOrEmpty(s.TotalFilter), s.Target, s.WindowDays,
@@ -111,8 +111,8 @@ func (r *Repository) UpdateSLO(s SLO) error {
 
 // DeleteSLO removes an SLO of the project. Its burn alerts and counts go with it.
 func (r *Repository) DeleteSLO(projectID, id int64) error {
-	return r.execHigh(func() error {
-		res, err := r.db.Exec(`DELETE FROM slos WHERE project_id = ? AND id = ?`, projectID, id)
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, err := db.Exec(`DELETE FROM slos WHERE project_id = ? AND id = ?`, projectID, id)
 		return expectRow(res, err)
 	})
 }
@@ -173,8 +173,8 @@ func (r *Repository) GetSLOBurnAlert(projectID, id int64) (*SLOBurnAlert, error)
 // not in the project returns ErrNotFound.
 func (r *Repository) CreateSLOBurnAlert(projectID int64, a SLOBurnAlert) (int64, error) {
 	var id int64
-	err := r.execHigh(func() error {
-		res, e := r.db.Exec(
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec(
 			`INSERT INTO slo_burn_alerts (slo_id, window_minutes, burn_rate, webhook_url, email,
 				cooldown_minutes, enabled)
 			SELECT id, ?, ?, ?, ?, ?, ? FROM slos WHERE id = ? AND project_id = ?`,
@@ -195,8 +195,8 @@ func (r *Repository) CreateSLOBurnAlert(projectID int64, a SLOBurnAlert) (int64,
 
 // UpdateSLOBurnAlert replaces the editable fields of a burn alert of the project.
 func (r *Repository) UpdateSLOBurnAlert(projectID int64, a SLOBurnAlert) error {
-	return r.execHigh(func() error {
-		res, err := r.db.Exec(
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, err := db.Exec(
 			`UPDATE slo_burn_alerts SET window_minutes = ?, burn_rate = ?, webhook_url = ?, email = ?,
 				cooldown_minutes = ?, enabled = ?
 			WHERE id = ? AND slo_id IN (SELECT id FROM slos WHERE project_id = ?)`,
@@ -209,8 +209,8 @@ func (r *Repository) UpdateSLOBurnAlert(projectID int64, a SLOBurnAlert) error {
 
 // DeleteSLOBurnAlert removes a burn alert of the project.
 func (r *Repository) DeleteSLOBurnAlert(projectID, id int64) error {
-	return r.execHigh(func() error {
-		res, err := r.db.Exec(
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, err := db.Exec(
 			`DELETE FROM slo_burn_alerts WHERE id = ? AND slo_id IN (SELECT id FROM slos WHERE project_id = ?)`,
 			id, projectID)
 		return expectRow(res, err)
@@ -220,13 +220,13 @@ func (r *Repository) DeleteSLOBurnAlert(projectID, id int64) error {
 // UpdateSLOBurnAlertState records whether an alert is firing and, when at is
 // not zero, when it last triggered.
 func (r *Repository) UpdateSLOBurnAlertState(id int64, firing bool, at time.Time) error {
-	return r.execLow(func() error {
+	return r.execLow(FamilyCore, func(db *sql.DB) error {
 		var res sql.Result
 		var err error
 		if at.IsZero() {
-			res, err = r.db.Exec(`UPDATE slo_burn_alerts SET firing = ? WHERE id = ?`, boolInt(firing), id)
+			res, err = db.Exec(`UPDATE slo_burn_alerts SET firing = ? WHERE id = ?`, boolInt(firing), id)
 		} else {
-			res, err = r.db.Exec(`UPDATE slo_burn_alerts SET firing = ?, last_triggered_at = ? WHERE id = ?`,
+			res, err = db.Exec(`UPDATE slo_burn_alerts SET firing = ?, last_triggered_at = ? WHERE id = ?`,
 				boolInt(firing), at.UTC(), id)
 		}
 		return expectRow(res, err)
@@ -239,8 +239,8 @@ func (r *Repository) InsertSLOCounts(counts []SLOCount) error {
 	if len(counts) == 0 {
 		return nil
 	}
-	return r.execLow(func() error {
-		tx, err := r.db.Begin()
+	return r.execLow(FamilyCore, func(db *sql.DB) error {
+		tx, err := db.Begin()
 		if err != nil {
 			return err
 		}
@@ -286,5 +286,5 @@ func (r *Repository) LatestSLOBucket(sloID int64) (time.Time, error) {
 // DeleteSLOCountsBefore prunes buckets starting before cutoff across all SLOs
 // and returns how many rows it removed.
 func (r *Repository) DeleteSLOCountsBefore(cutoff time.Time) (int64, error) {
-	return r.execLowAffecting(`DELETE FROM slo_counts WHERE bucket_start < ?`, cutoff.UTC())
+	return r.execLowAffecting(FamilyCore, `DELETE FROM slo_counts WHERE bucket_start < ?`, cutoff.UTC())
 }

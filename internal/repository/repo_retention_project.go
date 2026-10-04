@@ -10,9 +10,17 @@ import (
 
 // evictCascadeTables lists the trace_id-keyed tables a victim trace is removed
 // from. spans/error_samples/prompt_records/logs each have a trace_id index;
-// trace_summaries is keyed by (project_id, trace_id). Order doesn't matter — the
-// whole set is deleted in one transaction.
-var evictCascadeTables = []string{"spans", "error_samples", "prompt_records", "logs", "trace_summaries"}
+// trace_summaries is keyed by (project_id, trace_id).
+//
+// The span-family tables go in the transaction that picks the victims. The
+// others live in their own files in a split layout, and a transaction cannot
+// commit two files atomically, so they are deleted after it, one write each.
+// If the process dies in between, those rows outlive their trace until their
+// own retention removes them; the trace itself is already gone from every list.
+var (
+	evictCascadeTables      = []string{"spans", "error_samples", "trace_summaries"}
+	evictCascadeOtherTables = []string{"prompt_records", "logs"}
+)
 
 // EvictProjectTracesOlderThan enforces a per-project retention cap by deleting a
 // project's NON-ERROR, non-pinned traces whose ingested_at is before cutoff,
@@ -29,16 +37,19 @@ func (r *Repository) EvictProjectTracesOlderThan(ctx context.Context, projectID 
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
-		var deleted int64
-		if err := r.execLow(func() error {
-			n, e := r.evictTraceBatch(ctx, projectID, c)
-			deleted = n
+		var ids []any
+		if err := r.execLow(FamilySpans, func(db *sql.DB) error {
+			var e error
+			ids, e = r.evictTraceBatch(ctx, db, projectID, c)
 			return e
 		}); err != nil {
 			return total, err
 		}
-		total += deleted
-		if deleted < retentionDeleteBatch {
+		if err := r.deleteOtherTraceRows(ctx, ids); err != nil {
+			return total, err
+		}
+		total += int64(len(ids))
+		if len(ids) < retentionDeleteBatch {
 			return total, nil
 		}
 		if r.deleteBatchYield > 0 {
@@ -51,13 +62,35 @@ func (r *Repository) EvictProjectTracesOlderThan(ctx context.Context, projectID 
 	}
 }
 
+// deleteOtherTraceRows removes ids from the tables outside the span family.
+func (r *Repository) deleteOtherTraceRows(ctx context.Context, ids []any) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	q := " WHERE trace_id IN (" + placeholderList(len(ids)) + ")"
+	for _, table := range evictCascadeOtherTables {
+		if err := r.execLow(TableFamily(table), func(db *sql.DB) error {
+			_, err := db.ExecContext(ctx, "DELETE FROM "+table+q, ids...)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func placeholderList(n int) string {
+	p := strings.Repeat("?,", n)
+	return p[:len(p)-1]
+}
+
 // evictTraceBatch selects up to retentionDeleteBatch victim trace_ids and deletes
-// them across evictCascadeTables in one transaction. Returns the number of traces
-// evicted (0 means nothing was eligible).
-func (r *Repository) evictTraceBatch(ctx context.Context, projectID int64, cutoff time.Time) (int64, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
+// them across evictCascadeTables in one transaction. Returns the evicted trace
+// ids (none means nothing was eligible).
+func (r *Repository) evictTraceBatch(ctx context.Context, db *sql.DB, projectID int64, cutoff time.Time) ([]any, error) {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer tx.Rollback()
 
@@ -70,36 +103,35 @@ func (r *Repository) evictTraceBatch(ctx context.Context, projectID int64, cutof
 		ORDER BY ingested_at
 		LIMIT ?`, projectID, cutoff, retentionDeleteBatch)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	var ids []any
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return 0, err
+			return nil, err
 		}
 		ids = append(ids, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return nil, err
 	}
 	if len(ids) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = placeholders[:len(placeholders)-1]
+	q := " WHERE trace_id IN (" + placeholderList(len(ids)) + ")"
 	for _, table := range evictCascadeTables {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE trace_id IN ("+placeholders+")", ids...); err != nil {
-			return 0, err
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+q, ids...); err != nil {
+			return nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return nil, err
 	}
-	return int64(len(ids)), nil
+	return ids, nil
 }
 
 // ProjectNonErrorTraceCountCutoff returns the ingested_at boundary that keeps the

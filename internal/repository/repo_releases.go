@@ -1,6 +1,9 @@
 package repository
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 // Release marks when a version went live. Boards draw it on time series panels.
 type Release struct {
@@ -12,8 +15,8 @@ type Release struct {
 
 func (r *Repository) CreateRelease(projectID int64, version string, at time.Time) (int64, error) {
 	var id int64
-	err := r.execHigh(func() error {
-		res, e := r.db.Exec(
+	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+		res, e := db.Exec(
 			`INSERT INTO releases (project_id, version, released_at) VALUES (?, ?, ?)`,
 			projectID, version, at.UTC(),
 		)

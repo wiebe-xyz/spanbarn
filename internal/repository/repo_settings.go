@@ -19,8 +19,8 @@ func (r *Repository) GetSetting(key string) (string, error) {
 
 // SetSetting upserts a setting key/value pair.
 func (r *Repository) SetSetting(key, value string) error {
-	return r.execHigh(func() error {
-		_, err := r.db.Exec(
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		_, err := db.Exec(
 			"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 			key, value,
 		)
@@ -30,8 +30,8 @@ func (r *Repository) SetSetting(key, value string) error {
 
 // DeleteSetting removes a setting key. No-op if the key does not exist.
 func (r *Repository) DeleteSetting(key string) error {
-	return r.execHigh(func() error {
-		_, err := r.db.Exec("DELETE FROM settings WHERE key = ?", key)
+	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+		_, err := db.Exec("DELETE FROM settings WHERE key = ?", key)
 		return err
 	})
 }

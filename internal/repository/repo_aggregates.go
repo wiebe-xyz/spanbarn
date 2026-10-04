@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -10,8 +11,8 @@ import (
 func (r *Repository) UpsertAggregate(agg Aggregate) error {
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx := WithoutSpanTracing(context.Background())
-	return r.execLow(func() error {
-		_, err := r.db.ExecContext(ctx, `INSERT INTO aggregates
+	return r.execLow(FamilySpans, func(db *sql.DB) error {
+		_, err := db.ExecContext(ctx, `INSERT INTO aggregates
 			(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(project_id, service, operation, resource, kind, bucket)
@@ -37,8 +38,8 @@ func (r *Repository) UpsertAggregates(aggs []Aggregate) error {
 	}
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx := WithoutSpanTracing(context.Background())
-	return r.execLow(func() error {
-		tx, err := r.db.BeginTx(ctx, nil)
+	return r.execLow(FamilySpans, func(db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -141,8 +142,8 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 }
 
 func (r *Repository) DeleteAggregatesOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
-	return r.batchedDelete(ctx, func() (int64, error) {
-		res, e := r.db.ExecContext(ctx,
+	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
+		res, e := db.ExecContext(ctx,
 			"DELETE FROM aggregates WHERE rowid IN (SELECT rowid FROM aggregates WHERE bucket < ? LIMIT ?)",
 			cutoff, retentionDeleteBatch,
 		)

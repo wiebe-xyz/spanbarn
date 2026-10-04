@@ -94,8 +94,8 @@ func (r *Repository) RefreshTraceStructure(ctx context.Context, keys []TraceKey)
 	if len(keys) == 0 {
 		return nil
 	}
-	return r.execLow(func() error {
-		tx, err := r.db.BeginTx(ctx, nil)
+	return r.execLow(FamilySpans, func(db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -123,9 +123,9 @@ func (r *Repository) BackfillTraceStructure(ctx context.Context, max int64) (int
 			batch = remaining
 		}
 		var n int64
-		if err := r.execLow(func() error {
+		if err := r.execLow(FamilySpans, func(db *sql.DB) error {
 			var e error
-			n, e = r.backfillTraceStructureBatch(ctx, batch)
+			n, e = r.backfillTraceStructureBatch(ctx, db, batch)
 			return e
 		}); err != nil {
 			return total, true, err
@@ -147,8 +147,8 @@ func (r *Repository) BackfillTraceStructure(ctx context.Context, max int64) (int
 
 // backfillTraceStructureBatch refreshes up to limit summaries that are still
 // NULL, seeking the partial index idx_trace_summaries_unchecked.
-func (r *Repository) backfillTraceStructureBatch(ctx context.Context, limit int64) (int64, error) {
-	tx, err := r.db.BeginTx(ctx, nil)
+func (r *Repository) backfillTraceStructureBatch(ctx context.Context, db *sql.DB, limit int64) (int64, error) {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}

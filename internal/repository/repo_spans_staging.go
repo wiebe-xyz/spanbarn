@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -22,8 +23,8 @@ func (r *Repository) InsertSpansStaging(ctx context.Context, spans []Span) error
 	}
 	// Writing spans must not emit spans. See WithoutSpanTracing.
 	ctx = WithoutSpanTracing(ctx)
-	return r.execLow(func() error {
-		tx, err := r.db.BeginTx(ctx, nil)
+	return r.execLow(FamilySpans, func(db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -103,8 +104,8 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 	if len(traceIDs) == 0 {
 		return nil
 	}
-	return r.execLow(func() error {
-		tx, err := r.db.BeginTx(ctx, nil)
+	return r.execLow(FamilySpans, func(db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
@@ -167,8 +168,8 @@ func (r *Repository) DeleteStagingOlderThan(ctx context.Context, cutoff time.Tim
 	// (monotonic rowid), so each LIMIT batch's scan hits the oldest rows first and
 	// returns fast even without a standalone ingested_at index on staging.
 	c := cutoff.UTC()
-	return r.batchedDelete(ctx, func() (int64, error) {
-		res, e := r.db.ExecContext(ctx,
+	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
+		res, e := db.ExecContext(ctx,
 			`DELETE FROM spans_staging WHERE rowid IN (SELECT rowid FROM spans_staging WHERE ingested_at < ? LIMIT ?)`,
 			c, retentionDeleteBatch)
 		if e != nil {

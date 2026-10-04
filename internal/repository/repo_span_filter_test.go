@@ -2,11 +2,12 @@ package repository
 
 import (
 	"errors"
-	"github.com/pressly/goose/v3"
 	"reflect"
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/pressly/goose/v3"
 
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
 )

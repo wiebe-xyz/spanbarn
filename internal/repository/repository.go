@@ -41,10 +41,15 @@ const DefaultQueryTimeout = 30 * time.Second
 //   - repo_aggregates.go — pre-computed aggregate CRUD
 //   - repo_alerts.go     — alert CRUD, error samples
 type Repository struct {
-	db               *sql.DB
-	queryTimeout     time.Duration
-	readOnly         bool
-	scheduler        *writescheduler.Scheduler
+	// db serves reads and sees every table: in a split layout it attaches the
+	// other families' files read-only.
+	db           *sql.DB
+	queryTimeout time.Duration
+	readOnly     bool
+	// writers and schedulers are per family. A nil writer means db; a nil
+	// scheduler means the write runs inline (tests, CLI commands).
+	writers          [numFamilies]*sql.DB
+	schedulers       [numFamilies]*writescheduler.Scheduler
 	deleteBatchYield time.Duration
 }
 
@@ -85,38 +90,69 @@ func (r *Repository) DB() *sql.DB {
 	return r.db
 }
 
-// SetWriteScheduler wires in a priority write scheduler. When set, all write
-// methods route through the scheduler instead of competing in the sql.DB pool.
-// Call before starting any goroutines that use this repository.
+// SetWriteScheduler wires in a priority write scheduler for every family. When
+// set, all write methods route through the scheduler instead of competing in
+// the sql.DB pool. Call before starting any goroutines that use this
+// repository.
 func (r *Repository) SetWriteScheduler(s *writescheduler.Scheduler) {
-	r.scheduler = s
-}
-
-// execHigh submits fn as a high-priority write (admin CRUD). It blocks until
-// fn completes. Falls back to a direct call when no scheduler is configured
-// (tests, CLI commands).
-func (r *Repository) execHigh(fn func() error) error {
-	if r.scheduler == nil {
-		return fn()
+	for f := range r.schedulers {
+		r.schedulers[f] = s
 	}
-	return r.scheduler.Submit(context.Background(), writescheduler.High, writeOpLabel(), fn)
 }
 
-// execLow submits fn as a low-priority write (background ingest, retention).
-func (r *Repository) execLow(fn func() error) error {
-	if r.scheduler == nil {
-		return fn()
+// SetFamilyWriter routes f's writes to db, queued on s. Call before starting
+// any goroutines that use this repository.
+func (r *Repository) SetFamilyWriter(f Family, db *sql.DB, s *writescheduler.Scheduler) {
+	r.writers[f] = db
+	r.schedulers[f] = s
+}
+
+// WithQueryTimeout returns a copy of r that shares its handles and schedulers
+// and uses timeout for its queries.
+func (r *Repository) WithQueryTimeout(timeout time.Duration) *Repository {
+	c := *r
+	c.queryTimeout = timeout
+	return &c
+}
+
+// writer returns the handle f's writes run on.
+func (r *Repository) writer(f Family) *sql.DB {
+	if w := r.writers[f]; w != nil {
+		return w
 	}
-	return r.scheduler.Submit(context.Background(), writescheduler.Low, writeOpLabel(), fn)
+	return r.db
 }
 
-// execLowAffecting runs a single low-priority write statement and returns the
-// number of rows it affected. It captures the execLow+Exec+RowsAffected boiler-
-// plate shared by the retention DeleteXOlderThan / DeleteXByY methods.
-func (r *Repository) execLowAffecting(query string, args ...any) (int64, error) {
+// execHigh submits fn as a high-priority write (admin CRUD) on f's writer. It
+// blocks until fn completes. Falls back to a direct call when no scheduler is
+// configured (tests, CLI commands).
+func (r *Repository) execHigh(f Family, fn func(db *sql.DB) error) error {
+	return r.submit(f, writescheduler.High, writeOpLabel(), fn)
+}
+
+// execLow submits fn as a low-priority write (background ingest, retention)
+// on f's writer.
+func (r *Repository) execLow(f Family, fn func(db *sql.DB) error) error {
+	return r.submit(f, writescheduler.Low, writeOpLabel(), fn)
+}
+
+func (r *Repository) submit(f Family, p writescheduler.Priority, label string, fn func(db *sql.DB) error) error {
+	db := r.writer(f)
+	s := r.schedulers[f]
+	if s == nil {
+		return fn(db)
+	}
+	return s.Submit(context.Background(), p, label, func() error { return fn(db) })
+}
+
+// execLowAffecting runs a single low-priority write statement on f's writer
+// and returns the number of rows it affected. It captures the
+// execLow+Exec+RowsAffected boilerplate shared by the retention
+// DeleteXOlderThan / DeleteXByY methods.
+func (r *Repository) execLowAffecting(f Family, query string, args ...any) (int64, error) {
 	var n int64
-	err := r.execLow(func() error {
-		res, e := r.db.Exec(query, args...)
+	err := r.execLow(f, func(db *sql.DB) error {
+		res, e := db.Exec(query, args...)
 		if e != nil {
 			return e
 		}
@@ -129,9 +165,9 @@ func (r *Repository) execLowAffecting(query string, args ...any) (int64, error) 
 // execHighExpectingRows runs a single high-priority write (admin update/delete
 // by key) and returns sql.ErrNoRows when it affected no rows, i.e. the target
 // row did not exist. Shared by the admin CRUD methods.
-func (r *Repository) execHighExpectingRows(query string, args ...any) error {
-	return r.execHigh(func() error {
-		res, err := r.db.Exec(query, args...)
+func (r *Repository) execHighExpectingRows(f Family, query string, args ...any) error {
+	return r.execHigh(f, func(db *sql.DB) error {
+		res, err := db.Exec(query, args...)
 		if err != nil {
 			return err
 		}
@@ -196,13 +232,14 @@ func (r *Repository) deleteOlderThanPerProject(ctx context.Context, table, timeC
 		return 0, err
 	}
 
+	f := TableFamily(table)
 	q := "DELETE FROM " + table + " WHERE rowid IN (SELECT rowid FROM " + table +
 		" WHERE project_id = ? AND " + timeCol + " < ? LIMIT ?)"
 	var total int64
 	for _, pid := range pids {
 		pid := pid
-		n, err := r.batchedDelete(ctx, func() (int64, error) {
-			res, e := r.db.ExecContext(ctx, q, pid, cutoff, retentionDeleteBatch)
+		n, err := r.batchedDelete(ctx, f, func(db *sql.DB) (int64, error) {
+			res, e := db.ExecContext(ctx, q, pid, cutoff, retentionDeleteBatch)
 			if e != nil {
 				return 0, e
 			}
@@ -225,7 +262,7 @@ func (r *Repository) deleteOlderThanPerProject(ctx context.Context, table, timeC
 // and a cycle that never returns never deletes anything else, never re-measures
 // the disk it is trying to free, and never logs — so from the outside retention
 // simply goes silent while the volume fills.
-func (r *Repository) batchedDeleteLimited(ctx context.Context, max int64, exec func(limit int64) (int64, error)) (int64, bool, error) {
+func (r *Repository) batchedDeleteLimited(ctx context.Context, f Family, max int64, exec func(db *sql.DB, limit int64) (int64, error)) (int64, bool, error) {
 	var total int64
 	for total < max {
 		if err := ctx.Err(); err != nil {
@@ -238,9 +275,9 @@ func (r *Repository) batchedDeleteLimited(ctx context.Context, max int64, exec f
 		}
 
 		var n int64
-		if err := r.execLow(func() error {
+		if err := r.execLow(f, func(db *sql.DB) error {
 			var e error
-			n, e = exec(batch)
+			n, e = exec(db, batch)
 			return e
 		}); err != nil {
 			return total, true, err
@@ -269,13 +306,14 @@ func (r *Repository) deleteOlderThanPerProjectLimited(ctx context.Context, table
 		return 0, false, err
 	}
 
+	f := TableFamily(table)
 	q := "DELETE FROM " + table + " WHERE rowid IN (SELECT rowid FROM " + table +
 		" WHERE project_id = ? AND " + timeCol + " < ? LIMIT ?)"
 	var total int64
 	for _, pid := range pids {
 		pid := pid
-		n, _, err := r.batchedDeleteLimited(ctx, max-total, func(limit int64) (int64, error) {
-			res, e := r.db.ExecContext(ctx, q, pid, cutoff, limit)
+		n, _, err := r.batchedDeleteLimited(ctx, f, max-total, func(db *sql.DB, limit int64) (int64, error) {
+			res, e := db.ExecContext(ctx, q, pid, cutoff, limit)
 			if e != nil {
 				return 0, e
 			}
@@ -299,16 +337,16 @@ func (r *Repository) deleteOlderThanPerProjectLimited(ctx context.Context, table
 // reached). Between batches it releases the write lock and, when a yield is
 // configured, pauses so the WAL checkpoint and readers are not starved. It
 // returns the total rows deleted.
-func (r *Repository) batchedDelete(ctx context.Context, exec func() (int64, error)) (int64, error) {
+func (r *Repository) batchedDelete(ctx context.Context, f Family, exec func(db *sql.DB) (int64, error)) (int64, error) {
 	var total int64
 	for {
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
 		var n int64
-		if err := r.execLow(func() error {
+		if err := r.execLow(f, func(db *sql.DB) error {
 			var e error
-			n, e = exec()
+			n, e = exec(db)
 			return e
 		}); err != nil {
 			return total, err

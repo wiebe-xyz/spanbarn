@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -13,8 +14,8 @@ func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
 	}
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx := WithoutSpanTracing(context.Background())
-	return r.execLow(func() error {
-		tx, err := r.db.BeginTx(ctx, nil)
+	return r.execLow(FamilyPrompts, func(db *sql.DB) error {
+		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}

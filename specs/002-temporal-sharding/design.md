@@ -6,8 +6,8 @@ Issue: #235. Measurements: the results comment on #235, produced by `cmd/shardsp
 
 Two steps, each shippable on its own:
 
-1. **Functional split.** Spans move to their own file, `spans.db`, next to the main database. Everything span-shaped that is written in the same transaction as spans moves with them: `spans`, `trace_summaries`, `spans_staging` and `aggregates`.
-2. **Time shards for the heavy tables.** `logs`, `metrics`, `prompt_records` and `error_samples` move to shard files that rotate by time. Retention for them becomes "delete the oldest file".
+1. **Functional split.** Spans move to their own file, `spans.db`, next to the main database. Everything span-shaped that is written in the same transaction as spans moves with them: `spans`, `trace_summaries`, `spans_staging`, `aggregates` and `error_samples`.
+2. **Time shards for the heavy tables.** `logs`, `metrics` and `prompt_records` move to shard files that rotate by time. Retention for them becomes "delete the oldest file".
 
 Spans are not time-sharded. The spike measured trace list going from 0.2 ms to 10 to 53 ms and analyze running 1.5 to 2.9x slower through `UNION ALL` views, and spans account for 7% of the row-delete cost. They stay in one file under today's row retention (48h default).
 
@@ -31,12 +31,12 @@ The run shared the CI host at load 73 to 87, so differences under ~30% are uncon
 
 ```
 $SPANBARN_DB_PATH                 main: config, rollups, aggregates of record
-$SPANBARN_DB_PATH.spans           spans, trace_summaries, spans_staging, aggregates
+$SPANBARN_DB_PATH.spans           spans, trace_summaries, spans_staging, aggregates,
+                                  error_samples, kept_logs
 $SPANBARN_DB_PATH.d/
     logs-20261004.db              daily
     metrics-20261004.db           daily
     prompts-2026w40.db            ISO week
-    errors-2026w40.db             ISO week (error_samples, kept logs)
 ```
 
 Paths derive from `SPANBARN_DB_PATH`, so the Helm chart, the PVC and the backup job need no new settings. One volume holds all files, so the disk ladder keeps measuring one filesystem.
@@ -54,13 +54,15 @@ Each file gets its own write connection and its own `writescheduler.Scheduler`. 
 Cross-file atomicity is avoided by placement. Every transaction the code runs today touches one family:
 
 - span insert, trace structure refresh, staging promote, aggregate-then-delete: all in `spans.db`. This is why `aggregates` moves with spans: the retention cycle aggregates spans and deletes them in one transaction, and SQLite commits attached WAL databases separately, so a crash between the two files could double-count.
-- `InsertErrorSamples`, log, metric and prompt inserts: one table each, one shard each.
+- error-sample copy: `error_samples` lives in `spans.db`. Retention copies error and durable spans into it before deleting them, and the trace-structure refresh reads it.
+- log, metric and prompt inserts: one table each, one shard each.
+- per-project trace eviction (`EvictProjectTracesOlderThan`) picks victims and deletes the span-family rows in one `spans.db` transaction, then deletes the trace's logs and prompt records with one write each. A crash in between leaves those rows to their own retention.
 
-A rule enforces this going forward: a repository method that writes may touch one family. A test opens every write method against a layout with the families in separate files and fails if a transaction spans two.
+A rule enforces this going forward: a repository method that writes may touch one family. Every family writer attaches the other files read-only, so a misrouted write fails with "attempt to write a readonly database". CI runs the repository tests a second time with `SPANBARN_TEST_LAYOUT=split`, which puts each family in its own file.
 
 Two places read across families inside a write and need care:
 
-- `DeleteLogsOlderThan` exempts logs whose trace is pinned (main) or error-sampled (errors shard). Step 2 replaces this delete (see "Retention" below), and in step 1 logs and error samples stay in main, so the query is unchanged.
+- `DeleteLogsOlderThan` exempts logs whose trace is pinned (main) or error-sampled (`spans.db`). It runs on the logs writer, which attaches the other files read-only, so the exemption still reads both. Step 2 replaces this delete (see "Error-trace logs" below).
 - Any future cross-family consistency goes through an idempotent job with a watermark, the pattern `metric_rollup_compaction` already uses.
 
 ### Granularity
@@ -70,7 +72,6 @@ Two places read across families inside a write and need care:
 | logs | daily | 24h (error-trace logs 30d, see below) | 2 |
 | metrics | daily | 7d | 8 |
 | prompts | ISO week | 30d | 5 to 6 |
-| error_samples + kept logs | ISO week | 30d | 5 to 6 |
 
 The disk ladder (`retention/pressure.go`, `Tier.Apply`) shortens logs and metrics to hours at "elevated". A daily file cannot express a 4h window, so the ladder keeps row deletes inside the newest shard for windows shorter than a shard, and drops whole files for everything older. Row deletes inside one daily file touch a fraction of today's table, and the freed pages are reused by the same day's inserts.
 
@@ -96,9 +97,9 @@ Logs of one trace can land in two daily files around midnight. Logs by trace rea
 
 ### Error-trace logs and pinned traces
 
-Today logs of error-sampled or pinned traces outlive the 24h log window (30 days). A daily logs file is deleted whole, so before the shard manager deletes a logs file it copies those logs into the matching weekly `errors` shard (`kept_logs` table, same columns as `logs`). The copy uses the same `NOT EXISTS` predicates the current delete uses. The logs view unions `logs` from the daily files with `kept_logs` from the weekly ones.
+Today logs of error-sampled or pinned traces outlive the 24h log window (30 days). A daily logs file is deleted whole, so before the shard manager deletes a logs file it copies those logs into `kept_logs` in `spans.db`, next to the error samples that justify keeping them (same columns as `logs`). The copy uses the same `NOT EXISTS` predicates the current delete uses, and `kept_logs` expires with error samples, by row. The logs view unions `logs` from the daily files with `kept_logs`.
 
-The copy runs as one write per file on the errors family queue. If the process dies between copy and delete, the next cycle copies again; `kept_logs` has a unique key on the source rowid and day, so the second copy inserts nothing.
+The copy runs as one write per file on the spans family queue. If the process dies between copy and delete, the next cycle copies again; `kept_logs` has a unique key on the source rowid and day, so the second copy inserts nothing.
 
 ### Migrations
 
