@@ -237,16 +237,12 @@ func TestSnapshotRestoreStartsAndServes(t *testing.T) {
 	}
 }
 
-// Main-track migrations must leave span-family tables alone: in the split
-// layout main does not have them, and the spans track's baseline is the schema
-// as of spansBaselineVersion. A span-family schema change belongs in
-// spansMigrations.
+// Main-track migrations must leave the tables of every family outside core
+// alone: in the split layout main does not have the span tables, and the spans
+// and shard tracks start from the schema as of spansBaselineVersion. A schema
+// change to one of them belongs in spansMigrations or shardMigrations.
 func TestMainTrackLeavesSpanTablesAlone(t *testing.T) {
 	ctx := context.Background()
-	baseline, err := spansBaselineDDL(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
 	db, err := NewDB(filepath.Join(t.TempDir(), "head.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -255,20 +251,25 @@ func TestMainTrackLeavesSpanTablesAlone(t *testing.T) {
 	if err := Migrate(db.DB); err != nil {
 		t.Fatal(err)
 	}
-	head := familySchema(t, db.DB)
-	if len(head) != len(baseline) {
-		t.Fatalf("head has %d span-family objects, baseline %d", len(head), len(baseline))
-	}
-	for i := range baseline {
-		if want := createPrefix.ReplaceAllStringFunc(head[i], ifNotExists); want != baseline[i] {
-			t.Errorf("span-family schema changed after version %d:\nhead:     %s\nbaseline: %s", spansBaselineVersion, want, baseline[i])
+	for _, f := range Families()[1:] {
+		baseline, err := familyBaselineDDL(ctx, f.Tables())
+		if err != nil {
+			t.Fatal(err)
+		}
+		head := familySchema(t, db.DB, f.Tables())
+		if len(head) != len(baseline) {
+			t.Fatalf("head has %d %s objects, baseline %d", len(head), f, len(baseline))
+		}
+		for i := range baseline {
+			if want := createPrefix.ReplaceAllStringFunc(head[i], ifNotExists); want != baseline[i] {
+				t.Errorf("%s schema changed after version %d:\nhead:     %s\nbaseline: %s", f, spansBaselineVersion, want, baseline[i])
+			}
 		}
 	}
 }
 
-func familySchema(t *testing.T, db *sql.DB) []string {
+func familySchema(t *testing.T, db *sql.DB, tables []string) []string {
 	t.Helper()
-	tables := FamilySpans.Tables()
 	args := make([]any, len(tables))
 	for i, tbl := range tables {
 		args[i] = tbl

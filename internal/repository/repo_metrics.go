@@ -45,7 +45,7 @@ func (r *Repository) InsertMetrics(ctx context.Context, recs []model.MetricRecor
 	}
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx = WithoutSpanTracing(ctx)
-	return r.execLow(FamilyMetrics, func(db *sql.DB) error {
+	return r.execIngest(FamilyMetrics, func(db *sql.DB) error {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err

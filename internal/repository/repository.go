@@ -51,6 +51,8 @@ type Repository struct {
 	writers          [numFamilies]*sql.DB
 	schedulers       [numFamilies]*writescheduler.Scheduler
 	deleteBatchYield time.Duration
+	// shards, when set, takes the inserts of the families it shards.
+	shards *ShardManager
 }
 
 // retentionDeleteBatch caps the rows touched by a single batched retention
@@ -107,6 +109,11 @@ func (r *Repository) SetFamilyWriter(f Family, db *sql.DB, s *writescheduler.Sch
 	r.schedulers[f] = s
 }
 
+// SetShards routes the inserts of every family m shards to m's shard files.
+// Everything else those families write (retention deletes) stays on main,
+// which still holds their older rows.
+func (r *Repository) SetShards(m *ShardManager) { r.shards = m }
+
 // WithQueryTimeout returns a copy of r that shares its handles and schedulers
 // and uses timeout for its queries.
 func (r *Repository) WithQueryTimeout(timeout time.Duration) *Repository {
@@ -133,6 +140,15 @@ func (r *Repository) execHigh(f Family, fn func(db *sql.DB) error) error {
 // execLow submits fn as a low-priority write (background ingest, retention)
 // on f's writer.
 func (r *Repository) execLow(f Family, fn func(db *sql.DB) error) error {
+	return r.submit(f, writescheduler.Low, writeOpLabel(), fn)
+}
+
+// execIngest submits fn as a telemetry insert of f: on the current shard of f
+// when f is sharded, otherwise as execLow on f's writer.
+func (r *Repository) execIngest(f Family, fn func(db *sql.DB) error) error {
+	if r.shards.Sharded(f) {
+		return r.shards.submit(f, writeOpLabel(), fn)
+	}
 	return r.submit(f, writescheduler.Low, writeOpLabel(), fn)
 }
 

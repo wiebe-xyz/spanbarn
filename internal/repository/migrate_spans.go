@@ -50,7 +50,7 @@ func MigrateSpans(ctx context.Context, db *sql.DB) error {
 // NOT EXISTS, so on a single-file database, where those migrations already
 // created them, it changes nothing.
 func spansBaselineUp(ctx context.Context, tx *sql.Tx) error {
-	ddl, err := spansBaselineDDL(ctx)
+	ddl, err := familyBaselineDDL(ctx, FamilySpans.Tables())
 	if err != nil {
 		return err
 	}
@@ -64,15 +64,15 @@ func spansBaselineUp(ctx context.Context, tx *sql.Tx) error {
 
 var createPrefix = regexp.MustCompile(`(?i)^CREATE\s+(UNIQUE\s+)?(TABLE|INDEX)\s+(IF\s+NOT\s+EXISTS\s+)?`)
 
-// spansBaselineDDL migrates a scratch in-memory database to
-// spansBaselineVersion and reads back the span-family schema. Reading it from
-// the migrated schema keeps one definition of these tables: migrations 1 to 41
-// stay the source, and the baseline cannot drift from what they build.
+// familyBaselineDDL migrates a scratch database to spansBaselineVersion and
+// reads back the schema of tables, with IF NOT EXISTS added. Reading it from the
+// migrated schema keeps one definition of these tables: migrations 1 to 41 stay
+// the source, and a baseline cannot drift from what they build.
 //
 // The scratch database is a file in a temporary directory: goose holds one
 // connection for the whole run while some migrations open another, and every
 // connection to ":memory:" would get a database of its own.
-func spansBaselineDDL(ctx context.Context) ([]string, error) {
+func familyBaselineDDL(ctx context.Context, tables []string) ([]string, error) {
 	dir, err := os.MkdirTemp("", "spanbarn-baseline-")
 	if err != nil {
 		return nil, err
@@ -92,7 +92,6 @@ func spansBaselineDDL(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("migrate scratch database: %w", err)
 	}
 
-	tables := FamilySpans.Tables()
 	args := make([]any, len(tables))
 	for i, t := range tables {
 		args[i] = t
