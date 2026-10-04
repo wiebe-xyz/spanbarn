@@ -65,7 +65,7 @@ func SnapshotSettings(ctx context.Context, srcPath, destPath string) (map[string
 	}
 	// The snapshot uses the split layout: the writer creates an empty spans
 	// file next to it on first start.
-	if err := dropMovedTables(ctx, dest.DB); err != nil {
+	if err := dropMovedTables(ctx, dest.DB, false); err != nil {
 		return nil, fmt.Errorf("prepare snapshot layout: %w", err)
 	}
 

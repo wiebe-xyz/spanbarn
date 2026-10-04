@@ -145,6 +145,8 @@ func openWriteRepo(cfg config.Config, logger *slog.Logger) (*repository.Storage,
 		MmapMB:        cfg.SQLiteMmapMB,
 		AttachCacheMB: cfg.SQLiteROCacheMB,
 		AttachMmapMB:  cfg.SQLiteROMmapMB,
+		CutOver:       true,
+		Logger:        logger,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)
