@@ -46,11 +46,11 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	// Write DB — MaxOpenConns(1), used exclusively by worker/retention/aggregation/alerts.
-	db, repo, err := openWriteRepo(cfg, logger)
+	store, repo, err := openWriteRepo(cfg, logger)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer store.Close()
 
 	if err := applySeedKeys(repo, cfg, logger); err != nil {
 		return err
@@ -115,7 +115,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	// Run the app-side checkpoint on a fixed interval. Its busy_timeout(30000)
 	// lets it wait for a clear write window. Combined (spool) mode has no Redis
 	// write-queue backlog to gate on, so no busy skip.
-	safeGo("wal-checkpoint", &wg, func() { db.RunPeriodicCheckpoint(workerCtx, 30*time.Second, logger) })
+	startCheckpoints(workerCtx, &wg, store, logger)
 
 	warnObsoleteRetentionEnv(cfg, logger)
 	retentionCfg := retentionConfigFrom(cfg)
@@ -208,7 +208,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	ingestHandler.Stop()
 	workerCancel()
 	wg.Wait()
-	db.FinalCheckpoint(logger)
+	store.FinalCheckpoint(logger)
 
 	logger.Info("shutdown complete")
 	return nil

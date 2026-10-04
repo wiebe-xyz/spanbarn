@@ -73,12 +73,10 @@ type DBCounts struct {
 func (r *Repository) GetDBSize(dbPath, spoolDir string) (*DBSize, error) {
 	size := &DBSize{}
 
-	if info, err := os.Stat(dbPath); err == nil {
-		size.DBSizeBytes = info.Size()
-	}
-	walPath := dbPath + "-wal"
-	if info, err := os.Stat(walPath); err == nil {
-		size.DBSizeBytes += info.Size()
+	for _, f := range []string{dbPath, dbPath + "-wal", SpansPath(dbPath), SpansPath(dbPath) + "-wal"} {
+		if info, err := os.Stat(f); err == nil {
+			size.DBSizeBytes += info.Size()
+		}
 	}
 
 	if spoolDir != "" {

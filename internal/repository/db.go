@@ -247,14 +247,16 @@ func (d *DB) FinalCheckpoint(log *slog.Logger) {
 	d.checkpoint(ctx, 0, log)
 }
 
-// checkpoint runs one wal_checkpoint(TRUNCATE) and returns the WAL size in
-// frames after the attempt (the pragma's `log` column), or -1 if it errored.
+// checkpoint runs one wal_checkpoint(TRUNCATE) on the handle's own file. Both
+// pragmas name main: unqualified, wal_checkpoint would also try every attached
+// file, and those are attached read-only and checkpointed by their own writer.
+// It returns the WAL size in frames after the attempt (the pragma's `log` column), or -1 if it errored.
 // It retries on busy=1 (reader snapshot blocking backfill) so the WAL is
 // actually reset once the reader releases.
 func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) int {
 	for {
 		var busy, walFrames, checkpointed int
-		if err := d.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
+		if err := d.QueryRowContext(ctx, "PRAGMA main.wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
 			if ctx.Err() == nil {
 				log.Warn("wal checkpoint error", "error", err)
 			}
@@ -263,7 +265,7 @@ func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *s
 		if busy == 0 {
 			// Reclaim up to 5000 freed pages (~20 MiB) per tick. No-op when
 			// auto_vacuum != INCREMENTAL (i.e. before migration 018 has run).
-			_, _ = d.ExecContext(ctx, "PRAGMA incremental_vacuum(5000)")
+			_, _ = d.ExecContext(ctx, "PRAGMA main.incremental_vacuum(5000)")
 			return walFrames
 		}
 		log.Debug("wal checkpoint blocked by reader, retrying", "wal_frames", walFrames, "checkpointed", checkpointed)
