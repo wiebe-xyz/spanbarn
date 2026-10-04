@@ -243,27 +243,39 @@ func (r *Repository) DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCu
 	// NOT EXISTS seeks idx_error_samples_trace by the candidate row's trace_id, so
 	// the cost scales with the small logs set, not the large error_samples table.
 	// It is also NULL-safe (NOT IN deletes nothing if the subquery yields a NULL).
-	pids, err := r.distinctProjectIDs(ctx, "logs")
+	//
+	// kept_logs (the error-trace and pinned logs copied out of expired logs
+	// shards) expires under the same rule.
+	n, err := r.deleteLogsFrom(ctx, "logs", cutoff, errorLogCutoff)
+	if err != nil {
+		return n, err
+	}
+	kept, err := r.deleteLogsFrom(ctx, "kept_logs", cutoff, errorLogCutoff)
+	return n + kept, err
+}
+
+func (r *Repository) deleteLogsFrom(ctx context.Context, table string, cutoff, errorLogCutoff time.Time) (int64, error) {
+	pids, err := r.distinctProjectIDs(ctx, table)
 	if err != nil {
 		return 0, err
 	}
 	var total int64
 	for _, pid := range pids {
 		pid := pid
-		n, err := r.batchedDelete(ctx, FamilyLogs, func(db *sql.DB) (int64, error) {
+		n, err := r.batchedDelete(ctx, TableFamily(table), func(db *sql.DB) (int64, error) {
 			res, e := db.ExecContext(ctx, `
-				DELETE FROM logs WHERE rowid IN (
-				    SELECT rowid FROM logs
+				DELETE FROM `+table+` WHERE rowid IN (
+				    SELECT rowid FROM `+table+` l
 				    WHERE project_id = ? AND ingested_at < ?
 				    AND (trace_id IS NULL
 				         OR (NOT EXISTS (
 				                 SELECT 1 FROM pinned_traces p
-				                 WHERE p.project_id = logs.project_id
-				                   AND p.trace_id = logs.trace_id
+				                 WHERE p.project_id = l.project_id
+				                   AND p.trace_id = l.trace_id
 				             )
 				             AND NOT EXISTS (
 				                 SELECT 1 FROM error_samples e
-				                 WHERE e.trace_id = logs.trace_id
+				                 WHERE e.trace_id = l.trace_id
 				                   AND e.sampled_at > ?
 				             )
 				         )

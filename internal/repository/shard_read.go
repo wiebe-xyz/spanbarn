@@ -30,13 +30,16 @@ type familyPool struct {
 	// mainHas reports whether main still holds the family's tables (rows
 	// written before the shards).
 	mainHas bool
+	// kept reports whether the logs view includes main's kept_logs: the
+	// error-trace and pinned logs copied out of expired logs shards.
+	kept bool
 	// segments are the schemas that hold the family's rows, newest first:
 	// one per shard, then main when it holds the tables.
 	segments []string
 }
 
-func (p *familyPool) same(files []string, mainHas bool) bool {
-	return p != nil && p.mainHas == mainHas && slices.Equal(p.files, files)
+func (p *familyPool) same(files []string, mainHas, kept bool) bool {
+	return p != nil && p.mainHas == mainHas && p.kept == kept && slices.Equal(p.files, files)
 }
 
 // ShardReaders keeps a read pool per sharded family. Refresh rebuilds a
@@ -104,15 +107,21 @@ func (s *ShardReaders) refreshFamily(ctx context.Context, f Family, files []stri
 	if err != nil {
 		return err
 	}
+	kept := false
+	if f == FamilyLogs {
+		if kept, err = hasTable(ctx, s.main, "kept_logs"); err != nil {
+			return err
+		}
+	}
 	s.mu.RLock()
 	current := s.pools[f]
 	s.mu.RUnlock()
-	if current.same(files, mainHas) || (current == nil && len(files) == 0) {
+	if current.same(files, mainHas, kept) || (current == nil && len(files) == 0) {
 		return nil
 	}
 	var next *familyPool
 	if len(files) > 0 {
-		if next, err = s.openPool(f, files, mainHas); err != nil {
+		if next, err = s.openPool(f, files, mainHas, kept); err != nil {
 			return err
 		}
 	}
@@ -156,8 +165,8 @@ func (s *ShardReaders) activeShards(ctx context.Context) (map[Family][]string, e
 
 // openPool opens a read pool on main that attaches files, newest first, and
 // views f's tables over them.
-func (s *ShardReaders) openPool(f Family, files []string, mainHas bool) (*familyPool, error) {
-	p := &familyPool{files: files, mainHas: mainHas}
+func (s *ShardReaders) openPool(f Family, files []string, mainHas, kept bool) (*familyPool, error) {
+	p := &familyPool{files: files, mainHas: mainHas, kept: kept}
 	attach := make([]Attachment, len(files))
 	for i, file := range files {
 		schema := fmt.Sprintf("shard_%d", i)
@@ -172,6 +181,9 @@ func (s *ShardReaders) openPool(f Family, files []string, mainHas bool) (*family
 		parts := make([]string, len(p.segments))
 		for i, schema := range p.segments {
 			parts[i] = "SELECT * FROM " + schema + "." + table
+		}
+		if kept && table == "logs" {
+			parts = append(parts, "SELECT * FROM main.kept_logs")
 		}
 		views = append(views, "CREATE TEMP VIEW "+table+" AS "+strings.Join(parts, " UNION ALL "))
 	}

@@ -30,9 +30,9 @@ The run shared the CI host at load 73 to 87, so differences under ~30% are uncon
 ## File layout
 
 ```
-$SPANBARN_DB_PATH                 main: config, rollups, aggregates of record
+$SPANBARN_DB_PATH                 main: config, rollups, aggregates of record, kept_logs
 $SPANBARN_DB_PATH.spans           spans, trace_summaries, spans_staging, aggregates,
-                                  error_samples, kept_logs
+                                  error_samples
 $SPANBARN_DB_PATH.d/
     logs-20261004.db              daily
     metrics-20261004.db           daily
@@ -97,9 +97,11 @@ Logs of one trace can land in two daily files around midnight. Logs by trace rea
 
 ### Error-trace logs and pinned traces
 
-Today logs of error-sampled or pinned traces outlive the 24h log window (30 days). A daily logs file is deleted whole, so before the shard manager deletes a logs file it copies those logs into `kept_logs` in `spans.db`, next to the error samples that justify keeping them (same columns as `logs`). The copy uses the same `NOT EXISTS` predicates the current delete uses, and `kept_logs` expires with error samples, by row. The logs view unions `logs` from the daily files with `kept_logs`.
+Today logs of error-sampled or pinned traces outlive the 24h log window (30 days). A daily logs file is deleted whole, so before the writer retires a logs shard it copies those logs into `kept_logs` in main (migration 043, same columns as `logs`). The copy attaches the shard read-only on main's queue and uses the predicates the row delete used: the trace is pinned (`pinned_traces`, main) or error-sampled after the error-log cutoff (`error_samples`, attached from the spans file). `kept_logs` expires by row with the error-log cutoff in `DeleteLogsOlderThan`. The logs view unions `logs` from the daily files and main with `main.kept_logs`.
 
-The copy runs as one write per file on the spans family queue. If the process dies between copy and delete, the next cycle copies again; `kept_logs` has a unique key on the source rowid and day, so the second copy inserts nothing.
+`kept_logs` lives in main and `spans.db` holds none of it: the logs read pool opens on main, so the view reads `kept_logs` with no extra attachment, and a reader opens one file fewer.
+
+If the process dies between the copy and marking the shard retiring, the next cycle copies again. `kept_logs` keeps the source id as its primary key (shard ids are seeded per day, so they do not collide) and the copy is `INSERT OR IGNORE`, so the second copy inserts nothing.
 
 ### Migrations
 
@@ -126,9 +128,11 @@ Deletion is two-phase so no reader holds a deleted inode, which kept space alloc
 
 ### Disk ladder and reclaim
 
-`evictUntilUnderTarget` (`retention/reclaim.go`) gains a first step: drop the oldest shard across all families, oldest period first, until under target. Row eviction on spans runs after that, as today. The ballast (`repository/ballast.go`) and the size-based target stay.
+`reclaimToTarget` (`retention/reclaim.go`) gains a first step, `retireShardsForReclaim`: retire the oldest shard across all families, oldest period first, until the projected usage is under target. A shard inserts can still reach (the current period or later) is never retired. Retiring shards count as free in that projection, since their files go within `shardDeleteDelay`; span row eviction then runs against the projection, and the ballast is restored only once usage is under target and no retiring shard is pending. The ballast (`repository/ballast.go`) and the size-based target stay.
 
-`DBSpace` (`repository/space.go`) sums `FileBytes` and `WALBytes` over main, `spans.db` and every shard listed in `shards`. Freelist pages are summed per file. The ingest disk-headroom check (`cmd/spanbarn/runtime.go`), the retention worker and the rollup compactor (`internal/rollup/compactor.go`) all read this sum.
+Retention expires shards by period (`Repository.ExpireShards`, called from the housekeeping step of the cycle): a shard whose whole period is older than its family's cutoff is retired, and a retiring shard older than `shardDeleteDelay` is deleted. When the disk ladder cuts a window below one period (logs to a few hours), the shard that straddles the cutoff also loses its older rows per project in batches, followed by `PRAGMA incremental_vacuum`. Shard files are created with `auto_vacuum=INCREMENTAL` for this.
+
+`DBSpace` (`repository/space.go`) sums `FileBytes` and `WALBytes` over main, `spans.db` and every shard listed in `shards`, and adds each shard's pages in main's page size. Shard freelists are left out, because incremental vacuum returns their freed pages to the volume. The ingest disk-headroom check (`cmd/spanbarn/runtime.go`), the retention worker and the rollup compactor (`internal/rollup/compactor.go`) all read this sum.
 
 ### Backups
 

@@ -198,6 +198,9 @@ type cycleStats struct {
 	rollupRowsDeleted    int64
 	rollupBacklogRemains bool
 	logsDeleted          int64
+	shardsRetired        int
+	shardsDeleted        int
+	shardRowsTrimmed     int64
 	promptsDeleted       int64
 	promptBacklogRemains bool
 	e2eUsersDeleted      int64
@@ -218,6 +221,9 @@ func (c *cycleStats) attributes() []attribute.KeyValue {
 		attribute.Int64("rollup_rows_deleted", c.rollupRowsDeleted),
 		attribute.Bool("rollup_backlog_remains", c.rollupBacklogRemains),
 		attribute.Int64("logs_deleted", c.logsDeleted),
+		attribute.Int("shards_retired", c.shardsRetired),
+		attribute.Int("shards_deleted", c.shardsDeleted),
+		attribute.Int64("shard_rows_trimmed", c.shardRowsTrimmed),
 		attribute.Int64("prompts_deleted", c.promptsDeleted),
 		attribute.Bool("prompt_backlog_remains", c.promptBacklogRemains),
 		attribute.Int64("e2e_users_deleted", c.e2eUsersDeleted),
@@ -239,6 +245,9 @@ func (c *cycleStats) logArgs() []any {
 		"rollup_rows_deleted", c.rollupRowsDeleted,
 		"rollup_backlog_remains", c.rollupBacklogRemains,
 		"logs_deleted", c.logsDeleted,
+		"shards_retired", c.shardsRetired,
+		"shards_deleted", c.shardsDeleted,
+		"shard_rows_trimmed", c.shardRowsTrimmed,
 		"prompts_deleted", c.promptsDeleted,
 		"prompt_backlog_remains", c.promptBacklogRemains,
 		"e2e_users_deleted", c.e2eUsersDeleted,
@@ -428,6 +437,9 @@ func (w *RetentionWorker) purgeHousekeeping(ctx context.Context, cut cycleCutoff
 		return err
 	}
 	if st.promptsDeleted, st.promptBacklogRemains, err = w.repo.DeletePromptRecordsOlderThanLimited(ctx, cut.prompts, maxPromptRowsPerCycle); err != nil {
+		return err
+	}
+	if err := w.expireShards(ctx, cut, st); err != nil {
 		return err
 	}
 	if st.e2eUsersDeleted, err = w.repo.DeleteExpiredE2EUsers(cut.now); err != nil {
