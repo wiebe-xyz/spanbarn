@@ -71,6 +71,24 @@ func TestMetricsEndpointWithToken(t *testing.T) {
 	}
 }
 
+// TestRegisterWorkerCountersReadsLiveValues: the worker counters are read at
+// scrape time, so a later scrape sees the worker's progress.
+func TestRegisterWorkerCountersReadsLiveValues(t *testing.T) {
+	m := NewMetrics()
+	processed, failed := int64(0), int64(0)
+	m.RegisterWorkerCounters(func() (int64, int64) { return processed, failed })
+
+	processed, failed = 120, 3
+	rr := httptest.NewRecorder()
+	m.Handler("").ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rr.Body.String()
+	for _, want := range []string{"spans_processed_total 120", "spans_failed_total 3"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics missing %q", want)
+		}
+	}
+}
+
 func TestMetricsMiddleware(t *testing.T) {
 	m := NewMetrics()
 	mw := MetricsMiddleware(m)

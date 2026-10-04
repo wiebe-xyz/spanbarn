@@ -15,7 +15,6 @@ import (
 // Metrics holds Prometheus metrics for SpanBarn.
 type Metrics struct {
 	SpansIngested  prometheus.Counter
-	SpansProcessed prometheus.Counter
 	OrphanedIngest *prometheus.CounterVec
 	HTTPRequests   *prometheus.CounterVec
 	HTTPDuration   *prometheus.HistogramVec
@@ -30,11 +29,7 @@ func NewMetrics() *Metrics {
 	m := &Metrics{
 		SpansIngested: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "spans_ingested_total",
-			Help: "Total number of spans ingested.",
-		}),
-		SpansProcessed: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "spans_processed_total",
-			Help: "Total number of spans processed.",
+			Help: "Spans accepted from clients on the OTLP and JSON trace endpoints of this pod, before tail sampling.",
 		}),
 		// Labelled by signal only (traces|metrics|logs). Deliberately not by
 		// service.name: that is client-supplied and unbounded, and this counter
@@ -58,7 +53,6 @@ func NewMetrics() *Metrics {
 	}
 
 	reg.MustRegister(m.SpansIngested)
-	reg.MustRegister(m.SpansProcessed)
 	reg.MustRegister(m.OrphanedIngest)
 	reg.MustRegister(m.HTTPRequests)
 	reg.MustRegister(m.HTTPDuration)
@@ -98,6 +92,27 @@ func (m *Metrics) RegisterTraceBuffer(stats func() ingest.BufferStats) {
 			func(s ingest.BufferStats) float64 {
 				return float64(s.EvictedKeptSpans + s.RefusedSpans + s.UndeliveredSpans)
 			}),
+	)
+}
+
+// RegisterWorkerCounters exposes the writer's span worker counts. Only the
+// writer runs the worker, so only the writer registers these; on an ingest pod
+// they are absent rather than stuck at zero. spans_processed_total used to be a
+// plain counter that nothing incremented, so it read 0 on every pod while
+// ingest ran at several requests a second.
+func (m *Metrics) RegisterWorkerCounters(read func() (processed, failed int64)) {
+	if read == nil {
+		return
+	}
+	m.registry.MustRegister(
+		prometheus.NewCounterFunc(prometheus.CounterOpts{
+			Name: "spans_processed_total",
+			Help: "Spans the writer consumed from the write queue and handled: stored, staged, or aggregated and skipped as boring.",
+		}, func() float64 { p, _ := read(); return float64(p) }),
+		prometheus.NewCounterFunc(prometheus.CounterOpts{
+			Name: "spans_failed_total",
+			Help: "Spans the writer dropped after retries (dead-lettered, or lost when a disk-full requeue failed).",
+		}, func() float64 { _, f := read(); return float64(f) }),
 	)
 }
 

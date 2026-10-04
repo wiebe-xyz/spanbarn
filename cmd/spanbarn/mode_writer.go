@@ -171,6 +171,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	rw.SetMinuteFloor(minuteFloor)
 	rw.SetHourFloor(hourFloor)
 	rw.SetStagingMode(cfg.SpanStagingEnabled)
+	apiServer.RegisterWorkerCounters(rw.Counts)
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
 
 	// Span staging (opt-in): the redis worker only appends to spans_staging; this
