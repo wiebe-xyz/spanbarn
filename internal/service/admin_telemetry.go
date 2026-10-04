@@ -95,6 +95,7 @@ type Store interface {
 	LogsRepository
 	MetricsRepository
 	BoardRepository
+	SLORepository
 }
 
 // WarmRepository is the storage the cache warmers need.

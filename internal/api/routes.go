@@ -240,6 +240,10 @@ func (s *Server) registerManagementRoutes(env *routeEnv) {
 	s.mux.Handle("/api/v1/alerts", apiRL(sessionAuth(ah)))
 	s.mux.Handle("/api/v1/alerts/", apiRL(sessionAuth(ah)))
 
+	// SLOs, burn alerts and status — rate limited + session auth required.
+	slh := &sloHandlers{svc: service.NewSLOService(s.repo, slog.Default())}
+	slh.register(s.mux, func(h http.Handler) http.Handler { return apiRL(sessionAuth(h)) })
+
 	// Settings + stats endpoints — rate limited + session auth required.
 	sh := &settingsHandlers{svc: service.NewSettingsService(s.repo), dbPath: s.dbPath, spoolDir: s.spoolDir, cache: s.cache}
 	s.mux.Handle("/api/v1/settings", apiRL(sessionAuth(sh)))
