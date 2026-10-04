@@ -97,6 +97,7 @@ linters:
           files:
             - "**/internal/model/**"
             - "**/internal/filter/**"
+            - "**/internal/slo/**"
             - "**/internal/cache/**"
             - "**/internal/metrics/**"
             - "**/internal/auth/**"
