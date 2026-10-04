@@ -212,7 +212,7 @@ func seedShardIDs(ctx context.Context, db *sql.DB, f Family, start time.Time) er
 // 2^32 rows before it reaches the next day's base, main's ids stay below the
 // first base, and every id stays under 2^53, so JSON clients read it exactly.
 func shardIDBase(start time.Time) int64 {
-	return int64(start.Sub(time.Unix(0, 0)) / day) << 32
+	return int64(start.Sub(time.Unix(0, 0))/day) << 32
 }
 
 // Maintain creates the shards of the current period and of the period that
