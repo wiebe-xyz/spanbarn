@@ -47,6 +47,8 @@ export type TraceSummary = {
   hasRoot?: boolean | null
   /** Spans whose parent is absent from the trace. */
   orphanCount?: number
+  /** false: retention evicted every span, so the trace detail is gone. */
+  spansAvailable?: boolean
 }
 
 /** Spans whose parent was never ingested, grouped by name, kind and service. */

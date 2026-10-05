@@ -12,15 +12,26 @@ const badgeStyle: CSSProperties = {
 }
 
 type Props = {
-  trace: Pick<TraceSummary, 'hasRoot' | 'orphanCount'>
+  trace: Pick<TraceSummary, 'hasRoot' | 'orphanCount' | 'spansAvailable'>
 }
 
 /**
  * Flags the structural defects of a trace in the list: no root span, and spans
  * whose parent is missing. Renders nothing for a healthy trace, and nothing
- * while the structure is not computed yet (hasRoot null).
+ * while the structure is not computed yet (hasRoot null). A trace whose spans
+ * were all evicted gets only the evicted badge.
  */
 export function TraceStructureBadges({ trace }: Props): ReactElement | null {
+  if (trace.spansAvailable === false) {
+    return (
+      <span
+        style={{ ...badgeStyle, color: '#9ca3af', borderColor: 'rgba(156,163,175,0.4)', background: 'rgba(156,163,175,0.1)' }}
+        title="Retention evicted every span of this trace; only its summary is left"
+      >
+        spans evicted
+      </span>
+    )
+  }
   const orphans = trace.orphanCount ?? 0
   if (trace.hasRoot !== false && orphans === 0) return null
   return (

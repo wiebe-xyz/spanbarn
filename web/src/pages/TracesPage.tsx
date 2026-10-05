@@ -724,9 +724,9 @@ export function TracesPage(): ReactElement {
                 {!loading && traces.map((trace) => (
                   <tr
                     key={trace.traceId}
-                    onClick={() => navigate(`/traces/${trace.traceId}`)}
+                    onClick={() => { if (trace.spansAvailable !== false) navigate(`/traces/${trace.traceId}`) }}
                     style={{
-                      cursor: 'pointer',
+                      cursor: trace.spansAvailable === false ? 'default' : 'pointer',
                       borderBottom: '1px solid #1f2937',
                       borderLeft: trace.status === 'error'
                         ? '3px solid #ef4444'

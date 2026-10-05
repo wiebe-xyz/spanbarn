@@ -58,6 +58,9 @@ type TraceSummary struct {
 	HasRoot *bool `json:"hasRoot"`
 	// OrphanCount is the number of spans whose parent is absent from the trace.
 	OrphanCount int `json:"orphanCount"`
+	// SpansAvailable is false when retention evicted every span of the trace:
+	// the summary still lists, and the trace detail answers 404.
+	SpansAvailable bool `json:"spansAvailable"`
 }
 
 // TraceDetail holds a full trace with all its spans.

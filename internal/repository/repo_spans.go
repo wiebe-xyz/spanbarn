@@ -221,22 +221,12 @@ func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
 // table fetching duration_us per row (which had grown into a 30s+ write-slot
 // wedge). Interesting spans carry a NULL expires_at and are removed by the
 // aggregate-then-delete pass instead; pre-migration rows are also NULL and drain
-// that same way.
+// that same way. Each batch also prunes the summaries of the traces it touched
+// (see deleteExpiredBoringBatch).
 func (r *Repository) DeleteExpiredBoringSpans(ctx context.Context, now time.Time) (int64, error) {
 	cutoff := now.UTC()
 	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
-		res, e := db.ExecContext(ctx,
-			`DELETE FROM spans WHERE rowid IN (
-				SELECT rowid FROM spans
-				WHERE expires_at IS NOT NULL AND expires_at < ?
-				LIMIT ?)`,
-			cutoff, retentionDeleteBatch,
-		)
-		if e != nil {
-			return 0, e
-		}
-		n, _ := res.RowsAffected()
-		return n, nil
+		return deleteExpiredBoringBatch(ctx, db, cutoff, retentionDeleteBatch)
 	})
 }
 
