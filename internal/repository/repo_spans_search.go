@@ -23,6 +23,9 @@ type TraceSummaryRow struct {
 	HasRoot *bool
 	// OrphanCount is the number of spans whose parent is absent from the trace.
 	OrphanCount int
+	// SpansAvailable is false when none of the trace's spans remain in spans or
+	// error_samples, so its detail would answer 404 (issue #169).
+	SpansAvailable bool
 }
 
 // SearchTraceSummaries returns at most filter.Limit trace summaries matching the
@@ -80,6 +83,7 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 	}
 
 	r.attachPromptStats(order, byTrace)
+	r.attachSpanAvailability(order, byTrace)
 
 	out := make([]TraceSummaryRow, 0, len(order))
 	for _, t := range order {
@@ -149,12 +153,7 @@ func scanTraceSummaryRows(rows *sql.Rows, limit int) ([]string, map[string]*Trac
 // attachPromptStats enriches the page with model and prompt count from
 // prompt_records. A failing enrichment query leaves the rows without them.
 func (r *Repository) attachPromptStats(order []string, byTrace map[string]*TraceSummaryRow) {
-	placeholders := strings.Repeat("?,", len(order))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(order))
-	for i, t := range order {
-		args[i] = t
-	}
+	placeholders, args := traceIDArgs(order)
 	q := fmt.Sprintf(`SELECT trace_id, MIN(model), COUNT(*) FROM prompt_records WHERE trace_id IN (%s) GROUP BY trace_id`, placeholders)
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -174,6 +173,51 @@ func (r *Repository) attachPromptStats(order []string, byTrace map[string]*Trace
 			row.PromptCount = cnt
 		}
 	}
+}
+
+// attachSpanAvailability marks which rows of the page still have spans to show,
+// in spans or in error_samples (the two tables the trace detail reads). A
+// summary can outlive its spans, and its detail then answers 404; the flag lets
+// clients say so instead of linking to it. A failing lookup marks every row
+// available, so the list never hides a trace it could not check.
+func (r *Repository) attachSpanAvailability(order []string, byTrace map[string]*TraceSummaryRow) {
+	for _, row := range byTrace {
+		row.SpansAvailable = true
+	}
+	placeholders, ids := traceIDArgs(order)
+	q := fmt.Sprintf(`SELECT trace_id FROM spans WHERE trace_id IN (%[1]s)
+		UNION SELECT trace_id FROM error_samples WHERE trace_id IN (%[1]s)`, placeholders)
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, append(ids, ids...)...)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	present := make(map[string]bool, len(order))
+	for rows.Next() {
+		var tid string
+		if err := rows.Scan(&tid); err != nil {
+			return
+		}
+		present[tid] = true
+	}
+	if rows.Err() != nil {
+		return
+	}
+	for _, row := range byTrace {
+		row.SpansAvailable = present[row.TraceID]
+	}
+}
+
+// traceIDArgs returns an IN-list of placeholders and the matching arguments for
+// trace ids. ids must not be empty.
+func traceIDArgs(ids []string) (string, []any) {
+	args := make([]any, len(ids))
+	for i, t := range ids {
+		args[i] = t
+	}
+	return placeholderList(len(ids)), args
 }
 
 func (r *Repository) StreamSpans(f SpanFilter, fn func(Span) error) error {

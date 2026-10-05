@@ -1511,6 +1511,9 @@ components:
         orphanCount:
           type: integer
           description: Spans whose parent is absent from the trace
+        spansAvailable:
+          type: boolean
+          description: false when retention evicted every span of the trace; its detail then answers 404
     SpanBatch:
       type: object
       required:

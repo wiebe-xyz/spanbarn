@@ -75,17 +75,18 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 			status = "error"
 		}
 		result = append(result, TraceSummary{
-			TraceID:      r.TraceID,
-			RootSpanName: r.RootName,
-			RootService:  r.RootService,
-			DurationUs:   r.RootDuration,
-			SpanCount:    r.SpanCount,
-			Status:       status,
-			StartTime:    time.UnixMicro(r.StartTimeUs),
-			RootModel:    r.RootModel,
-			PromptCount:  r.PromptCount,
-			HasRoot:      r.HasRoot,
-			OrphanCount:  r.OrphanCount,
+			TraceID:        r.TraceID,
+			RootSpanName:   r.RootName,
+			RootService:    r.RootService,
+			DurationUs:     r.RootDuration,
+			SpanCount:      r.SpanCount,
+			Status:         status,
+			StartTime:      time.UnixMicro(r.StartTimeUs),
+			RootModel:      r.RootModel,
+			PromptCount:    r.PromptCount,
+			HasRoot:        r.HasRoot,
+			OrphanCount:    r.OrphanCount,
+			SpansAvailable: r.SpansAvailable,
 		})
 	}
 	return result, nil

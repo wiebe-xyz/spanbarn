@@ -23,4 +23,10 @@ describe('TraceStructureBadges', () => {
     expect(screen.getByText('3 orphan spans')).toBeInTheDocument()
     expect(screen.queryByText('no root span')).not.toBeInTheDocument()
   })
+
+  it('flags a trace whose spans were evicted, and nothing else', () => {
+    render(<TraceStructureBadges trace={{ hasRoot: false, orphanCount: 2, spansAvailable: false }} />)
+    expect(screen.getByText('spans evicted')).toBeInTheDocument()
+    expect(screen.queryByText('no root span')).not.toBeInTheDocument()
+  })
 })
