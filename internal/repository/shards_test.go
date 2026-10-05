@@ -24,11 +24,11 @@ func openShardedStorage(t *testing.T, path string, clock *time.Time) *Storage {
 	t.Helper()
 	o := testStorageOptions
 	o.Shards = testShardRetention
+	o.Now = func() time.Time { return *clock }
 	store, err := OpenStorage(context.Background(), path, o)
 	if err != nil {
 		t.Fatalf("open storage: %v", err)
 	}
-	store.Shards.now = func() time.Time { return *clock }
 	t.Cleanup(func() { store.Close() })
 	return store
 }

@@ -73,6 +73,9 @@ func openShardManager(ctx context.Context, main *sql.DB, dbPath string, retentio
 		now:     time.Now,
 		handles: map[shardKey]*DB{},
 	}
+	if o.Now != nil {
+		m.now = o.Now
+	}
 	for _, sf := range shardedFamilies {
 		if r := retention[sf.family]; r > 0 {
 			m.specs[sf.family] = newShardSpec(sf.family, sf.weekly, r)
