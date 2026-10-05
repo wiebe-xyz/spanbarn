@@ -6,28 +6,33 @@ row retention. Once one of those tables is empty, the writer lists it in
 `retired_tables`, readers stop reading it within 30 seconds, and the writer
 drops it 5 minutes later (`internal/repository/main_retire.go`).
 
-Dropping a table does not shrink the file: main has no incremental vacuum, so
-the freed pages stay on its freelist. Once all three tables are gone (prompts
-take the longest, 30 days by default), one `VACUUM INTO` and a swap give the
-space back to the volume. This runs once per environment.
+## Is it needed?
 
-## When
-
-All three heavy tables are gone from main:
+Usually no. Check main's vacuum mode first:
 
 ```
-kubectl -n spanbarn-<env> logs deployment/spanbarn | grep '"main table dropped"'
+sqlite3 -readonly /var/lib/spanbarn/spanbarn.db "PRAGMA auto_vacuum; PRAGMA freelist_count"
 ```
 
-lists `logs`, `metrics` and `prompt_records`. Or, from a pod with the volume
-mounted:
+- `2` (INCREMENTAL, set by migration 018): the writer's checkpoint loop runs
+  `PRAGMA incremental_vacuum(5000)` every 30 seconds (`internal/repository/db.go`),
+  so pages freed by row retention and by dropped tables go back to the volume
+  within the hour. Nothing to do. Production was in this state on 2026-10-05,
+  with a freelist of 0.
+- `0` (NONE): freed pages stay on the freelist and the file never shrinks. A
+  main rebuilt from a `.schema` dump ends up here. Run the procedure below
+  once all three heavy tables are gone, which happens after the error-trace
+  log window (30 days) and the prompt window (30 days) pass:
 
-```
-sqlite3 -readonly /var/lib/spanbarn/spanbarn.db \
-  "SELECT name FROM sqlite_master WHERE name IN ('logs','metrics','prompt_records')"
-```
+  ```
+  kubectl -n spanbarn-<env> logs deployment/spanbarn | grep '"main table dropped"'
+  ```
 
-prints nothing. Do not run `dbstat` against production; it reads every page.
+  This should list `logs`, `metrics` and `prompt_records`. Do not run `dbstat`
+  against production, because it reads every page.
+
+The procedure writes main's live pages to a new file with `auto_vacuum` set,
+then swaps it in.
 
 ## Space
 
@@ -67,7 +72,7 @@ on the new file. Ingest waits in the Redis write queue meanwhile.
    ```
    cd /var/lib/spanbarn
    sqlite3 spanbarn.db "PRAGMA wal_checkpoint(TRUNCATE)"
-   sqlite3 spanbarn.db "VACUUM INTO 'spanbarn.db.compact'"
+   sqlite3 spanbarn.db "PRAGMA auto_vacuum = INCREMENTAL; VACUUM INTO 'spanbarn.db.compact'"
    sqlite3 spanbarn.db.compact "PRAGMA integrity_check"
    ```
    `integrity_check` must print `ok`. Compare row counts of a few settings
