@@ -28,6 +28,7 @@ func expiryFixture(t *testing.T) (string, *Storage, *Repository, *time.Time) {
 	if err := repo.InsertLogs(ctx, recs); err != nil {
 		t.Fatal(err)
 	}
+	stampFile(t, filepath.Join(ShardsDir(path), "logs-20261004.db"), "logs", "2026-10-04 10:00:00")
 	if err := repo.InsertErrorSamples([]Span{{ProjectID: 1, TraceID: "err", SpanID: "s1", Name: "op", Status: "error", Attributes: "{}", Events: "[]"}}); err != nil {
 		t.Fatal(err)
 	}

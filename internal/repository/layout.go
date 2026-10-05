@@ -56,6 +56,9 @@ type StorageOptions struct {
 	CutOver       bool
 	Shards        ShardRetention
 	Logger        *slog.Logger
+	// Now is the shard manager's clock. Nil means time.Now; tests set it so
+	// the shards created at open follow their clock.
+	Now func() time.Time
 }
 
 func (o StorageOptions) logger() *slog.Logger {
