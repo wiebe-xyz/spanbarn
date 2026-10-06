@@ -31,8 +31,23 @@ sqlite3 -readonly /var/lib/spanbarn/spanbarn.db "PRAGMA auto_vacuum; PRAGMA free
   This should list `logs`, `metrics` and `prompt_records`. Do not run `dbstat`
   against production, because it reads every page.
 
-The procedure writes main's live pages to a new file with `auto_vacuum` set,
-then swaps it in.
+## At writer start
+
+With `SPANBARN_COMPACT_MAIN_ON_START=true` the writer does this itself when it
+opens a split-layout main in mode `0`: it runs `PRAGMA auto_vacuum =
+INCREMENTAL; VACUUM main` in place before any worker starts, then checkpoints
+(`internal/repository/compact_main.go`). It skips main when its live data
+exceeds `SPANBARN_COMPACT_MAIN_MAX_LIVE_MB` (default 1024), because the VACUUM
+holds main's write lock while it runs, and it does nothing on a main already in
+mode `2`. Tables still waiting to be dropped do not need to be gone first: once
+main is INCREMENTAL, the checkpoint loop returns their pages when the writer
+drops them. Testing and staging set it (`configmap-retention-patch.yaml`).
+
+## Manual procedure
+
+The procedure below writes main's live pages to a new file with `auto_vacuum`
+set, then swaps it in. Use it where the writer cannot, for example a main above
+the live-data limit.
 
 ## Space
 

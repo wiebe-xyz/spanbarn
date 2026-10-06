@@ -148,6 +148,9 @@ func openWriteRepo(cfg config.Config, logger *slog.Logger) (*repository.Storage,
 		CutOver:       true,
 		Shards:        shardRetention(cfg),
 		Logger:        logger,
+
+		CompactMain:             cfg.CompactMainOnStart,
+		CompactMainMaxLiveBytes: int64(cfg.CompactMainMaxLiveMB) << 20,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)

@@ -143,7 +143,13 @@ type Config struct {
 	// $SPANBARN_DB_PATH.d instead of main (specs/002-temporal-sharding). Off
 	// until reads and expiry cover the shards: with it on and neither in place,
 	// new rows are invisible to the dashboard and never expire.
-	Shards                   bool // SPANBARN_SHARDS (default false)
+	Shards bool // SPANBARN_SHARDS (default false)
+	// CompactMainOnStart rewrites main once in auto_vacuum=INCREMENTAL mode
+	// when the writer opens it, so space freed by retention goes back to the
+	// volume (deploy/docs/compact-main.md). Skipped when main holds more live
+	// data than CompactMainMaxLiveMB.
+	CompactMainOnStart       bool // SPANBARN_COMPACT_MAIN_ON_START (default false)
+	CompactMainMaxLiveMB     int  // SPANBARN_COMPACT_MAIN_MAX_LIVE_MB (default 1024)
 	SpanStagingEnabled       bool // SPANBARN_SPAN_STAGING_ENABLED — when true, the redis worker appends consumed spans to spans_staging (cheap) and a background flusher does accumulation+classification+indexed storage per complete trace off the hot path (default false)
 	TraceBufferWindowSeconds int  // SPANBARN_TRACE_BUFFER_WINDOW_SECONDS — how long a trace's spans buffer in spans_staging before the flusher treats the trace as complete (default 90)
 	StagingMaxAgeSeconds     int  // SPANBARN_STAGING_MAX_AGE_SECONDS — hard backstop: spans_staging rows older than this are dropped unconditionally so the table can never grow without bound (default 900)
@@ -244,6 +250,8 @@ func Load() Config {
 			CompactEnabled: getenvBool("SPANBARN_ROLLUP_COMPACT_ENABLED", true),
 		},
 		Shards:                   getenvBool("SPANBARN_SHARDS", false),
+		CompactMainOnStart:       getenvBool("SPANBARN_COMPACT_MAIN_ON_START", false),
+		CompactMainMaxLiveMB:     getenvInt("SPANBARN_COMPACT_MAIN_MAX_LIVE_MB", 1024),
 		SpanStagingEnabled:       getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
 		TraceBufferWindowSeconds: getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
 		TraceBufferMaxSpans:      getenvInt("SPANBARN_TRACE_BUFFER_MAX_SPANS", 50000),

@@ -19,6 +19,10 @@ patches:
     target:
       kind: ConfigMap
       name: spanbarn-config
+  - path: configmap-retention-patch.yaml
+    target:
+      kind: ConfigMap
+      name: spanbarn-config
 
 images:
   - name: ghcr.io/wiebe-xyz/spanbarn/service

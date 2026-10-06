@@ -54,8 +54,13 @@ type StorageOptions struct {
 	AttachCacheMB int
 	AttachMmapMB  int
 	CutOver       bool
-	Shards        ShardRetention
-	Logger        *slog.Logger
+	// CompactMain rewrites a split-layout main once in auto_vacuum=INCREMENTAL
+	// mode at open (see compactMain), unless its live data exceeds
+	// CompactMainMaxLiveBytes. Only the writer sets it.
+	CompactMain             bool
+	CompactMainMaxLiveBytes int64
+	Shards                  ShardRetention
+	Logger                  *slog.Logger
 	// Now is the shard manager's clock. Nil means time.Now; tests set it so
 	// the shards created at open follow their clock.
 	Now func() time.Time
@@ -128,6 +133,12 @@ func openLayout(ctx context.Context, dbPath string, o StorageOptions) (*Storage,
 	err = finishCutover(ctx, dbPath, o)
 	if err == nil {
 		err = prepareSplit(ctx, plain.DB, dbPath, o)
+	}
+	if err == nil && o.CompactMain {
+		// Best-effort: a failed compaction leaves main as it was.
+		if cerr := compactMain(ctx, plain.DB, o.CompactMainMaxLiveBytes, o.logger()); cerr != nil {
+			o.logger().Error("main compaction failed", "error", cerr)
+		}
 	}
 	plain.Close()
 	if err != nil {
