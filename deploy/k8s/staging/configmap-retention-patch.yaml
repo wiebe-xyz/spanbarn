@@ -1,0 +1,17 @@
+# About a week of retention on staging. Staging shares k3s1's disk with
+# testing and the CI runners' images (webwiebe/k3s-infra#61); production keeps
+# the base values.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spanbarn-config
+data:
+  SPANBARN_RETENTION_ERROR_DAYS: "7"
+  SPANBARN_RETENTION_AGGREGATED_DAYS: "14"
+  SPANBARN_RETENTION_INTERESTING_HOURS: "24"
+  SPANBARN_METRICS_RETENTION_DAYS: "3"
+  SPANBARN_ERROR_LOG_RETENTION_DAYS: "7"
+  SPANBARN_PROMPT_RETENTION_DAYS: "7"
+  # Rewrite main once in auto_vacuum=INCREMENTAL mode so freed pages go back
+  # to the volume (deploy/docs/compact-main.md). A no-op once done.
+  SPANBARN_COMPACT_MAIN_ON_START: "true"
