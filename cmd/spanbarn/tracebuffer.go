@@ -19,7 +19,11 @@ func newTraceBuffer(cfg config.Config, lookup ingest.SampleRatioLookup, logger *
 		logger.Warn("trace buffer span cap is disabled: buffered spans are live data the GC cannot reclaim, so ingest bursts can OOM this pod",
 			"setting", "SPANBARN_TRACE_BUFFER_MAX_SPANS")
 	}
-	return ingest.NewTraceBufferWithLimits(ttl, cfg.TraceBufferMaxSpans, lookup, logger)
+	rules := ingest.RescueRules{
+		SlowThresholdUs:  int64(cfg.SlowThresholdMS) * 1000,
+		MinTracesPerHour: cfg.TraceBufferMinPerHour,
+	}
+	return ingest.NewTraceBufferWithRules(ttl, cfg.TraceBufferMaxSpans, rules, lookup, logger)
 }
 
 // registerTraceBufferGauges publishes trace-buffer occupancy and loss as

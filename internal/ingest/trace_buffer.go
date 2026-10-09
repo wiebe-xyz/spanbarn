@@ -10,6 +10,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
+	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 )
 
 const (
@@ -82,6 +83,11 @@ type TraceBuffer struct {
 	maxSpans  int
 	spanCount int
 
+	// rescue keeps low-volume and slow root operations that ratio sampling
+	// would drop. See trace_buffer_rescue.go.
+	rescue RescueRules
+	floor  *sampling.MinuteFloor
+
 	// Eviction order. sacrificeQ holds traces whose flush-time sampling decision
 	// is already known to be "discard" — freeing one of those costs nothing at
 	// all, because it was never going to reach storage. anyQ holds every trace
@@ -151,6 +157,12 @@ func NewTraceBuffer(ttl time.Duration, lookup SampleRatioLookup, logger *slog.Lo
 // rate is known to be bounded, since buffered spans are live data the GC cannot
 // reclaim for the whole TTL.
 func NewTraceBufferWithLimits(ttl time.Duration, maxSpans int, lookup SampleRatioLookup, logger *slog.Logger) *TraceBuffer {
+	return NewTraceBufferWithRules(ttl, maxSpans, RescueRules{}, lookup, logger)
+}
+
+// NewTraceBufferWithRules is NewTraceBufferWithLimits plus the rules that keep
+// slow and low-volume root operations through ratio sampling.
+func NewTraceBufferWithRules(ttl time.Duration, maxSpans int, rules RescueRules, lookup SampleRatioLookup, logger *slog.Logger) *TraceBuffer {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -167,8 +179,12 @@ func NewTraceBufferWithLimits(ttl time.Duration, maxSpans int, lookup SampleRati
 		lookup:   lookup,
 		logger:   logger,
 		maxSpans: maxSpans,
+		rescue:   rules.normalised(),
 		out:      ch,
 		Out:      ch,
+	}
+	if tb.rescue.MinTracesPerHour > 0 {
+		tb.floor = sampling.NewBucketFloor(time.Hour)
 	}
 	observability.SafeGo("trace-buffer-gc", nil, tb.gcLoop)
 	return tb
@@ -297,7 +313,7 @@ func (tb *TraceBuffer) Flush(now time.Time) {
 
 	var undelivered int64
 	for _, tr := range toDecide {
-		if !tb.keep(tr) {
+		if !tb.keep(tr, now) {
 			continue
 		}
 		// A trace that survived sampling has already been paid for; dropping it
@@ -326,8 +342,9 @@ func (tb *TraceBuffer) Flush(now time.Time) {
 	}
 }
 
-// keep returns true if the trace should be forwarded to storage.
-func (tb *TraceBuffer) keep(tr *bufferedTrace) bool {
+// keep returns true if the trace should be forwarded to storage. now is the
+// flush time, used to place the trace in an hourly rarity bucket.
+func (tb *TraceBuffer) keep(tr *bufferedTrace, now time.Time) bool {
 	if tr.hasError {
 		return true
 	}
@@ -338,7 +355,10 @@ func (tb *TraceBuffer) keep(tr *bufferedTrace) bool {
 	if op == "" {
 		op = tr.spans[0].Name
 	}
-	return tb.sampledIn(tr.projectID, op, tr.id)
+	if tb.slowRoot(tr) {
+		return true
+	}
+	return tb.rescued(tr.projectID, op, now, tb.sampledIn(tr.projectID, op, tr.id))
 }
 
 // sampledIn reports whether ratio sampling keeps this trace. Deterministic in
