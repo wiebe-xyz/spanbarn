@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,8 +90,7 @@ func runConnSetup(conn sqlite.ExecQuerierContext, dsn string) error {
 		if skip {
 			continue
 		}
-		arg := []driver.NamedValue{{Ordinal: 1, Value: "file:" + a.Path + "?mode=ro"}}
-		if _, err := conn.ExecContext(context.Background(), "ATTACH DATABASE ? AS "+a.Schema, arg); err != nil {
+		if err := attachFile(conn, a); err != nil {
 			return fmt.Errorf("attach %s as %s: %w", a.Path, a.Schema, err)
 		}
 		if err := sizeAttachment(conn, a); err != nil {
@@ -103,6 +103,35 @@ func runConnSetup(conn sqlite.ExecQuerierContext, dsn string) error {
 		}
 	}
 	return nil
+}
+
+// attachFile attaches a.Path as a.Schema, read-only. A WAL-mode file with no
+// -wal or -shm next to it (a closed shard) cannot be opened mode=ro by a
+// reader that cannot create the -shm, which fails the attach. That state has
+// no live writer, so the attach retries immutable: SQLite takes no locks and
+// needs no sidecar. A file with a sidecar or a hot journal never takes the
+// retry, so a shard still being written always attaches mode=ro and sees its
+// WAL. An immutable connection does not see a writer that opens the file
+// later; pooled connections are recycled after readConnMaxLifetime.
+func attachFile(conn sqlite.ExecQuerierContext, a Attachment) error {
+	stmt := "ATTACH DATABASE ? AS " + a.Schema
+	arg := []driver.NamedValue{{Ordinal: 1, Value: "file:" + a.Path + "?mode=ro"}}
+	_, err := conn.ExecContext(context.Background(), stmt, arg)
+	if err == nil || hasSidecar(a.Path) {
+		return err
+	}
+	arg[0].Value = "file:" + a.Path + "?immutable=1"
+	_, err = conn.ExecContext(context.Background(), stmt, arg)
+	return err
+}
+
+func hasSidecar(path string) bool {
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if _, err := os.Stat(path + suffix); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func skipAttachment(conn sqlite.ExecQuerierContext, a Attachment) (bool, error) {
