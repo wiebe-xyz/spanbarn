@@ -153,7 +153,7 @@ type Config struct {
 	SpanStagingEnabled       bool // SPANBARN_SPAN_STAGING_ENABLED — when true, the redis worker appends consumed spans to spans_staging (cheap) and a background flusher does accumulation+classification+indexed storage per complete trace off the hot path (default false)
 	TraceBufferWindowSeconds int  // SPANBARN_TRACE_BUFFER_WINDOW_SECONDS — how long a trace's spans buffer in spans_staging before the flusher treats the trace as complete (default 90)
 	StagingMaxAgeSeconds     int  // SPANBARN_STAGING_MAX_AGE_SECONDS — hard backstop: spans_staging rows older than this are dropped unconditionally so the table can never grow without bound (default 900)
-	IngestSampleRate         float64
+	TraceBufferMinPerHour    int  // SPANBARN_TRACE_BUFFER_MIN_TRACES_PER_HOUR — traces per (project, root op) per hour the trace buffer keeps regardless of the sample ratio (default 1, 0 disables)
 	SlowThresholdMS          int
 	AggregationInterval      string
 	AllowedOrigins           []string
@@ -257,7 +257,7 @@ func Load() Config {
 		TraceBufferMaxSpans:      getenvInt("SPANBARN_TRACE_BUFFER_MAX_SPANS", 50000),
 		TraceBufferTTLSeconds:    getenvInt("SPANBARN_TRACE_BUFFER_TTL_SECONDS", 600),
 		StagingMaxAgeSeconds:     getenvInt("SPANBARN_STAGING_MAX_AGE_SECONDS", 900),
-		IngestSampleRate:         getenvFloat("SPANBARN_INGEST_SAMPLE_RATE", 1.0),
+		TraceBufferMinPerHour:    getenvIntAllowZero("SPANBARN_TRACE_BUFFER_MIN_TRACES_PER_HOUR", 1),
 		SlowThresholdMS:          getenvInt("SPANBARN_SLOW_THRESHOLD_MS", 500),
 		AggregationInterval:      getenv("SPANBARN_AGGREGATION_INTERVAL", "1m"),
 		Self: SelfConfig{
@@ -411,9 +411,11 @@ func getenvBool(key string, fallback bool) bool {
 	return fallback
 }
 
-func getenvFloat(key string, fallback float64) float64 {
+// getenvIntAllowZero is getenvInt for settings where 0 is a meaningful value
+// (usually "off"). Negative and unparsable values fall back.
+func getenvIntAllowZero(key string, fallback int) int {
 	if raw := os.Getenv(key); raw != "" {
-		if parsed, err := strconv.ParseFloat(raw, 64); err == nil && parsed >= 0 && parsed <= 1 {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
 			return parsed
 		}
 	}

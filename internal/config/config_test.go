@@ -149,3 +149,13 @@ func TestMaxBodyBytesEnvOverride(t *testing.T) {
 		t.Fatalf("MaxBodyBytes = %d, want %d", got, 8<<20)
 	}
 }
+
+func TestTraceBufferMinPerHour(t *testing.T) {
+	const key = "SPANBARN_TRACE_BUFFER_MIN_TRACES_PER_HOUR"
+	for raw, want := range map[string]int{"": 1, "0": 0, "3": 3, "-2": 1, "x": 1} {
+		t.Setenv(key, raw)
+		if got := getenvIntAllowZero(key, 1); got != want {
+			t.Errorf("%q: got %d, want %d", raw, got, want)
+		}
+	}
+}
