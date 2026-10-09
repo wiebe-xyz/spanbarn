@@ -106,15 +106,15 @@ func TestFirstStringAttr(t *testing.T) {
 
 func TestServiceSummariesWeightsAndOrder(t *testing.T) {
 	merged := map[string]*aggStats{}
-	statsFor(merged, "small").foldAggregate(1, 0, 10, 20, 30)
+	statsFor(merged, "small").foldAggregate(1, 1, 0, 10, 20, 30)
 	big := statsFor(merged, "big")
-	big.foldAggregate(3, 1, 100, 200, 300)
-	big.foldAggregate(1, 0, 200, 400, 600)
+	big.foldAggregate(1, 3, 1, 100, 200, 300)
+	big.foldAggregate(1, 1, 0, 200, 400, 600)
 	if statsFor(merged, "big") != big {
 		t.Fatal("statsFor must return the existing entry")
 	}
 
-	got := serviceSummaries(merged, 1)
+	got := serviceSummaries(merged)
 	if len(got) != 2 || got[0].Service != "big" {
 		t.Fatalf("order = %+v", got)
 	}

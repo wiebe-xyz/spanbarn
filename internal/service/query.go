@@ -93,6 +93,37 @@ func (s *QueryService) projectSampleRate(ctx context.Context, projectID int64) f
 	return 1.0 / float64(ratio)
 }
 
+// opRates resolves the sample rate per operation for one project and request,
+// with the most specific key winning as it does at ingest. Lookups are memoised
+// because a result set repeats the same few operations many times.
+type opRates struct {
+	ctx       context.Context
+	lookup    SampleRatioLookup
+	projectID int64
+	memo      map[string]float64
+}
+
+func (s *QueryService) newOpRates(ctx context.Context, projectID int64) *opRates {
+	return &opRates{ctx: ctx, lookup: s.ratioLookup, projectID: projectID, memo: map[string]float64{}}
+}
+
+// rate returns the (0-1] sample rate for an operation. An empty operation
+// resolves to the project level ratio.
+func (r *opRates) rate(operation string) float64 {
+	if r.lookup == nil {
+		return 1.0
+	}
+	if v, ok := r.memo[operation]; ok {
+		return v
+	}
+	v := 1.0
+	if ratio := r.lookup.Ratio(r.ctx, r.projectID, operation); ratio > 1 {
+		v = 1.0 / float64(ratio)
+	}
+	r.memo[operation] = v
+	return v
+}
+
 // inflateCount returns the estimated true span population given sampled counts.
 // errorCount is assumed to be always-sampled; only ok spans are scaled.
 func inflateCount(count, errorCount int64, sampleRate float64) int64 {
