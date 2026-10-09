@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -32,22 +31,8 @@ func run() error {
 
 	cfg := config.Load()
 
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "version", "--version", "-v":
-			fmt.Printf("spanbarn %s (built %s)\n", Version, BuildTime)
-			return nil
-		case "worker-once":
-			return runWorkerOnce(cfg)
-		case "user":
-			return runUserCmd(cfg, os.Args[2:])
-		case "project":
-			return runProjectCmd(cfg, os.Args[2:])
-		case "apikey":
-			return runAPIKeyCmd(cfg, os.Args[2:])
-		case "db":
-			return runDBCmd(cfg, os.Args[2:])
-		}
+	if handled, err := dispatch(cfg, os.Args[1:], os.Stdout); handled {
+		return err
 	}
 
 	if err := cfg.Validate(); err != nil {
