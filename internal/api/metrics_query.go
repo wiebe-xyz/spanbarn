@@ -145,27 +145,31 @@ func groupCatalog(entries []service.MetricCatalogEntry) []catalogGroup {
 	return groups
 }
 
-// handleMetricSeries returns data points for a named metric.
-//
-// GET /api/v1/metrics/series?name=<name>&project_id=1&from=<rfc3339>&to=<rfc3339>&limit=1000&label[service.name]=foo
-func (h *metricsQueryHandlers) handleMetricSeries(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
-		return
-	}
+// metricQuery is a parsed, executed metric query: the input points of one
+// named metric over a range plus the resolution they were read at.
+type metricQuery struct {
+	name, metricType, unit string
+	in                     []metrics.InputPoint
+	step                   int64
+	groupBy                []string
+}
 
+// loadMetricQuery parses name, project_id, the time range, label filters and
+// group_by, then reads raw points or rollups depending on the range. On a bad
+// request or a failed query it writes the error response and returns false.
+func (h *metricsQueryHandlers) loadMetricQuery(w http.ResponseWriter, r *http.Request, defaultLimit int) (metricQuery, bool) {
 	name := r.URL.Query().Get("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "missing name parameter", "")
-		return
+		return metricQuery{}, false
 	}
 
 	projectID := parseInt64Param(r, "project_id", 0)
-	limit := parseIntParam(r, "limit", 1000)
+	limit := parseIntParam(r, "limit", defaultLimit)
 	from, to, err := parseTimeRange(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
-		return
+		return metricQuery{}, false
 	}
 	if from.IsZero() {
 		from = time.Now().Add(-24 * time.Hour)
@@ -178,7 +182,7 @@ func (h *metricsQueryHandlers) handleMetricSeries(w http.ResponseWriter, r *http
 	for k := range labels {
 		if !service.ValidLabelKey(k) {
 			writeError(w, http.StatusBadRequest, "invalid label key", "")
-			return
+			return metricQuery{}, false
 		}
 	}
 	groupBy := parseGroupBy(r)
@@ -197,8 +201,27 @@ func (h *metricsQueryHandlers) handleMetricSeries(w http.ResponseWriter, r *http
 	}
 	if queryErr != nil {
 		writeError(w, http.StatusInternalServerError, "query failed", queryErr.Error())
+		return metricQuery{}, false
+	}
+
+	return metricQuery{name: name, metricType: metricType, unit: unit, in: in, step: step, groupBy: groupBy}, true
+}
+
+// handleMetricSeries returns data points for a named metric.
+//
+// GET /api/v1/metrics/series?name=<name>&project_id=1&from=<rfc3339>&to=<rfc3339>&limit=1000&label[service.name]=foo
+func (h *metricsQueryHandlers) handleMetricSeries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
 	}
+
+	q, ok := h.loadMetricQuery(w, r, 1000)
+	if !ok {
+		return
+	}
+	name, metricType, unit, step, groupBy := q.name, q.metricType, q.unit, q.step, q.groupBy
+	in := q.in
 
 	series := metrics.BuildSeries(metricType, in, groupBy)
 	if series == nil {

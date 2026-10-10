@@ -60,7 +60,17 @@ func (h *logsQueryHandlers) handleLogs(w http.ResponseWriter, r *http.Request) {
 		to = time.Now()
 	}
 
+	attrs := parseLabelParams(r)
+	for k := range attrs {
+		if !service.ValidLabelKey(k) {
+			writeError(w, http.StatusBadRequest, "invalid label key", "")
+			return
+		}
+	}
+
 	f := service.LogFilter{
+		Attributes:  attrs,
+		Ascending:   r.URL.Query().Get("order") == "asc",
 		ProjectID:   projectID,
 		TraceID:     r.URL.Query().Get("trace_id"),
 		SpanID:      r.URL.Query().Get("span_id"),

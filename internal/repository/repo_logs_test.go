@@ -387,3 +387,33 @@ func TestDeleteProjectLogsOlderThan(t *testing.T) {
 		}
 	}
 }
+
+func TestQueryLogsByAttributeAndOrder(t *testing.T) {
+	repo := setupTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	mk := func(session, body string, off time.Duration) model.LogRecord {
+		r := makeLogRecord(1, "", body, 9)
+		r.Attributes, _ = json.Marshal(map[string]string{"session.id": session})
+		r.TimeUnixNano = uint64(now.Add(off).UnixNano())
+		return r
+	}
+	if err := repo.InsertLogs(ctx, []model.LogRecord{
+		mk("s1", "second", 2*time.Second), mk("s1", "first", time.Second), mk("s2", "other", 3*time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f := LogFilter{ProjectID: 1, From: now.Add(-time.Minute), To: now.Add(time.Minute), Limit: 10,
+		Attributes: map[string]string{"session.id": "s1"}, Ascending: true}
+	rows, total, err := repo.QueryLogs(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(rows) != 2 || rows[0].Body != "first" || rows[1].Body != "second" {
+		t.Fatalf("got total=%d rows=%+v, want s1's logs oldest first", total, rows)
+	}
+	f.Attributes = map[string]string{"bad key!": "x"}
+	if _, _, err := repo.QueryLogs(ctx, f); err == nil {
+		t.Error("invalid attribute key: want error")
+	}
+}

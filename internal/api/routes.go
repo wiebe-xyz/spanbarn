@@ -300,6 +300,7 @@ func (s *Server) registerMetricsAndLogsRoutes(env *routeEnv) {
 		{"/api/v1/metrics/catalog", env.readAuth, mqh.handleMetricCatalog},
 		{"/api/v1/metrics/insights", env.readAuth, mqh.handleMetricInsights},
 		{"/api/v1/metrics/series", env.readAuth, mqh.handleMetricSeries},
+		{"/api/v1/metrics/totals", env.readAuth, mqh.handleMetricTotals},
 		{"/api/v1/logs", env.readAuth, lqh.handleLogs},
 		{"/api/v1/logs/histogram", env.readAuth, lqh.handleLogsHistogram},
 		{"/api/v1/pinned-traces", env.sessionAuth, lqh.handlePinnedTraces},
