@@ -46,6 +46,11 @@ type InputPoint struct {
 	Count      int64
 	Extra      json.RawMessage
 	Attributes map[string]string
+	// Delta marks a sum whose Value is the increase over the interval ending at
+	// T, not a running total. IntervalNano is that interval's width; zero means
+	// unknown, and the gap to the previous point stands in for it.
+	Delta        bool
+	IntervalNano int64
 }
 
 // DerivedPoint is a render-ready point. Which fields are populated depends on
@@ -153,25 +158,51 @@ func deriveGauge(points []InputPoint) []DerivedPoint {
 	return out
 }
 
-// deriveRate converts a cumulative counter into a per-second rate. It assumes
-// cumulative temporality (the OTLP default): the rate at point i is the
-// increase since point i-1 divided by the elapsed seconds. A decrease is
-// treated as a counter reset, so the new value itself is taken as the increase.
+// deriveRate converts a counter into a per-second rate.
+//
+// A cumulative point holds a running total, so its rate is the increase since
+// the previous point divided by the elapsed seconds; a decrease is a counter
+// reset and the new value itself is taken as the increase. A delta point
+// already holds the increase over its own interval, so its rate is the value
+// divided by that interval and the previous point plays no part.
 func deriveRate(points []InputPoint) []DerivedPoint {
 	out := make([]DerivedPoint, 0, len(points))
-	for i := 1; i < len(points); i++ {
-		prev, cur := points[i-1], points[i]
-		dtSec := float64(cur.T-prev.T) / 1e9
-		if dtSec <= 0 {
-			continue
+	for i, cur := range points {
+		var prev *InputPoint
+		if i > 0 {
+			prev = &points[i-1]
 		}
-		delta := cur.Value - prev.Value
-		if delta < 0 { // counter reset
-			delta = cur.Value
+		if v, ok := pointRate(prev, cur); ok {
+			out = append(out, DerivedPoint{T: cur.T, Value: v, Count: cur.Count})
 		}
-		out = append(out, DerivedPoint{T: cur.T, Value: delta / dtSec, Count: cur.Count})
 	}
 	return out
+}
+
+// pointRate returns the per-second rate at cur, and false when it has none.
+func pointRate(prev *InputPoint, cur InputPoint) (float64, bool) {
+	if cur.Delta {
+		width := cur.IntervalNano
+		if width <= 0 && prev != nil {
+			width = cur.T - prev.T
+		}
+		if width <= 0 {
+			return 0, false
+		}
+		return cur.Value / (float64(width) / 1e9), true
+	}
+	if prev == nil {
+		return 0, false
+	}
+	dtSec := float64(cur.T-prev.T) / 1e9
+	if dtSec <= 0 {
+		return 0, false
+	}
+	delta := cur.Value - prev.Value
+	if delta < 0 { // counter reset
+		delta = cur.Value
+	}
+	return delta / dtSec, true
 }
 
 func derivePercentiles(metricType string, points []InputPoint) []DerivedPoint {
