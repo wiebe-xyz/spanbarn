@@ -59,3 +59,41 @@ func (w *RetentionWorker) settingInt(key string) int {
 	}
 	return n
 }
+
+// projectLogDeleter is the part of the repository that deletes one project's
+// logs. It is optional, like the shard interfaces, so a repository without it
+// skips the per-project log cap.
+type projectLogDeleter interface {
+	DeleteProjectLogsOlderThan(ctx context.Context, projectID int64, cutoff time.Time) (int64, error)
+}
+
+// evictProjectLogs enforces retention.log_hours.project.{id}: that project's
+// logs older than that many hours go, error-trace logs included. It exists for
+// projects whose logs carry content (the claude-code project holds full
+// conversations) and only ever shortens retention. Returns the rows deleted.
+func (w *RetentionWorker) evictProjectLogs(ctx context.Context, now time.Time) (int64, error) {
+	d, ok := w.repo.(projectLogDeleter)
+	if !ok {
+		return 0, nil
+	}
+	pids, err := w.repo.ListProjectIDs()
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, pid := range pids {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		h := w.settingInt(fmt.Sprintf("retention.log_hours.project.%d", pid))
+		if h <= 0 {
+			continue
+		}
+		n, err := d.DeleteProjectLogsOlderThan(ctx, pid, now.Add(-time.Duration(h)*time.Hour))
+		total += n
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}

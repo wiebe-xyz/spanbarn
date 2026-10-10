@@ -84,3 +84,26 @@ func TestProjectSetRejectsBadInput(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectSetLogRetention(t *testing.T) {
+	cfg, id := newProjectSetFixture(t)
+	key := "retention.log_hours.project." + itoa(id)
+	if err := runProjectCmd(cfg, []string{"set", "claude-code", "--log-retention-hours=168"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := settingOf(t, cfg, key); got != "168" {
+		t.Errorf("%s = %q, want 168", key, got)
+	}
+	if got := settingOf(t, cfg, "ingest.sample_ratio.project."+itoa(id)); got != "" {
+		t.Errorf("trace ratio touched without its flag: %q", got)
+	}
+	if err := runProjectCmd(cfg, []string{"set", "claude-code", "--log-retention-hours=0"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := settingOf(t, cfg, key); got != "" {
+		t.Errorf("%s = %q, want cleared", key, got)
+	}
+	if err := runProjectCmd(cfg, []string{"set", "claude-code", "--log-retention-hours=-5"}); err == nil {
+		t.Error("negative hours: want error")
+	}
+}

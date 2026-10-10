@@ -166,7 +166,7 @@ func serveSWR[T any](
 // boring.min_traces_per_minute, boring.min_traces_per_minute.project.{id},
 // boring.min_traces_per_hour, boring.min_traces_per_hour.project.{id}.
 // Per-project retention caps: retention.max_hours.project.{id},
-// retention.max_traces.project.{id}.
+// retention.max_traces.project.{id}, retention.log_hours.project.{id}.
 // Rollup tiers: metric_rollup_retention_days (the 5-minute tier) plus
 // metric_rollup_{hourly,daily,weekly,monthly}_days, and the attribute reduction
 // lists metrics.rollup_drop_attrs.{hourly,daily}.
@@ -189,6 +189,7 @@ func isAllowedSettingKey(k string) bool {
 		strings.HasPrefix(k, "boring.min_traces_per_minute.") ||
 		strings.HasPrefix(k, "boring.min_traces_per_hour.") ||
 		strings.HasPrefix(k, "boring.verbose_until.") ||
+		strings.HasPrefix(k, "retention.log_hours.project.") ||
 		strings.HasPrefix(k, "retention.max_hours.project.") ||
 		strings.HasPrefix(k, "retention.max_traces.project.")
 }

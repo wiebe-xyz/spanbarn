@@ -297,6 +297,38 @@ func (r *Repository) deleteLogsFrom(ctx context.Context, table string, cutoff, e
 	return total, nil
 }
 
+// DeleteProjectLogsOlderThan removes one project's log records ingested before
+// cutoff, error-trace logs included, from the live and kept tables. It backs a
+// per-project cap for projects whose logs hold content that should not outlive
+// it. Logs of pinned traces are still kept.
+func (r *Repository) DeleteProjectLogsOlderThan(ctx context.Context, projectID int64, cutoff time.Time) (int64, error) {
+	var total int64
+	for _, table := range []string{"logs", "kept_logs"} {
+		n, err := r.batchedDelete(ctx, TableFamily(table), func(db *sql.DB) (int64, error) {
+			res, e := db.ExecContext(ctx, `
+				DELETE FROM `+table+` WHERE rowid IN (
+				    SELECT rowid FROM `+table+` l
+				    WHERE project_id = ? AND ingested_at < ?
+				    AND (trace_id IS NULL OR NOT EXISTS (
+				            SELECT 1 FROM pinned_traces p
+				            WHERE p.project_id = l.project_id AND p.trace_id = l.trace_id))
+				    LIMIT ?)`,
+				projectID, cutoff, retentionDeleteBatch,
+			)
+			if e != nil {
+				return 0, e
+			}
+			n, _ := res.RowsAffected()
+			return n, nil
+		})
+		total += n
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
 // --- Pinned Traces ---
 
 func (r *Repository) PinTrace(ctx context.Context, projectID int64, traceID, label string) error {

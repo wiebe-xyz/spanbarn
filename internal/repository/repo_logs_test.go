@@ -342,3 +342,48 @@ func TestPinnedTracesCRUD(t *testing.T) {
 		t.Errorf("expected empty list after unpin, got %d", len(list3))
 	}
 }
+
+// A project's own log cap ignores the error-trace exemption: those logs hold
+// conversation text and must not outlive the cap. Pinned traces and other
+// projects are left alone.
+func TestDeleteProjectLogsOlderThan(t *testing.T) {
+	repo := setupTestDB(t)
+	now := time.Now().UTC()
+	ctx := context.Background()
+
+	if err := repo.InsertLogs(ctx, []model.LogRecord{
+		makeLogRecord(1, "error-trace", "error log", 17),
+		makeLogRecord(1, "pinned-trace", "pinned log", 9),
+		makeLogRecord(1, "", "plain log", 9),
+		makeLogRecord(2, "", "other project", 9),
+	}); err != nil {
+		t.Fatalf("InsertLogs: %v", err)
+	}
+	if err := repo.InsertErrorSamples([]Span{makeSpan(1, "error-trace", "s1", "web", "op", "error", 1000)}); err != nil {
+		t.Fatalf("InsertErrorSamples: %v", err)
+	}
+	if err := repo.PinTrace(ctx, 1, "pinned-trace", "keep"); err != nil {
+		t.Fatalf("PinTrace: %v", err)
+	}
+
+	n, err := repo.DeleteProjectLogsOlderThan(ctx, 1, now.Add(-time.Hour))
+	if err != nil || n != 0 {
+		t.Fatalf("past cutoff: n=%d err=%v, want 0", n, err)
+	}
+	n, err = repo.DeleteProjectLogsOlderThan(ctx, 1, now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("DeleteProjectLogsOlderThan: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("deleted %d, want 2 (error-trace and plain)", n)
+	}
+	for pid, want := range map[int64]int{1: 1, 2: 1} {
+		_, total, err := repo.QueryLogs(ctx, LogFilter{ProjectID: pid, From: now.Add(-time.Minute), To: now.Add(time.Minute), Limit: 10})
+		if err != nil {
+			t.Fatalf("QueryLogs: %v", err)
+		}
+		if total != want {
+			t.Errorf("project %d keeps %d logs, want %d", pid, total, want)
+		}
+	}
+}
