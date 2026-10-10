@@ -173,7 +173,7 @@ func otlpToSpanRecords(req *collectorpb.ExportTraceServiceRequest, projectID int
 				// Extract resource from merged attributes.
 				if len(merged) > 0 {
 					raw, _ := json.Marshal(merged)
-					rec.Resource = extractResource(raw)
+					rec.Resource = extractResource(rec.Name, raw)
 				}
 
 				collapseSpanParams(&rec)

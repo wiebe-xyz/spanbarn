@@ -65,7 +65,7 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 
 		// Extract resource from attributes if not provided.
 		if rec.Resource == "" && len(sp.Attributes) > 0 {
-			rec.Resource = extractResource(sp.Attributes)
+			rec.Resource = extractResource(sp.Name, sp.Attributes)
 		}
 
 		collapseSpanParams(&rec)
@@ -141,19 +141,37 @@ func collapseSpanParams(rec *model.SpanRecord) {
 }
 
 // extractResource tries to derive a resource name from span attributes.
-// It checks common attribute keys in priority order.
-func extractResource(raw json.RawMessage) string {
+// It checks common attribute keys in priority order, then falls back to the
+// attribute that identifies the operation for spans of known instrumentation.
+func extractResource(spanName string, raw json.RawMessage) string {
 	var attrs map[string]any
 	if err := json.Unmarshal(raw, &attrs); err != nil {
 		return ""
 	}
 	keys := []string{"http.route", "db.statement", "rpc.method", "aws.operation"}
+	if k := fallbackResourceKey(spanName); k != "" {
+		keys = append(keys, k)
+	}
 	for _, k := range keys {
 		if v, ok := attrs[k]; ok {
 			if s, ok := v.(string); ok && s != "" {
 				return s
 			}
 		}
+	}
+	return ""
+}
+
+// fallbackResourceKey names the attribute that stands in for a resource on
+// spans that carry none of the common keys. Claude Code tool spans have
+// tool_name and its LLM request spans have model; the interaction root has
+// neither, so it keeps an empty resource.
+func fallbackResourceKey(spanName string) string {
+	switch {
+	case spanName == "claude_code.llm_request":
+		return "model"
+	case spanName == "claude_code.tool" || strings.HasPrefix(spanName, "claude_code.tool."):
+		return "tool_name"
 	}
 	return ""
 }

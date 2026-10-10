@@ -18,7 +18,7 @@ Commands:
   version                     print version and build time
   worker-once                 run one worker pass
   user create|delete|list     manage users
-  project create|list         manage projects
+  project create|list|set     manage projects
   apikey create|list|revoke   manage API keys
   db snapshot-settings        write a settings-only database snapshot
   help                        show this message
