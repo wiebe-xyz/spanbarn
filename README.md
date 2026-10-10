@@ -168,6 +168,10 @@ spanbarn user create --username=admin --password=secret
 # Manage projects
 spanbarn project create --name=my-app
 
+# Keep every trace of a project (1 in N; 0 returns to the defaults).
+# Writes the trace buffer ratio and the boring-span ratio together.
+spanbarn project set my-app --trace-ratio=1
+
 # Manage API keys (scope: ingest | read | full)
 spanbarn apikey create --project=my-app --scope=ingest
 spanbarn apikey create --project=my-app --name=cli --scope=read
