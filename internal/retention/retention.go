@@ -206,6 +206,7 @@ type cycleStats struct {
 	e2eUsersDeleted      int64
 	webSessionsDeleted   int64
 	projectTracesEvicted int64
+	projectLogsDeleted   int64
 	backlogRemains       bool
 }
 
@@ -229,6 +230,7 @@ func (c *cycleStats) attributes() []attribute.KeyValue {
 		attribute.Int64("e2e_users_deleted", c.e2eUsersDeleted),
 		attribute.Int64("web_sessions_deleted", c.webSessionsDeleted),
 		attribute.Int64("project_traces_evicted", c.projectTracesEvicted),
+		attribute.Int64("project_logs_deleted", c.projectLogsDeleted),
 		attribute.Bool("backlog_remains", c.backlogRemains),
 	}
 }
@@ -253,6 +255,7 @@ func (c *cycleStats) logArgs() []any {
 		"e2e_users_deleted", c.e2eUsersDeleted,
 		"web_sessions_deleted", c.webSessionsDeleted,
 		"project_traces_evicted", c.projectTracesEvicted,
+		"project_logs_deleted", c.projectLogsDeleted,
 		"backlog_remains", c.backlogRemains,
 	}
 }
@@ -454,7 +457,10 @@ func (w *RetentionWorker) purgeHousekeeping(ctx context.Context, cut cycleCutoff
 	// Enforce per-project retention caps (max age in hours and/or max non-error
 	// trace count). Only shortens retention; never touches errors, pinned traces,
 	// or metrics.
-	st.projectTracesEvicted, err = w.evictPerProjectCaps(ctx, cut.now)
+	if st.projectTracesEvicted, err = w.evictPerProjectCaps(ctx, cut.now); err != nil {
+		return err
+	}
+	st.projectLogsDeleted, err = w.evictProjectLogs(ctx, cut.now)
 	return err
 }
 

@@ -172,6 +172,9 @@ spanbarn project create --name=my-app
 # Writes the trace buffer ratio and the boring-span ratio together.
 spanbarn project set my-app --trace-ratio=1
 
+# Delete a project's logs after H hours, error-trace logs included (0 removes the cap).
+spanbarn project set my-app --log-retention-hours=168
+
 # Manage API keys (scope: ingest | read | full)
 spanbarn apikey create --project=my-app --scope=ingest
 spanbarn apikey create --project=my-app --name=cli --scope=read
