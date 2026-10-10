@@ -521,6 +521,24 @@ export type LogsParams = {
   to: string
   limit?: number
   offset?: number
+  /** Keep logs whose attribute equals the value, for each pair. */
+  labels?: Record<string, string>
+  /** `asc` returns the oldest log first; the default is newest first. */
+  order?: 'asc' | 'desc'
+}
+
+/** One group of a counter's summed growth, from GET /api/v1/metrics/totals. */
+export type MetricTotal = {
+  labels: Record<string, string>
+  total: number
+}
+
+/** Response from GET /api/v1/metrics/totals */
+export type MetricTotalsResponse = {
+  name: string
+  type: string
+  unit: string
+  groups: MetricTotal[]
 }
 
 /** Project, range and optional filters for attribute discovery. */

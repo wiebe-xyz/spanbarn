@@ -32,6 +32,8 @@ const PagesPage = lazy(() => import('./pages/PagesPage').then(m => ({ default: m
 const PageDetailPage = lazy(() => import('./pages/PageDetailPage').then(m => ({ default: m.PageDetailPage })))
 const AlertsPage = lazy(() => import('./pages/AlertsPage').then(m => ({ default: m.AlertsPage })))
 const SlosPage = lazy(() => import('./pages/SlosPage').then(m => ({ default: m.SlosPage })))
+const ClaudeCodePage = lazy(() => import('./pages/ClaudeCodePage').then(m => ({ default: m.ClaudeCodePage })))
+const ClaudeSessionPage = lazy(() => import('./pages/ClaudeSessionPage').then(m => ({ default: m.ClaudeSessionPage })))
 const MetricsPage = lazy(() => import('./pages/MetricsPage').then(m => ({ default: m.MetricsPage })))
 const LogsPage = lazy(() => import('./pages/LogsPage').then(m => ({ default: m.LogsPage })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })))
@@ -72,6 +74,8 @@ function App() {
               <Route path="alerts" element={<AlertsPage />} />
               <Route path="slos" element={<SlosPage />} />
               <Route path="metrics" element={<MetricsPage />} />
+              <Route path="claude-code" element={<ClaudeCodePage />} />
+              <Route path="claude-code/:sessionId" element={<ClaudeSessionPage />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="account" element={<ProfilePage />} />
               {/* Back-compat: the account page used to live at /profile. */}
