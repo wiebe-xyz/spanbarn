@@ -256,3 +256,38 @@ func TestPinnedTracesAuthRequired(t *testing.T) {
 		t.Errorf("want 401, got %d", rec.Code)
 	}
 }
+
+func TestLogsQueryLabelFilterAndOrder(t *testing.T) {
+	srv, sm, repo := setupLogsQueryServer(t)
+	now := time.Now().UTC()
+	mk := func(session, body string, off time.Duration) model.LogRecord {
+		return model.LogRecord{
+			ProjectID: 1, Body: body, TimeUnixNano: uint64(now.Add(off).UnixNano()),
+			Attributes: []byte(`{"session.id":"` + session + `"}`),
+		}
+	}
+	insertTestLogs(t, repo, []model.LogRecord{mk("s1", "b", 2*time.Second), mk("s1", "a", time.Second), mk("s2", "x", 0)})
+
+	get := func(path string) (int, []string) {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(sessionCookie(t, sm))
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		var resp struct {
+			Logs []struct{ Body string } `json:"logs"`
+		}
+		_ = json.NewDecoder(rr.Body).Decode(&resp)
+		var bodies []string
+		for _, l := range resp.Logs {
+			bodies = append(bodies, l.Body)
+		}
+		return rr.Code, bodies
+	}
+	code, bodies := get("/api/v1/logs?project_id=1&label[session.id]=s1&order=asc")
+	if code != http.StatusOK || len(bodies) != 2 || bodies[0] != "a" || bodies[1] != "b" {
+		t.Fatalf("code %d bodies %v, want [a b]", code, bodies)
+	}
+	if code, _ := get("/api/v1/logs?project_id=1&label[bad%20key]=x"); code != http.StatusBadRequest {
+		t.Errorf("bad label key: status %d, want 400", code)
+	}
+}

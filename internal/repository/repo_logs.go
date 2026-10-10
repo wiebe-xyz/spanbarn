@@ -33,10 +33,14 @@ type LogFilter struct {
 	MinSeverity int32  // inclusive lower bound on severity_number; 0 = no filter
 	Service     string // matches JSON_EXTRACT(attributes,'$.service.name')
 	Search      string // body LIKE %search%
-	From        time.Time
-	To          time.Time
-	Limit       int
-	Offset      int
+	// Attributes keeps logs whose attribute equals the value, for each pair.
+	Attributes map[string]string
+	// Ascending returns the oldest log first; the default is newest first.
+	Ascending bool
+	From      time.Time
+	To        time.Time
+	Limit     int
+	Offset    int
 }
 
 // PinnedTrace is a user-saved trace reference that exempts its logs from normal deletion.
@@ -124,7 +128,15 @@ func (r *Repository) QueryLogs(ctx context.Context, f LogFilter) ([]LogRow, int,
 		args = append(args, "%"+f.Search+"%")
 	}
 
+	where, args, err := appendAttrFilters(where, args, f.Attributes)
+	if err != nil {
+		return nil, 0, err
+	}
 	cond := strings.Join(where, " AND ")
+	order := "DESC"
+	if f.Ascending {
+		order = "ASC"
+	}
 
 	var total int
 	db := r.reader(FamilyLogs)
@@ -144,7 +156,7 @@ func (r *Repository) QueryLogs(ctx context.Context, f LogFilter) ([]LogRow, int,
 		`SELECT id, project_id, COALESCE(trace_id,''), COALESCE(span_id,''),
 		        severity_number, severity_text,
 		        time_unix_nano, observed_time_unix_nano, body, attributes, ingested_at
-		 FROM logs WHERE %s ORDER BY time_unix_nano DESC LIMIT ? OFFSET ?`, cond),
+		 FROM logs WHERE %s ORDER BY time_unix_nano %s LIMIT ? OFFSET ?`, cond, order),
 		pageArgs...,
 	)
 	if err != nil {
