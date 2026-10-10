@@ -66,6 +66,55 @@ func TestDeriveRateCounterReset(t *testing.T) {
 	}
 }
 
+func TestDeriveRateDeltaMatchesCumulative(t *testing.T) {
+	// The same traffic, exported two ways: running totals and per-interval
+	// increments. Both must chart as 10/s then 15/s.
+	cumulative := []InputPoint{
+		{T: 0, Value: 0},
+		{T: 10e9, Value: 100},
+		{T: 20e9, Value: 250},
+	}
+	delta := []InputPoint{
+		{T: 10e9, Value: 100, Delta: true, IntervalNano: 10e9},
+		{T: 20e9, Value: 150, Delta: true, IntervalNano: 10e9},
+	}
+	want := Derive("sum", cumulative)
+	got := Derive("sum", delta)
+	if len(got) != len(want) {
+		t.Fatalf("delta gave %d points, cumulative %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].T != want[i].T || !approx(got[i].Value, want[i].Value, 1e-9) {
+			t.Errorf("point %d: delta %v@%d, cumulative %v@%d", i, got[i].Value, got[i].T, want[i].Value, want[i].T)
+		}
+	}
+}
+
+func TestDeriveRateDeltaNeverNegative(t *testing.T) {
+	// A delta that is smaller than the previous one is not a counter reset.
+	pts := []InputPoint{
+		{T: 10e9, Value: 100, Delta: true, IntervalNano: 10e9},
+		{T: 20e9, Value: 5, Delta: true, IntervalNano: 10e9},
+	}
+	got := Derive("sum", pts)
+	if len(got) != 2 || !approx(got[1].Value, 0.5, 1e-9) {
+		t.Fatalf("got %+v, want second rate 0.5", got)
+	}
+}
+
+func TestDeriveRateDeltaWithoutIntervalUsesSpacing(t *testing.T) {
+	// No interval known (rollup read of an unknown width): fall back to the
+	// gap from the previous point, and drop the first point, which has none.
+	pts := []InputPoint{
+		{T: 10e9, Value: 100, Delta: true},
+		{T: 20e9, Value: 150, Delta: true},
+	}
+	got := Derive("sum", pts)
+	if len(got) != 1 || !approx(got[0].Value, 15, 1e-9) {
+		t.Fatalf("got %+v, want one point at 15/s", got)
+	}
+}
+
 func TestDeriveRateZeroInterval(t *testing.T) {
 	// Duplicate timestamp must not divide by zero; point is skipped.
 	pts := []InputPoint{{T: 5e9, Value: 1}, {T: 5e9, Value: 2}}

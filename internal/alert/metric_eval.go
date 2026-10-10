@@ -93,6 +93,7 @@ type bucketAgg struct {
 	count, obs int64
 	sum, last  float64
 	typ        string
+	delta      bool
 	histBounds []float64
 	histCounts []float64
 	lastExtra  string
@@ -109,7 +110,7 @@ func mergeRollupsByBucket(rows []repository.MetricRollup) []metrics.InputPoint {
 		t := r.Bucket.UnixNano()
 		g := byBucket[t]
 		if g == nil {
-			g = &bucketAgg{typ: r.Type}
+			g = &bucketAgg{typ: r.Type, delta: r.Type == "sum" && r.Temporality == repository.DeltaTemporality}
 			byBucket[t] = g
 			order = append(order, t)
 		}
@@ -125,6 +126,9 @@ func mergeRollupsByBucket(rows []repository.MetricRollup) []metrics.InputPoint {
 	for _, t := range order {
 		g := byBucket[t]
 		value := g.last
+		if g.delta {
+			value = g.sum
+		}
 		if g.typ == "gauge" && g.count > 0 {
 			value = g.sum / float64(g.count)
 		}
@@ -136,7 +140,8 @@ func mergeRollupsByBucket(rows []repository.MetricRollup) []metrics.InputPoint {
 		} else if g.lastExtra != "" {
 			extra = json.RawMessage(g.lastExtra)
 		}
-		out = append(out, metrics.InputPoint{T: t, Value: value, Count: g.obs, Extra: extra})
+		out = append(out, metrics.InputPoint{T: t, Value: value, Count: g.obs, Extra: extra,
+			Delta: g.delta, IntervalNano: int64(repository.Rollup5mStep) * int64(time.Second)})
 	}
 	return out
 }

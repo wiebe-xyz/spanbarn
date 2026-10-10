@@ -281,7 +281,7 @@ project automatically.
 | `SPANBARN_REDIS_URL` | | Redis URL for distributed rate limiting and caching |
 | `SPANBARN_CACHE_TTL_SECONDS` | `60` | Dashboard query cache lifetime |
 | `SPANBARN_API_RATE_PER_MINUTE` | | API requests per minute per IP |
-| `SPANBARN_INGEST_RATE_PER_MINUTE` | | Ingest requests per minute per API key |
+| `SPANBARN_INGEST_RATE_PER_MINUTE` | | Ingest requests per minute per client IP (all API keys behind one IP share the budget) |
 | `SPANBARN_LOGIN_RATE_PER_MINUTE` | | Login attempts per minute per IP |
 | `SPANBARN_METRICS_TOKEN` | | Bearer token to protect the `/metrics` endpoint |
 | `SPANBARN_BUGBARN_ENDPOINT` | | BugBarn endpoint for error forwarding |

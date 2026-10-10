@@ -233,13 +233,21 @@ func (h *metricsQueryHandlers) rawInput(r *http.Request, projectID int64, name s
 		if metricType == "" {
 			metricType, unit = row.Type, row.Unit
 		}
-		in = append(in, metrics.InputPoint{
+		p := metrics.InputPoint{
 			T:          row.TimeUnixNano,
 			Value:      row.Value,
 			Count:      row.Count,
 			Extra:      service.MarshalMetricExtra(row),
 			Attributes: parseAttrs(row.Attributes),
-		})
+		}
+		if row.DeltaSum() {
+			p.Delta = true
+			p.Extra = nil
+			if row.StartTimeUnixNano > 0 && row.TimeUnixNano > row.StartTimeUnixNano {
+				p.IntervalNano = row.TimeUnixNano - row.StartTimeUnixNano
+			}
+		}
+		in = append(in, p)
 	}
 	return metricType, unit, in, nil
 }
@@ -287,7 +295,11 @@ func (h *metricsQueryHandlers) rollupInput(r *http.Request, projectID int64, nam
 			if metricType == "" {
 				metricType, unit = row.Type, row.Unit
 			}
-			in = append(in, rollupToInput(row))
+			p := rollupToInput(row)
+			if p.Delta {
+				p.IntervalNano = step * int64(time.Second)
+			}
+			in = append(in, p)
 		}
 		return metricType, unit, in, step, nil
 	}
@@ -314,11 +326,17 @@ func (h *metricsQueryHandlers) queryTier(r *http.Request, step int64, f service.
 // rollupToInput maps a rollup bucket to a derivation input point. The per-type
 // value choice keeps metrics.Derive working unchanged: gauges use the bucket
 // average, counters use the bucket-end cumulative value (so rate is derived
-// across buckets), distributions carry their merged extra.
+// across buckets), distributions carry their merged extra. A delta sum has no
+// running total to difference: its bucket sum is the increase, and the caller
+// sets the interval it covers.
 func rollupToInput(row service.MetricRollup) metrics.InputPoint {
 	value := row.Last
 	if row.Type == "gauge" && row.Count > 0 {
 		value = row.Sum / float64(row.Count)
+	}
+	delta := row.Type == "sum" && row.Temporality == rollup.TemporalityDelta
+	if delta {
+		value = row.Sum
 	}
 	return metrics.InputPoint{
 		T:          row.Bucket.UnixNano(),
@@ -326,6 +344,7 @@ func rollupToInput(row service.MetricRollup) metrics.InputPoint {
 		Count:      row.ObsCount,
 		Extra:      json.RawMessage(row.Extra),
 		Attributes: parseAttrs(row.Attributes),
+		Delta:      delta,
 	}
 }
 

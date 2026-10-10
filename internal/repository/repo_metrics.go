@@ -28,6 +28,20 @@ type MetricRow struct {
 	IngestedAt        time.Time
 }
 
+// DeltaTemporality is the stored name of delta aggregation temporality.
+const DeltaTemporality = "delta"
+
+// deltaSumExtra is stored in the extra column of a delta sum. The raw metrics
+// table has no temporality column, and a delta point reads as nonsense when
+// charted as a running total, so the marker rides in the column that sums
+// otherwise leave empty. DeltaSum reads it back.
+var deltaSumExtra = `{"temporality":"delta"}`
+
+// DeltaSum reports whether a stored point is a delta sum.
+func (m MetricRow) DeltaSum() bool {
+	return m.Type == string(model.MetricTypeSum) && m.Extra == deltaSumExtra
+}
+
 // MetricFilter scopes metric queries.
 type MetricFilter struct {
 	ProjectID  int64
@@ -71,6 +85,8 @@ func (r *Repository) InsertMetrics(ctx context.Context, recs []model.MetricRecor
 			if len(rec.Extra) > 0 && string(rec.Extra) != "null" {
 				s := string(rec.Extra)
 				extra = &s
+			} else if rec.Type == model.MetricTypeSum && rec.Temporality == DeltaTemporality {
+				extra = &deltaSumExtra
 			}
 			if _, err := stmt.ExecContext(ctx,
 				rec.ProjectID, rec.Name, rec.Description, rec.Unit, string(rec.Type),
