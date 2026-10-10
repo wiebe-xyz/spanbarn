@@ -40,6 +40,7 @@ import type {
   MetricCatalogResponse,
   MetricInsightsResponse,
   MetricSeriesResponse,
+  MetricTotalsResponse,
   LogsResponse,
   LogsHistogramResponse,
   PinnedTracesResponse,
@@ -124,6 +125,15 @@ function qs(params: Record<string, string | number | undefined>): string {
   )
   if (entries.length === 0) return ''
   return '?' + entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')
+}
+
+/** Encodes label[key]=value filters, joined onto an existing query string. */
+function labelQuery(labels: Record<string, string> | undefined, base: string): string {
+  const parts = Object.entries(labels ?? {}).map(
+    ([k, v]) => `label[${encodeURIComponent(k)}]=${encodeURIComponent(v)}`,
+  )
+  if (parts.length === 0) return ''
+  return (base.includes('?') ? '&' : '?') + parts.join('&')
 }
 
 function dashboardQs(f: DashboardFilter, extra: Record<string, string | undefined> = {}): string {
@@ -456,21 +466,41 @@ export const api = {
     return fetchJSON<MetricSeriesResponse>(`/api/v1/metrics/series${query}`)
   },
 
-  getLogs: (params: LogsParams) =>
-    fetchJSON<LogsResponse>(
-      `/api/v1/logs${qs({
-        project_id: params.projectId || undefined,
-        trace_id: params.traceId,
-        span_id: params.spanId,
-        severity: params.severity,
-        service: params.service,
-        search: params.search,
-        from: params.from,
-        to: params.to,
-        limit: params.limit,
-        offset: params.offset,
-      })}`,
-    ),
+  getMetricTotals: (
+    name: string,
+    from: string,
+    to: string,
+    groupBy: string[],
+    projectId = 0,
+    labels?: Record<string, string>,
+  ) => {
+    let query = qs({
+      name,
+      from,
+      to,
+      project_id: projectId || undefined,
+      group_by: groupBy.length > 0 ? groupBy.join(',') : undefined,
+    })
+    query += labelQuery(labels, query)
+    return fetchJSON<MetricTotalsResponse>(`/api/v1/metrics/totals${query}`)
+  },
+
+  getLogs: (params: LogsParams) => {
+    const base = qs({
+      project_id: params.projectId || undefined,
+      trace_id: params.traceId,
+      span_id: params.spanId,
+      severity: params.severity,
+      service: params.service,
+      search: params.search,
+      from: params.from,
+      to: params.to,
+      limit: params.limit,
+      offset: params.offset,
+      order: params.order === 'asc' ? 'asc' : undefined,
+    })
+    return fetchJSON<LogsResponse>(`/api/v1/logs${base}${labelQuery(params.labels, base)}`)
+  },
 
   getLogsHistogram: (params: Pick<LogsParams, 'from' | 'to' | 'severity' | 'service' | 'search' | 'projectId'>) =>
     fetchJSON<LogsHistogramResponse>(
