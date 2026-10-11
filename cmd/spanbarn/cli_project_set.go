@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"strconv"
@@ -17,7 +18,7 @@ func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 func runProjectSet(cfg config.Config, args []string) error {
 	const usage = "usage: spanbarn project set <slug> [--trace-ratio=N] [--log-retention-hours=H]"
 	if len(args) == 0 {
-		return fmt.Errorf(usage)
+		return errors.New(usage)
 	}
 	slug := args[0]
 	fs := flag.NewFlagSet("project set", flag.ContinueOnError)
