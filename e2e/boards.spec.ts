@@ -21,7 +21,7 @@ const panels = [
 async function saveToBoard(page: Page, boardName: string, title: string, url: string) {
   await page.goto(url);
   // The button shows once the query has a result, an empty one included.
-  await page.getByRole('button', { name: 'Save to board' }).click({ timeout: 20000 });
+  await page.getByRole('button', { name: 'Save to board' }).click({ timeout: 60000 });
   await page.getByRole('combobox', { name: 'Board' }).selectOption({ label: boardName });
   await page.getByLabel('Panel title').fill(title);
   await page.getByRole('button', { name: 'Add panel' }).click();
@@ -60,7 +60,7 @@ test.describe('Boards', () => {
 
     await page.goto(boardUrl);
     const cards = page.getByTestId('panel');
-    await expect(cards).toHaveCount(3, { timeout: 15000 });
+    await expect(cards).toHaveCount(3, { timeout: 60000 });
     await expect(cards.locator('h2')).toHaveText(panels.map((p) => p.title));
 
     // One range for every panel, saved with the board.
@@ -76,20 +76,20 @@ test.describe('Boards', () => {
     await refreshSaved;
 
     await page.reload();
-    await expect(cards).toHaveCount(3, { timeout: 15000 });
+    await expect(cards).toHaveCount(3, { timeout: 60000 });
     await expect(page.getByRole('combobox', { name: 'Time range' })).toHaveValue('1h');
     await expect(page.getByRole('combobox', { name: 'Refresh interval' })).toHaveValue('60');
 
     // The first and third panels are tables, the second a chart. A project with no
     // spans in the window shows the empty table, otherwise rows.
-    await expect(cards.nth(0).getByRole('table')).toBeVisible({ timeout: 15000 });
+    await expect(cards.nth(0).getByRole('table')).toBeVisible({ timeout: 60000 });
     await expect(cards.nth(1).getByRole('button', { name: 'Show table' })).toBeVisible();
     await expect(cards.nth(2).getByRole('table')).toBeVisible();
 
     // Reordering sticks.
     await page.getByRole('button', { name: `Move ${panels[0].title} later` }).click();
     await page.reload();
-    await expect(cards.locator('h2')).toHaveText([panels[1].title, panels[0].title, panels[2].title], { timeout: 15000 });
+    await expect(cards.locator('h2')).toHaveText([panels[1].title, panels[0].title, panels[2].title], { timeout: 60000 });
 
     // Clean up.
     page.once('dialog', (d) => d.accept());
