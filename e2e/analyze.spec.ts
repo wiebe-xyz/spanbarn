@@ -23,11 +23,13 @@ test.describe('Query (group by)', () => {
     await expect(page.getByRole('combobox', { name: 'Time range' })).toHaveValue('24h');
 
     // Nothing runs until the query is submitted.
+    // 1h keeps the scan small on an environment that holds a lot of spans.
+    await page.getByRole('combobox', { name: 'Time range' }).selectOption('1h');
     await page.getByRole('button', { name: '+ Add group by' }).click();
     await page.getByLabel('Group by key 1', { exact: true }).fill('kind');
     await page.getByRole('button', { name: 'Run query' }).click();
     await expect(page).toHaveURL(/group_by=kind/);
-    await expect(page).toHaveURL(/range=24h/);
+    await expect(page).toHaveURL(/range=1h/);
 
     // A project with no spans in the window renders the empty state, otherwise rows.
     const table = page.getByRole('table');

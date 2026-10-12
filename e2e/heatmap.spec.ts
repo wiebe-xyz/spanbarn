@@ -19,7 +19,7 @@ test.describe('Duration heatmap', () => {
     await login(page, request);
 
     const loaded = page.waitForResponse((r) => r.url().includes('/api/v1/heatmap'));
-    await page.goto('/heatmap?range=7d');
+    await page.goto('/heatmap?range=1h');
     await expect(page.getByRole('heading', { name: 'Duration heatmap' })).toBeVisible({ timeout: 10000 });
     expect((await loaded).status()).toBe(200);
 

@@ -27,6 +27,8 @@ test.describe('Compare attributes', () => {
     await selection.getByLabel('Filter key').fill('kind');
     await selection.getByLabel('Filter value').fill('server');
 
+    // 1h keeps the scan small on an environment that holds a lot of spans.
+    await page.getByRole('combobox', { name: 'Time range' }).selectOption('1h');
     const compared = page.waitForResponse((r) => r.url().includes('/api/v1/attributes/compare'));
     await page.getByRole('button', { name: 'Compare' }).click();
     expect((await compared).status()).toBe(200);
