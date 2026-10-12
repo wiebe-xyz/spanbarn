@@ -90,15 +90,11 @@ func (c *recoverConn) PrepareContext(ctx context.Context, query string) (driver.
 }
 
 func (c *recoverConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	var (
-		tx  driver.Tx
-		err error
-	)
-	if b, ok := c.Conn.(driver.ConnBeginTx); ok {
-		tx, err = b.BeginTx(ctx, opts)
-	} else {
-		tx, err = c.Conn.Begin() //nolint:staticcheck // fallback for drivers without BeginTx
+	b, ok := c.Conn.(driver.ConnBeginTx)
+	if !ok {
+		return nil, errors.New("sqlite driver does not support BeginTx")
 	}
+	tx, err := b.BeginTx(ctx, opts)
 	if err != nil {
 		return nil, recoverErr(ctx, err)
 	}
