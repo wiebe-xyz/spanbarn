@@ -5,7 +5,8 @@ import type { MetricTotal } from '../api/types'
 import { TimeRangeSelector } from '../components/TimeRangeSelector'
 import { getTimeRange } from '../utils/timeRange'
 import { useTimeRange } from '../contexts/useTimeRange'
-import { CLAUDE_METRICS, GROUP_KEYS, joinTotals } from '../utils/claudeCode'
+import { ToolSpanTable } from '../components/ToolSpanTable'
+import { CLAUDE_METRICS, GROUP_KEYS, joinTotals, toolSpanStats, type ToolSpanStat } from '../utils/claudeCode'
 
 const CLAUDE_PROJECT_SLUG = 'claude-code'
 
@@ -19,6 +20,7 @@ export function ClaudeCodePage(): ReactElement {
   const [groupKey, setGroupKey] = useState<string>(GROUP_KEYS[0].key)
   const [byMetric, setByMetric] = useState<Record<string, MetricTotal[]>>({})
   const [loading, setLoading] = useState(true)
+  const [tools, setTools] = useState<ToolSpanStat[]>([])
 
   useEffect(() => {
     void api.listProjects().then((ps) => {
@@ -45,6 +47,17 @@ export function ClaudeCodePage(): ReactElement {
     return () => { cancelled = true }
   }, [projectId, range, groupKey])
 
+  useEffect(() => {
+    if (!projectId) return
+    let cancelled = false
+    const { from, to } = getTimeRange(range)
+    // kind '' keeps internal spans: tool spans are not server spans.
+    void api.getOperations(CLAUDE_PROJECT_SLUG, from, to, '')
+      .then((ops) => { if (!cancelled) setTools(toolSpanStats(ops ?? []).tools) })
+      .catch(() => { if (!cancelled) setTools([]) })
+    return () => { cancelled = true }
+  }, [projectId, range])
+
   const rows = useMemo(() => joinTotals(groupKey, byMetric, CLAUDE_METRICS[0].name), [groupKey, byMetric])
   const sum = (name: string): number => (byMetric[name] ?? []).reduce((a, g) => a + g.total, 0)
 
@@ -69,6 +82,8 @@ export function ClaudeCodePage(): ReactElement {
           </div>
         ))}
       </div>
+
+      <ToolSpanTable tools={tools} />
 
       <div style={card}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>

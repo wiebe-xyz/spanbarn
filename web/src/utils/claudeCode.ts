@@ -1,4 +1,4 @@
-import type { LogEntry, MetricTotal } from '../api/types'
+import type { LogEntry, MetricTotal, OperationSummary } from '../api/types'
 
 /** Metrics the Claude Code page totals per group, in column order. */
 export const CLAUDE_METRICS = [
@@ -42,6 +42,49 @@ export function joinTotals(key: string, byMetric: Record<string, MetricTotal[]>,
     }
   }
   return [...rows.values()].sort((a, b) => (b.totals[order] ?? 0) - (a.totals[order] ?? 0))
+}
+
+/** Formats a microsecond duration as ms, seconds or minutes. */
+export function formatMicros(us: number): string {
+  if (us >= 60_000_000) return `${(us / 60_000_000).toFixed(1)} min`
+  if (us >= 1_000_000) return `${(us / 1_000_000).toFixed(1)} s`
+  return `${Math.round(us / 1000)} ms`
+}
+
+/** Calls and blocked-on-user time for one tool. */
+export type ToolSpanStat = { name: string; calls: number; blocked: number; blockedP50Us: number; blockedP95Us: number }
+
+const TOOL_SPAN = 'claude_code.tool'
+const BLOCKED_SPAN = 'claude_code.tool.blocked_on_user'
+
+/** Derives per-tool call counts and blocked-on-user time from the operations of the claude-code service. */
+export function toolSpanStats(ops: OperationSummary[]): { tools: ToolSpanStat[]; totalCalls: number; totalBlocked: number } {
+  const byTool = new Map<string, ToolSpanStat>()
+  const entry = (resource: string): ToolSpanStat => {
+    const name = resource || 'unknown'
+    let st = byTool.get(name)
+    if (!st) {
+      st = { name, calls: 0, blocked: 0, blockedP50Us: 0, blockedP95Us: 0 }
+      byTool.set(name, st)
+    }
+    return st
+  }
+  for (const o of ops) {
+    if (o.operation === TOOL_SPAN) {
+      entry(o.resource).calls += o.spanCount
+    } else if (o.operation === BLOCKED_SPAN) {
+      const st = entry(o.resource)
+      st.blocked += o.spanCount
+      st.blockedP50Us = o.p50Us
+      st.blockedP95Us = o.p95Us
+    }
+  }
+  const tools = [...byTool.values()].sort((a, b) => b.calls - a.calls || b.blocked - a.blocked)
+  return {
+    tools,
+    totalCalls: tools.reduce((a, t) => a + t.calls, 0),
+    totalBlocked: tools.reduce((a, t) => a + t.blocked, 0),
+  }
 }
 
 /** Event name without its claude_code. prefix. */
