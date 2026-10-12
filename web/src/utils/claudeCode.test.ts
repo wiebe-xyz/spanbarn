@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { joinTotals, toolCounts, toolSpanStats, formatCount, formatMicros, formatSeconds } from './claudeCode'
+import { joinTotals, toolCounts, toolSpanStats, sessionTracesUrl, formatCount, formatMicros, formatSeconds } from './claudeCode'
 import type { LogEntry, OperationSummary } from '../api/types'
 
 const ev = (body: string, attributes: Record<string, unknown> = {}): LogEntry => ({
@@ -70,6 +70,27 @@ describe('formatMicros', () => {
     expect(formatMicros(250_000)).toBe('250 ms')
     expect(formatMicros(3_400_000)).toBe('3.4 s')
     expect(formatMicros(90_000_000)).toBe('1.5 min')
+  })
+})
+
+describe('sessionTracesUrl', () => {
+  it('links to the trace list filtered on the session, over the last 7 days', () => {
+    const now = new Date('2026-10-12T12:00:00Z')
+    const url = sessionTracesUrl({ projectId: 7, sessionId: 'abc', now })
+    const [path, query] = url.split('?')
+    expect(path).toBe('/traces')
+    const params = new URLSearchParams(query)
+    expect(params.get('project')).toBe('7')
+    expect(JSON.parse(params.get('filter') ?? '')).toEqual({
+      match: 'and',
+      filters: [{ key: 'session.id', op: '=', value: 'abc' }],
+    })
+    const span = new Date(params.get('to') as string).getTime() - new Date(params.get('from') as string).getTime()
+    expect(span).toBe(7 * 24 * 3600_000)
+  })
+
+  it('omits the project when unknown', () => {
+    expect(sessionTracesUrl({ projectId: 0, sessionId: 'a b' })).not.toContain('project=')
   })
 })
 

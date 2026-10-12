@@ -6,7 +6,7 @@ import { TimeRangeSelector } from '../components/TimeRangeSelector'
 import { getTimeRange } from '../utils/timeRange'
 import { useTimeRange } from '../contexts/useTimeRange'
 import { ToolSpanTable } from '../components/ToolSpanTable'
-import { CLAUDE_METRICS, GROUP_KEYS, joinTotals, toolSpanStats, type ToolSpanStat } from '../utils/claudeCode'
+import { CLAUDE_METRICS, GROUP_KEYS, joinTotals, sessionTracesUrl, toolSpanStats, type ToolSpanStat } from '../utils/claudeCode'
 
 const CLAUDE_PROJECT_SLUG = 'claude-code'
 
@@ -98,7 +98,13 @@ export function ClaudeCodePage(): ReactElement {
               <tr key={r.value} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ ...cell, textAlign: 'left', fontFamily: 'monospace' }}>
                   {groupKey === 'session.id'
-                    ? <Link to={`/claude-code/${encodeURIComponent(r.value)}?project=${projectId}`}>{r.value}</Link>
+                    ? (
+                      <>
+                        <Link to={`/claude-code/${encodeURIComponent(r.value)}?project=${projectId}`}>{r.value}</Link>
+                        {' '}
+                        <Link to={sessionTracesUrl({ projectId: projectId ?? 0, sessionId: r.value })} aria-label={`Traces of ${r.value}`}>traces</Link>
+                      </>
+                    )
                     : r.value}
                 </td>
                 {CLAUDE_METRICS.map((m) => <td key={m.name} style={cell}>{m.format(r.totals[m.name] ?? 0)}</td>)}
