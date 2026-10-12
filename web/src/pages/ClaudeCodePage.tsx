@@ -102,7 +102,7 @@ export function ClaudeCodePage(): ReactElement {
                       <>
                         <Link to={`/claude-code/${encodeURIComponent(r.value)}?project=${projectId}`}>{r.value}</Link>
                         {' '}
-                        <Link to={sessionTracesUrl({ projectId, sessionId: r.value })} aria-label={`Traces of ${r.value}`}>traces</Link>
+                        <Link to={sessionTracesUrl({ projectId: projectId ?? 0, sessionId: r.value })} aria-label={`Traces of ${r.value}`}>traces</Link>
                       </>
                     )
                     : r.value}
