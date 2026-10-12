@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -186,7 +188,18 @@ func writeError(w http.ResponseWriter, status int, msg, details string) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// statusClientClosedRequest is nginx's 499: the client went away before the
+// response was ready.
+const statusClientClosedRequest = 499
+
 func writeServerError(w http.ResponseWriter, r *http.Request, msg string, err error) {
+	if errors.Is(err, context.Canceled) {
+		// The caller aborted (tab closed, request superseded). Nothing failed
+		// on the server, so it is neither an error log nor a 500.
+		slog.Debug(msg+": client canceled", "method", r.Method, "path", r.URL.Path)
+		writeError(w, statusClientClosedRequest, "client closed request", "")
+		return
+	}
 	attrs := []any{"error", err, "method", r.Method, "path", r.URL.Path}
 	if id := getRequestID(r); id != "" {
 		attrs = append(attrs, "request_id", id)

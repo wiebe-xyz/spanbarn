@@ -159,7 +159,11 @@ func Open(dbPath string, o OpenOptions) (*DB, error) {
 	if o.ReadOnly {
 		mode = "sqlite read-only"
 	}
-	db, err := otelsql.Open("sqlite", buildDSN(dbPath, o.ReadOnly, o.CacheMB, o.MmapMB, key), otelOpts...)
+	driverName := "sqlite"
+	if o.ReadOnly {
+		driverName = recoverDriver()
+	}
+	db, err := otelsql.Open(driverName, buildDSN(dbPath, o.ReadOnly, o.CacheMB, o.MmapMB, key), otelOpts...)
 	if err != nil {
 		if key != "" {
 			connSetups.Delete(key)
