@@ -6,15 +6,15 @@ const errorFilter = JSON.stringify({ match: 'and', filters: [{ key: 'status', op
 const panels = [
   {
     title: 'Error count by url.path',
-    url: `/analyze?run=1&range=24h&group_by=url.path&calc=count&filter=${encodeURIComponent(errorFilter)}`,
+    url: `/analyze?run=1&range=1h&group_by=url.path&calc=count&filter=${encodeURIComponent(errorFilter)}`,
   },
   {
     title: 'P95 by http.request.method',
-    url: '/analyze?run=1&range=24h&group_by=http.request.method&calc=p95&view=chart',
+    url: '/analyze?run=1&range=1h&group_by=http.request.method&calc=p95&view=chart',
   },
   {
     title: 'COUNT by user_agent.original',
-    url: '/analyze?run=1&range=24h&group_by=user_agent.original&calc=count',
+    url: '/analyze?run=1&range=1h&group_by=user_agent.original&calc=count',
   },
 ];
 
@@ -54,6 +54,15 @@ test.describe('Boards', () => {
     const boardUrl = page.url();
     await expect(page.getByText('This board has no panels')).toBeVisible();
 
+    // One range for every panel, saved with the board. Set while the board is empty so the
+    // panels never scan the default 24h: staging holds far more spans than the tests need.
+    // A reload cancels a request still in flight, so wait for each save to land.
+    const saved = () => page.waitForResponse((r) => r.request().method() === 'PUT' && /\/api\/v1\/boards\/\d+$/.test(r.url()) && r.ok());
+    const range = page.getByRole('combobox', { name: 'Time range' });
+    const rangeSaved = saved();
+    await range.selectOption('1h');
+    await rangeSaved;
+
     for (const p of panels) {
       await saveToBoard(page, boardName, p.title, p.url);
     }
@@ -63,14 +72,7 @@ test.describe('Boards', () => {
     await expect(cards).toHaveCount(3, { timeout: 60000 });
     await expect(cards.locator('h2')).toHaveText(panels.map((p) => p.title));
 
-    // One range for every panel, saved with the board.
-    const range = page.getByRole('combobox', { name: 'Time range' });
-    await expect(range).toHaveValue('24h');
-    // A reload cancels a request still in flight, so wait for each save to land.
-    const saved = () => page.waitForResponse((r) => r.request().method() === 'PUT' && /\/api\/v1\/boards\/\d+$/.test(r.url()) && r.ok());
-    const rangeSaved = saved();
-    await range.selectOption('1h');
-    await rangeSaved;
+    await expect(range).toHaveValue('1h');
     const refreshSaved = saved();
     await page.getByRole('combobox', { name: 'Refresh interval' }).selectOption('60');
     await refreshSaved;
