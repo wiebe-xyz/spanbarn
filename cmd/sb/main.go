@@ -27,6 +27,7 @@ var commandTable = map[string]func(args []string) error{
 	"database":    cmdDatabase,
 	"service-map": cmdServiceMap,
 	"tui":         cmdTUI,
+	"mcp":         cmdMCP,
 }
 
 func main() {
@@ -94,6 +95,7 @@ Telemetry (JSON by default; add --output table for a table):
 
 Interactive:
   tui           Trace/error explorer (drill into spans + correlated logs)
+  mcp           Read-only MCP server over stdio (same data as the commands above)
 
 Common flags: --project SLUG, --from, --to, --output json|table
 
