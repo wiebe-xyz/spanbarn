@@ -33,7 +33,7 @@ test.describe('Compare attributes', () => {
     await page.getByRole('button', { name: 'Compare' }).click();
     expect((await compared).status()).toBe(200);
     await expect(page).toHaveURL(/selection=/);
-    await expect(page.getByTestId('compare-note')).toBeVisible({ timeout: 60000 });
+    await expect(page.getByTestId('compare-note')).toBeVisible({ timeout: 30000 });
 
     // The traces page links here with its filters as the selection.
     await page.goto('/traces?service=web');

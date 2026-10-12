@@ -33,7 +33,7 @@ test.describe('Query (group by)', () => {
 
     // A project with no spans in the window renders the empty state, otherwise rows.
     const table = page.getByRole('table');
-    await expect(table).toBeVisible({ timeout: 60000 });
+    await expect(table).toBeVisible({ timeout: 30000 });
     await expect(table.getByRole('button', { name: 'Count' })).toBeVisible();
     await expect(table.getByRole('button', { name: /P95/ })).toBeVisible();
 
@@ -43,6 +43,6 @@ test.describe('Query (group by)', () => {
 
     // The URL is the whole query, so a reload runs it again.
     await page.reload();
-    await expect(page.getByRole('tab', { name: 'Chart', selected: true })).toBeVisible({ timeout: 60000 });
+    await expect(page.getByRole('tab', { name: 'Chart', selected: true })).toBeVisible({ timeout: 30000 });
   });
 });
