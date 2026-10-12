@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spanbarn
+spec:
+  template:
+    spec:
+      containers:
+        - name: spanbarn
+          # The writer ran at its 2Gi limit (memory.events max in the hundreds,
+          # ~470 GiB of file refaults over 37h): anon memory (Go heap up to
+          # GOMEMLIMIT 1GiB plus the 256 MiB SQLite page cache and the
+          # read-only caches) left the kernel page cache almost nothing, so
+          # index reads went back to disk. 3Gi leaves ~1.5 GiB for page cache.
+          # The 500m CPU limit throttled 4.5% of periods (~920 s), which stalls
+          # the serial write scheduler; the limit is raised to 2 cores and the
+          # request kept low so scheduling is unchanged.
+          resources:
+            requests:
+              cpu: 250m
+              memory: 3Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi
