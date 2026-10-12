@@ -9,6 +9,9 @@ resources:
   - ingress-forward-domains.yaml
   - middleware-sb-redirect.yaml
   - middleware-otlp-root.yaml
+patches:
+  - path: patch-resources.yaml
+
 # Image tags are injected by the deploy workflow (sed-replaces __SHA__).
 # This avoids the ":latest" tag being applied — that tag isn't published.
 images:
