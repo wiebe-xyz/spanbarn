@@ -4,6 +4,12 @@ metadata:
   name: spanbarn
 spec:
   template:
+    metadata:
+      labels:
+        # Opts the writer out of the cluster's Kyverno policies that rewrite
+        # requests to cpu 10m / memory 128Mi (k3s-infra#79), so the scheduler
+        # sees the real 3Gi. Harmless until the policy exclusion is applied.
+        resources.wiebe.xyz/keep-requests: "allow"
     spec:
       containers:
         - name: spanbarn
