@@ -1,3 +1,5 @@
+import { toLocalDatetime } from '../analyze/model'
+import { serializeFilter } from '../filters/model'
 import type { LogEntry, MetricTotal, OperationSummary } from '../api/types'
 
 /** Metrics the Claude Code page totals per group, in column order. */
@@ -85,6 +87,17 @@ export function toolSpanStats(ops: OperationSummary[]): { tools: ToolSpanStat[];
     totalCalls: tools.reduce((a, t) => a + t.calls, 0),
     totalBlocked: tools.reduce((a, t) => a + t.blocked, 0),
   }
+}
+
+/** The trace list filtered on one session's `session.id`, over the last 7 days. */
+export function sessionTracesUrl(opts: { projectId: number; sessionId: string; now?: Date }): string {
+  const now = opts.now ?? new Date()
+  const params = new URLSearchParams()
+  if (opts.projectId) params.set('project', String(opts.projectId))
+  params.set('filter', serializeFilter({ match: 'and', filters: [{ key: 'session.id', op: '=', value: opts.sessionId }] }))
+  params.set('from', toLocalDatetime(new Date(now.getTime() - 7 * 24 * 3600_000)))
+  params.set('to', toLocalDatetime(now))
+  return `/traces?${params.toString()}`
 }
 
 /** Event name without its claude_code. prefix. */

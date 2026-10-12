@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { LogEntry } from '../api/types'
-import { eventName, toolCounts } from '../utils/claudeCode'
+import { eventName, sessionTracesUrl, toolCounts } from '../utils/claudeCode'
 
 const SHOWN_ATTRS = ['prompt', 'tool_name', 'model', 'cost_usd', 'duration_ms', 'success', 'input_tokens', 'output_tokens']
 
@@ -44,6 +44,7 @@ export function ClaudeSessionPage(): ReactElement {
       {tools.length > 0 && (
         <p>Tool calls: {tools.map(([name, n]) => `${name} ${n}`).join(', ')}</p>
       )}
+      <p><Link to={sessionTracesUrl({ projectId, sessionId })}>All traces of this session</Link></p>
       {traceIds.length > 0 && (
         <p>Traces: {traceIds.map((id) => (
           <Link key={id} to={`/traces/${id}`} style={{ marginRight: '0.5rem', fontFamily: 'monospace' }}>{id.slice(0, 8)}</Link>

@@ -25,6 +25,14 @@ describe('ClaudeCodePage', () => {
     expect(api.getMetricTotals).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.any(String), ['session.id'], 7)
   })
 
+  it('links each session to the trace list filtered on its session.id', async () => {
+    render(<MemoryRouter><ClaudeCodePage /></MemoryRouter>)
+    const link = await screen.findByRole('link', { name: 'Traces of abc' })
+    const href = link.getAttribute('href') ?? ''
+    expect(href).toContain('/traces?project=7')
+    expect(decodeURIComponent(href)).toContain('"key":"session.id"')
+  })
+
   it('shows tool call counts and blocked-on-user time derived from spans', async () => {
     vi.mocked(api.getOperations).mockResolvedValue([
       { operation: 'claude_code.tool', resource: 'Bash', kind: 'internal', spanCount: 12, errorCount: 0, errorRate: 0, p50Us: 0, p95Us: 0, p99Us: 0 },
