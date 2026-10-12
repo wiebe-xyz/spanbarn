@@ -26,7 +26,7 @@ test.describe('Attributes', () => {
 
     await page.getByRole('combobox', { name: 'Time range' }).selectOption('1h');
     await expect(page).toHaveURL(/range=1h/);
-    await expect(page.getByTestId('scan-note')).toBeVisible({ timeout: 60000 });
+    await expect(page.getByTestId('scan-note')).toBeVisible({ timeout: 30000 });
 
     // The trace health page links here.
     await page.goto('/trace-health');
