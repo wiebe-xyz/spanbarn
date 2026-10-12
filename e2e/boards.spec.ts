@@ -25,7 +25,9 @@ async function saveToBoard(page: Page, boardName: string, title: string, url: st
   await page.getByRole('combobox', { name: 'Board' }).selectOption({ label: boardName });
   await page.getByLabel('Panel title').fill(title);
   await page.getByRole('button', { name: 'Add panel' }).click();
-  await expect(page.getByRole('status')).toContainText(`Saved to ${boardName}`);
+  // The panel write queues behind the staging flush, which holds the write
+  // scheduler for several seconds, so the default 5s expect is too short.
+  await expect(page.getByRole('status')).toContainText(`Saved to ${boardName}`, { timeout: 30000 });
 }
 
 test.describe('Boards', () => {
