@@ -50,6 +50,9 @@ type job struct {
 	fn       func() error
 	resultCh chan error
 	label    string
+	// enqueuedAt is taken before the job enters its channel, so the wait to
+	// start includes time spent blocked on a full channel.
+	enqueuedAt time.Time
 }
 
 // Scheduler serialises DB writes through a single goroutine with two priority
@@ -97,7 +100,7 @@ func (s *Scheduler) SetLogger(l *slog.Logger) {
 // the context is cancelled while waiting to enqueue or waiting for the result.
 // An in-flight job cannot be cancelled.
 func (s *Scheduler) Submit(ctx context.Context, p Priority, label string, fn func() error) error {
-	j := job{fn: fn, resultCh: make(chan error, 1), label: label}
+	j := job{fn: fn, resultCh: make(chan error, 1), label: label, enqueuedAt: time.Now()}
 	ch := s.lowPri
 	if p == High {
 		ch = s.highPri
@@ -151,6 +154,7 @@ func (s *Scheduler) execute(j job) {
 	span.SetAttributes(attribute.String("write.op", label))
 
 	start := time.Now()
+	wait := start.Sub(j.enqueuedAt)
 	s.mu.Lock()
 	s.curLabel = label
 	s.curStart = start
@@ -164,7 +168,10 @@ func (s *Scheduler) execute(j job) {
 	s.curLabel = ""
 	s.mu.Unlock()
 
-	span.SetAttributes(attribute.Int64("write.duration_ms", dur.Milliseconds()))
+	span.SetAttributes(
+		attribute.Int64("write.duration_ms", dur.Milliseconds()),
+		attribute.Int64("write.wait_ms", wait.Milliseconds()),
+	)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -172,7 +179,12 @@ func (s *Scheduler) execute(j job) {
 	span.End()
 
 	if dur >= s.slowThreshold {
-		s.logger.Warn("write scheduler: slow write", "op", label, "duration_ms", dur.Milliseconds())
+		s.logger.Warn("write scheduler: slow write", "op", label, "duration_ms", dur.Milliseconds(), "wait_ms", wait.Milliseconds())
+	}
+	// Info, not Warn: the wait is the serial queue draining behind a slow job
+	// and the slow job itself already files a Warn.
+	if wait >= s.slowThreshold {
+		s.logger.Info("write scheduler: slow queue wait", "op", label, "wait_ms", wait.Milliseconds(), "duration_ms", dur.Milliseconds())
 	}
 	j.resultCh <- err
 }
