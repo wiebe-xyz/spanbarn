@@ -16,7 +16,9 @@ jobs:
           echo "Validating tag: ${TAG}"
           # SemVer 2.0.0 with leading v: vMAJOR.MINOR.PATCH[-prerelease][+build]
           SEMVER='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
-          if [[ ! "${TAG}" =~ ${SEMVER} ]]; then
+          # js-vX.Y.Z tags release the JS SDK (release-js-sdk.yml); the prefix is
+          # optional and the rest has to be semver.
+          if [[ ! "${TAG#js-}" =~ ${SEMVER} ]]; then
             echo "::error::Tag '${TAG}' does not match semver vX.Y.Z[-prerelease][+build]"
             echo "Valid examples: v1.2.3, v1.2.3-rc.1, v1.2.3+build.5, v1.2.3-rc.1+build.5"
             echo "Datever (e.g. v2026.05.16) and other formats are not accepted."

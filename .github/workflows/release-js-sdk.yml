@@ -1,0 +1,67 @@
+name: Release JS SDK
+
+# Publishes @spanbarn/js as a tarball on a GitHub Release, without npmjs.com.
+# Consumers install it from the release asset URL:
+#
+#   https://github.com/wiebe-xyz/spanbarn/releases/download/js-v<version>/spanbarn-js-<version>.tgz
+#
+# A `js-vX.Y.Z` tag cuts a release. The tag version has to equal the version in
+# sdks/js/package.json, so the asset name and the manifest inside it agree.
+# Only GITHUB_TOKEN is used.
+on:
+  push:
+    tags:
+      - 'js-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check the tag against package.json
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#js-v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "${TAG_VERSION}" != "${PKG_VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match sdks/js/package.json version ${PKG_VERSION}"
+            exit 1
+          fi
+          echo "VERSION=${PKG_VERSION}" >> "$GITHUB_ENV"
+      - name: Enable corepack
+        run: corepack enable
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Pack
+        # pnpm pack rewrites catalog: specifiers to concrete versions in the
+        # packed manifest; npm pack would ship them literally.
+        run: pnpm pack --pack-destination "${RUNNER_TEMP}"
+      - name: Check the tarball
+        run: |
+          TARBALL="${RUNNER_TEMP}/spanbarn-js-${VERSION}.tgz"
+          test -f "${TARBALL}"
+          tar -tzf "${TARBALL}" | grep -q '^package/dist/esm/index.js$'
+          tar -tzf "${TARBALL}" | grep -q '^package/dist/cjs/index.js$'
+          tar -tzf "${TARBALL}" | grep -q '^package/package.json$'
+          if tar -xzOf "${TARBALL}" package/package.json | grep -q 'catalog:'; then
+            echo "::error::packed manifest still contains catalog: specifiers"
+            exit 1
+          fi
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "${RUNNER_TEMP}/spanbarn-js-${VERSION}.tgz" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "@spanbarn/js ${VERSION}" \
+            --notes "SpanBarn JavaScript SDK ${VERSION}. Install from the attached tarball."
