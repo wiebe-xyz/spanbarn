@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, getClientConfig } from './helpers';
+import { login, getClientConfig, expectResult } from './helpers';
 
 test.describe('Query (group by)', () => {
   test('redirects to login when not authenticated', async ({ page }) => {
@@ -33,7 +33,7 @@ test.describe('Query (group by)', () => {
 
     // A project with no spans in the window renders the empty state, otherwise rows.
     const table = page.getByRole('table');
-    await expect(table).toBeVisible({ timeout: 30000 });
+    await expectResult(page, table);
     await expect(table.getByRole('button', { name: 'Count' })).toBeVisible();
     await expect(table.getByRole('button', { name: /P95/ })).toBeVisible();
 

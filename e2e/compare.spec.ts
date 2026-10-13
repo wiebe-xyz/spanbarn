@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, getClientConfig } from './helpers';
+import { login, getClientConfig, expectResult } from './helpers';
 
 test.describe('Compare attributes', () => {
   test('redirects to login when not authenticated', async ({ page }) => {
@@ -33,7 +33,7 @@ test.describe('Compare attributes', () => {
     await page.getByRole('button', { name: 'Compare' }).click();
     expect((await compared).status()).toBe(200);
     await expect(page).toHaveURL(/selection=/);
-    await expect(page.getByTestId('compare-note')).toBeVisible({ timeout: 30000 });
+    await expectResult(page, page.getByTestId('compare-note'));
 
     // The traces page links here with its filters as the selection.
     await page.goto('/traces?service=web');

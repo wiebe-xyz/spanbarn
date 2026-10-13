@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { login, getClientConfig } from './helpers';
+import { login, getClientConfig, expectResult } from './helpers';
 
 test.describe('Attributes', () => {
   test('redirects to login when not authenticated', async ({ page }) => {
@@ -26,7 +26,7 @@ test.describe('Attributes', () => {
 
     await page.getByRole('combobox', { name: 'Time range' }).selectOption('1h');
     await expect(page).toHaveURL(/range=1h/);
-    await expect(page.getByTestId('scan-note')).toBeVisible({ timeout: 30000 });
+    await expectResult(page, page.getByTestId('scan-note'));
 
     // The trace health page links here.
     await page.goto('/trace-health');
