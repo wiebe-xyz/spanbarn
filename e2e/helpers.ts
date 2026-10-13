@@ -1,4 +1,4 @@
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { APIRequestContext, Locator, Page } from '@playwright/test';
 
 export interface ClientConfig {
   oidc?: { enabled?: boolean; loginURL?: string };
@@ -84,4 +84,15 @@ export async function login(page: Page, request: APIRequestContext) {
   } else {
     await loginNative(page);
   }
+}
+
+// expectResult waits for a query result to render and fails at once when the
+// page shows an error alert instead. The pages render a failed read as
+// role=alert and never render the result, so waiting on the result alone burns
+// the whole timeout on a request that already failed and hides the server error.
+export async function expectResult(page: Page, result: Locator, timeout = 30000) {
+  const failure = page.getByRole('alert');
+  await result.or(failure).first().waitFor({ state: 'visible', timeout });
+  if (await result.first().isVisible()) return;
+  throw new Error(`page reported an error instead of a result: ${(await failure.first().innerText()).trim()}`);
 }
