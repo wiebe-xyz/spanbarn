@@ -120,7 +120,28 @@ func (c *BugBarnClient) baseTags() map[string]string {
 	return tags
 }
 
+// withEnvironment copies attrs and adds the deployment environment under the
+// two attribute names BugBarn groups by. BugBarn has no top-level environment
+// field, so the tag alone left every event without one. A key the caller set
+// wins.
+func (c *BugBarnClient) withEnvironment(attrs map[string]any) map[string]any {
+	if c.env == "" {
+		return attrs
+	}
+	out := make(map[string]any, len(attrs)+2)
+	for k, v := range attrs {
+		out[k] = v
+	}
+	for _, k := range []string{"environment", "deployment.environment"} {
+		if _, set := out[k]; !set {
+			out[k] = c.env
+		}
+	}
+	return out
+}
+
 func (c *BugBarnClient) enqueue(ev bugbarnEvent) {
+	ev.Attributes = c.withEnvironment(ev.Attributes)
 	select {
 	case c.queue <- ev:
 	default:
