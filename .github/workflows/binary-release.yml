@@ -30,7 +30,7 @@ env:
 jobs:
   tag:
     name: Create Release Tag
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, build]
     # A manual run releases the current default branch. An automatic run
     # releases only a push that CI passed; a failed, cancelled or skipped CI run
     # produces no tag, and therefore no npm, PyPI, deb or brew publish.
@@ -49,6 +49,22 @@ jobs:
           SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
           echo "sha=${SHA}" >> $GITHUB_OUTPUT
           echo "Releasing ${SHA}"
+
+      - name: Reclaim workspace (clear read-only Go cache from prior runs)
+
+        shell: bash
+
+        run: |
+
+          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
+
+            [ -d "$c" ] || continue
+
+            chmod -R u+w "$c" 2>/dev/null || true
+
+            rm -rf "$c" 2>/dev/null || true
+
+          done
 
       - name: Checkout code
         uses: actions/checkout@v6
@@ -85,20 +101,30 @@ jobs:
 
   publish-npm:
     needs: [tag]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, build]
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     defaults:
       run:
         working-directory: sdks/js
     steps:
+      - name: Reclaim workspace (clear read-only Go cache from prior runs)
+        shell: bash
+        run: |
+          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
+            [ -d "$c" ] || continue
+            chmod -R u+w "$c" 2>/dev/null || true
+            rm -rf "$c" 2>/dev/null || true
+          done
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.tag.outputs.sha }}
-      - name: Enable corepack
-        # setup-node needs pnpm resolvable on PATH, so corepack has to run
-        # before setup-node.
-        run: corepack enable
+      - name: Set up pnpm
+        shell: bash
+        run: |
+          . "$GITHUB_WORKSPACE/scripts/use-pnpm.sh"
+          echo "$GITHUB_WORKSPACE/.tools/corepack-bin" >> "$GITHUB_PATH"
+          if [ -d "$GITHUB_WORKSPACE/.tools/corepack/node_modules/.bin" ]; then echo "$GITHUB_WORKSPACE/.tools/corepack/node_modules/.bin" >> "$GITHUB_PATH"; fi
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
@@ -116,36 +142,53 @@ jobs:
 
   publish-pypi:
     needs: [tag]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, build]
     env:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
     defaults:
       run:
         working-directory: sdks/python
     steps:
+      - name: Reclaim workspace (clear read-only Go cache from prior runs)
+        shell: bash
+        run: |
+          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
+            [ -d "$c" ] || continue
+            chmod -R u+w "$c" 2>/dev/null || true
+            rm -rf "$c" 2>/dev/null || true
+          done
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.tag.outputs.sha }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - run: pip install build twine
-      - run: python -m build
+      - name: Create the build venv
+        # The macOS host's Python is externally managed, so pip needs a venv.
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pyvenv"
+          "$RUNNER_TEMP/pyvenv/bin/python" -m pip install --quiet build twine
+      - run: '"$RUNNER_TEMP/pyvenv/bin/python" -m build'
       - name: Publish to PyPI
         if: env.PYPI_TOKEN != ''
-        run: twine upload dist/*
+        run: '"$RUNNER_TEMP/pyvenv/bin/twine" upload dist/*'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
 
   build-debs:
     name: Build .deb Packages (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, build]
     needs: tag
     strategy:
       matrix:
         arch: [amd64, arm64]
     steps:
+      - name: Reclaim workspace (clear read-only Go cache from prior runs)
+        shell: bash
+        run: |
+          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
+            [ -d "$c" ] || continue
+            chmod -R u+w "$c" 2>/dev/null || true
+            rm -rf "$c" 2>/dev/null || true
+          done
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.tag.outputs.sha }}
@@ -200,12 +243,20 @@ jobs:
 
   build-darwin-tarballs:
     name: Build macOS Tarballs (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, build]
     needs: tag
     strategy:
       matrix:
         arch: [amd64, arm64]
     steps:
+      - name: Reclaim workspace (clear read-only Go cache from prior runs)
+        shell: bash
+        run: |
+          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
+            [ -d "$c" ] || continue
+            chmod -R u+w "$c" 2>/dev/null || true
+            rm -rf "$c" 2>/dev/null || true
+          done
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.tag.outputs.sha }}
@@ -247,7 +298,7 @@ jobs:
 
   attach-to-release:
     name: Attach Artifacts to Release
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, build]
     needs: [tag, build-debs, build-darwin-tarballs]
     steps:
       - name: Download all artifacts
@@ -298,9 +349,17 @@ jobs:
   # ---------------------------------------------------------------------------
   update-brew-repo:
     name: Update Homebrew Tarballs (R2)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, build]
     needs: [tag, build-darwin-tarballs]
     steps:
+      - name: Reclaim workspace (clear read-only Go cache from prior runs)
+        shell: bash
+        run: |
+          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
+            [ -d "$c" ] || continue
+            chmod -R u+w "$c" 2>/dev/null || true
+            rm -rf "$c" 2>/dev/null || true
+          done
       - name: Checkout code
         uses: actions/checkout@v6
         with:
@@ -313,9 +372,24 @@ jobs:
           path: darwin-download
 
       - name: Install sops
+
+        shell: bash
+
         run: |
-          curl -fsSL -o /tmp/sops https://github.com/getsops/sops/releases/download/v3.12.2/sops-v3.12.2.linux.amd64
-          sudo install -m 0755 /tmp/sops /usr/local/bin/sops
+
+          set -euo pipefail
+
+          command -v sops >/dev/null 2>&1 && exit 0
+
+          case "$(uname -m)" in arm64|aarch64) ARCH=arm64 ;; *) ARCH=amd64 ;; esac
+
+          mkdir -p "$RUNNER_TEMP/bin"
+
+          curl -fsSL -o "$RUNNER_TEMP/bin/sops" "https://github.com/getsops/sops/releases/download/v3.12.2/sops-v3.12.2.darwin.${ARCH}"
+
+          chmod +x "$RUNNER_TEMP/bin/sops"
+
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Prepare brew repository
         env:
@@ -360,7 +434,9 @@ jobs:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY_PRODUCTION }}
           AWS_DEFAULT_REGION: auto
         run: |
-          pip install awscli
+          python3 -m venv "$RUNNER_TEMP/awsvenv"
+          "$RUNNER_TEMP/awsvenv/bin/python" -m pip install --quiet awscli
+          export PATH="$RUNNER_TEMP/awsvenv/bin:$PATH"
           # Decrypt R2 credentials on disk (never echoed).
           export AWS_ACCESS_KEY_ID=$(sops -d --extract '["r2"]["access_key"]' deploy/ci-secrets.yaml)
           export AWS_SECRET_ACCESS_KEY=$(sops -d --extract '["r2"]["secret_key"]' deploy/ci-secrets.yaml)
@@ -418,9 +494,17 @@ jobs:
 
   update-homebrew-tap:
     name: Update Homebrew Tap (GitHub)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, build]
     needs: [tag, update-brew-repo]
     steps:
+      - name: Reclaim workspace (clear read-only Go cache from prior runs)
+        shell: bash
+        run: |
+          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
+            [ -d "$c" ] || continue
+            chmod -R u+w "$c" 2>/dev/null || true
+            rm -rf "$c" 2>/dev/null || true
+          done
       - name: Checkout code
         uses: actions/checkout@v6
         with:
@@ -433,9 +517,24 @@ jobs:
           path: darwin-download
 
       - name: Install sops
+
+        shell: bash
+
         run: |
-          curl -fsSL -o /tmp/sops https://github.com/getsops/sops/releases/download/v3.12.2/sops-v3.12.2.linux.amd64
-          sudo install -m 0755 /tmp/sops /usr/local/bin/sops
+
+          set -euo pipefail
+
+          command -v sops >/dev/null 2>&1 && exit 0
+
+          case "$(uname -m)" in arm64|aarch64) ARCH=arm64 ;; *) ARCH=amd64 ;; esac
+
+          mkdir -p "$RUNNER_TEMP/bin"
+
+          curl -fsSL -o "$RUNNER_TEMP/bin/sops" "https://github.com/getsops/sops/releases/download/v3.12.2/sops-v3.12.2.darwin.${ARCH}"
+
+          chmod +x "$RUNNER_TEMP/bin/sops"
+
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Generate formula and push to tap
         env:
