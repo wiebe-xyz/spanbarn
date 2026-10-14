@@ -143,6 +143,7 @@ jobs:
       - name: Gate script tests
         run: |
           bash scripts/quality-lib.test.sh
+          bash scripts/e2e-targets.test.sh
           go test ./scripts/...
       - name: Quality gate
         # This replaces an inline 60% coverage floor that sat over packages
@@ -305,6 +306,10 @@ jobs:
       PATH: /Users/wiebe/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Full history and tags: the E2E gate diffs against the last tag.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Transfer manifests
         run: |
@@ -411,50 +416,26 @@ jobs:
           echo "Timed out waiting for writer API to initialize"
           exit 1
 
-      - name: Run E2E tests against staging
-        env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY_STAGING }}
+      # The full suite runs nightly (e2e-nightly.yml). This gate runs only the
+      # specs mapped from the paths changed since the last tag, and none for a
+      # docs-only change.
+      - name: Pick E2E specs for this change
+        id: targets
         run: |
           set -euo pipefail
-          STAGING_URL=https://spanbarn.staging.wiebe.xyz
+          specs=$(scripts/e2e-targets.sh)
+          echo "Specs for this change:"
+          echo "${specs:-<none>}"
+          if [ -n "$specs" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
+          {
+            echo 'specs<<E2E_SPECS_EOF'
+            echo "$specs"
+            echo 'E2E_SPECS_EOF'
+          } >> "$GITHUB_OUTPUT"
 
-          # Decrypt the server admin API key (scope=full, projectID=0).
-          # handleE2ESession accepts this key and bypasses the e2e_enabled check.
-          E2E_API_KEY=$(sops -d --extract '["stringData"]["E2E_API_KEY"]' deploy/k8s/staging/secret.yaml)
-          echo "::add-mask::$E2E_API_KEY"
-
-          # The writer answering is not enough: the reader pod reopens the
-          # database after a writer restart and returns 500s until it has one
-          # good read. Wait for an authenticated read so the first red in the
-          # suite is a real failure.
-          JAR="$RUNNER_TEMP/e2e-cookies.txt"
-          for i in $(seq 1 60); do
-            if curl -sf -o /dev/null -c "$JAR" -X POST \
-                 "${STAGING_URL}/api/v1/e2e/session" \
-                 -H "Authorization: Bearer ${E2E_API_KEY}" \
-               && curl -sf -o /dev/null -b "$JAR" "${STAGING_URL}/api/v1/projects"; then
-              echo "Staging read path ready (attempt ${i})"
-              break
-            fi
-            if [ "$i" = "60" ]; then
-              echo "Staging read path never returned 200"
-              exit 1
-            fi
-            echo "Read path not ready yet, attempt ${i}/60"
-            sleep 5
-          done
-          rm -f "$JAR"
-
-          cd "$(git rev-parse --show-toplevel)"
-          # The self-hosted runner's Node has no corepack, and the runner is
-          # shared with other repos' jobs, so install the pnpm version pinned in
-          # package.json into a job-scoped directory.
-          PNPM_VERSION=$(node -p "require('./package.json').packageManager.split('@')[1]")
-          npm install --prefix "$RUNNER_TEMP/pnpm" "pnpm@${PNPM_VERSION}"
-          export PATH="$RUNNER_TEMP/pnpm/node_modules/.bin:$PATH"
-          echo "$RUNNER_TEMP/pnpm/node_modules/.bin" >> "$GITHUB_PATH"
-          pnpm install --frozen-lockfile
-          pnpm exec playwright install chromium
-          E2E_BASE_URL="${STAGING_URL}" \
-          E2E_API_KEY="${E2E_API_KEY}" \
-          pnpm exec playwright test --project=chromium --reporter=line
+      - name: Run targeted E2E specs against staging
+        if: steps.targets.outputs.run == 'true'
+        uses: ./.github/actions/e2e-staging
+        with:
+          specs: ${{ steps.targets.outputs.specs }}
+          sops-age-key: ${{ secrets.SOPS_AGE_KEY_STAGING }}

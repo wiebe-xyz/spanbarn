@@ -190,6 +190,7 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
         run: |
           bash scripts/quality-lib.test.sh
+          bash scripts/e2e-targets.test.sh
           go test ./scripts/...
       - name: Quality gate
         shell: bash

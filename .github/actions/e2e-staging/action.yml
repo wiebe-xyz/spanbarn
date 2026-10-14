@@ -1,0 +1,69 @@
+name: E2E against staging
+description: Runs Playwright specs against the staging environment.
+
+inputs:
+  specs:
+    description: Spec files to run, one per line. Empty runs the whole suite.
+    required: false
+    default: ''
+  sops-age-key:
+    description: Age key that decrypts deploy/k8s/staging/secret.yaml.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Run E2E tests against staging
+      shell: bash
+      env:
+        SOPS_AGE_KEY: ${{ inputs.sops-age-key }}
+        E2E_SPECS: ${{ inputs.specs }}
+      run: |
+        set -euo pipefail
+        STAGING_URL=https://spanbarn.staging.wiebe.xyz
+
+        # Decrypt the server admin API key (scope=full, projectID=0).
+        # handleE2ESession accepts this key and bypasses the e2e_enabled check.
+        E2E_API_KEY=$(sops -d --extract '["stringData"]["E2E_API_KEY"]' deploy/k8s/staging/secret.yaml)
+        echo "::add-mask::$E2E_API_KEY"
+
+        # The writer answering is not enough: the reader pod reopens the
+        # database after a writer restart and returns 500s until it has one
+        # good read. Wait for an authenticated read so the first red in the
+        # suite is a real failure.
+        JAR="$RUNNER_TEMP/e2e-cookies.txt"
+        for i in $(seq 1 60); do
+          if curl -sf -o /dev/null -c "$JAR" -X POST \
+               "${STAGING_URL}/api/v1/e2e/session" \
+               -H "Authorization: Bearer ${E2E_API_KEY}" \
+             && curl -sf -o /dev/null -b "$JAR" "${STAGING_URL}/api/v1/projects"; then
+            echo "Staging read path ready (attempt ${i})"
+            break
+          fi
+          if [ "$i" = "60" ]; then
+            echo "Staging read path never returned 200"
+            exit 1
+          fi
+          echo "Read path not ready yet, attempt ${i}/60"
+          sleep 5
+        done
+        rm -f "$JAR"
+
+        cd "$(git rev-parse --show-toplevel)"
+        # The self-hosted runner's Node has no corepack, and the runner is
+        # shared with other repos' jobs, so install the pnpm version pinned in
+        # package.json into a job-scoped directory.
+        PNPM_VERSION=$(node -p "require('./package.json').packageManager.split('@')[1]")
+        npm install --prefix "$RUNNER_TEMP/pnpm" "pnpm@${PNPM_VERSION}"
+        export PATH="$RUNNER_TEMP/pnpm/node_modules/.bin:$PATH"
+        pnpm install --frozen-lockfile
+        pnpm exec playwright install chromium
+
+        SPEC_ARGS=()
+        while IFS= read -r spec; do
+          [ -n "$spec" ] && SPEC_ARGS+=("$spec")
+        done <<< "$E2E_SPECS"
+        echo "Running ${#SPEC_ARGS[@]} spec file(s); none listed means the whole suite"
+        E2E_BASE_URL="${STAGING_URL}" \
+        E2E_API_KEY="${E2E_API_KEY}" \
+        pnpm exec playwright test --project=chromium --reporter=line ${SPEC_ARGS[@]+"${SPEC_ARGS[@]}"}

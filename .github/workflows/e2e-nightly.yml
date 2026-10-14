@@ -1,0 +1,35 @@
+name: E2E nightly (staging)
+
+# The full Playwright suite runs here against staging. The staging deploy gate
+# in build-and-test.yml runs only the specs mapped from the paths changed since
+# the last tag (scripts/e2e-targets.sh).
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  e2e:
+    runs-on: [self-hosted, build]
+    timeout-minutes: 60
+    env:
+      HOME: /Users/wiebe
+      PATH: /Users/wiebe/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run the full E2E suite against staging
+        uses: ./.github/actions/e2e-staging
+        with:
+          sops-age-key: ${{ secrets.SOPS_AGE_KEY_STAGING }}
