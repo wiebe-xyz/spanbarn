@@ -128,6 +128,54 @@ func bucketExpr(intervalSec int64) string {
 	return fmt.Sprintf("(%s / %d) * %d", ingestedEpochSQL, intervalSec, intervalSec)
 }
 
+// bucketKey groups spans on a prefix of ingested_at instead of computing Unix
+// seconds per row. strftime costs about as much as the index scan itself on the
+// 0.3 CPU staging pod, and a text prefix groups just as well. SQL groups on the
+// prefix (minute, or second below one minute); Go folds prefixes into buckets.
+type bucketKey struct {
+	sql      string
+	layout   string
+	interval int64
+}
+
+func newBucketKey(intervalSec int64) bucketKey {
+	if intervalSec >= 60 && intervalSec%60 == 0 {
+		return bucketKey{sql: "substr(ingested_at, 1, 16)", layout: "2006-01-02 15:04", interval: intervalSec}
+	}
+	return bucketKey{sql: "substr(ingested_at, 1, 19)", layout: "2006-01-02 15:04:05", interval: intervalSec}
+}
+
+// epoch parses a prefix produced by b.sql and floors it to the bucket width.
+func (b bucketKey) epoch(prefix string) (int64, error) {
+	t, err := time.Parse(b.layout, prefix)
+	if err != nil {
+		return 0, fmt.Errorf("parse ingested_at prefix %q: %w", prefix, err)
+	}
+	sec := t.Unix()
+	return sec - ((sec%b.interval)+b.interval)%b.interval, nil
+}
+
+// bucketMemo remembers the last prefix parsed. Rows arrive in index order, so
+// consecutive rows share a prefix and nearly every lookup is a string compare.
+type bucketMemo struct {
+	key    bucketKey
+	prefix string
+	sec    int64
+	ok     bool
+}
+
+func (m *bucketMemo) epoch(prefix string) (int64, error) {
+	if m.ok && prefix == m.prefix {
+		return m.sec, nil
+	}
+	sec, err := m.key.epoch(prefix)
+	if err != nil {
+		return 0, err
+	}
+	m.prefix, m.sec, m.ok = prefix, sec, true
+	return sec, nil
+}
+
 // QueryDashboardCounts counts spans per time bucket and group. Only the topN
 // groups by volume keep their own series; the rest fold into DashboardOtherGroup.
 // Spans without an HTTP status code are skipped when grouping by http_status.
@@ -143,8 +191,9 @@ func (r *Repository) QueryDashboardCounts(f SpanFilter, intervalSec int64, group
 		table = dashboardHTTPSpans
 	}
 	where, args := dashboardWhere(f, extra...)
+	bk := newBucketKey(intervalSec)
 	q := fmt.Sprintf(`SELECT %s AS bucket, %s AS grp, COUNT(*) FROM %s%s GROUP BY bucket, grp ORDER BY bucket`,
-		bucketExpr(intervalSec), expr, table, where)
+		bk.sql, expr, table, where)
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -154,18 +203,36 @@ func (r *Repository) QueryDashboardCounts(f SpanFilter, intervalSec int64, group
 	}
 	defer rows.Close()
 
-	var points []DashboardCountPoint
+	type key struct {
+		sec   int64
+		group string
+	}
+	totals := map[key]int64{}
 	for rows.Next() {
-		var sec, n int64
-		var grp string
-		if err := rows.Scan(&sec, &grp, &n); err != nil {
+		var prefix, grp string
+		var n int64
+		if err := rows.Scan(&prefix, &grp, &n); err != nil {
 			return nil, err
 		}
-		points = append(points, DashboardCountPoint{Bucket: time.Unix(sec, 0).UTC(), Group: grp, Count: n})
+		sec, err := bk.epoch(prefix)
+		if err != nil {
+			return nil, err
+		}
+		totals[key{sec, grp}] += n
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	points := make([]DashboardCountPoint, 0, len(totals))
+	for k, n := range totals {
+		points = append(points, DashboardCountPoint{Bucket: time.Unix(k.sec, 0).UTC(), Group: k.group, Count: n})
+	}
+	sort.Slice(points, func(i, j int) bool {
+		if !points[i].Bucket.Equal(points[j].Bucket) {
+			return points[i].Bucket.Before(points[j].Bucket)
+		}
+		return points[i].Group < points[j].Group
+	})
 	return foldCountPoints(points, topN), nil
 }
 
@@ -239,16 +306,9 @@ func (r *Repository) QueryDashboardPercentiles(f SpanFilter, intervalSec int64, 
 	}
 	where, args := dashboardWhere(f)
 
-	keep, err := r.topGroupsByCount(expr, where, args, topN)
-	if err != nil {
-		return nil, err
-	}
-	if len(keep) == 0 {
-		return nil, nil
-	}
-
+	bk := newBucketKey(intervalSec)
 	q := fmt.Sprintf(`SELECT %s, %s, duration_us FROM `+dashboardSpans+`%s LIMIT %d`,
-		bucketExpr(intervalSec), expr, where, dashboardRowCap)
+		bk.sql, expr, where, dashboardRowCap)
 	ctx, cancel := r.queryContext()
 	defer cancel()
 	rows, err := r.db.QueryContext(ctx, q, args...)
@@ -257,25 +317,43 @@ func (r *Repository) QueryDashboardPercentiles(f SpanFilter, intervalSec int64, 
 	}
 	defer rows.Close()
 
+	// One pass collects every group; the top N by span count is chosen
+	// afterwards, so no separate counting scan is needed.
 	type key struct {
 		sec   int64
 		group string
 	}
 	durations := map[key][]int64{}
+	totals := map[string]int64{}
+	memo := bucketMemo{key: bk}
 	for rows.Next() {
-		var sec, dur int64
-		var grp string
-		if err := rows.Scan(&sec, &grp, &dur); err != nil {
+		var prefix, grp string
+		var dur int64
+		if err := rows.Scan(&prefix, &grp, &dur); err != nil {
 			return nil, err
 		}
-		if !keep[grp] {
-			continue
+		sec, err := memo.epoch(prefix)
+		if err != nil {
+			return nil, err
 		}
 		k := key{sec, grp}
 		durations[k] = append(durations[k], dur)
+		totals[grp]++
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if topN <= 0 {
+		topN = 10
+	}
+	keep := topGroups(totals, topN)
+	for k := range durations {
+		if !keep[k.group] {
+			delete(durations, k)
+		}
+	}
+	if len(durations) == 0 {
+		return nil, nil
 	}
 
 	points := make([]DashboardPercentilePoint, 0, len(durations))
@@ -299,39 +377,13 @@ func (r *Repository) QueryDashboardPercentiles(f SpanFilter, intervalSec int64, 
 	return points, nil
 }
 
-// topGroupsByCount returns the topN values of the group expression by span count.
-func (r *Repository) topGroupsByCount(expr, where string, args []any, topN int) (map[string]bool, error) {
-	if topN <= 0 {
-		topN = 10
-	}
-	q := fmt.Sprintf(`SELECT %s AS grp, COUNT(*) AS n FROM `+dashboardSpans+`%s GROUP BY grp ORDER BY n DESC, grp LIMIT %d`,
-		expr, where, topN)
-	ctx, cancel := r.queryContext()
-	defer cancel()
-	rows, err := r.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	keep := map[string]bool{}
-	for rows.Next() {
-		var grp string
-		var n int64
-		if err := rows.Scan(&grp, &n); err != nil {
-			return nil, err
-		}
-		keep[grp] = true
-	}
-	return keep, rows.Err()
-}
-
 // QueryDashboardHeatmap counts spans per (time bucket, duration bucket). The
 // duration bucket index follows HeatmapBucketIndexSQL.
 func (r *Repository) QueryDashboardHeatmap(f SpanFilter, intervalSec int64) ([]DashboardHeatmapCell, error) {
 	where, args := dashboardWhere(f)
-	q := fmt.Sprintf(`SELECT %s AS bucket, %s AS dbucket, COUNT(*) FROM `+dashboardSpans+`%s GROUP BY bucket, dbucket ORDER BY bucket, dbucket`,
-		bucketExpr(intervalSec), HeatmapBucketIndexSQL, where)
+	bk := newBucketKey(intervalSec)
+	q := fmt.Sprintf(`SELECT %s AS bucket, %s AS dbucket, COUNT(*) FROM `+dashboardSpans+`%s GROUP BY bucket, dbucket`,
+		bk.sql, HeatmapBucketIndexSQL, where)
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -341,14 +393,36 @@ func (r *Repository) QueryDashboardHeatmap(f SpanFilter, intervalSec int64) ([]D
 	}
 	defer rows.Close()
 
-	var cells []DashboardHeatmapCell
+	type key struct {
+		sec int64
+		idx int
+	}
+	totals := map[key]int64{}
 	for rows.Next() {
-		var sec, n int64
+		var prefix string
 		var idx int
-		if err := rows.Scan(&sec, &idx, &n); err != nil {
+		var n int64
+		if err := rows.Scan(&prefix, &idx, &n); err != nil {
 			return nil, err
 		}
-		cells = append(cells, DashboardHeatmapCell{Bucket: time.Unix(sec, 0).UTC(), DurationBucket: idx, Count: n})
+		sec, err := bk.epoch(prefix)
+		if err != nil {
+			return nil, err
+		}
+		totals[key{sec, idx}] += n
 	}
-	return cells, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	cells := make([]DashboardHeatmapCell, 0, len(totals))
+	for k, n := range totals {
+		cells = append(cells, DashboardHeatmapCell{Bucket: time.Unix(k.sec, 0).UTC(), DurationBucket: k.idx, Count: n})
+	}
+	sort.Slice(cells, func(i, j int) bool {
+		if !cells[i].Bucket.Equal(cells[j].Bucket) {
+			return cells[i].Bucket.Before(cells[j].Bucket)
+		}
+		return cells[i].DurationBucket < cells[j].DurationBucket
+	})
+	return cells, nil
 }
