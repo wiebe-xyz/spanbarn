@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -121,4 +122,55 @@ func warmEntry(
 	}
 	cache.SetSWR(c, cctx, key, v, freshTTL, staleTTL)
 	logger.Info("warmer: cache populated", "key", key, "elapsed", time.Since(start))
+}
+
+// dashboardWarmPeriod matches the coarse dashboard snapping grain: the cache
+// key for the landing view changes once per period, so one warm per period
+// keeps the first viewer of each period off the cold scans.
+const dashboardWarmPeriod = 15 * time.Minute
+
+// dashboardWarmSettle is how long after a period boundary the warm starts, so
+// the data of the previous period has been ingested.
+const dashboardWarmSettle = 3 * time.Second
+
+// nextDashboardWarm returns when the warm for the period after now should run.
+// jitter spreads pods so one of them computes and the others find the entry.
+func nextDashboardWarm(now time.Time, jitter time.Duration) time.Time {
+	return now.Truncate(dashboardWarmPeriod).Add(dashboardWarmPeriod + dashboardWarmSettle + jitter)
+}
+
+// WarmDashboardLoop warms the dashboard's landing view once at start and then
+// once per period, until ctx is cancelled. Failures log at warn: a missed warm
+// costs the next viewer a slow load and loses no data.
+func WarmDashboardLoop(ctx context.Context, qs *service.QueryService, logger *slog.Logger) {
+	if qs == nil {
+		return
+	}
+	go func() {
+		defer observability.RecoverAndReport("warm-dashboard", false)
+		warm := func() {
+			start := time.Now()
+			wctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancel()
+			if err := qs.WarmDashboard(wctx, start); err != nil {
+				if ctx.Err() == nil {
+					logger.Warn("warm dashboard: failed", "elapsed", time.Since(start), "error", err)
+				}
+				return
+			}
+			logger.Info("warm dashboard: complete", "elapsed", time.Since(start))
+		}
+		warm()
+		for {
+			jitter := time.Duration(rand.Int64N(int64(20 * time.Second)))
+			timer := time.NewTimer(time.Until(nextDashboardWarm(time.Now(), jitter)))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				warm()
+			}
+		}
+	}()
 }

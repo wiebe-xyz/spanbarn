@@ -30,23 +30,40 @@ const MinDashboardWindow = time.Minute
 const dashboardTopN = 10
 
 // Dashboard results are cached per filter so a reload, a second viewer or a
-// retry does not scan the raw spans again. The range is snapped down to
-// dashboardCacheGrain so requests a few seconds apart share one entry; a fresh
-// entry is served for dashboardFreshTTL, a stale one for dashboardStaleTTL
-// while one background refresh runs.
+// retry does not scan the raw spans again. The range is snapped down to a grain
+// that grows with the window, so requests inside one grain share one entry. A
+// fresh entry is served for one grain, a stale one for four while one
+// background refresh runs.
 const (
-	dashboardCacheGrain = 15 * time.Second
-	dashboardFreshTTL   = 15 * time.Second
-	dashboardStaleTTL   = time.Minute
+	// dashboardFineGrain keeps short windows close to live.
+	dashboardFineGrain = 15 * time.Second
+	// dashboardCoarseGrain applies to windows of dashboardCoarseFrom or wider.
+	// Their scan costs seconds on a small pod and a quarter hour of lag is
+	// invisible on a chart of a day, so one entry serves a whole quarter hour
+	// and WarmDashboard can fill it ahead of the first viewer.
+	dashboardCoarseGrain = 15 * time.Minute
+	dashboardCoarseFrom  = 12 * time.Hour
 )
+
+// dashboardGrain returns the snapping grain for a window of the given width.
+func dashboardGrain(window time.Duration) time.Duration {
+	if window >= dashboardCoarseFrom {
+		return dashboardCoarseGrain
+	}
+	return dashboardFineGrain
+}
 
 // dashboardFlight collapses identical concurrent dashboard queries into one.
 var dashboardFlight singleflight.Group
 
-// snapped returns q with the range snapped down to dashboardCacheGrain.
+// grain is the snapping grain of q's window.
+func (q DashboardQuery) grain() time.Duration { return dashboardGrain(q.To.Sub(q.From)) }
+
+// snapped returns q with the range snapped down to its grain.
 func (q DashboardQuery) snapped() DashboardQuery {
-	q.From = q.From.Truncate(dashboardCacheGrain)
-	q.To = q.To.Truncate(dashboardCacheGrain)
+	g := q.grain()
+	q.From = q.From.Truncate(g)
+	q.To = q.To.Truncate(g)
 	return q
 }
 
@@ -59,7 +76,7 @@ func (q DashboardQuery) cacheKey(kind, group string, rootOnly bool) string {
 // dashboardCached returns the cached result for key, computing it once on a
 // miss. compute runs on a context detached from the request, so a viewer who
 // navigates away does not cancel the work other viewers wait on.
-func dashboardCached[T any](ctx context.Context, c *cache.Cache, key string, compute func(context.Context) (*T, error)) (*T, error) {
+func dashboardCached[T any](ctx context.Context, c *cache.Cache, key string, grain time.Duration, compute func(context.Context) (*T, error)) (*T, error) {
 	if c == nil {
 		return compute(ctx)
 	}
@@ -69,7 +86,7 @@ func dashboardCached[T any](ctx context.Context, c *cache.Cache, key string, com
 			if err != nil {
 				return nil, err
 			}
-			cache.SetSWR(c, context.Background(), key, res, dashboardFreshTTL, dashboardStaleTTL)
+			cache.SetSWR(c, context.Background(), key, res, grain, 4*grain)
 			return res, nil
 		})
 		if err != nil {
@@ -221,7 +238,7 @@ func (s *QueryService) GetDashboardCounts(ctx context.Context, q DashboardQuery,
 		return nil, err
 	}
 	q = q.snapped()
-	return dashboardCached(ctx, s.cache, q.cacheKey("counts", group, rootOnly), func(ctx context.Context) (*DashboardCounts, error) {
+	return dashboardCached(ctx, s.cache, q.cacheKey("counts", group, rootOnly), q.grain(), func(ctx context.Context) (*DashboardCounts, error) {
 		return s.dashboardCountsUncached(q, group, rootOnly)
 	})
 }
@@ -258,7 +275,7 @@ func (s *QueryService) GetDashboardPercentiles(ctx context.Context, q DashboardQ
 		return nil, err
 	}
 	q = q.snapped()
-	return dashboardCached(ctx, s.cache, q.cacheKey("percentiles", group, false), func(ctx context.Context) (*DashboardPercentiles, error) {
+	return dashboardCached(ctx, s.cache, q.cacheKey("percentiles", group, false), q.grain(), func(ctx context.Context) (*DashboardPercentiles, error) {
 		return s.dashboardPercentilesUncached(q, group)
 	})
 }
@@ -297,7 +314,7 @@ func (s *QueryService) GetDashboardHeatmap(ctx context.Context, q DashboardQuery
 		return nil, err
 	}
 	q = q.snapped()
-	return dashboardCached(ctx, s.cache, q.cacheKey("heatmap", "", rootOnly), func(ctx context.Context) (*DashboardHeatmap, error) {
+	return dashboardCached(ctx, s.cache, q.cacheKey("heatmap", "", rootOnly), q.grain(), func(ctx context.Context) (*DashboardHeatmap, error) {
 		return s.dashboardHeatmapUncached(q, rootOnly)
 	})
 }
@@ -323,4 +340,31 @@ func (s *QueryService) dashboardHeatmapUncached(q DashboardQuery, rootOnly bool)
 		})
 	}
 	return out, nil
+}
+
+// WarmDashboard fills the cache for the dashboard's landing view: the default
+// 24h window over all projects, every card the page requests. Viewers inside
+// the same grain then read cached results instead of paying the cold scans.
+// It is a no-op for a result another process already cached.
+func (s *QueryService) WarmDashboard(ctx context.Context, now time.Time) error {
+	q := DashboardQuery{From: now.Add(-24 * time.Hour), To: now}
+	var errs []error
+	note := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	_, err := s.GetDashboardCounts(ctx, q, "service", true)
+	note(err)
+	_, err = s.GetDashboardCounts(ctx, q, "http_status", true)
+	note(err)
+	_, err = s.GetDashboardHeatmap(ctx, q, true)
+	note(err)
+	_, err = s.GetDashboardHeatmap(ctx, q, false)
+	note(err)
+	_, err = s.GetDashboardPercentiles(ctx, q, "service")
+	note(err)
+	_, err = s.GetDashboardPercentiles(ctx, q, "name")
+	note(err)
+	return errors.Join(errs...)
 }

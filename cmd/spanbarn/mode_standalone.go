@@ -195,6 +195,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	startSelfMetrics(ctx, cfg, &wg, selfRec, logger)
 
 	api.WarmCaches(ctx, queryRepo, querySvc.Cache(), logger)
+	api.WarmDashboardLoop(ctx, querySvc, logger)
 
 	mux := http.NewServeMux()
 	registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
