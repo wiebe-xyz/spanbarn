@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -312,10 +313,17 @@ func (r *Repository) deleteLogsFrom(ctx context.Context, table string, cutoff, e
 // DeleteProjectLogsOlderThan removes one project's log records ingested before
 // cutoff, error-trace logs included, from the live and kept tables. It backs a
 // per-project cap for projects whose logs hold content that should not outlive
-// it. Logs of pinned traces are still kept.
+// it. Logs of pinned traces are still kept. With sharded logs the rows live in
+// the shard files, so those are trimmed too; main's own tables may be gone.
 func (r *Repository) DeleteProjectLogsOlderThan(ctx context.Context, projectID int64, cutoff time.Time) (int64, error) {
 	var total int64
 	for _, table := range []string{"logs", "kept_logs"} {
+		// Main drops a sharded family's table once it is empty.
+		if has, err := hasTable(ctx, r.writer(TableFamily(table)), table); err != nil {
+			return total, err
+		} else if !has {
+			continue
+		}
 		n, err := r.batchedDelete(ctx, TableFamily(table), func(db *sql.DB) (int64, error) {
 			res, e := db.ExecContext(ctx, `
 				DELETE FROM `+table+` WHERE rowid IN (
@@ -338,7 +346,82 @@ func (r *Repository) DeleteProjectLogsOlderThan(ctx context.Context, projectID i
 			return total, err
 		}
 	}
+	n, err := r.deleteProjectLogsFromShards(ctx, projectID, cutoff)
+	return total + n, err
+}
+
+// deleteProjectLogsFromShards removes one project's logs older than cutoff from
+// every logs shard that can hold them, sparing logs of pinned traces. Pins live
+// in main, so they are read once and handed to each shard as a JSON list.
+func (r *Repository) deleteProjectLogsFromShards(ctx context.Context, projectID int64, cutoff time.Time) (int64, error) {
+	m := r.shards
+	if m == nil || !m.Sharded(FamilyLogs) {
+		return 0, nil
+	}
+	rows, err := m.rows(ctx)
+	if err != nil {
+		return 0, err
+	}
+	pinned, err := r.pinnedTraceIDsJSON(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, row := range rows {
+		// A shard that starts after the cutoff holds nothing older than it.
+		if row.family != FamilyLogs || row.start.After(cutoff) {
+			continue
+		}
+		for {
+			if err := ctx.Err(); err != nil {
+				return total, err
+			}
+			var n int64
+			if err := m.onShard(row.family, row.start, "projectLogCap", func(db *sql.DB) error {
+				res, e := db.ExecContext(ctx, `
+					DELETE FROM logs WHERE rowid IN (
+					    SELECT rowid FROM logs
+					    WHERE project_id = ? AND ingested_at < ?
+					    AND (trace_id IS NULL OR trace_id NOT IN (SELECT value FROM json_each(?)))
+					    LIMIT ?)`,
+					projectID, cutoff.UTC(), pinned, retentionDeleteBatch)
+				if e != nil {
+					return e
+				}
+				n, _ = res.RowsAffected()
+				return nil
+			}); err != nil {
+				return total, err
+			}
+			total += n
+			if n < retentionDeleteBatch {
+				break
+			}
+		}
+	}
 	return total, nil
+}
+
+// pinnedTraceIDsJSON returns the project's pinned trace ids as a JSON array.
+func (r *Repository) pinnedTraceIDsJSON(ctx context.Context, projectID int64) (string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT trace_id FROM pinned_traces WHERE project_id = ?`, projectID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(ids)
+	return string(b), err
 }
 
 // --- Pinned Traces ---
