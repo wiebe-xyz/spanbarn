@@ -132,18 +132,7 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 			w.logger.Info("retention worker stopped")
 			return
 		case <-timer.C:
-			var lastErr error
-			for attempt := 1; attempt <= 5; attempt++ {
-				if lastErr = w.RunOnce(ctx); lastErr == nil {
-					break
-				}
-				w.logger.Info("retention cycle attempt failed", "attempt", attempt, "error", lastErr)
-				backoff := time.Duration(attempt*attempt) * time.Second
-				time.Sleep(backoff)
-			}
-			if lastErr != nil {
-				w.logger.Info("retention cycle failed, will retry next tick", "error", lastErr)
-			}
+			w.runWithRetry(ctx, time.Sleep)
 			timer.Reset(w.nextInterval())
 		}
 	}
@@ -159,6 +148,28 @@ func (w *RetentionWorker) lockBatch(ctx context.Context, yield time.Duration, fn
 		case <-time.After(yield):
 		}
 	}
+}
+
+// retentionAttempts is how many times one tick tries a failing cycle.
+const retentionAttempts = 5
+
+// runWithRetry runs a retention cycle, retrying a failure with a growing pause.
+// A cycle that still fails after the last attempt deleted nothing it should
+// have, so it is logged at error level and reaches BugBarn. A shutdown in the
+// middle of a cycle is not a failure and logs nothing at that level.
+func (w *RetentionWorker) runWithRetry(ctx context.Context, sleep func(time.Duration)) {
+	var lastErr error
+	for attempt := 1; attempt <= retentionAttempts; attempt++ {
+		if lastErr = w.RunOnce(ctx); lastErr == nil {
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		w.logger.Warn("retention cycle attempt failed", "attempt", attempt, "error", lastErr)
+		sleep(time.Duration(attempt*attempt) * time.Second)
+	}
+	w.logger.Error("retention cycle failed, will retry next tick", "error", lastErr)
 }
 
 // cycleCutoffs holds the age cutoffs of one retention cycle.
