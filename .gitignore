@@ -63,3 +63,5 @@ var/
 
 # Docker and compose state
 docker-compose.override.yml
+
+.tools/

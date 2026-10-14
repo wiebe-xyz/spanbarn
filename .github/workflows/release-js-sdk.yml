@@ -18,11 +18,19 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, build]
     defaults:
       run:
         working-directory: sdks/js
     steps:
+      - name: Reclaim workspace (clear read-only Go cache from prior runs)
+        shell: bash
+        run: |
+          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
+            [ -d "$c" ] || continue
+            chmod -R u+w "$c" 2>/dev/null || true
+            rm -rf "$c" 2>/dev/null || true
+          done
       - uses: actions/checkout@v6
       - name: Check the tag against package.json
         run: |
@@ -33,8 +41,12 @@ jobs:
             exit 1
           fi
           echo "VERSION=${PKG_VERSION}" >> "$GITHUB_ENV"
-      - name: Enable corepack
-        run: corepack enable
+      - name: Set up pnpm
+        shell: bash
+        run: |
+          . "$GITHUB_WORKSPACE/scripts/use-pnpm.sh"
+          echo "$GITHUB_WORKSPACE/.tools/corepack-bin" >> "$GITHUB_PATH"
+          if [ -d "$GITHUB_WORKSPACE/.tools/corepack/node_modules/.bin" ]; then echo "$GITHUB_WORKSPACE/.tools/corepack/node_modules/.bin" >> "$GITHUB_PATH"; fi
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
