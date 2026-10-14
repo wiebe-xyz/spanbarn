@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"golang.org/x/sync/singleflight"
 
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
+	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -25,6 +28,66 @@ const MinDashboardWindow = time.Minute
 
 // dashboardTopN is how many groups keep their own series.
 const dashboardTopN = 10
+
+// Dashboard results are cached per filter so a reload, a second viewer or a
+// retry does not scan the raw spans again. The range is snapped down to
+// dashboardCacheGrain so requests a few seconds apart share one entry; a fresh
+// entry is served for dashboardFreshTTL, a stale one for dashboardStaleTTL
+// while one background refresh runs.
+const (
+	dashboardCacheGrain = 15 * time.Second
+	dashboardFreshTTL   = 15 * time.Second
+	dashboardStaleTTL   = time.Minute
+)
+
+// dashboardFlight collapses identical concurrent dashboard queries into one.
+var dashboardFlight singleflight.Group
+
+// snapped returns q with the range snapped down to dashboardCacheGrain.
+func (q DashboardQuery) snapped() DashboardQuery {
+	q.From = q.From.Truncate(dashboardCacheGrain)
+	q.To = q.To.Truncate(dashboardCacheGrain)
+	return q
+}
+
+func (q DashboardQuery) cacheKey(kind, group string, rootOnly bool) string {
+	return fmt.Sprintf("dashboard:%s:%s:%t:%d:%q:%q:%q:%d:%d:%d:%d",
+		kind, group, rootOnly, q.ProjectID, q.Service, q.Name, q.Status,
+		q.MinDurationUs, q.MaxDurationUs, q.From.Unix(), q.To.Unix())
+}
+
+// dashboardCached returns the cached result for key, computing it once on a
+// miss. compute runs on a context detached from the request, so a viewer who
+// navigates away does not cancel the work other viewers wait on.
+func dashboardCached[T any](ctx context.Context, c *cache.Cache, key string, compute func(context.Context) (*T, error)) (*T, error) {
+	if c == nil {
+		return compute(ctx)
+	}
+	load := func() (*T, error) {
+		v, err, _ := dashboardFlight.Do(key, func() (any, error) {
+			res, err := compute(context.WithoutCancel(ctx))
+			if err != nil {
+				return nil, err
+			}
+			cache.SetSWR(c, context.Background(), key, res, dashboardFreshTTL, dashboardStaleTTL)
+			return res, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		return v.(*T), nil
+	}
+	if hit, found, fresh := cache.GetSWR[*T](c, ctx, key); found && hit != nil {
+		if !fresh {
+			go func() {
+				defer observability.RecoverAndReport("dashboard-revalidate", false)
+				_, _ = load()
+			}()
+		}
+		return hit, nil
+	}
+	return load()
+}
 
 // DashboardQuery is the filter shared by every dashboard card.
 type DashboardQuery struct {
@@ -154,6 +217,16 @@ func (s *QueryService) GetDashboardCounts(ctx context.Context, q DashboardQuery,
 	span.SetAttributes(attribute.String("group_by", group))
 	defer span.End()
 
+	if _, err := q.validate(); err != nil {
+		return nil, err
+	}
+	q = q.snapped()
+	return dashboardCached(ctx, s.cache, q.cacheKey("counts", group, rootOnly), func(ctx context.Context) (*DashboardCounts, error) {
+		return s.dashboardCountsUncached(q, group, rootOnly)
+	})
+}
+
+func (s *QueryService) dashboardCountsUncached(q DashboardQuery, group string, rootOnly bool) (*DashboardCounts, error) {
 	interval, err := q.validate()
 	if err != nil {
 		return nil, err
@@ -181,6 +254,16 @@ func (s *QueryService) GetDashboardPercentiles(ctx context.Context, q DashboardQ
 	span.SetAttributes(attribute.String("group_by", group))
 	defer span.End()
 
+	if _, err := q.validate(); err != nil {
+		return nil, err
+	}
+	q = q.snapped()
+	return dashboardCached(ctx, s.cache, q.cacheKey("percentiles", group, false), func(ctx context.Context) (*DashboardPercentiles, error) {
+		return s.dashboardPercentilesUncached(q, group)
+	})
+}
+
+func (s *QueryService) dashboardPercentilesUncached(q DashboardQuery, group string) (*DashboardPercentiles, error) {
 	interval, err := q.validate()
 	if err != nil {
 		return nil, err
@@ -210,6 +293,16 @@ func (s *QueryService) GetDashboardHeatmap(ctx context.Context, q DashboardQuery
 	_, span := tracer.Start(ctx, "query.dashboard_heatmap")
 	defer span.End()
 
+	if _, err := q.validate(); err != nil {
+		return nil, err
+	}
+	q = q.snapped()
+	return dashboardCached(ctx, s.cache, q.cacheKey("heatmap", "", rootOnly), func(ctx context.Context) (*DashboardHeatmap, error) {
+		return s.dashboardHeatmapUncached(q, rootOnly)
+	})
+}
+
+func (s *QueryService) dashboardHeatmapUncached(q DashboardQuery, rootOnly bool) (*DashboardHeatmap, error) {
 	interval, err := q.validate()
 	if err != nil {
 		return nil, err

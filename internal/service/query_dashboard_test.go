@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -216,5 +217,52 @@ func TestDashboardGroupsAndDurationBand(t *testing.T) {
 
 	if _, err := svc.GetDashboardPercentiles(ctx, DashboardQuery{ProjectID: 1, From: from, To: to}, "status"); err != nil {
 		t.Errorf("percentiles by status: %v", err)
+	}
+}
+
+func TestDashboardResultsAreCachedPerFilter(t *testing.T) {
+	repo := setupTestRepo(t)
+	seedDashboardSpans(t, repo)
+	svc := NewQueryService(repo, nil, nil)
+	svc.SetCache(cache.New(cache.NewMemoryStore(), time.Minute))
+	from, to := dashboardRange()
+	q := DashboardQuery{ProjectID: 1, From: from, To: to}
+
+	total := func(c *DashboardCounts) int64 {
+		var n int64
+		for _, p := range c.Points {
+			n += p.Count
+		}
+		return n
+	}
+	first, err := svc.GetDashboardCounts(context.Background(), q, "service", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := total(first); got != 3 {
+		t.Fatalf("first total = %d, want 3", got)
+	}
+
+	if err := repo.InsertSpans([]repository.Span{
+		{ProjectID: 1, TraceID: "c", SpanID: "c1", Name: "GET /", Service: "web", Kind: "server", Status: "ok", DurationUs: 100, Attributes: "{}", Events: "[]"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := svc.GetDashboardCounts(context.Background(), q, "service", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := total(second); got != 3 {
+		t.Errorf("repeat total = %d, want the cached 3", got)
+	}
+
+	// A different group is a different entry and sees the new span.
+	other, err := svc.GetDashboardCounts(context.Background(), q, "name", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := total(other); got != 4 {
+		t.Errorf("other group total = %d, want 4", got)
 	}
 }
