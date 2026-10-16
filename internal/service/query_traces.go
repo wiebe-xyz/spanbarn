@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -128,6 +129,10 @@ func (s *QueryService) ListTraceGroups(ctx context.Context, filter TraceSearchFi
 		To:                filter.To,
 	}
 
+	if strings.EqualFold(filter.Status, "error") {
+		return s.listErrorTraceGroups(ctx, sf)
+	}
+
 	groups, err := s.repo.QueryRootSpanGroups(ctx, sf)
 	if err != nil {
 		return nil, err
@@ -154,14 +159,46 @@ func (s *QueryService) ListTraceGroups(ctx context.Context, filter TraceSearchFi
 		})
 	}
 
-	// Sort: errors first, then by count desc.
+	sortTraceGroups(out)
+	return out, nil
+}
+
+// sortTraceGroups puts errors first, then the larger groups.
+func sortTraceGroups(out []TraceGroupSummary) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ErrorCount != out[j].ErrorCount {
 			return out[i].ErrorCount > out[j].ErrorCount
 		}
 		return out[i].Count > out[j].Count
 	})
+}
 
+// listErrorTraceGroups groups every trace with an error span by its root
+// operation, over the whole window. Root spans alone would miss a trace whose
+// error is in a child span (a failed client call under an ok page load), and
+// the raw span table holds only the interesting window.
+func (s *QueryService) listErrorTraceGroups(ctx context.Context, sf repository.SpanFilter) ([]TraceGroupSummary, error) {
+	groups, err := s.repo.QueryErrorTraceGroups(ctx, sf)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TraceGroupSummary, 0, len(groups))
+	for _, g := range groups {
+		n := int64(len(g.Durations))
+		p50, p95, p99 := computePercentiles(g.Durations)
+		ops := make([]ErrorOperation, 0, len(g.ErrorOperations))
+		for _, op := range g.ErrorOperations {
+			ops = append(ops, ErrorOperation{Operation: op.Operation, Service: op.Service, Traces: op.Traces, ExampleTraceID: op.ExampleTraceID})
+		}
+		sort.SliceStable(ops, func(i, j int) bool { return ops[i].Traces > ops[j].Traces })
+		out = append(out, TraceGroupSummary{
+			Operation: g.Operation, Service: g.Service,
+			Count: n, ErrorCount: n, ErrorRate: 1,
+			P50Us: p50, P95Us: p95, P99Us: p99,
+			ExampleTraceID: g.ExampleTraceID, ErrorOperations: ops,
+		})
+	}
+	sortTraceGroups(out)
 	return out, nil
 }
 

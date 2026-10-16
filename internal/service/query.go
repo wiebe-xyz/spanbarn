@@ -21,6 +21,7 @@ type QueryRepository interface {
 	QuerySpans(filter repository.SpanFilter) ([]repository.Span, error)
 	SearchTraceSummaries(filter repository.SpanFilter, minSpans int) ([]repository.TraceSummaryRow, error)
 	QueryRootSpanGroups(ctx context.Context, f repository.SpanFilter) ([]repository.RootSpanGroup, error)
+	QueryErrorTraceGroups(ctx context.Context, f repository.SpanFilter) ([]repository.ErrorTraceGroup, error)
 	GetTraceByID(traceID string) ([]repository.Span, error)
 	QueryErrorSamples(filter repository.SpanFilter) ([]repository.Span, error)
 	ExcludedOperations(projectID int64) ([]string, error)

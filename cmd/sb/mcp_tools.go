@@ -35,7 +35,7 @@ var (
 var mcpTools = []mcpTool{
 	{name: "list_projects", desc: "List the projects (slug and id) this account can read.", endpoint: "/api/v1/projects"},
 	{name: "services", desc: "Per-service error rate and latency percentiles.", endpoint: "/api/v1/services", timed: true},
-	{name: "flows", desc: "Problematic flows grouped by root operation (errors, latency).", endpoint: "/api/v1/traces/groups", timed: true,
+	{name: "flows", desc: "Problematic flows grouped by root operation (errors, latency). With status=error: every trace with an error span in any span, over the whole window, with the erroring operations and an example trace id per group.", endpoint: "/api/v1/traces/groups", timed: true,
 		props: []mcpProp{propSvc, {"status", "string", "filter by status, for example error"}, {"min_duration_us", "integer", "minimum root duration in microseconds"}}},
 	{name: "traces", desc: "Search traces.", endpoint: "/api/v1/traces", timed: true,
 		props: []mcpProp{propSvc, {"operation", "string", "filter by root operation"}, {"status", "string", "filter by status, for example error"},

@@ -651,3 +651,46 @@ func TestListTraceGroups(t *testing.T) {
 		t.Fatalf("expected 0, got %d", len(none))
 	}
 }
+
+// status=error groups a trace by its root even when only a child span failed,
+// and names the failed child operation.
+func TestListTraceGroupsErrorsMatchChildSpans(t *testing.T) {
+	repo := setupTestRepo(t)
+	svc := NewQueryService(repo, nil, nil)
+	now := time.Now().UTC()
+	span := func(traceID, spanID, parent, name, status string) repository.Span {
+		return repository.Span{
+			ProjectID: 1, TraceID: traceID, SpanID: spanID, ParentSpanID: parent,
+			Name: name, Service: "web", Resource: "/", Kind: "server", Status: status,
+			StartTimeUs: now.UnixMicro(), DurationUs: 1000, Attributes: `{}`, Events: `[]`,
+			IngestedAt: now,
+		}
+	}
+	if err := repo.InsertSpans([]repository.Span{
+		span("t1", "r1", "", "page /app", "ok"),
+		span("t1", "c1", "r1", "GET /pending", "error"),
+		span("t2", "r2", "", "page /app", "ok"),
+	}); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+
+	groups, err := svc.ListTraceGroups(context.Background(), TraceSearchFilter{
+		ProjectID: 1,
+		Status:    "error",
+		From:      now.Add(-time.Hour),
+		To:        now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("ListTraceGroups: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("groups = %+v, want one page /app group", groups)
+	}
+	g := groups[0]
+	if g.Operation != "page /app" || g.Count != 1 || g.ErrorCount != 1 || g.ExampleTraceID != "t1" {
+		t.Errorf("group = %+v, want page /app with 1 error trace t1", g)
+	}
+	if len(g.ErrorOperations) != 1 || g.ErrorOperations[0].Operation != "GET /pending" {
+		t.Errorf("error operations = %+v, want GET /pending", g.ErrorOperations)
+	}
+}

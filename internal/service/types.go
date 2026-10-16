@@ -243,4 +243,16 @@ type TraceGroupSummary struct {
 	P50Us      int64   `json:"p50Us"`
 	P95Us      int64   `json:"p95Us"`
 	P99Us      int64   `json:"p99Us"`
+	// Set for status=error only: the newest trace of the group, and the span
+	// operations that errored in its traces.
+	ExampleTraceID  string           `json:"exampleTraceId,omitempty"`
+	ErrorOperations []ErrorOperation `json:"errorOperations,omitempty"`
+}
+
+// ErrorOperation is a span operation that errored inside a trace group.
+type ErrorOperation struct {
+	Operation      string `json:"operation"`
+	Service        string `json:"service"`
+	Traces         int64  `json:"traces"`
+	ExampleTraceID string `json:"exampleTraceId"`
 }
