@@ -207,6 +207,15 @@ func createSpansFile(ctx context.Context, path string, o StorageOptions) error {
 // copyTable copies one table in rowid batches (one statement for a table
 // without rowids) and checks the row counts match.
 func copyTable(ctx context.Context, dst *sql.DB, table string) (int64, error) {
+	// A span table added after main's spans track last ran (error_exemplars)
+	// is missing from main. The new spans file already holds it, empty.
+	var inMain int
+	if err := dst.QueryRowContext(ctx, `SELECT count(*) FROM `+CoreSchema+`.sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&inMain); err != nil {
+		return 0, err
+	}
+	if inMain == 0 {
+		return 0, nil
+	}
 	cols, err := storedColumns(ctx, dst, table)
 	if err != nil {
 		return 0, err

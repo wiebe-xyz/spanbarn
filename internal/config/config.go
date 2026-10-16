@@ -17,6 +17,7 @@ type RetentionConfig struct {
 	FullHours          int // SPANBARN_RETENTION_FULL_HOURS (obsolete, ignored)
 	AggregatedDays     int // SPANBARN_RETENTION_AGGREGATED_DAYS
 	ErrorDays          int // SPANBARN_RETENTION_ERROR_DAYS
+	ErrorExemplarDays  int // SPANBARN_RETENTION_ERROR_EXEMPLAR_DAYS — how long to keep one error trace per (service, operation, day) (default 30)
 	InterestingHours   int // SPANBARN_RETENTION_INTERESTING_HOURS
 	BoringMinutes      int // SPANBARN_BORING_RETENTION_MINUTES — short retention for sampled boring spans
 	MetricsDays        int // SPANBARN_METRICS_RETENTION_DAYS — how long to keep raw metric data points
@@ -224,6 +225,7 @@ func Load() Config {
 			FullHours:          getenvInt("SPANBARN_RETENTION_FULL_HOURS", 0),
 			AggregatedDays:     getenvInt("SPANBARN_RETENTION_AGGREGATED_DAYS", 30),
 			ErrorDays:          getenvInt("SPANBARN_RETENTION_ERROR_DAYS", 90),
+			ErrorExemplarDays:  getenvInt("SPANBARN_RETENTION_ERROR_EXEMPLAR_DAYS", 30),
 			InterestingHours:   getenvInt("SPANBARN_RETENTION_INTERESTING_HOURS", 48),
 			BoringMinutes:      getenvInt("SPANBARN_BORING_RETENTION_MINUTES", 30),
 			MetricsDays:        getenvInt("SPANBARN_METRICS_RETENTION_DAYS", 7),

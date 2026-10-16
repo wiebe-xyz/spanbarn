@@ -131,6 +131,7 @@ func retentionConfigFrom(cfg config.Config) retention.Config {
 		InterestingRetentionHours: cfg.Retention.InterestingHours,
 		BoringRetentionMinutes:    cfg.Retention.BoringMinutes,
 		ErrorRetentionDays:        cfg.Retention.ErrorDays,
+		ErrorExemplarDays:         cfg.Retention.ErrorExemplarDays,
 		AggregateRetentionDays:    cfg.Retention.AggregatedDays,
 		MetricsRetentionDays:      cfg.Retention.MetricsDays,
 		LogRetentionHours:         cfg.Retention.LogHours,

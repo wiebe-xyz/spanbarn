@@ -103,8 +103,8 @@ func TestOpenStorageNewInstallSplits(t *testing.T) {
 	if mainHasTable(t, store.Spans.DB, "projects") {
 		t.Error("spans file has a core table")
 	}
-	if v := spansVersion(t, store.Spans.DB); v != 1 {
-		t.Errorf("spans track version = %d, want 1", v)
+	if v, want := spansVersion(t, store.Spans.DB), int64(len(spansMigrations())); v != want {
+		t.Errorf("spans track version = %d, want %d", v, want)
 	}
 	var av int
 	if err := store.Spans.QueryRow(`PRAGMA main.auto_vacuum`).Scan(&av); err != nil || av != 2 {
@@ -141,8 +141,8 @@ func TestOpenStorageKeepsSingleFile(t *testing.T) {
 	if _, err := os.Stat(SpansPath(path)); !os.IsNotExist(err) {
 		t.Fatalf("spans file created for a single-file database: %v", err)
 	}
-	if v := spansVersion(t, store.Main.DB); v != 1 {
-		t.Errorf("spans track version in main = %d, want 1", v)
+	if v, want := spansVersion(t, store.Main.DB), int64(len(spansMigrations())); v != want {
+		t.Errorf("spans track version in main = %d, want %d", v, want)
 	}
 	insertAndReadSpan(t, store, path)
 }

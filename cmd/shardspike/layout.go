@@ -32,6 +32,11 @@ var splitFiles = map[string][]string{
 	"heavy.db": {"logs", "metrics", "error_samples", "prompt_records"},
 }
 
+// everyFile are small tables every file keeps. error_exemplars is written by
+// the error-sample insert and read by the trace summary delete, which run on
+// different files in L2, and the files are not attached to each other.
+var everyFile = []string{"error_exemplars"}
+
 // timeColumn is the column a table is sharded on.
 var timeColumn = map[string]string{
 	"spans": "ingested_at", "trace_summaries": "ingested_at", "logs": "ingested_at",
@@ -55,10 +60,13 @@ func createFile(ctx context.Context, path string, drop []string) error {
 		return err
 	}
 	defer db.Close()
-	if err := repository.Migrate(db.DB); err != nil {
+	if err := repository.MigrateSingleFile(ctx, db.DB); err != nil {
 		return fmt.Errorf("migrate %s: %w", path, err)
 	}
 	for _, t := range drop {
+		if slices.Contains(everyFile, t) {
+			continue
+		}
 		if _, err := db.ExecContext(ctx, "DROP TABLE "+t); err != nil {
 			return fmt.Errorf("drop %s in %s: %w", t, path, err)
 		}

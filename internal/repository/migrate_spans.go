@@ -26,6 +26,7 @@ const spansBaselineVersion = 41
 func spansMigrations() []*goose.Migration {
 	return []*goose.Migration{
 		goose.NewGoMigration(1, &goose.GoFunc{RunTx: spansBaselineUp}, nil),
+		goose.NewGoMigration(2, &goose.GoFunc{RunTx: spansErrorExemplarsUp}, nil),
 	}
 }
 
@@ -121,4 +122,33 @@ func ifNotExists(prefix string) string {
 		out += "UNIQUE "
 	}
 	return out + strings.ToUpper(m[2]) + " IF NOT EXISTS "
+}
+
+// spansErrorExemplarsUp adds error_exemplars (issue #320): one trace per
+// (project, service, operation, UTC day) of an error span. Retention keeps
+// the error_samples and trace summary of a listed trace past the error cutoff,
+// until the exemplar window ends, so an error that happens a few times a day
+// still has a trace to read after the bulk of its samples are gone.
+//
+// day is the UTC date (YYYY-MM-DD) of the error span's start. The primary key
+// makes the first recorded trace of a day the exemplar; later ones are
+// ignored. The trace index serves the NOT EXISTS checks in retention.
+func spansErrorExemplarsUp(ctx context.Context, tx *sql.Tx) error {
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS error_exemplars (
+			project_id INTEGER NOT NULL,
+			service    TEXT NOT NULL,
+			name       TEXT NOT NULL,
+			day        TEXT NOT NULL,
+			trace_id   TEXT NOT NULL,
+			PRIMARY KEY (project_id, service, name, day)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_error_exemplars_trace ON error_exemplars(project_id, trace_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_error_exemplars_day ON error_exemplars(day)`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("error exemplars: %w", err)
+		}
+	}
+	return nil
 }

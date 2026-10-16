@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -55,7 +56,7 @@ func createFamilyTestFile(t *testing.T, path string, f Family) {
 		t.Fatalf("create %s: %v", path, err)
 	}
 	defer db.Close()
-	if err := Migrate(db.DB); err != nil {
+	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("migrate %s: %v", path, err)
 	}
 	tables, err := userTables(db.DB)

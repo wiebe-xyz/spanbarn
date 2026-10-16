@@ -6,6 +6,7 @@ func TestIsAllowedSettingKeyRetention(t *testing.T) {
 	allowed := []string{
 		"retention.max_hours.project.5",
 		"retention.max_traces.project.42",
+		"retention_error_exemplar_days",
 	}
 	for _, k := range allowed {
 		if !isAllowedSettingKey(k) {

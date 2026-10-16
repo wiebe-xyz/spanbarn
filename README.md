@@ -258,6 +258,7 @@ project automatically.
 | `SPANBARN_BORING_RETENTION_MINUTES` | `30` | Minutes to keep uninteresting (non-error, non-slow) spans |
 | `SPANBARN_RETENTION_AGGREGATED_DAYS` | `30` | Days to keep aggregates |
 | `SPANBARN_RETENTION_ERROR_DAYS` | `90` | Days to keep error samples |
+| `SPANBARN_RETENTION_ERROR_EXEMPLAR_DAYS` | `30` | Days to keep one error trace per (service, operation, UTC day) after the error samples around it are deleted |
 | `SPANBARN_METRICS_RETENTION_DAYS` | `7` | Days to keep raw metric points. Raw points are only read for ranges ≤ 6h; longer ranges read rollups. |
 | `SPANBARN_METRIC_ROLLUP_RETENTION_DAYS` | `2` | Days to keep 5-minute rollups (see [Rollup tiers](#rollup-tiers)) |
 | `SPANBARN_METRIC_ROLLUP_HOURLY_DAYS` | `30` | Days to keep hourly rollups |
@@ -479,6 +480,7 @@ SDK/OTLP → POST /v1/traces or /api/v1/spans
 ### Error samples table (medium-term)
 - Same as spans but only error/slow spans
 - Kept for `SPANBARN_RETENTION_ERROR_DAYS`
+- The first error trace of each (project, service, operation, UTC day) is listed in `error_exemplars` and kept for `SPANBARN_RETENTION_ERROR_EXEMPLAR_DAYS` (setting `retention_error_exemplar_days`), so a rare error keeps a readable trace after the rest of its samples are gone
 
 ## Development
 

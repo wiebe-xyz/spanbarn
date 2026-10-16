@@ -30,7 +30,7 @@ func setupCombinedTestDB(t *testing.T) *Repository {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if err := Migrate(db.DB); err != nil {
+	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	return NewRepository(db.DB)
@@ -628,7 +628,11 @@ func TestInsertAndQueryErrorSamples(t *testing.T) {
 		t.Fatalf("expected 1 web error, got %d", len(webErrs))
 	}
 
-	// Delete with future cutoff.
+	// Both traces are their operation's error exemplar; release them, then
+	// delete with a future cutoff.
+	if _, err := repo.PruneErrorExemplars(context.Background(), time.Now().Add(48*time.Hour)); err != nil {
+		t.Fatalf("PruneErrorExemplars: %v", err)
+	}
 	n, err := repo.DeleteErrorSamplesOlderThan(context.Background(), time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("DeleteErrorSamplesOlderThan: %v", err)
