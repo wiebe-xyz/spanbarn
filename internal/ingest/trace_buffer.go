@@ -327,8 +327,12 @@ func (tb *TraceBuffer) flush(now time.Time, all bool) (sent int) {
 
 	var undelivered int64
 	for _, tr := range toDecide {
-		if !tb.keep(tr, now) {
+		w := tb.keepWeight(tr, now)
+		if w == 0 {
 			continue
+		}
+		for i := range tr.spans {
+			tr.spans[i].SampleWeight = w
 		}
 		// A trace that survived sampling has already been paid for; dropping it
 		// here silently would discard error traces too — the one guarantee the
@@ -369,33 +373,58 @@ func (tb *TraceBuffer) deliver(spans []model.SpanRecord) bool {
 	}
 }
 
-// keep returns true if the trace should be forwarded to storage. now is the
-// flush time, used to place the trace in an hourly rarity bucket.
-func (tb *TraceBuffer) keep(tr *bufferedTrace, now time.Time) bool {
+// keepWeight decides whether the trace goes to storage and returns the sample
+// weight of its spans: how many traces of the population it stands for. 0
+// drops the trace. now is the flush time, used to place the trace in an hourly
+// rarity bucket.
+//
+// Only the ratio sample is a 1-in-N draw, so only a trace that the ratio
+// sample alone kept stands for N. The error and slow-root rules keep every
+// trace of their kind, so such a trace stands for itself even when the ratio
+// sample also picked it: its kind is seen in full, and scaling it would count
+// the same traces N times. A trace the hourly floor rescued stands for itself
+// too.
+func (tb *TraceBuffer) keepWeight(tr *bufferedTrace, now time.Time) int {
 	if tr.hasError {
-		return true
+		return 1
 	}
 	if len(tr.spans) == 0 {
-		return false
+		return 0
 	}
 	op := tr.rootOp
 	if op == "" {
 		op = tr.spans[0].Name
 	}
 	if tb.slowRoot(tr) {
-		return true
+		return 1
 	}
-	return tb.rescued(tr.projectID, op, now, tb.sampledIn(tr.projectID, op, tr.id))
+	ratio := tb.ratio(tr.projectID, op)
+	sampled := ratioSampled(tr.id, ratio)
+	if !tb.rescued(tr.projectID, op, now, sampled) {
+		return 0
+	}
+	if sampled {
+		return max(ratio, 1)
+	}
+	return 1
+}
+
+// ratio returns the 1-in-N sample ratio for a root operation.
+func (tb *TraceBuffer) ratio(projectID int64, op string) int {
+	if tb.lookup == nil {
+		return DefaultSampleRatio
+	}
+	return tb.lookup.Ratio(context.Background(), projectID, op)
 }
 
 // sampledIn reports whether ratio sampling keeps this trace. Deterministic in
 // the trace ID, so the same trace decides the same way on every pod and at
 // every call site.
 func (tb *TraceBuffer) sampledIn(projectID int64, op, traceID string) bool {
-	ratio := DefaultSampleRatio
-	if tb.lookup != nil {
-		ratio = tb.lookup.Ratio(context.Background(), projectID, op)
-	}
+	return ratioSampled(traceID, tb.ratio(projectID, op))
+}
+
+func ratioSampled(traceID string, ratio int) bool {
 	if ratio <= 1 {
 		return true
 	}

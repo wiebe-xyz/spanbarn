@@ -22,7 +22,7 @@ func TestCheckpoint(t *testing.T) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := Migrate(db.DB); err != nil {
+	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	repo := NewRepository(db.DB)
@@ -69,7 +69,7 @@ func TestCheckpointFrameCount(t *testing.T) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := Migrate(db.DB); err != nil {
+	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	repo := NewRepository(db.DB)

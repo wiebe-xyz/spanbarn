@@ -247,6 +247,7 @@ func convertRecords(records []model.SpanRecord) []repository.Span {
 			DurationUs:   r.DurationUs,
 			Attributes:   attrs,
 			Events:       events,
+			SampleWeight: r.SampleWeight,
 		}
 	}
 	return spans

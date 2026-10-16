@@ -80,8 +80,10 @@ func (a *Aggregator) AggregateSpans(ctx context.Context, spans []repository.Span
 		var errorCount int64
 		var sumDuration int64
 		var maxDuration int64
+		var weights spanWeights
 
 		for i, s := range bucket {
+			weights.add(s)
 			durations[i] = s.DurationUs
 			sumDuration += s.DurationUs
 			if s.DurationUs > maxDuration {
@@ -106,6 +108,8 @@ func (a *Aggregator) AggregateSpans(ctx context.Context, spans []repository.Span
 			P99Us:         P99(durations),
 			MaxUs:         maxDuration,
 			SumDurationUs: sumDuration,
+			WeightedCount: weights.count,
+			WeightedSpans: weights.spans,
 		})
 	}
 

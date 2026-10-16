@@ -122,6 +122,15 @@ func inflateCount(count, errorCount int64, sampleRate float64) int64 {
 	return errorCount + int64(float64(okCount)/sampleRate)
 }
 
+// estimateCount mirrors service.estimateCount: the summed sample weights when
+// every span of the bucket carried one, otherwise inflateCount.
+func estimateCount(a repository.Aggregate, sampleRate float64) int64 {
+	if n, ok := a.WeightedEstimate(); ok {
+		return n
+	}
+	return inflateCount(a.Count, a.ErrorCount, sampleRate)
+}
+
 // Evaluate checks all enabled alerts for a project and sends notifications for triggered ones.
 func (e *Evaluator) Evaluate(ctx context.Context, projectID int64) error {
 	ctx, span := alertTracer.Start(ctx, "alert.evaluate_project")
@@ -207,14 +216,14 @@ func (e *Evaluator) evaluateAlert(ctx context.Context, a repository.Alert, now t
 		}
 	case "error_rate":
 		sr := e.projectSampleRate(ctx, a.ProjectID)
-		if eff := inflateCount(current.Count, current.ErrorCount, sr); eff > 0 {
+		if eff := estimateCount(current, sr); eff > 0 {
 			currentVal = float64(current.ErrorCount) / float64(eff) * 100.0
 		}
 		if len(historyAggs) > 0 {
 			var totalErrors, totalCount int64
 			for _, h := range historyAggs {
 				totalErrors += h.ErrorCount
-				totalCount += inflateCount(h.Count, h.ErrorCount, sr)
+				totalCount += estimateCount(h, sr)
 			}
 			if totalCount > 0 {
 				avgVal = float64(totalErrors) / float64(totalCount) * 100.0
@@ -273,6 +282,8 @@ func sumByBucket(rows []repository.Aggregate) []repository.Aggregate {
 		b := &out[n-1]
 		b.Count += r.Count
 		b.ErrorCount += r.ErrorCount
+		b.WeightedCount += r.WeightedCount
+		b.WeightedSpans += r.WeightedSpans
 		weighted[n-1] += float64(r.P95Us) * float64(r.Count)
 	}
 	for i := range out {

@@ -44,6 +44,7 @@ type accSlot struct {
 	count      int64
 	errorCount int64
 	durations  []int64
+	weights    spanWeights
 }
 
 // NewAccumulator creates an Accumulator.
@@ -80,6 +81,7 @@ func (a *Accumulator) Add(s repository.Span) {
 		a.slots[k] = sl
 	}
 	sl.count++
+	sl.weights.add(s)
 	if s.Status == "error" {
 		sl.errorCount++
 	}
@@ -117,17 +119,19 @@ func (a *Accumulator) QueryRecent(f repository.AggregateFilter) []repository.Agg
 		durations := make([]int64, len(sl.durations))
 		copy(durations, sl.durations)
 		result = append(result, repository.Aggregate{
-			ProjectID:  k.projectID,
-			Service:    k.service,
-			Operation:  k.operation,
-			Resource:   k.resource,
-			Kind:       k.kind,
-			Bucket:     k.bucket,
-			Count:      sl.count,
-			ErrorCount: sl.errorCount,
-			P50Us:      P50(durations),
-			P95Us:      P95(durations),
-			P99Us:      P99(durations),
+			ProjectID:     k.projectID,
+			Service:       k.service,
+			Operation:     k.operation,
+			Resource:      k.resource,
+			Kind:          k.kind,
+			Bucket:        k.bucket,
+			Count:         sl.count,
+			ErrorCount:    sl.errorCount,
+			P50Us:         P50(durations),
+			P95Us:         P95(durations),
+			P99Us:         P99(durations),
+			WeightedCount: sl.weights.count,
+			WeightedSpans: sl.weights.spans,
 		})
 	}
 	return result
@@ -169,6 +173,8 @@ func (a *Accumulator) Flush(ctx context.Context) error {
 			P99Us:         P99(sl.durations),
 			MaxUs:         maxUs,
 			SumDurationUs: sumUs,
+			WeightedCount: sl.weights.count,
+			WeightedSpans: sl.weights.spans,
 		})
 	}
 
@@ -228,7 +234,9 @@ func (a *Accumulator) AggregateSpans(ctx context.Context, spans []repository.Spa
 	for k, batch := range groups {
 		durations := make([]int64, len(batch))
 		var errorCount, sumDuration, maxDuration int64
+		var weights spanWeights
 		for i, s := range batch {
+			weights.add(s)
 			durations[i] = s.DurationUs
 			sumDuration += s.DurationUs
 			if s.DurationUs > maxDuration {
@@ -252,6 +260,8 @@ func (a *Accumulator) AggregateSpans(ctx context.Context, spans []repository.Spa
 			P99Us:         P99(durations),
 			MaxUs:         maxDuration,
 			SumDurationUs: sumDuration,
+			WeightedCount: weights.count,
+			WeightedSpans: weights.spans,
 		})
 	}
 	return out, nil

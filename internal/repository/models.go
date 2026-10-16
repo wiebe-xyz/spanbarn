@@ -59,6 +59,11 @@ type Span struct {
 	// hour. It carries no ExpiresAt, and retention copies it to error_samples at
 	// the interesting cutoff so the trace outlives the raw span window.
 	Durable bool `json:"durable,omitempty"`
+	// SampleWeight is how many traces this span's trace stands for, as the
+	// ingest trace buffer decided when it kept the trace. 0 means unknown: the
+	// span was stored without a weight (before weights existed, or by an older
+	// binary).
+	SampleWeight int `json:"sampleWeight,omitempty"`
 }
 
 type Aggregate struct {
@@ -76,6 +81,25 @@ type Aggregate struct {
 	P99Us         int64     `json:"p99Us"`
 	MaxUs         int64     `json:"maxUs"`
 	SumDurationUs int64     `json:"sumDurationUs"`
+	// WeightedCount is the sum of the sample weights of the spans with a known
+	// weight, and WeightedSpans the number of those spans. Both read 0 for a
+	// row written before the columns existed (NULL). WeightedCount is the
+	// population estimate only when WeightedSpans equals Count; see
+	// WeightedEstimate.
+	WeightedCount int64 `json:"weightedCount,omitempty"`
+	WeightedSpans int64 `json:"weightedSpans,omitempty"`
+}
+
+// WeightedEstimate returns the span population the row stands for, summed from
+// the sample weights the trace buffer stamped. ok is false when any span of the
+// row has no known weight: rows written before weights existed, spans from an
+// older binary during a rollback, or a bucket that mixes both. The caller then
+// falls back to scaling Count by the current sample ratio.
+func (a Aggregate) WeightedEstimate() (n int64, ok bool) {
+	if a.Count == 0 || a.WeightedSpans != a.Count {
+		return 0, false
+	}
+	return a.WeightedCount, true
 }
 
 type SpanFilter struct {

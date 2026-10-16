@@ -17,4 +17,8 @@ type SpanRecord struct {
 	DurationUs   int64           `json:"duration_us"`
 	Attributes   json.RawMessage `json:"attributes,omitempty"`
 	Events       json.RawMessage `json:"events,omitempty"`
+	// SampleWeight is how many traces of the population this span's trace
+	// stands for, set by the trace buffer when it keeps the trace. 0 means
+	// unknown: the span reached storage without a sampling decision.
+	SampleWeight int `json:"sample_weight,omitempty"`
 }

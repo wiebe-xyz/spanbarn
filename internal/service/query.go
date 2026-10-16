@@ -139,6 +139,18 @@ func inflateCount(count, errorCount int64, sampleRate float64) int64 {
 	return errorCount + int64(float64(okCount)/sampleRate)
 }
 
+// estimateCount returns the span population an aggregate row stands for. A row
+// whose every span carried a sample weight sums those weights, so a trace kept
+// for an error or by the hourly floor counts once and a ratio-sampled trace
+// counts for its ratio. Any other row (written before weights existed, or by an
+// older binary during a rollback) scales its ok spans by the current rate.
+func estimateCount(a repository.Aggregate, sampleRate float64) int64 {
+	if n, ok := a.WeightedEstimate(); ok {
+		return n
+	}
+	return inflateCount(a.Count, a.ErrorCount, sampleRate)
+}
+
 func (s *QueryService) SetCache(c *cache.Cache) {
 	s.cache = c
 }

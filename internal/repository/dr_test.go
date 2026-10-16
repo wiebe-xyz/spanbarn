@@ -53,7 +53,7 @@ func TestSnapshotSettingsCopiesSettingsOnly(t *testing.T) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	defer db.Close()
-	if err := Migrate(db.DB); err != nil {
+	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	repo := NewRepository(db.DB)
@@ -126,7 +126,7 @@ func TestSnapshotSettingsOverwritesExisting(t *testing.T) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	defer db.Close()
-	if err := Migrate(db.DB); err != nil {
+	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	repo := NewRepository(db.DB)

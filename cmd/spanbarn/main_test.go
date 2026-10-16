@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"testing"
@@ -18,7 +19,7 @@ func testRepo(t *testing.T) (*repository.Repository, *sql.DB) {
 	if err != nil {
 		t.Fatalf("open in-memory sqlite: %v", err)
 	}
-	if err := repository.Migrate(db); err != nil {
+	if err := repository.MigrateSingleFile(context.Background(), db); err != nil {
 		db.Close()
 		t.Fatalf("migrate: %v", err)
 	}
