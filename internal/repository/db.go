@@ -81,9 +81,12 @@ const (
 // db.Exec("PRAGMA …") only configures the single connection that handled the
 // Exec call; later connections spawned under load inherit no pragmas, so
 // busy_timeout defaults to 0 and any contention surfaces as SQLITE_BUSY.
+// busyTimeoutMs is how long a connection waits on a lock before SQLITE_BUSY.
+const busyTimeoutMs = 30000
+
 func buildDSN(dbPath string, readOnly bool, cacheMB, mmapMB int, setupKey string) string {
 	q := url.Values{}
-	q.Add("_pragma", "busy_timeout(30000)")
+	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeoutMs))
 	q.Add("_pragma", "foreign_keys(ON)")
 	if !readOnly {
 		q.Add("_pragma", "journal_mode(WAL)")
@@ -206,11 +209,12 @@ func (d *DB) Close() error {
 // blocks full WAL backfill) it retries every retryInterval until the readers
 // release or the next full-interval tick arrives.
 //
-// Note: a TRUNCATE checkpoint does NOT automatically retry via busy_timeout
-// when readers block WAL backfill — it returns SQLITE_BUSY immediately in
-// that phase. busy_timeout only applies to write-lock conflicts between
-// concurrent writers. Application-level retry (done here) is required to
-// eventually drain the WAL under read load.
+// SQLite calls the busy handler while a TRUNCATE checkpoint waits for readers
+// to release the WAL, so with the connection's busy_timeout the checkpoint
+// would hold the only writer connection for up to 30s and every write would
+// queue behind it (SPA-74, #337). checkpointOnce turns busy_timeout off for the
+// attempt, so a reader makes it return busy=1 at once, and the retry here waits
+// with the connection released.
 //
 // Call on the same writer *DB as every other writer. An earlier version used a
 // dedicated second connection to avoid queueing behind worker transactions, but
@@ -261,8 +265,8 @@ func (d *DB) FinalCheckpoint(log *slog.Logger) {
 // actually reset once the reader releases.
 func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) int {
 	for {
-		var busy, walFrames, checkpointed int
-		if err := d.QueryRowContext(ctx, "PRAGMA main.wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
+		busy, walFrames, checkpointed, err := d.checkpointOnce(ctx)
+		if err != nil {
 			if ctx.Err() == nil {
 				log.Warn("wal checkpoint error", "error", err)
 			}
@@ -284,4 +288,30 @@ func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *s
 		case <-time.After(retryInterval):
 		}
 	}
+}
+
+// checkpointOnce runs one TRUNCATE checkpoint with busy_timeout off on the
+// connection it uses, and restores busy_timeout before the connection goes
+// back to the pool.
+func (d *DB) checkpointOnce(ctx context.Context) (busy, walFrames, checkpointed int, err error) {
+	conn, err := d.Conn(ctx)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout = 0"); err != nil {
+		return 0, 0, 0, err
+	}
+	defer func() {
+		if _, rerr := conn.ExecContext(context.Background(), fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeoutMs)); rerr != nil {
+			// A connection left without a busy timeout would fail writes
+			// with SQLITE_BUSY, so drop it from the pool instead.
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+			if err == nil {
+				err = fmt.Errorf("restore busy_timeout: %w", rerr)
+			}
+		}
+	}()
+	err = conn.QueryRowContext(ctx, "PRAGMA main.wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed)
+	return busy, walFrames, checkpointed, err
 }
