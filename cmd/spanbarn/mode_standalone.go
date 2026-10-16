@@ -17,6 +17,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
+	"github.com/wiebe-xyz/spanbarn/internal/releasemark"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
@@ -125,6 +126,8 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
+	releaseMarker := releasemark.New(repo, releasemark.DefaultInterval, logger)
+	safeGo("release-marks", &wg, func() { releaseMarker.Run(retentionCtx) })
 
 	compactor := newRollupCompactor(repo, cfg, logger)
 	safeGo("rollup-compactor", &wg, func() { compactor.Run(retentionCtx) })

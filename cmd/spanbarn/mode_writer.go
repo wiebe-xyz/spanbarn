@@ -19,6 +19,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
+	"github.com/wiebe-xyz/spanbarn/internal/releasemark"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
@@ -205,6 +206,8 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
+	releaseMarker := releasemark.New(repo, releasemark.DefaultInterval, logger)
+	safeGo("release-marks", &wg, func() { releaseMarker.Run(retentionCtx) })
 
 	// Shares retentionRepo for the same reason retention does: a longer query
 	// timeout and the write scheduler, on the one writer connection.
