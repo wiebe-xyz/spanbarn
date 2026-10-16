@@ -23,7 +23,7 @@ func setupTestWorker(t *testing.T, cfg Config) (*RetentionWorker, *repository.Re
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if err := repository.Migrate(db.DB); err != nil {
+	if err := repository.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 

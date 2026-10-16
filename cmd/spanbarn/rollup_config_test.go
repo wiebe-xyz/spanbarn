@@ -31,6 +31,7 @@ func TestRetentionConfigFromMapsEveryWindow(t *testing.T) {
 			InterestingHours:      11,
 			BoringMinutes:         12,
 			ErrorDays:             13,
+			ErrorExemplarDays:     24,
 			AggregatedDays:        14,
 			MetricsDays:           15,
 			LogHours:              16,

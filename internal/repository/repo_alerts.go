@@ -166,6 +166,9 @@ func (r *Repository) InsertErrorSamples(spans []Span) error {
 				return err
 			}
 		}
+		if err := recordErrorExemplars(tx, spans, time.Now()); err != nil {
+			return err
+		}
 		return tx.Commit()
 	})
 }
@@ -221,10 +224,18 @@ func (r *Repository) QueryErrorSamples(f SpanFilter) ([]Span, error) {
 	return r.scanErrorSamples(q, args...)
 }
 
+// DeleteErrorSamplesOlderThan deletes error samples copied before cutoff,
+// except those of a trace listed in error_exemplars: they stay until
+// PruneErrorExemplars drops the trace's exemplar rows.
 func (r *Repository) DeleteErrorSamplesOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
 		res, e := db.ExecContext(ctx,
-			"DELETE FROM error_samples WHERE rowid IN (SELECT rowid FROM error_samples WHERE sampled_at < ? LIMIT ?)",
+			`DELETE FROM error_samples WHERE rowid IN (
+				SELECT rowid FROM error_samples e
+				WHERE sampled_at < ?
+				  AND NOT EXISTS (SELECT 1 FROM error_exemplars x
+				                  WHERE x.project_id = e.project_id AND x.trace_id = e.trace_id)
+				LIMIT ?)`,
 			cutoff, retentionDeleteBatch)
 		if e != nil {
 			return 0, e

@@ -154,7 +154,7 @@ func setupDiskWorker(t *testing.T, cfg Config) (*RetentionWorker, *repository.Re
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := repository.Migrate(db.DB); err != nil {
+	if err := repository.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 

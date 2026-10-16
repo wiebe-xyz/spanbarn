@@ -7,6 +7,7 @@ type Config struct {
 	InterestingRetentionHours int           // hours to keep spans (default 48 = 2d); this is the cutoff RunOnce deletes spans on, so it sizes the database
 	BoringRetentionMinutes    int           // minutes to keep sampled boring spans (default 30); 0 disables boring cleanup
 	ErrorRetentionDays        int           // days to keep error samples (default 30)
+	ErrorExemplarDays         int           // days to keep one error trace per (project, service, operation, day) after the error cutoff has taken the rest (default 30)
 	AggregateRetentionDays    int           // days to keep aggregates (default 365)
 	MetricsRetentionDays      int           // days to keep raw metric data points (default 7). Raw points are only ever read for ranges <= rollupQueryThreshold (6h); longer ranges read the rollup tiers.
 	LogRetentionHours         int           // hours to keep log records (default 24)
@@ -52,6 +53,7 @@ func (c Config) withDefaults() Config {
 		{&c.InterestingRetentionHours, 48},
 		{&c.BoringRetentionMinutes, 30},
 		{&c.ErrorRetentionDays, 30},
+		{&c.ErrorExemplarDays, 30},
 		{&c.AggregateRetentionDays, 365},
 		{&c.MetricsRetentionDays, 7},
 		{&c.LogRetentionHours, 24},
@@ -112,6 +114,7 @@ func (w *RetentionWorker) effectiveConfig() Config {
 		{"retention_interesting_hours", &cfg.InterestingRetentionHours},
 		{"retention_aggregated_days", &cfg.AggregateRetentionDays},
 		{"retention_error_days", &cfg.ErrorRetentionDays},
+		{"retention_error_exemplar_days", &cfg.ErrorExemplarDays},
 		{"boring_retention_minutes", &cfg.BoringRetentionMinutes},
 		{"metrics_retention_days", &cfg.MetricsRetentionDays},
 		{"log_retention_hours", &cfg.LogRetentionHours},

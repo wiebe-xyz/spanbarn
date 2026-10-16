@@ -20,7 +20,7 @@ func failingWorker(t *testing.T) (*RetentionWorker, *bytes.Buffer) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.Migrate(db.DB); err != nil {
+	if err := repository.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatal(err)
 	}
 	repo := repository.NewRepository(db.DB)

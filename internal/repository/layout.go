@@ -147,6 +147,13 @@ func openLayout(ctx context.Context, dbPath string, o StorageOptions) (*Storage,
 	return openSplit(dbPath, o)
 }
 
+// MigrateSingleFile runs both migration tracks against db, which then holds
+// every table in one file. Migrate alone leaves out the span-family tables the
+// spans track adds.
+func MigrateSingleFile(ctx context.Context, db *sql.DB) error {
+	return migrateSingleFile(ctx, db)
+}
+
 func migrateSingleFile(ctx context.Context, db *sql.DB) error {
 	if err := Migrate(db); err != nil {
 		return fmt.Errorf("run migrations: %w", err)

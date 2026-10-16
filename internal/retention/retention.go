@@ -53,6 +53,7 @@ type Repository interface {
 	DeleteTraceSummariesOlderThan(ctx context.Context, interestingCutoff, errorCutoff time.Time) (int64, error)
 	InsertErrorSamples(spans []repository.Span) error
 	DeleteErrorSamplesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
+	PruneErrorExemplars(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteAggregatesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteExpiredE2EUsers(now time.Time) (int64, error)
 	DeleteExpiredWebSessions(now time.Time) (int64, error)
@@ -177,6 +178,7 @@ type cycleCutoffs struct {
 	now         time.Time
 	interesting time.Time
 	errors      time.Time
+	exemplars   time.Time
 	aggregates  time.Time
 	metrics     time.Time
 	logs        time.Time
@@ -189,6 +191,7 @@ func newCycleCutoffs(now time.Time, cfg Config) cycleCutoffs {
 		now:         now,
 		interesting: now.Add(-time.Duration(cfg.InterestingRetentionHours) * time.Hour),
 		errors:      now.Add(-time.Duration(cfg.ErrorRetentionDays) * 24 * time.Hour),
+		exemplars:   now.Add(-time.Duration(cfg.ErrorExemplarDays) * 24 * time.Hour),
 		aggregates:  now.Add(-time.Duration(cfg.AggregateRetentionDays) * 24 * time.Hour),
 		metrics:     now.Add(-time.Duration(cfg.MetricsRetentionDays) * 24 * time.Hour),
 		logs:        now.Add(-time.Duration(cfg.LogRetentionHours) * time.Hour),
@@ -204,6 +207,7 @@ type cycleStats struct {
 	spansDeleted         int64
 	boringDeleted        int64
 	errorSamplesDeleted  int64
+	exemplarsPruned      int64
 	aggregatesDeleted    int64
 	metricsDeleted       int64
 	rollupRowsDeleted    int64
@@ -228,6 +232,7 @@ func (c *cycleStats) attributes() []attribute.KeyValue {
 		attribute.Int64("spans_deleted", c.spansDeleted),
 		attribute.Int64("boring_deleted", c.boringDeleted),
 		attribute.Int64("error_samples_deleted", c.errorSamplesDeleted),
+		attribute.Int64("error_exemplars_pruned", c.exemplarsPruned),
 		attribute.Int64("aggregates_deleted", c.aggregatesDeleted),
 		attribute.Int64("metrics_deleted", c.metricsDeleted),
 		attribute.Int64("rollup_rows_deleted", c.rollupRowsDeleted),
@@ -253,6 +258,7 @@ func (c *cycleStats) logArgs() []any {
 		"spans_deleted", c.spansDeleted,
 		"boring_deleted", c.boringDeleted,
 		"error_samples_deleted", c.errorSamplesDeleted,
+		"error_exemplars_pruned", c.exemplarsPruned,
 		"aggregates_deleted", c.aggregatesDeleted,
 		"metrics_deleted", c.metricsDeleted,
 		"rollup_rows_deleted", c.rollupRowsDeleted,
@@ -416,11 +422,17 @@ func (w *RetentionWorker) purgeSpanDerived(ctx context.Context, cfg Config, cut 
 		return err
 	}
 
+	// Release the error exemplars whose window has ended first, so the deletes
+	// below take their summaries and error samples in this same cycle.
+	if st.exemplarsPruned, err = w.repo.PruneErrorExemplars(ctx, cut.exemplars); err != nil {
+		return err
+	}
+
 	// Clean up trace_summaries in lockstep with the spans they describe: early
 	// for boring-sampled traces (stamped expires_at), then non-error at the
 	// interesting cutoff, and error or durable traces at the error cutoff
 	// (matching error_samples, which holds their spans), so the trace list drops
-	// rows exactly when its spans go.
+	// rows exactly when its spans go. Error exemplars stay until pruned.
 	if _, err := w.repo.DeleteExpiredTraceSummaries(ctx, cut.now); err != nil {
 		return err
 	}
