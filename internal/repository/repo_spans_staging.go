@@ -103,7 +103,7 @@ func (r *Repository) GetStagingSpansByTraceIDs(ctx context.Context, traceIDs []s
 	}
 	q := `SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at, COALESCE(sample_weight, 0)
 		FROM spans_staging WHERE trace_id IN (` + placeholders + `)`
-	ctx, cancel := r.queryContext()
+	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
