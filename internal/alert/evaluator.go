@@ -179,32 +179,17 @@ func (e *Evaluator) evaluateAlert(ctx context.Context, a repository.Alert, now t
 		return e.evaluateMetricAlert(ctx, a, now)
 	}
 
-	// Query the current (most recent) bucket aggregate.
-	currentAggs, err := e.repo.QueryAggregates(repository.AggregateFilter{
-		ProjectID: a.ProjectID,
-		Service:   a.Service,
-		Operation: a.Operation,
-		To:        now,
-		Limit:     1,
-	})
+	buckets, err := e.serviceBuckets(a, now)
 	if err != nil {
 		return fmt.Errorf("query current aggregate: %w", err)
 	}
-	if len(currentAggs) == 0 {
+	if len(buckets) == 0 {
 		return nil // no data yet
 	}
-	current := currentAggs[0]
-
-	// Query previous N buckets for rolling average (skip the current one).
-	historyAggs, err := e.repo.QueryAggregates(repository.AggregateFilter{
-		ProjectID: a.ProjectID,
-		Service:   a.Service,
-		Operation: a.Operation,
-		To:        current.Bucket.Add(-time.Second), // exclude current bucket
-		Limit:     a.ComparisonWindow,
-	})
-	if err != nil {
-		return fmt.Errorf("query history aggregates: %w", err)
+	current := buckets[0]
+	historyAggs := buckets[1:]
+	if len(historyAggs) > a.ComparisonWindow {
+		historyAggs = historyAggs[:a.ComparisonWindow]
 	}
 
 	// Compute current value and average based on alert type.
@@ -240,6 +225,62 @@ func (e *Evaluator) evaluateAlert(ctx context.Context, a repository.Alert, now t
 	}
 
 	return e.maybeTrigger(ctx, span, a, currentVal, avgVal, len(historyAggs) > 0, now)
+}
+
+// aggregateLookback bounds how far back the evaluator reads aggregate rows for
+// the current bucket and its history. aggregateRowCap bounds how many rows that
+// read returns; rows come newest first, so a cap only trims the oldest history.
+const (
+	aggregateLookback = 24 * time.Hour
+	aggregateRowCap   = 50000
+)
+
+// serviceBuckets returns the alert's aggregates summed per bucket, newest first.
+// A bucket holds one row per (operation, resource, kind), so an alert without
+// an operation, or an operation seen under several kinds, has many rows per
+// bucket. Taking rows one by one compared one operation's latest bucket with
+// other operations' rows of the same bucket. Counts and errors add up; p95 is
+// the count-weighted mean of the rows' p95, which is close but not exact.
+func (e *Evaluator) serviceBuckets(a repository.Alert, now time.Time) ([]repository.Aggregate, error) {
+	rows, err := e.repo.QueryAggregates(repository.AggregateFilter{
+		ProjectID: a.ProjectID,
+		Service:   a.Service,
+		Operation: a.Operation,
+		From:      now.Add(-aggregateLookback),
+		To:        now,
+		Limit:     aggregateRowCap,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sumByBucket(rows), nil
+}
+
+// sumByBucket folds rows ordered newest first into one aggregate per bucket,
+// keeping that order.
+func sumByBucket(rows []repository.Aggregate) []repository.Aggregate {
+	var out []repository.Aggregate
+	var weighted []float64
+	for _, r := range rows {
+		n := len(out)
+		if n == 0 || !out[n-1].Bucket.Equal(r.Bucket) {
+			out = append(out, repository.Aggregate{
+				ProjectID: r.ProjectID, Service: r.Service, Bucket: r.Bucket,
+			})
+			weighted = append(weighted, 0)
+			n++
+		}
+		b := &out[n-1]
+		b.Count += r.Count
+		b.ErrorCount += r.ErrorCount
+		weighted[n-1] += float64(r.P95Us) * float64(r.Count)
+	}
+	for i := range out {
+		if out[i].Count > 0 {
+			out[i].P95Us = int64(weighted[i] / float64(out[i].Count))
+		}
+	}
+	return out
 }
 
 // maybeTrigger applies the shared threshold + significant-increase gate and, if
