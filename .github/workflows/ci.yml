@@ -69,6 +69,10 @@ jobs:
                 (cd "$dir" && SPANBARN_TEST_LAYOUT=split go test ./internal/repository/...)
               fi
               (cd "$dir" && go vet ./...)
+              # Same pinned staticcheck as quality-backend in build-and-test.yml,
+              # which runs only after merge. Without it here a finding passes the
+              # PR and the merge queue and first fails on main.
+              (cd "$dir" && go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...)
               # Layering rules (depguard) from .golangci.yml. Pinned like gocyclo/dupl.
               # --allow-parallel-runners: every self-hosted runner on the host runs as
               # one user and golangci-lint locks a file in that user's temp dir, so a
