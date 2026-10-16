@@ -440,3 +440,83 @@ func TestEvaluateBelowThreshold(t *testing.T) {
 		t.Fatal("expected no notification when below threshold")
 	}
 }
+
+// serviceAlertRepo holds a service-level error_rate alert and, per 5-minute
+// bucket, a noisy low-volume operation next to a clean high-volume one.
+func serviceAlertRepo(now time.Time, currentErrors int64) *mockAlertRepo {
+	repo := newMockRepo()
+	repo.alerts = []repository.Alert{{
+		ID: 3, ProjectID: 1, Service: "web", Type: "error_rate",
+		Threshold: 5.0, ComparisonWindow: 3, CooldownMinutes: 15,
+		WebhookURL: "https://hook", Enabled: true,
+	}}
+	for i := 0; i < 4; i++ {
+		bucket := now.Add(-time.Duration(i*5+1) * time.Minute)
+		errs := int64(1)
+		if i == 0 {
+			errs = currentErrors
+		}
+		repo.aggregates = append(repo.aggregates,
+			repository.Aggregate{ProjectID: 1, Service: "web", Operation: "GET /rare", Bucket: bucket, Count: 100, ErrorCount: errs},
+			repository.Aggregate{ProjectID: 1, Service: "web", Operation: "GET /busy", Bucket: bucket, Count: 900},
+		)
+	}
+	return repo
+}
+
+// The service's error rate is 1% in the current bucket: 10 errors over 1000
+// spans. One operation alone runs at 10%, which must not fire a 5% alert.
+func TestServiceErrorRateSumsOperationsPerBucket(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	repo := serviceAlertRepo(now, 10)
+	notifier := &mockNotifier{}
+	eval := NewEvaluator(repo, notifier, slog.Default(), nil)
+	eval.now = func() time.Time { return now }
+
+	if err := eval.Evaluate(context.Background(), 1); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if len(notifier.webhooks) != 0 {
+		t.Fatalf("fired on one operation's rate: %+v", notifier.webhooks[0].payload)
+	}
+}
+
+// 60 errors over 1000 spans is 6%, against a 0.1% history: the alert fires
+// with the service-wide numbers.
+func TestServiceErrorRateFiresOnSummedRate(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	repo := serviceAlertRepo(now, 60)
+	notifier := &mockNotifier{}
+	eval := NewEvaluator(repo, notifier, slog.Default(), nil)
+	eval.now = func() time.Time { return now }
+
+	if err := eval.Evaluate(context.Background(), 1); err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if len(notifier.webhooks) != 1 {
+		t.Fatalf("webhooks = %d, want 1", len(notifier.webhooks))
+	}
+	p := notifier.webhooks[0].payload
+	if p.Current != 6 || p.Average != 0.1 {
+		t.Errorf("current = %v, average = %v, want 6 and 0.1", p.Current, p.Average)
+	}
+}
+
+func TestSumByBucketWeightsP95ByCount(t *testing.T) {
+	b1 := time.Date(2026, 10, 16, 12, 5, 0, 0, time.UTC)
+	b0 := b1.Add(-5 * time.Minute)
+	got := sumByBucket([]repository.Aggregate{
+		{Bucket: b1, Count: 30, ErrorCount: 3, P95Us: 1000},
+		{Bucket: b1, Count: 10, ErrorCount: 1, P95Us: 5000},
+		{Bucket: b0, Count: 5, P95Us: 200},
+	})
+	if len(got) != 2 {
+		t.Fatalf("buckets = %d, want 2", len(got))
+	}
+	if got[0].Count != 40 || got[0].ErrorCount != 4 || got[0].P95Us != 2000 || !got[0].Bucket.Equal(b1) {
+		t.Errorf("newest bucket = %+v", got[0])
+	}
+	if got[1].Count != 5 || got[1].P95Us != 200 {
+		t.Errorf("older bucket = %+v", got[1])
+	}
+}
