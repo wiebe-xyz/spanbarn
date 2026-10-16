@@ -275,32 +275,11 @@ func (r *Repository) deleteLogsFrom(ctx context.Context, table string, cutoff, e
 	var total int64
 	for _, pid := range pids {
 		pid := pid
+		// The cursor keeps protected rows (pinned, error-sampled) from being
+		// scanned again by every later batch of this project.
+		var cur logTrimCursor
 		n, err := r.batchedDelete(ctx, TableFamily(table), func(db *sql.DB) (int64, error) {
-			res, e := db.ExecContext(ctx, `
-				DELETE FROM `+table+` WHERE rowid IN (
-				    SELECT rowid FROM `+table+` l
-				    WHERE project_id = ? AND ingested_at < ?
-				    AND (trace_id IS NULL
-				         OR (NOT EXISTS (
-				                 SELECT 1 FROM pinned_traces p
-				                 WHERE p.project_id = l.project_id
-				                   AND p.trace_id = l.trace_id
-				             )
-				             AND NOT EXISTS (
-				                 SELECT 1 FROM error_samples e
-				                 WHERE e.trace_id = l.trace_id
-				                   AND e.sampled_at > ?
-				             )
-				         )
-				    )
-				    LIMIT ?)`,
-				pid, cutoff, errorLogCutoff, retentionDeleteBatch,
-			)
-			if e != nil {
-				return 0, e
-			}
-			n, _ := res.RowsAffected()
-			return n, nil
+			return trimLogsBatch(ctx, db, table, pid, cutoff, errorLogCutoff, &cur, retentionDeleteBatch)
 		})
 		total += n
 		if err != nil {
