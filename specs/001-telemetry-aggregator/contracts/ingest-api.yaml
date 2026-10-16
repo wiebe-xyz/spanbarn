@@ -145,6 +145,42 @@ paths:
                 items:
                   $ref: '#/components/schemas/OperationSummary'
 
+  /api/v1/services/{service}/versions:
+    get:
+      summary: Entry-point metrics of a service per service.version, newest version first
+      description: >
+        Groups the service's raw server spans by the service.version attribute.
+        Spans without a version are left out, so a service that reports no
+        version returns an empty list. Counts are raw spans in the window.
+      operationId: listServiceVersions
+      security:
+        - session: []
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Version list with metrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VersionSummary'
+
   /api/v1/dashboard/counts:
     get:
       summary: Span or trace counts over time, grouped by service, span name, span status or HTTP status code
@@ -1612,6 +1648,31 @@ components:
           type: string
         kind:
           type: string
+        spanCount:
+          type: integer
+        errorCount:
+          type: integer
+        errorRate:
+          type: number
+          format: float
+        p50Us:
+          type: integer
+        p95Us:
+          type: integer
+        p99Us:
+          type: integer
+
+    VersionSummary:
+      type: object
+      properties:
+        version:
+          type: string
+        firstSeen:
+          type: string
+          format: date-time
+        lastSeen:
+          type: string
+          format: date-time
         spanCount:
           type: integer
         errorCount:

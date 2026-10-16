@@ -1,6 +1,7 @@
 import type {
   ServiceSummary,
   OperationSummary,
+  VersionSummary,
   TimeseriesBucket,
   TraceSummary,
   TraceGroupSummary,
@@ -235,6 +236,10 @@ export const api = {
   getServices: (from: string, to: string, serverOnly = true) =>
     fetchJSON<ServiceSummary[]>(`/api/v1/services${qs({ from, to, server_only: serverOnly ? 'true' : undefined })}`),
 
+  getServiceVersions: (service: string, from: string, to: string) =>
+    fetchJSON<VersionSummary[]>(
+      `/api/v1/services/${encodeURIComponent(service)}/versions${qs({ from, to })}`,
+    ),
   getOperations: (service: string, from: string, to: string, kind = 'server') =>
     fetchJSON<OperationSummary[]>(
       `/api/v1/services/${encodeURIComponent(service)}/operations${qs({ from, to, kind: kind || undefined })}`,

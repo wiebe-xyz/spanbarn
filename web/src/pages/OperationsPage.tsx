@@ -17,6 +17,7 @@ import { getTimeRange } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
 import { useTimeRange } from '../contexts/useTimeRange'
+import { ServiceVersions } from '../components/ServiceVersions'
 
 export function OperationsPage(): ReactElement {
   const { service } = useParams<{ service: string }>()
@@ -299,6 +300,8 @@ export function OperationsPage(): ReactElement {
         </table>
         </div>
       </div>
+
+      {service && <ServiceVersions service={service} range={range} />}
     </div>
   )
 }
