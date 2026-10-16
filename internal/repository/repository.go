@@ -30,6 +30,34 @@ func writeOpLabel() string {
 	return name
 }
 
+// batchLabel names a batched delete by the repository method that called
+// batchedDelete and the table family it runs on, for example
+// "deleteLogsFrom:logs". Without it every retention delete is labelled
+// "batchedDelete" in slow-write warnings and wedge dumps, and the log trim, the
+// staging delete and the aggregate delete cannot be told apart.
+// It must be called directly from batchedDelete or batchedDeleteLimited.
+func batchLabel(f Family) string {
+	// 0 → writeOpLabelAt, 1 → batchLabel, 2 → batchedDelete(Limited), 3 → the repo method.
+	return writeOpLabelAt(3) + ":" + f.String()
+}
+
+// writeOpLabelAt is writeOpLabel for an explicit stack depth (0 is itself).
+func writeOpLabelAt(skip int) string {
+	pc, _, _, ok := runtime.Caller(skip)
+	if !ok {
+		return "unknown"
+	}
+	f := runtime.FuncForPC(pc)
+	if f == nil {
+		return "unknown"
+	}
+	name := f.Name()
+	if i := strings.LastIndex(name, "."); i >= 0 {
+		name = name[i+1:]
+	}
+	return name
+}
+
 const DefaultQueryTimeout = 30 * time.Second
 
 // Repository provides data access methods over a SQLite database.
@@ -299,6 +327,7 @@ func (r *Repository) deleteOlderThanPerProject(ctx context.Context, table, timeC
 // the disk it is trying to free, and never logs — so from the outside retention
 // simply goes silent while the volume fills.
 func (r *Repository) batchedDeleteLimited(ctx context.Context, f Family, max int64, exec func(db *sql.DB, limit int64) (int64, error)) (int64, bool, error) {
+	label := batchLabel(f)
 	var total int64
 	for total < max {
 		if err := ctx.Err(); err != nil {
@@ -311,7 +340,7 @@ func (r *Repository) batchedDeleteLimited(ctx context.Context, f Family, max int
 		}
 
 		var n int64
-		if err := r.execLow(f, func(db *sql.DB) error {
+		if err := r.submit(f, writescheduler.Low, label, func(db *sql.DB) error {
 			var e error
 			n, e = exec(db, batch)
 			return e
@@ -374,13 +403,14 @@ func (r *Repository) deleteOlderThanPerProjectLimited(ctx context.Context, table
 // configured, pauses so the WAL checkpoint and readers are not starved. It
 // returns the total rows deleted.
 func (r *Repository) batchedDelete(ctx context.Context, f Family, exec func(db *sql.DB) (int64, error)) (int64, error) {
+	label := batchLabel(f)
 	var total int64
 	for {
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
 		var n int64
-		if err := r.execLow(f, func(db *sql.DB) error {
+		if err := r.submit(f, writescheduler.Low, label, func(db *sql.DB) error {
 			var e error
 			n, e = exec(db)
 			return e
