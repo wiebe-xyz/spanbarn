@@ -106,10 +106,10 @@ func TestFirstStringAttr(t *testing.T) {
 
 func TestServiceSummariesWeightsAndOrder(t *testing.T) {
 	merged := map[string]*aggStats{}
-	statsFor(merged, "small").foldAggregate(1, 1, 0, 10, 20, 30)
+	statsFor(merged, "small").foldAggregate(1, repository.Aggregate{Count: 1, P50Us: 10, P95Us: 20, P99Us: 30})
 	big := statsFor(merged, "big")
-	big.foldAggregate(1, 3, 1, 100, 200, 300)
-	big.foldAggregate(1, 1, 0, 200, 400, 600)
+	big.foldAggregate(1, repository.Aggregate{Count: 3, ErrorCount: 1, P50Us: 100, P95Us: 200, P99Us: 300})
+	big.foldAggregate(1, repository.Aggregate{Count: 1, P50Us: 200, P95Us: 400, P99Us: 600})
 	if statsFor(merged, "big") != big {
 		t.Fatal("statsFor must return the existing entry")
 	}
@@ -120,5 +120,26 @@ func TestServiceSummariesWeightsAndOrder(t *testing.T) {
 	}
 	if got[0].SpanCount != 4 || got[0].ErrorCount != 1 || got[0].P50Us != 125 {
 		t.Errorf("big = %+v", got[0])
+	}
+}
+
+// TestEstimateCount checks that a fully weighted row counts its weights and
+// any other row falls back to scaling its ok spans by the current rate.
+func TestEstimateCount(t *testing.T) {
+	cases := []struct {
+		name string
+		a    repository.Aggregate
+		want int64
+	}{
+		// One error trace span (weight 1) and one span of a trace sampled 1 in
+		// 1000: the ratio estimate would scale both ok spans.
+		{"weighted", repository.Aggregate{Count: 3, ErrorCount: 1, WeightedCount: 1002, WeightedSpans: 3}, 1002},
+		{"no weights", repository.Aggregate{Count: 3, ErrorCount: 1}, 2001},
+		{"partly weighted", repository.Aggregate{Count: 3, ErrorCount: 1, WeightedCount: 2, WeightedSpans: 2}, 2001},
+	}
+	for _, c := range cases {
+		if got := estimateCount(c.a, 0.001); got != c.want {
+			t.Errorf("%s: estimateCount = %d, want %d", c.name, got, c.want)
+		}
 	}
 }

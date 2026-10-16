@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -23,7 +24,7 @@ func newExtSessionService(t *testing.T) *api.SessionService {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := repository.Migrate(db.DB); err != nil {
+	if err := repository.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	return api.NewSessionService(repository.NewRepository(db.DB), 3600, 3600, nil)

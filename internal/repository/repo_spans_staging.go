@@ -11,7 +11,17 @@ import (
 // stagingCols is the column list shared by staging reads/writes (matches spans,
 // minus the auto id). ingested_at is preserved across the staging->spans move so
 // a span's received time doesn't jump to flush time.
-const stagingCols = `project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at`
+const stagingCols = `project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at, sample_weight`
+
+// sampleWeightArg stores an unknown weight (0) as NULL, so the column reads the
+// same for a span the trace buffer never weighted and a row from before the
+// column existed.
+func sampleWeightArg(w int) any {
+	if w <= 0 {
+		return nil
+	}
+	return w
+}
 
 // InsertSpansStaging appends spans to the unindexed-ish spans_staging landing
 // table (one trace_id index). This is the cheap write that lets the writer drain
@@ -31,8 +41,8 @@ func (r *Repository) InsertSpansStaging(ctx context.Context, spans []Span) error
 		defer tx.Rollback()
 
 		stmt, err := tx.PrepareContext(ctx, `INSERT INTO spans_staging
-			(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+			(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events, sample_weight)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		if err != nil {
 			return err
 		}
@@ -46,7 +56,7 @@ func (r *Repository) InsertSpansStaging(ctx context.Context, spans []Span) error
 			if _, err := stmt.ExecContext(ctx,
 				s.ProjectID, s.TraceID, s.SpanID, parentID,
 				s.Name, s.Service, s.Resource, s.Kind, s.Status,
-				s.StartTimeUs, s.DurationUs, s.Attributes, s.Events,
+				s.StartTimeUs, s.DurationUs, s.Attributes, s.Events, sampleWeightArg(s.SampleWeight),
 			); err != nil {
 				return err
 			}
@@ -91,9 +101,28 @@ func (r *Repository) GetStagingSpansByTraceIDs(ctx context.Context, traceIDs []s
 	for i, id := range traceIDs {
 		args[i] = id
 	}
-	q := `SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at
+	q := `SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at, COALESCE(sample_weight, 0)
 		FROM spans_staging WHERE trace_id IN (` + placeholders + `)`
-	return r.scanSpans(q, args...)
+	ctx, cancel := r.queryContext()
+	defer cancel()
+	rows, err := r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Span
+	for rows.Next() {
+		var s Span
+		if err := rows.Scan(
+			&s.ID, &s.ProjectID, &s.TraceID, &s.SpanID, &s.ParentSpanID,
+			&s.Name, &s.Service, &s.Resource, &s.Kind, &s.Status,
+			&s.StartTimeUs, &s.DurationUs, &s.Attributes, &s.Events, &s.IngestedAt, &s.SampleWeight,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // CommitStagingFlush atomically moves the interesting spans into the indexed
@@ -114,7 +143,7 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 		if len(interesting) > 0 {
 			stmt, err := tx.PrepareContext(ctx, `INSERT INTO spans
 				(`+stagingCols+`, expires_at, durable)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 			if err != nil {
 				return err
 			}
@@ -126,7 +155,7 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 				if _, err := stmt.ExecContext(ctx,
 					s.ProjectID, s.TraceID, s.SpanID, parentID,
 					s.Name, s.Service, s.Resource, s.Kind, s.Status,
-					s.StartTimeUs, s.DurationUs, s.Attributes, s.Events, s.IngestedAt,
+					s.StartTimeUs, s.DurationUs, s.Attributes, s.Events, s.IngestedAt, sampleWeightArg(s.SampleWeight),
 					s.ExpiresAt, s.Durable,
 				); err != nil {
 					stmt.Close()

@@ -26,8 +26,8 @@ func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error
 		defer tx.Rollback()
 
 		stmt, err := tx.PrepareContext(ctx, `INSERT INTO spans
-			(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events, expires_at, durable)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+			(project_id, trace_id, span_id, parent_span_id, name, service, resource, kind, status, start_time_us, duration_us, attributes, events, expires_at, durable, sample_weight)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		if err != nil {
 			return err
 		}
@@ -41,7 +41,7 @@ func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error
 			if _, err := stmt.ExecContext(ctx,
 				s.ProjectID, s.TraceID, s.SpanID, parentID,
 				s.Name, s.Service, s.Resource, s.Kind, s.Status,
-				s.StartTimeUs, s.DurationUs, s.Attributes, s.Events, s.ExpiresAt, s.Durable,
+				s.StartTimeUs, s.DurationUs, s.Attributes, s.Events, s.ExpiresAt, s.Durable, sampleWeightArg(s.SampleWeight),
 			); err != nil {
 				return err
 			}
@@ -247,7 +247,7 @@ func (r *Repository) GetSpansForAggregation(cutoff time.Time, limit int) ([]Span
 	ctx, cancel := r.queryContext()
 	defer cancel()
 	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at, durable FROM spans WHERE ingested_at <= ? ORDER BY ingested_at LIMIT ?",
+		"SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at, durable, COALESCE(sample_weight, 0) FROM spans WHERE ingested_at <= ? ORDER BY ingested_at LIMIT ?",
 		cutoff, limit,
 	)
 	if err != nil {
@@ -260,7 +260,7 @@ func (r *Repository) GetSpansForAggregation(cutoff time.Time, limit int) ([]Span
 		if err := rows.Scan(
 			&s.ID, &s.ProjectID, &s.TraceID, &s.SpanID, &s.ParentSpanID,
 			&s.Name, &s.Service, &s.Resource, &s.Kind, &s.Status,
-			&s.StartTimeUs, &s.DurationUs, &s.Attributes, &s.Events, &s.IngestedAt, &s.Durable,
+			&s.StartTimeUs, &s.DurationUs, &s.Attributes, &s.Events, &s.IngestedAt, &s.Durable, &s.SampleWeight,
 		); err != nil {
 			return nil, err
 		}

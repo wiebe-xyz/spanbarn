@@ -8,26 +8,39 @@ import (
 	"time"
 )
 
+// upsertAggregateSQL adds a row's counts into its bucket. weighted_count and
+// weighted_spans add like count, so a bucket whose stored value is NULL (rows
+// from before the columns existed) stays NULL, and WeightedEstimate reports it
+// as unknown instead of mixing weighted and unweighted spans.
+const upsertAggregateSQL = `INSERT INTO aggregates
+	(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us, weighted_count, weighted_spans)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(project_id, service, operation, resource, kind, bucket)
+	DO UPDATE SET
+		count = count + excluded.count,
+		error_count = error_count + excluded.error_count,
+		p50_us = excluded.p50_us,
+		p95_us = excluded.p95_us,
+		p99_us = excluded.p99_us,
+		max_us = MAX(max_us, excluded.max_us),
+		sum_duration_us = sum_duration_us + excluded.sum_duration_us,
+		weighted_count = weighted_count + excluded.weighted_count,
+		weighted_spans = weighted_spans + excluded.weighted_spans`
+
+func upsertAggregateArgs(agg Aggregate) []any {
+	return []any{
+		agg.ProjectID, agg.Service, agg.Operation, agg.Resource, agg.Kind,
+		agg.Bucket, agg.Count, agg.ErrorCount,
+		agg.P50Us, agg.P95Us, agg.P99Us, agg.MaxUs, agg.SumDurationUs,
+		agg.WeightedCount, agg.WeightedSpans,
+	}
+}
+
 func (r *Repository) UpsertAggregate(agg Aggregate) error {
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx := WithoutSpanTracing(context.Background())
 	return r.execLow(FamilySpans, func(db *sql.DB) error {
-		_, err := db.ExecContext(ctx, `INSERT INTO aggregates
-			(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(project_id, service, operation, resource, kind, bucket)
-			DO UPDATE SET
-				count = count + excluded.count,
-				error_count = error_count + excluded.error_count,
-				p50_us = excluded.p50_us,
-				p95_us = excluded.p95_us,
-				p99_us = excluded.p99_us,
-				max_us = MAX(max_us, excluded.max_us),
-				sum_duration_us = sum_duration_us + excluded.sum_duration_us`,
-			agg.ProjectID, agg.Service, agg.Operation, agg.Resource, agg.Kind,
-			agg.Bucket, agg.Count, agg.ErrorCount,
-			agg.P50Us, agg.P95Us, agg.P99Us, agg.MaxUs, agg.SumDurationUs,
-		)
+		_, err := db.ExecContext(ctx, upsertAggregateSQL, upsertAggregateArgs(agg)...)
 		return err
 	})
 }
@@ -45,29 +58,14 @@ func (r *Repository) UpsertAggregates(aggs []Aggregate) error {
 		}
 		defer tx.Rollback()
 
-		stmt, err := tx.PrepareContext(ctx, `INSERT INTO aggregates
-			(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(project_id, service, operation, resource, kind, bucket)
-			DO UPDATE SET
-				count = count + excluded.count,
-				error_count = error_count + excluded.error_count,
-				p50_us = excluded.p50_us,
-				p95_us = excluded.p95_us,
-				p99_us = excluded.p99_us,
-				max_us = MAX(max_us, excluded.max_us),
-				sum_duration_us = sum_duration_us + excluded.sum_duration_us`)
+		stmt, err := tx.PrepareContext(ctx, upsertAggregateSQL)
 		if err != nil {
 			return err
 		}
 		defer stmt.Close()
 
 		for _, agg := range aggs {
-			if _, err := stmt.ExecContext(ctx,
-				agg.ProjectID, agg.Service, agg.Operation, agg.Resource, agg.Kind,
-				agg.Bucket, agg.Count, agg.ErrorCount,
-				agg.P50Us, agg.P95Us, agg.P99Us, agg.MaxUs, agg.SumDurationUs,
-			); err != nil {
+			if _, err := stmt.ExecContext(ctx, upsertAggregateArgs(agg)...); err != nil {
 				return err
 			}
 		}
@@ -104,7 +102,7 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 		args = append(args, f.To)
 	}
 
-	q := "SELECT id, project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us FROM aggregates"
+	q := "SELECT id, project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us, COALESCE(weighted_count, 0), COALESCE(weighted_spans, 0) FROM aggregates"
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -133,6 +131,7 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 			&a.ID, &a.ProjectID, &a.Service, &a.Operation, &a.Resource, &a.Kind,
 			&a.Bucket, &a.Count, &a.ErrorCount,
 			&a.P50Us, &a.P95Us, &a.P99Us, &a.MaxUs, &a.SumDurationUs,
+			&a.WeightedCount, &a.WeightedSpans,
 		); err != nil {
 			return nil, err
 		}
