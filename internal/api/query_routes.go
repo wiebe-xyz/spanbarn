@@ -61,6 +61,9 @@ func (h *queryHandlers) resolveServiceRoute(parts []string) http.HandlerFunc {
 	case len(parts) == 5 && parts[4] == "operations":
 		// GET /api/v1/services/{service}/operations
 		return h.handleOperations
+	case len(parts) == 5 && parts[4] == "versions":
+		// GET /api/v1/services/{service}/versions
+		return h.handleServiceVersions
 	case len(parts) >= 7 && parts[4] == "operations" && parts[len(parts)-1] == "timeseries":
 		// GET /api/v1/services/{service}/operations/{operation}/timeseries
 		return h.handleTimeseries

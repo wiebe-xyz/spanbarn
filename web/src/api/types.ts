@@ -22,6 +22,19 @@ export type OperationSummary = {
   p99Us: number
 }
 
+/** Entry-point metrics of one service.version of a service. */
+export type VersionSummary = {
+  version: string
+  firstSeen: string
+  lastSeen: string
+  spanCount: number
+  errorCount: number
+  errorRate: number
+  p50Us: number
+  p95Us: number
+  p99Us: number
+}
+
 /** A single time-series bucket of metrics. */
 export type TimeseriesBucket = {
   bucket: string

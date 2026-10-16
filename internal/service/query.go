@@ -26,6 +26,7 @@ type QueryRepository interface {
 	ExcludedOperations(projectID int64) ([]string, error)
 	QueryServiceStatsFromSpans(projectID int64, from, to time.Time, kind string) ([]repository.ServiceStats, error)
 	QueryOperationStatsFromSpans(projectID int64, service string, from, to time.Time, kind string) ([]repository.OperationStats, error)
+	QueryVersionStatsFromSpans(projectID int64, service string, from, to time.Time) ([]repository.VersionStats, error)
 	QuerySpanTimeseries(projectID int64, service, operation string, from, to time.Time, intervalSec int64) ([]repository.SpanBucket, error)
 	QueryPromptRecords(filter repository.PromptFilter) ([]repository.PromptRecord, error)
 	GetSpansBySpanIDs(spanIDs []string) ([]repository.Span, error)
