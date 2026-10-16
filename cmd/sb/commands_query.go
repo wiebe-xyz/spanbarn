@@ -40,7 +40,7 @@ func cmdFlows(args []string) error {
 	from, to := addTimeFlags(fs)
 	service := fs.String("service", "", "filter by service")
 	status := fs.String("status", "", "filter by status (e.g. error)")
-	errorsOnly := fs.Bool("errors", false, "shortcut for --status=error")
+	errorsOnly := fs.Bool("errors", false, "traces with an error in any span, with the erroring operations (shortcut for --status=error)")
 	minDur := fs.Int64("min-duration-us", 0, "minimum root duration (µs)")
 	if err := fs.Parse(args); err != nil {
 		return err
