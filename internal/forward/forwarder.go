@@ -97,13 +97,18 @@ func (f *Forwarder) Run(ctx context.Context) {
 	}
 }
 
+// spanPublisher is the part of *queue.RedisQueue the RedisForwarder uses.
+type spanPublisher interface {
+	Publish(ctx context.Context, records []model.SpanRecord) error
+}
+
 // RedisForwarder reads SpanRecords from a spool and publishes them to a Redis
 // write queue. The file spool acts as the durability anchor: the cursor
 // advances only after a successful Publish, so a Redis outage causes the spool
 // to accumulate without losing data.
 type RedisForwarder struct {
 	spool  *spool.Spool
-	queue  *queue.RedisQueue
+	queue  spanPublisher
 	logger *slog.Logger
 }
 
@@ -141,44 +146,71 @@ func (f *RedisForwarder) Run(ctx context.Context) {
 				}
 			}
 
-			records, newCursor, err := f.spool.Read(cursor, defaultBatchSize)
+			next, _, err := f.forwardBatch(ctx, cursor)
 			if err != nil {
-				f.logger.Error("redis forwarder: spool read failed", "error", err)
-				continue
-			}
-			if len(records) == 0 {
-				retryDelay = 0
-				continue
-			}
-
-			pubCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err = f.queue.Publish(pubCtx, records)
-			cancel()
-			if err != nil {
-				if isQueueFullError(err) {
-					// Redis is at maxmemory — drop this batch to shed load.
-					// The write contention that caused the backup will resolve
-					// faster without unbounded retries piling up.
-					f.logger.Warn("redis forwarder: queue full, dropping batch", "count", len(records))
-					cursor = newCursor
-					if saveErr := f.spool.SaveCursor(cursor); saveErr != nil {
-						f.logger.Error("redis forwarder: failed to save cursor after drop", "error", saveErr)
-					}
-					retryDelay = 0
-					continue
-				}
-				f.logger.Error("redis forwarder: publish failed, will retry", "error", err, "count", len(records))
 				retryDelay = min(retryDelay*2+time.Second, maxRetryDelay)
 				continue
 			}
-
 			retryDelay = 0
-			cursor = newCursor
-			if err := f.spool.SaveCursor(cursor); err != nil {
-				f.logger.Error("redis forwarder: failed to save cursor", "error", err)
-			}
+			cursor = next
 		}
 	}
+}
+
+// Drain publishes what is left in the spool and returns once the spool is
+// empty, a publish fails or ctx ends. Shutdown calls it after Run has stopped
+// and the ingest handler has written its last spans: the reader's spool is on
+// the pod's own disk, so whatever is still in it when the pod goes is lost.
+func (f *RedisForwarder) Drain(ctx context.Context) (int, error) {
+	cursor, err := f.spool.LoadCursor()
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for {
+		next, n, err := f.forwardBatch(ctx, cursor)
+		if err != nil {
+			return total, err
+		}
+		if n == 0 {
+			return total, nil
+		}
+		total += n
+		cursor = next
+	}
+}
+
+// forwardBatch publishes the next batch after cursor and saves the new cursor.
+// It returns that cursor and the batch size, 0 when the spool has nothing
+// after cursor. On error the cursor stays where it was.
+func (f *RedisForwarder) forwardBatch(ctx context.Context, cursor int64) (int64, int, error) {
+	records, newCursor, err := f.spool.Read(cursor, defaultBatchSize)
+	if err != nil {
+		f.logger.Error("redis forwarder: spool read failed", "error", err)
+		return cursor, 0, err
+	}
+	if len(records) == 0 {
+		return cursor, 0, nil
+	}
+
+	pubCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	err = f.queue.Publish(pubCtx, records)
+	cancel()
+	if err != nil {
+		if !isQueueFullError(err) {
+			f.logger.Error("redis forwarder: publish failed, will retry", "error", err, "count", len(records))
+			return cursor, 0, err
+		}
+		// Redis is at maxmemory — drop this batch to shed load.
+		// The write contention that caused the backup will resolve
+		// faster without unbounded retries piling up.
+		f.logger.Warn("redis forwarder: queue full, dropping batch", "count", len(records))
+	}
+
+	if err := f.spool.SaveCursor(newCursor); err != nil {
+		f.logger.Error("redis forwarder: failed to save cursor", "error", err)
+	}
+	return newCursor, len(records), nil
 }
 
 func (f *Forwarder) send(ctx context.Context, records []model.SpanRecord) error {

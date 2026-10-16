@@ -92,7 +92,9 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	ingestHandler.Start(ctx)
+	// Not ctx: the flush loop keeps writing to the spool until Stop, so the
+	// traces the trace buffer decides at shutdown still reach it.
+	ingestHandler.Start(context.Background())
 
 	var wg sync.WaitGroup
 	defer startShardReaders(ctx, &wg, cfg, roDB, queryRepo, logger).Close()
@@ -166,7 +168,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	// single-node installs silently ingest everything unsampled and every
 	// ingest.sample_ratio.* setting reads back fine while doing nothing.
 	standaloneBuffer := newTraceBuffer(cfg, ingest.NewCachedRatioLookup(queryRepo, time.Minute), logger)
-	drainTraceBuffer(ctx, &wg, standaloneBuffer, ingestHandler)
+	traceDrained := drainTraceBuffer(&wg, standaloneBuffer, ingestHandler)
 	// Mutations (trace exclusions, alerts CRUD) still use the write repo.
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessions, logger,
 		api.WithRepository(repo),
@@ -213,6 +215,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 	shutdownHTTP(httpServer, logger, "http server shutdown error")
+	closeTraceBuffer(standaloneBuffer, traceDrained, logger)
 
 	alertCancel()
 	retentionCancel()

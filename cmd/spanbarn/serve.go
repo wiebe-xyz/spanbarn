@@ -13,12 +13,17 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
+	"github.com/wiebe-xyz/spanbarn/internal/forward"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
+
+// spoolShutdownTimeout bounds forwardSpoolOnShutdown. The reader's grace
+// period is 30s, and shutdownHTTP can take 10s of it.
+const spoolShutdownTimeout = 10 * time.Second
 
 // newHTTPServer builds the http.Server every serving mode uses.
 func newHTTPServer(cfg config.Config, handler http.Handler) *http.Server {
@@ -80,20 +85,43 @@ func startGRPC(ctx context.Context, cfg config.Config, wg *sync.WaitGroup, apiSe
 }
 
 // drainTraceBuffer forwards sampled traces from the buffer into the ingest
-// handler until ctx is cancelled.
-func drainTraceBuffer(ctx context.Context, wg *sync.WaitGroup, buf *ingest.TraceBuffer, handler *ingest.Handler) {
+// handler until closeTraceBuffer closes the buffer. The returned channel
+// closes once the last of them is in the handler.
+func drainTraceBuffer(wg *sync.WaitGroup, buf *ingest.TraceBuffer, handler *ingest.Handler) <-chan struct{} {
+	drained := make(chan struct{})
 	safeGo("trace-buffer-drain", wg, func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case spans := <-buf.Out:
-				for _, rec := range spans {
-					handler.Enqueue(rec)
-				}
+		defer close(drained)
+		for spans := range buf.Out {
+			for _, rec := range spans {
+				handler.Enqueue(rec)
 			}
 		}
 	})
+	return drained
+}
+
+// closeTraceBuffer decides every trace still in the buffer and waits until the
+// kept ones are in the ingest handler. Call it after the servers stop taking
+// spans and before handler.Stop, which writes the handler's queue to the spool.
+func closeTraceBuffer(buf *ingest.TraceBuffer, drained <-chan struct{}, logger *slog.Logger) {
+	res := buf.Close(time.Now())
+	<-drained
+	logger.Info("trace buffer flushed on shutdown",
+		"traces", res.Traces, "spans", res.Spans, "kept_spans", res.Kept)
+}
+
+// forwardSpoolOnShutdown publishes what the reader's spool still holds. Run
+// has stopped by now, and the spool goes with the pod.
+func forwardSpoolOnShutdown(fwd *forward.RedisForwarder, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), spoolShutdownTimeout)
+	defer cancel()
+	n, err := fwd.Drain(ctx)
+	if err != nil {
+		logger.Warn("spool not fully forwarded on shutdown, the rest is lost with the pod",
+			"forwarded_spans", n, "error", err)
+		return
+	}
+	logger.Info("spool forwarded on shutdown", "spans", n)
 }
 
 // newQueryCache builds the dashboard query cache backed by Redis when

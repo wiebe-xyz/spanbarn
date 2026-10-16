@@ -54,7 +54,9 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	ingestQueue := ingest.NewQueue(32768)
 	ingestHandler := ingest.NewHandler(ingestQueue, eventSpool, 5*time.Millisecond, logger)
 
-	ingestHandler.Start(readerCtx)
+	// Not ctx: the flush loop keeps writing to the spool until Stop, so the
+	// traces the trace buffer decides at shutdown still reach it.
+	ingestHandler.Start(context.Background())
 
 	metricsPublisher := queue.NewMetricsPublisher(writeQueue)
 	readerMetricsHandler := ingest.NewMetricsHandler(metricsPublisher, logger)
@@ -111,7 +113,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		ratioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
 	}
 	traceBuffer := newTraceBuffer(cfg, ratioLookup, logger)
-	drainTraceBuffer(readerCtx, &wg, traceBuffer, ingestHandler)
+	traceDrained := drainTraceBuffer(&wg, traceBuffer, ingestHandler)
 
 	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer), api.WithMetricsHandler(readerMetricsHandler), api.WithLogsHandler(readerLogsHandler)}
 	if roRepo != nil {
@@ -154,8 +156,10 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	}
 	shutdownHTTP(httpServer, logger, "reader shutdown error")
 
+	closeTraceBuffer(traceBuffer, traceDrained, logger)
 	ingestHandler.Stop()
 	wg.Wait()
+	forwardSpoolOnShutdown(fwd, logger)
 	logger.Info("reader shutdown complete")
 	return nil
 }

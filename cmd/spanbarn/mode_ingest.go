@@ -45,7 +45,9 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	ingestHandler.Start(ctx)
+	// Not ctx: the flush loop keeps writing to the spool until Stop, so the
+	// traces the trace buffer decides at shutdown still reach it.
+	ingestHandler.Start(context.Background())
 
 	var wg sync.WaitGroup
 	fwd := forward.New(eventSpool, cfg.WriterURL, cfg.APIKey, logger)
@@ -99,7 +101,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 		ingestRatioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
 	}
 	traceBuffer := newTraceBuffer(cfg, ingestRatioLookup, logger)
-	drainTraceBuffer(ctx, &wg, traceBuffer, ingestHandler)
+	traceDrained := drainTraceBuffer(&wg, traceBuffer, ingestHandler)
 
 	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer)}
 	if roRepo != nil {
@@ -129,6 +131,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	}
 	shutdownHTTP(httpServer, logger, "http server shutdown error")
 
+	closeTraceBuffer(traceBuffer, traceDrained, logger)
 	ingestHandler.Stop()
 	wg.Wait()
 	logger.Info("ingest shutdown complete")
