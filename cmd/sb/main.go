@@ -17,6 +17,7 @@ var commandTable = map[string]func(args []string) error{
 	"init":        cmdInit,
 	"projects":    cmdProjects,
 	"services":    cmdServices,
+	"operations":  cmdOperations,
 	"flows":       cmdFlows,
 	"traces":      cmdTraces,
 	"trace":       cmdTrace,
@@ -87,6 +88,7 @@ Telemetry (JSON by default; add --output table for a table):
   trace <id>    Full span tree for one trace
   logs          Query logs (--trace-id, --severity, --search, ...)
   services      Per-service error rate and latency percentiles
+  operations    Operations of one service; --per OP adds spans per span of OP
   metrics       OTLP metrics: 'metrics names' | 'metrics series --name N'
   prompts       LLM/prompt samples: 'prompts' | 'prompts detail --name N'
   deps          Service dependency graph
