@@ -20,13 +20,16 @@ type TraceKey struct {
 // Structural recompute of one summary from the spans table.
 //
 // A root is a span with no parent. An orphan is a span whose parent_span_id is
-// set but matches no span_id in the same trace. Both lookups seek
-// idx_spans_trace, so the cost depends on the size of one trace, not the table.
+// set but matches no span_id in the same trace. The cost depends on the size of
+// one trace, not the table.
 //
-// Every spans reference is pinned with INDEXED BY idx_spans_trace. Without it
-// the planner (no ANALYZE stats) picked idx_spans_http_status (project_id=?),
-// which walks every span of the project once per trace and made a 500-span
-// batch cost seconds. The pin fails loudly if the index is ever dropped.
+// Every spans reference is pinned with INDEXED BY. Without it the planner (no
+// ANALYZE stats) picked idx_spans_http_status (project_id=?), which walks every
+// span of the project once per trace and made a 500-span batch cost seconds.
+// The pin fails loudly if the index is ever dropped. The parent lookup of the
+// orphan count seeks idx_spans_span_id: idx_spans_trace holds only trace_id, so
+// finding a parent through it walked every span of the trace once per span. A
+// 16k-span cron trace then took minutes per flush and wedged the writer.
 // span_count is recomputed from the same rows, which keeps it equal to what the
 // trace detail shows after spans have been evicted.
 //
@@ -42,9 +45,9 @@ const (
 		orphan_count = (SELECT COUNT(*) FROM spans s INDEXED BY idx_spans_trace
 			WHERE s.project_id = ?1 AND s.trace_id = ?2
 			  AND s.parent_span_id IS NOT NULL AND s.parent_span_id != ''
-			  AND NOT EXISTS (SELECT 1 FROM spans p INDEXED BY idx_spans_trace
-			                  WHERE p.project_id = ?1 AND p.trace_id = ?2
-			                    AND p.span_id = s.parent_span_id))
+			  AND NOT EXISTS (SELECT 1 FROM spans p INDEXED BY idx_spans_span_id
+			                  WHERE p.span_id = s.parent_span_id
+			                    AND p.project_id = ?1 AND p.trace_id = ?2))
 		WHERE project_id = ?1 AND trace_id = ?2
 		  AND EXISTS (SELECT 1 FROM spans INDEXED BY idx_spans_trace WHERE project_id = ?1 AND trace_id = ?2)`
 
