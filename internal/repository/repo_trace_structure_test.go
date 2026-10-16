@@ -213,9 +213,11 @@ func TestTraceHealthQueries(t *testing.T) {
 	}
 }
 
-// The refresh must seek idx_spans_trace on every spans reference. Left to the
-// planner it chose idx_spans_http_status (project_id=?), a walk of the whole
-// project per trace, which made ingest quadratic in the span count.
+// The refresh must seek idx_spans_trace on every spans reference except the
+// parent lookup, which seeks idx_spans_span_id. Left to the planner it chose
+// idx_spans_http_status (project_id=?), a walk of the whole project per trace,
+// which made ingest quadratic in the span count. A parent lookup through
+// idx_spans_trace walks the whole trace per span, quadratic in the trace size.
 func TestRefreshTraceStructurePlanSeeksTraceIndex(t *testing.T) {
 	repo := setupTestDB(t)
 	for _, q := range []string{refreshTraceStructureSQL, clearStaleRootSQL, settleTraceStructureSQL} {
@@ -230,9 +232,13 @@ func TestRefreshTraceStructurePlanSeeksTraceIndex(t *testing.T) {
 				rows.Close()
 				t.Fatal(err)
 			}
+			want := "idx_spans_trace"
+			if strings.HasPrefix(detail, "SEARCH p ") {
+				want = "idx_spans_span_id"
+			}
 			if strings.Contains(detail, "SEARCH") && strings.Contains(detail, "spans") &&
-				!strings.Contains(detail, "idx_spans_trace") {
-				t.Errorf("spans not read through idx_spans_trace: %s", detail)
+				!strings.Contains(detail, want) {
+				t.Errorf("spans not read through %s: %s", want, detail)
 			}
 		}
 		rows.Close()

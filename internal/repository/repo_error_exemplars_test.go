@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -142,5 +143,87 @@ func TestErrorExemplarOutlivesErrorCutoff(t *testing.T) {
 	}
 	if summaries, _ := repo.SearchTraceSummaries(SpanFilter{ProjectID: 1}, 0); len(summaries) != 0 {
 		t.Fatalf("summaries after prune = %+v, want none", summaries)
+	}
+}
+
+// The delete must seek idx_error_samples_project. A global sampled_at filter
+// has no index and scans every sample on each batch.
+func TestDeleteErrorSamplesPlanSeeksProjectIndex(t *testing.T) {
+	repo := setupTestDB(t)
+	rows, err := repo.DB().Query("EXPLAIN QUERY PLAN "+deleteErrorSamplesSQL, 1, "2030-01-01", retentionDeleteBatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan += detail + "\n"
+	}
+	if !strings.Contains(plan, "idx_error_samples_project") || strings.Contains(plan, "SCAN e") {
+		t.Errorf("delete does not seek the project index:\n%s", plan)
+	}
+}
+
+// Every project's old samples go, and recent ones stay.
+func TestDeleteErrorSamplesOlderThanCoversEveryProject(t *testing.T) {
+	repo := setupTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	old := now.Add(-10 * 24 * time.Hour)
+
+	var spans []Span
+	for _, c := range []struct {
+		pid int64
+		id  string
+	}{{1, "P1-old"}, {2, "P2-old"}, {2, "P2-new"}} {
+		s := tsSpan(c.id, c.id+"-s", "", "GET /x", "web", "error", now.UnixMicro(), 10)
+		s.ProjectID = c.pid
+		spans = append(spans, s)
+	}
+	if err := repo.InsertErrorSamples(spans); err != nil {
+		t.Fatalf("insert error samples: %v", err)
+	}
+	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+		if _, err := db.Exec(`DELETE FROM error_exemplars`); err != nil {
+			return err
+		}
+		_, err := db.Exec(`UPDATE error_samples SET sampled_at = ? WHERE trace_id LIKE '%-old'`, old)
+		return err
+	}); err != nil {
+		t.Fatalf("age samples: %v", err)
+	}
+
+	n, err := repo.DeleteErrorSamplesOlderThan(ctx, now.Add(-7*24*time.Hour))
+	if err != nil {
+		t.Fatalf("delete samples: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("deleted %d samples, want 2", n)
+	}
+	var left []string
+	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+		rows, err := db.Query(`SELECT trace_id FROM error_samples ORDER BY trace_id`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			left = append(left, id)
+		}
+		return rows.Err()
+	}); err != nil {
+		t.Fatalf("list samples: %v", err)
+	}
+	if !equalStrings(left, []string{"P2-new"}) {
+		t.Errorf("samples left = %v, want [P2-new]", left)
 	}
 }
