@@ -197,7 +197,14 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.26'
-          cache: true
+          cache: false
+      - name: Isolate the Go module cache
+        # setup-go's cache tars GOMODCACHE and the shared GOCACHE (43 GB on the
+        # runner host) into the Actions cache and back, 10 to 25 minutes per
+        # job, on runners where the build cache stays on disk anyway. The
+        # module cache is per job for the cross-repo race described in ci.yml.
+        shell: bash
+        run: echo "GOMODCACHE=${RUNNER_TEMP}/gomodcache" >> "$GITHUB_ENV"
 
       - name: Install nfpm
         # Pin nfpm (not @latest) so a new release bumping its Go requirement
@@ -265,7 +272,14 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.25'
-          cache: true
+          cache: false
+      - name: Isolate the Go module cache
+        # setup-go's cache tars GOMODCACHE and the shared GOCACHE (43 GB on the
+        # runner host) into the Actions cache and back, 10 to 25 minutes per
+        # job, on runners where the build cache stays on disk anyway. The
+        # module cache is per job for the cross-repo race described in ci.yml.
+        shell: bash
+        run: echo "GOMODCACHE=${RUNNER_TEMP}/gomodcache" >> "$GITHUB_ENV"
 
       - name: Build macOS binary
         env:
