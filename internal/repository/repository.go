@@ -83,6 +83,8 @@ type Repository struct {
 	shards *ShardManager
 	// shardReaders, when set, serves the reads of every family with shards.
 	shardReaders *ShardReaders
+	// logTrim carries the log trim's cursors between retention passes.
+	logTrim *logTrimCursors
 }
 
 // retentionDeleteBatch caps the rows touched by a single batched retention
@@ -95,7 +97,7 @@ const retentionDeleteBatch = 1000
 
 // NewRepository creates a Repository backed by the given database connection.
 func NewRepository(db *sql.DB) *Repository {
-	return &Repository{db: db, queryTimeout: DefaultQueryTimeout}
+	return &Repository{db: db, queryTimeout: DefaultQueryTimeout, logTrim: newLogTrimCursors()}
 }
 
 // NewReadOnlyRepository creates a Repository that is flagged as read-only.
