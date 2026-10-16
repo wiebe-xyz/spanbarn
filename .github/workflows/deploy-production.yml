@@ -1,6 +1,16 @@
 name: Deploy Production
 
+# Production rolls forward on its own once "Build and Deploy Testing" succeeded
+# for a main commit. That workflow deploys testing and staging and runs the E2E
+# gate, so a success means staging rolled out. The release tag for the same
+# commit is created by Binary Release; preflight waits for it. A manual dispatch
+# still deploys any version that is already on staging.
 on:
+  workflow_run:
+    workflows: ["Build and Deploy Testing"]
+    types: [completed]
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       production_version:
@@ -32,14 +42,20 @@ env:
 jobs:
   preflight:
     runs-on: [self-hosted, build]
-    timeout-minutes: 5
+    timeout-minutes: 20
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success')
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
+      version: ${{ steps.resolve.outputs.version }}
     env:
       HOME: /Users/wiebe
       PATH: /Users/wiebe/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
     steps:
       - name: Require confirmation
+        if: github.event_name == 'workflow_dispatch'
         run: |
           if [ "${{ github.event.inputs.confirmed }}" != "true" ]; then
             echo "ERROR: Set 'confirmed' to true to proceed with production deploy"
@@ -55,8 +71,21 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ github.event.inputs.production_version }}"
+          if [ -z "${VERSION}" ]; then
+            # Automatic run: the tag Binary Release put on the tested commit.
+            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            for i in $(seq 1 40); do
+              git fetch --tags --force -q
+              VERSION=$(git tag --points-at "${HEAD_SHA}" -l 'v*' --sort=-version:refname | head -1)
+              [ -n "${VERSION}" ] && break
+              echo "No release tag on ${HEAD_SHA} yet (${i}/40)"
+              sleep 15
+            done
+            [ -n "${VERSION}" ] || { echo "ERROR: no release tag appeared for ${HEAD_SHA}"; exit 1; }
+          fi
           SHA=$(git rev-list -n1 "${VERSION}" 2>/dev/null) || \
             { echo "ERROR: Tag ${VERSION} not found in repo"; exit 1; }
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Resolved ${VERSION} -> ${SHA}"
           DOCKER_CONFIG_DIR="${RUNNER_TEMP}/docker-config-${GITHUB_RUN_ID}"
           mkdir -p "$DOCKER_CONFIG_DIR"
@@ -158,10 +187,10 @@ jobs:
             -H "Content-Type: application/json" \
             -H "X-BugBarn-Api-Key: ${BUGBARN_API_KEY}" \
             -d "{
-              \"name\": \"${{ github.event.inputs.production_version }}\",
+              \"name\": \"${{ needs.preflight.outputs.version }}\",
               \"environment\": \"production\",
-              \"version\": \"${{ github.event.inputs.production_version }}\",
-              \"url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${{ github.event.inputs.production_version }}\",
+              \"version\": \"${{ needs.preflight.outputs.version }}\",
+              \"url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${{ needs.preflight.outputs.version }}\",
               \"notes\": \"Deployed by GitHub Actions run #${GITHUB_RUN_NUMBER}\"
             }" || echo "BugBarn release marker skipped"
 
@@ -171,7 +200,7 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| | |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Version | \`${{ github.event.inputs.production_version }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Version | \`${{ needs.preflight.outputs.version }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| URL | https://spanbarn.wiebe.xyz |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Namespace | \`${NAMESPACE}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Cluster | \`${K3S_HOST}\` |" >> "$GITHUB_STEP_SUMMARY"
