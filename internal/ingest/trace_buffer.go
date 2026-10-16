@@ -109,10 +109,16 @@ type TraceBuffer struct {
 	evictedKTotal  int64
 	undeliverTotal int64
 
-	// Accepted spans are sent to this channel for the caller to drain.
+	// Accepted spans are sent to this channel for the caller to drain. Close
+	// closes it.
 	Out <-chan []model.SpanRecord
 
 	out chan []model.SpanRecord
+
+	// stop ends the gc loop, which closes gcDone on its way out. See Close.
+	stop      chan struct{}
+	gcDone    chan struct{}
+	closeOnce sync.Once
 }
 
 type bufferedTrace struct {
@@ -182,6 +188,8 @@ func NewTraceBufferWithRules(ttl time.Duration, maxSpans int, rules RescueRules,
 		rescue:   rules.normalised(),
 		out:      ch,
 		Out:      ch,
+		stop:     make(chan struct{}),
+		gcDone:   make(chan struct{}),
 	}
 	if tb.rescue.MinTracesPerHour > 0 {
 		tb.floor = sampling.NewBucketFloor(time.Hour)
@@ -292,10 +300,16 @@ func (tb *TraceBuffer) Stats() BufferStats {
 // Flush evaluates and emits all traces whose TTL has expired.
 // Called by the background gc loop; also callable manually in tests.
 func (tb *TraceBuffer) Flush(now time.Time) {
+	tb.flush(now, false)
+}
+
+// flush decides the traces whose TTL has expired, or every buffered trace when
+// all is set, and returns how many spans it sent to Out.
+func (tb *TraceBuffer) flush(now time.Time, all bool) (sent int) {
 	tb.mu.Lock()
 	toDecide := make([]*bufferedTrace, 0, 16)
 	for _, tr := range tb.traces {
-		if now.Sub(tr.firstSeen) >= tb.ttl {
+		if all || now.Sub(tr.firstSeen) >= tb.ttl {
 			toDecide = append(toDecide, tr)
 		}
 	}
@@ -320,16 +334,10 @@ func (tb *TraceBuffer) Flush(now time.Time) {
 		// here silently would discard error traces too — the one guarantee the
 		// buffer makes. Give the drain a bounded chance to catch up, then count
 		// and report what we lose instead of losing it invisibly.
-		select {
-		case tb.out <- tr.spans:
-		default:
-			timer := time.NewTimer(outDeliverTimeout)
-			select {
-			case tb.out <- tr.spans:
-			case <-timer.C:
-				undelivered += int64(len(tr.spans))
-			}
-			timer.Stop()
+		if tb.deliver(tr.spans) {
+			sent += len(tr.spans)
+		} else {
+			undelivered += int64(len(tr.spans))
 		}
 	}
 	if undelivered > 0 {
@@ -339,6 +347,25 @@ func (tb *TraceBuffer) Flush(now time.Time) {
 		tb.logger.Warn("trace buffer output blocked, sampled spans lost",
 			"spans", undelivered,
 			"hint", "the drain goroutine is not keeping up with kept traces")
+	}
+	return sent
+}
+
+// deliver hands spans to the drain goroutine, waiting at most
+// outDeliverTimeout for it to make room.
+func (tb *TraceBuffer) deliver(spans []model.SpanRecord) bool {
+	select {
+	case tb.out <- spans:
+		return true
+	default:
+	}
+	timer := time.NewTimer(outDeliverTimeout)
+	defer timer.Stop()
+	select {
+	case tb.out <- spans:
+		return true
+	case <-timer.C:
+		return false
 	}
 }
 
@@ -399,9 +426,15 @@ func isErrorStatus(s string) bool {
 }
 
 func (tb *TraceBuffer) gcLoop() {
+	defer close(tb.gcDone)
 	ticker := time.NewTicker(gcInterval)
 	defer ticker.Stop()
-	for t := range ticker.C {
-		tb.Flush(t)
+	for {
+		select {
+		case <-tb.stop:
+			return
+		case t := <-ticker.C:
+			tb.Flush(t)
+		}
 	}
 }
