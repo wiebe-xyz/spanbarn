@@ -88,6 +88,13 @@ func New() *Scheduler {
 	}
 }
 
+// InFlight returns the label of the job being executed, or "" when idle.
+func (s *Scheduler) InFlight() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.curLabel
+}
+
 // SetLogger sets the logger used for slow-job and wedge diagnostics.
 func (s *Scheduler) SetLogger(l *slog.Logger) {
 	if l != nil {
