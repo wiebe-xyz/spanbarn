@@ -274,13 +274,7 @@ func (r *Repository) deleteLogsFrom(ctx context.Context, table string, cutoff, e
 	}
 	var total int64
 	for _, pid := range pids {
-		pid := pid
-		// The cursor keeps protected rows (pinned, error-sampled) from being
-		// scanned again by every later batch of this project.
-		var cur logTrimCursor
-		n, err := r.batchedDelete(ctx, TableFamily(table), func(db *sql.DB) (int64, error) {
-			return trimLogsBatch(ctx, db, table, pid, cutoff, errorLogCutoff, &cur, retentionDeleteBatch)
-		})
+		n, err := r.trimLogsFrom(ctx, table, pid, cutoff, errorLogCutoff)
 		total += n
 		if err != nil {
 			return total, err
