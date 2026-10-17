@@ -4,6 +4,19 @@
 
 SpanBarn is a self-hosted telemetry aggregator written in Go. It collects distributed traces (OTLP-compatible), stores full-fidelity spans for a short window, then aggregates into long-term performance metrics. Part of the Barn family alongside BugBarn (errors) and FunnelBarn (analytics).
 
+## Specs And Constitution
+
+Work here is spec-driven. Before changing behaviour, read:
+
+- `.specify/memory/constitution.md`: the principles CI and the tests enforce, each with its source.
+- `specs/README.md`: the index of feature specs and the workflow.
+- The `specs/NNN-<area>/spec.md` for the area you are changing.
+
+A new feature starts as a spec or a spec change referenced from its issue. A PR
+that changes behaviour updates the spec it implements in the same PR, including
+its Drift section. When a spec, `docs/` and the code disagree, the code is the
+fact; fix the document that is wrong.
+
 ## Build & Development
 
 ```bash
@@ -98,7 +111,9 @@ into per-mode files (`mode_*.go`) plus shared helpers (`serve.go`,
 - `build-and-test.yml` — Docker build + deploy to k3s testing, then staging + E2E. The
   `quality-backend` job runs the same `scripts/quality-gate.sh`, so the gate is in the
   deploy path and not only in a `quality` job no deploy job depends on
-- `deploy-production.yml` — manual production deploy with confirmation
+- `deploy-production.yml` — production rolls forward after "Build and Deploy Testing" succeeded
+  (staging and E2E green), asserts the running version and rolls back on failure; a manual
+  `workflow_dispatch` with confirmation stays as the override
 - `binary-release.yml` — semver tags, .deb packages, macOS tarballs, npm/PyPI SDK publish.
   Triggered by `workflow_run` on a **successful** CI run and checks out
   `workflow_run.head_sha`, so a red build cuts no tag and publishes nothing, and the
