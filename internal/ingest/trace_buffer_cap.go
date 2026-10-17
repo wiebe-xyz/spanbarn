@@ -23,14 +23,16 @@ func (tb *TraceBuffer) ensureRoom(keep *bufferedTrace) bool {
 	return true
 }
 
-// evictOne drops one buffered trace, preferring traces sampling would discard
+// evictOne frees one buffered trace, preferring traces sampling would discard
 // anyway, and reports whether it found one. Error traces are never evicted.
 // Caller holds the lock.
 func (tb *TraceBuffer) evictOne(keep *bufferedTrace) bool {
 	if tr := tb.nextVictim(&tb.sacrificeQ, &tb.sacrificeHead, true, keep); tr != nil {
-		tb.evictedSacrif += int64(len(tr.spans))
-		tb.evictedSTotal += int64(len(tr.spans))
 		tb.remove(tr)
+		if !tb.rescueAtCap(tr) {
+			tb.evictedSacrif += int64(len(tr.spans))
+			tb.evictedSTotal += int64(len(tr.spans))
+		}
 		return true
 	}
 	if tr := tb.nextVictim(&tb.anyQ, &tb.anyHead, false, keep); tr != nil {
@@ -40,6 +42,32 @@ func (tb *TraceBuffer) evictOne(keep *bufferedTrace) bool {
 		return true
 	}
 	return false
+}
+
+// rescueAtCap makes the TTL decision early for a trace eviction picked, and
+// reports whether the trace is kept. "Sacrificial" only means the ratio sample
+// skips the trace. The slow-root rule and the hourly floor decide when a trace
+// reaches its TTL, and a buffer that stays at its cap turns over faster than
+// that, so without this every rare clean trace was evicted before either rule
+// saw it (#339). A kept trace leaves the buffer, so it still frees its span
+// budget, and the next flush delivers it. Caller holds the lock.
+func (tb *TraceBuffer) rescueAtCap(tr *bufferedTrace) bool {
+	w := tb.keepWeight(tr, tb.now())
+	if w == 0 {
+		return false
+	}
+	stampWeight(tr, w)
+	tb.rescuedAtCap = append(tb.rescuedAtCap, tr)
+	tb.evictedRescue += int64(len(tr.spans))
+	tb.evictedRTotal += int64(len(tr.spans))
+	return true
+}
+
+// stampWeight sets the sample weight on every span of a kept trace.
+func stampWeight(tr *bufferedTrace, w int) {
+	for i := range tr.spans {
+		tr.spans[i].SampleWeight = w
+	}
 }
 
 // nextVictim pops queued trace IDs until it finds one that is still buffered
@@ -90,6 +118,7 @@ type lossWindow struct {
 	refused       int64
 	evictedSacrif int64
 	evictedKept   int64
+	rescued       int64
 	maxSpans      int
 	buffered      int
 	traces        int
@@ -102,9 +131,10 @@ func (tb *TraceBuffer) takeLossWindow() lossWindow {
 		refused:       tb.refused,
 		evictedSacrif: tb.evictedSacrif,
 		evictedKept:   tb.evictedKept,
+		rescued:       tb.evictedRescue,
 		maxSpans:      tb.maxSpans,
 	}
-	tb.refused, tb.evictedSacrif, tb.evictedKept = 0, 0, 0
+	tb.refused, tb.evictedSacrif, tb.evictedKept, tb.evictedRescue = 0, 0, 0, 0
 	return w
 }
 
@@ -113,9 +143,10 @@ func (tb *TraceBuffer) takeLossWindow() lossWindow {
 // throw away is the cap working as designed and is reported at info; losing
 // traces that would have been stored, or refusing spans outright, is not.
 func (tb *TraceBuffer) reportLoss(w lossWindow) {
-	if w.evictedSacrif > 0 && w.evictedKept == 0 && w.refused == 0 {
+	if (w.evictedSacrif > 0 || w.rescued > 0) && w.evictedKept == 0 && w.refused == 0 {
 		tb.logger.Info("trace buffer at capacity, shed unsampled traces",
 			"evicted_spans", w.evictedSacrif,
+			"rescued_spans", w.rescued,
 			"max_spans", w.maxSpans,
 			"buffered_spans", w.buffered,
 			"buffered_traces", w.traces)
@@ -128,6 +159,7 @@ func (tb *TraceBuffer) reportLoss(w lossWindow) {
 		"evicted_kept_spans", w.evictedKept,
 		"refused_spans", w.refused,
 		"evicted_unsampled_spans", w.evictedSacrif,
+		"rescued_spans", w.rescued,
 		"max_spans", w.maxSpans,
 		"buffered_spans", w.buffered,
 		"buffered_traces", w.traces,
