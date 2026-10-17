@@ -79,9 +79,8 @@ web app uses knip through `web/scripts/knip-ratchet.mjs`: unused files, exports,
 types and dependencies are compared item by item with `web/knip-baseline.json`,
 and the gate fails both when an item appears and when a baseline item is gone
 (`pnpm --filter @spanbarn/web run lint:knip -- --write` refreshes the baseline).
-Its test (`lint:knip-test`) blocks in CI. The gate itself runs with
-`--report-only` in `ci.yml` while it soaks on real pull requests; drop the flag
-to enforce. The baseline is 0.
+Its test (`lint:knip-test`) and the gate itself both block in CI. The baseline
+is 0.
 
 The gate scripts have their own tests: `make quality-gate-test` runs the ratchet
 semantics (violation present, violation baselined, baseline beatable, clean
