@@ -22,7 +22,7 @@ trap 'rm -rf "$T"' EXIT
 check() { # name expected-rc actual-rc
   if [ "$2" = "$3" ]; then pass=$((pass + 1)); echo "ok   $1"; else
     fail=$((fail + 1)); echo "FAIL $1: expected exit $2, got $3"
-    printf '%s\n' "${OUT:-}" | sed 's/^/     | /' | tail -8; fi
+    printf '%s\n' "${OUT:-}" | sed "s/^/     | /" | tail -40; fi
 }
 has() { # name needle haystack
   case "$3" in *"$2"*) pass=$((pass + 1)); echo "ok   $1" ;; *) fail=$((fail + 1)); echo "FAIL $1: output lacks '$2'" ;; esac
@@ -38,7 +38,7 @@ new_repo() {
   local d="$T/$1"
   mkdir -p "$d"
   (
-    cd "$d" && git init -q . && git config user.email t@example.invalid && git config user.name t
+    cd "$d" && git init -q . && git config user.email t@example.invalid && git config user.name t && git config gc.auto 0 && git config maintenance.auto false
     cp "$CONFIG" .gitleaks.toml
     echo base > a.txt
     git add a.txt .gitleaks.toml && git commit -q -m base
