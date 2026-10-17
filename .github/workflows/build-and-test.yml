@@ -126,8 +126,9 @@ jobs:
         # Pinned, not @latest. This is the repo's only dead-code gate; a new
         # staticcheck release would otherwise change what CI enforces with no
         # commit on our side, which is the drift the adjacent gocyclo/dupl/ruff
-        # pins exist to prevent.
-        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+        # pins exist to prevent. The pin lives in scripts/staticcheck-gate.py,
+        # which also fails when U1000 analysed fewer packages than its floor.
+        run: python3 scripts/staticcheck-gate.py .
       - name: go vet
         run: go vet ./...
       - name: Go tests with race detector

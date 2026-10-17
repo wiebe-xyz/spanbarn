@@ -1,8 +1,8 @@
 // The ratchet's own test. A gate that has quietly stopped failing looks exactly
 // like a clean repo, which is why it is tested before it is trusted. `compare`
-// and `flatten` are the decision on knip's findings. The floor tests run the
-// real knip, since a knip that reads nothing is the false green the floor
-// exists for (vibecortex#29).
+// and `flatten` are the decision on knip's findings. The last tests run the
+// real knip: a planted unused export turns the gate red, and a knip that reads
+// nothing is the false green the floor exists for (vibecortex#29).
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -17,6 +17,7 @@ import {
   ITEM_TYPES,
   analysedFiles,
   floorProblem,
+  run,
   runKnipPerformance,
   MIN_ANALYSED_FILES,
 } from "./knip-ratchet.mjs";
@@ -139,4 +140,52 @@ test("the real knip over a package whose project glob matches nothing trips the 
 test("the real web package clears the floor", () => {
   const analysed = analysedFiles(runKnipPerformance(webDir));
   assert.equal(floorProblem(analysed), null, `knip analysed ${analysed} files in web/`);
+});
+
+/** A throwaway package; returns its path. `files` maps relative paths to contents. */
+function tempPackage(t, files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "knip-ratchet-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const all = { "package.json": JSON.stringify({ name: "planted", private: true, type: "module" }), ...files };
+  for (const [rel, body] of Object.entries(all)) {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), body);
+  }
+  return root;
+}
+
+/** Runs the gate and collects what it printed. */
+function gate(dir, args) {
+  const lines = [];
+  const say = (line) => lines.push(line);
+  const code = run({ dir, args, minFiles: 1, out: say, err: say });
+  return { code, output: lines.join("\n") };
+}
+
+const PLANTED = {
+  "knip.json": JSON.stringify({ entry: ["src/index.ts"], project: ["src/**/*.ts"] }),
+  "src/index.ts": 'import { used } from "./lib.ts";\nconsole.log(used);\n',
+  "src/lib.ts": "export const used = 1;\nexport const plantedUnused = 2;\n",
+};
+
+test("the real knip: a planted unused export turns the gate red", (t) => {
+  const { code, output } = gate(tempPackage(t, PLANTED), []);
+  assert.equal(code, 1, output);
+  assert.match(output, /exports:src\/lib\.ts:plantedUnused/);
+});
+
+test("the real knip: without the planted export the gate is clean", (t) => {
+  const clean = { ...PLANTED, "src/lib.ts": "export const used = 1;\n" };
+  const { code, output } = gate(tempPackage(t, clean), []);
+  assert.equal(code, 0, output);
+  assert.match(output, /knip: clean/);
+});
+
+test("the real knip: an empty project glob exits 2 in every mode", (t) => {
+  const root = tempPackage(t, { "knip.json": JSON.stringify({ project: ["src/**/*.ts"] }) });
+  for (const args of [[], ["--report-only"]]) {
+    const { code, output } = gate(root, args);
+    assert.equal(code, 2, `${args.join(" ")}: ${output}`);
+    assert.match(output, /analysed 0 file\(s\), expected at least 1/);
+  }
 });

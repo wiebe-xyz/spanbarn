@@ -110,8 +110,13 @@ export function floorProblem(analysed, min = MIN_ANALYSED_FILES) {
   return `knip analysed ${analysed} file(s), expected at least ${min}: the run did not read the tree`;
 }
 
+// The web package's own knip, pinned in package.json. `npx knip` could fetch a
+// different version at run time.
+const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+export const KNIP = [path.join(WEB_DIR, "node_modules", ".bin", "knip")];
+
 /** Run `knip --performance` in dir and return its output. */
-export function runKnipPerformance(dir, knip = ["npx", "knip"]) {
+export function runKnipPerformance(dir, knip = KNIP) {
   try {
     return execFileSync(knip[0], [...knip.slice(1), "--performance", "--no-exit-code"], {
       cwd: dir,
@@ -124,11 +129,11 @@ export function runKnipPerformance(dir, knip = ["npx", "knip"]) {
   }
 }
 
-export function runKnip(webDir) {
+export function runKnip(dir, knip = KNIP) {
   let raw = "";
   try {
-    raw = execFileSync("npx", ["knip", "--reporter", "json", "--no-exit-code"], {
-      cwd: webDir,
+    raw = execFileSync(knip[0], [...knip.slice(1), "--reporter", "json", "--no-exit-code"], {
+      cwd: dir,
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -139,24 +144,28 @@ export function runKnip(webDir) {
   return JSON.parse(raw);
 }
 
-function main() {
-  const webDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const baselinePath = path.join(webDir, BASELINE_FILE);
-  const write = process.argv.includes("--write");
-  const reportOnly = process.argv.includes("--report-only");
+/**
+ * The gate over the package in `dir`; returns the exit code. The floor exits 2
+ * in every mode. `--report-only` turns a disagreement with the baseline into
+ * exit 0; it never touches the floor.
+ */
+export function run({ dir = WEB_DIR, args = [], minFiles = MIN_ANALYSED_FILES, out = console.log, err = console.error } = {}) {
+  const baselinePath = path.join(dir, BASELINE_FILE);
+  const write = args.includes("--write");
+  const reportOnly = args.includes("--report-only");
 
-  const problem = floorProblem(analysedFiles(runKnipPerformance(webDir)));
+  const problem = floorProblem(analysedFiles(runKnipPerformance(dir)), minFiles);
   if (problem) {
-    console.error(`knip floor FAILED: ${problem}`);
-    process.exit(2);
+    err(`knip floor FAILED: ${problem}`);
+    return 2;
   }
 
-  const items = flatten(runKnip(webDir));
+  const items = flatten(runKnip(dir));
 
   if (write) {
     fs.writeFileSync(baselinePath, `${JSON.stringify({ total: items.length, items }, null, 2)}\n`);
-    console.log(`knip baseline written: ${items.length} items`);
-    return;
+    out(`knip baseline written: ${items.length} items`);
+    return 0;
   }
 
   const baseline = fs.existsSync(baselinePath)
@@ -165,16 +174,16 @@ function main() {
   const res = compare(baseline.items, items);
 
   if (res.ok && res.total === 0) {
-    console.log("knip: clean");
-    return;
+    out("knip: clean");
+    return 0;
   }
-  console.log(`knip: ${res.total} items (baseline ${res.baselineTotal})`);
+  out(`knip: ${res.total} items (baseline ${res.baselineTotal})`);
   if (res.ok) {
-    console.log("knip: on the baseline, exactly.");
-    return;
+    out("knip: on the baseline, exactly.");
+    return 0;
   }
 
-  const say = reportOnly ? console.log : console.error;
+  const say = reportOnly ? out : err;
   say("");
   say(
     reportOnly
@@ -198,14 +207,15 @@ function main() {
   }
 
   if (reportOnly) {
-    console.log("");
-    console.log("knip ratchet: report-only run, not gating.");
-    return;
+    out("");
+    out("knip ratchet: report-only run, not gating.");
+    return 0;
   }
-  process.exit(1);
+  return 1;
 }
 
 // Only run when invoked directly, so the test can import the pure helpers.
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  main();
+  const code = run({ args: process.argv.slice(2) });
+  if (code !== 0) process.exit(code);
 }
