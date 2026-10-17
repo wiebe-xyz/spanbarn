@@ -152,5 +152,55 @@ profile "$r" a_test.go 2 13 0
 run "$r" --enforce
 if [ "$code" -eq 0 ] && grep -q 'Exempt' "$WORK/out"; then ok "test files are not measured"; else bad "test files are not measured"; fi
 
+# run_with <repo> <profile> <base> [args] — like run, with explicit PROFILE and BASE.
+run_with() {
+  repo="$1"
+  prof="$2"
+  base="$3"
+  shift 3
+  set +e
+  (cd "$repo" && sh "$GATE" "$@" "$prof" "$base" > "$WORK/out" 2>&1)
+  code=$?
+  set -e
+}
+
+# 7. A measurement that cannot be made fails in report mode too. A broken
+# measurement must go red; it must never read as an exempt diff.
+r=$(new_repo broken)
+add_lines "$r" a.go 12
+profile "$r" a.go 2 13 1
+
+run_with "$r" missing.out main
+if [ "$code" -eq 3 ] && grep -q 'missing or empty' "$WORK/out"; then ok "missing profile fails in report mode"; else bad "missing profile fails in report mode"; fi
+
+: > "$r/empty.out"
+run_with "$r" empty.out main
+if [ "$code" -eq 3 ] && grep -q 'missing or empty' "$WORK/out"; then ok "empty profile fails in report mode"; else bad "empty profile fails in report mode"; fi
+
+printf 'not a profile\n' > "$r/junk.out"
+run_with "$r" junk.out main
+if [ "$code" -eq 3 ] && grep -q 'no mode header' "$WORK/out"; then ok "profile without a mode header fails in report mode"; else bad "profile without a mode header fails in report mode"; fi
+
+run_with "$r" cover.out no-such-ref
+if [ "$code" -eq 3 ] && grep -q 'does not resolve' "$WORK/out"; then ok "unknown base ref fails in report mode"; else bad "unknown base ref fails in report mode"; fi
+
+run_with "$r" cover.out ""
+if [ "$code" -eq 3 ] && grep -q 'does not resolve' "$WORK/out"; then ok "empty base ref fails in report mode"; else bad "empty base ref fails in report mode"; fi
+
+run_with "$r" missing.out main --enforce
+if [ "$code" -eq 3 ]; then ok "the same errors fail when enforced"; else bad "the same errors fail when enforced"; fi
+
+# 8. A merge-queue group gives the base as a commit sha (merge_group.base_sha),
+# not as a branch name, and the head is the queued commit. The sha form must
+# measure exactly like the branch form.
+r=$(new_repo queue)
+base_sha=$(git -C "$r" rev-parse main)
+add_lines "$r" a.go 12
+profile "$r" a.go 2 13 0
+run_with "$r" cover.out "$base_sha" --enforce
+if [ "$code" -eq 1 ] && grep -q '0.0% (0 of 12' "$WORK/out"; then ok "a base given as a commit sha is measured"; else bad "a base given as a commit sha is measured"; fi
+run_with "$r" cover.out "$base_sha"
+if [ "$code" -eq 0 ] && grep -q '::warning::' "$WORK/out"; then ok "low coverage on a sha base only warns in report mode"; else bad "low coverage on a sha base only warns in report mode"; fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

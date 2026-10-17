@@ -11,7 +11,9 @@
 #
 # Test files, generated code, migrations and testdata are not measured.
 #
-# Report only until --enforce is passed: a miss prints a warning and exits 0.
+# Report only until --enforce is passed: low coverage prints a warning and exits 0.
+# A measurement that cannot be made (no profile, unknown base ref, git error)
+# exits 3 in both modes.
 #
 # Usage: scripts/diff-coverage.sh [--enforce] PROFILE BASE
 #   PROFILE  text profile written by `go test -coverprofile` in the module root
@@ -35,15 +37,34 @@ fi
 PROFILE="$1"
 BASE="$2"
 
-cd "$(git rev-parse --show-toplevel)"
-MODULE=$(awk 'NR==1 {print $2}' go.mod)
+# A measurement that cannot be made is an error in every mode, report only
+# included: it exits 3 and never reads as an exempt diff. Only a low coverage
+# result is softened without --enforce.
+unmeasurable() {
+  echo "::error::Diff coverage could not be measured: $1" >&2
+  exit 3
+}
+
+cd "$(git rev-parse --show-toplevel)" || unmeasurable "not inside a git work tree"
+MODULE=$(awk 'NR==1 {print $2}' go.mod 2>/dev/null) || MODULE=""
+[ -n "$MODULE" ] || unmeasurable "no module path in go.mod"
+[ -s "$PROFILE" ] || unmeasurable "coverage profile $PROFILE is missing or empty"
+case "$(head -n 1 "$PROFILE")" in
+  mode:*) ;;
+  *) unmeasurable "coverage profile $PROFILE has no mode header" ;;
+esac
+git rev-parse --verify --quiet "$BASE^{commit}" > /dev/null ||
+  unmeasurable "base ref $BASE does not resolve to a commit"
 
 CHANGED=$(mktemp)
-trap 'rm -f "$CHANGED"' EXIT
+DIFF=$(mktemp)
+trap 'rm -f "$CHANGED" "$DIFF"' EXIT
+
+git diff -U0 --no-color --no-ext-diff "$BASE...HEAD" -- '*.go' > "$DIFF" ||
+  unmeasurable "git diff $BASE...HEAD failed (no merge base?)"
 
 # "<file> <line>" for every added line of a production Go file.
-git diff -U0 --no-color --no-ext-diff "$BASE...HEAD" -- '*.go' |
-  awk '
+awk '
     /^\+\+\+ / { file = ($2 == "/dev/null") ? "" : substr($2, 3); next }
     /^@@ / {
       if (file == "") next
@@ -52,7 +73,7 @@ git diff -U0 --no-color --no-ext-diff "$BASE...HEAD" -- '*.go' |
       start = p[1] + 0; count = (n > 1) ? p[2] + 0 : 1
       for (i = 0; i < count; i++) print file, start + i
     }
-  ' |
+  ' "$DIFF" |
   grep -vE '^[^ ]*(_test\.go|_templ\.go|\.pb\.go|_gen\.go) ' |
   grep -vE '^([^ ]*/)?(testdata|migrations|vendor)/' > "$CHANGED" || true
 
