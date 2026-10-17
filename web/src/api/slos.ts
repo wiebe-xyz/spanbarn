@@ -41,7 +41,7 @@ export type BurnAlertSettings = {
   enabled: boolean
 }
 
-export type BurnAlertStatus = {
+type BurnAlertStatus = {
   id: number
   windowMinutes: number
   burnRate: number

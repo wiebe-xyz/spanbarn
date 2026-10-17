@@ -10,7 +10,7 @@ export type DashboardFilter = {
   maxDurationUs?: number
 }
 
-export type DashboardCountPoint = {
+type DashboardCountPoint = {
   time: string
   group: string
   count: number
@@ -22,7 +22,7 @@ export type DashboardCounts = {
 }
 
 /** Durations are microseconds. */
-export type DashboardPercentilePoint = {
+type DashboardPercentilePoint = {
   time: string
   group: string
   count: number

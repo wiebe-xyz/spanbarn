@@ -1,8 +1,11 @@
 version: "2"
 
-# Layering rules, enforced with depguard. Everything else golangci-lint can
-# check is left off on purpose: `go vet` and gofmt run in `make lint`, and the
-# complexity, length and duplication ratchets live in scripts/quality-gate.sh.
+# Layering rules, enforced with depguard, and dead code, found by `unused`
+# (unused functions, methods, types, constants and fields, test files included;
+# zero findings when it was switched on, so there is no baseline). Everything
+# else golangci-lint can check is left off on purpose: `go vet` and gofmt run
+# in `make lint`, and the complexity, length and duplication ratchets live in
+# scripts/quality-gate.sh. Dead code in the web app is web/scripts/knip-ratchet.mjs.
 #
 # Test files are excluded from every rule ($test). Tests may wire packages
 # together in ways production code must not.
@@ -16,6 +19,7 @@ linters:
   default: none
   enable:
     - depguard
+    - unused
   # Baselined exclusions. Each one is a known violation; the soak exit
   # criterion is in scripts/quality-thresholds.conf. Do not add entries.
   exclusions:

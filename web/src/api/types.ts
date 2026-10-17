@@ -406,11 +406,11 @@ export type WebVitalTimeseriesBucket = {
 }
 
 /** How a metric series should be rendered (mirrors metrics.RenderKind). */
-export type MetricRender = 'line' | 'rate' | 'percentile'
+type MetricRender = 'line' | 'rate' | 'percentile'
 
 /** A render-ready point. Which fields are set depends on the render kind:
  * value for line/rate, p50/p95/p99 for percentile. */
-export type MetricPoint = {
+type MetricPoint = {
   t: number
   value: number
   count: number
@@ -431,7 +431,7 @@ export type MetricNamesResponse = {
 }
 
 /** One metric in the catalog, with its type, unit and distinct-series count. */
-export type MetricCatalogEntry = {
+type MetricCatalogEntry = {
   name: string
   type: string
   unit: string
@@ -500,7 +500,7 @@ export type LogsResponse = {
 }
 
 /** A user-pinned trace. */
-export type PinnedTrace = {
+type PinnedTrace = {
   traceId: string
   label: string
   pinnedAt: string
@@ -625,7 +625,7 @@ export type AttributeDifference = {
   values: AttributeValueShare[]
 }
 
-export type AttributeSetSummary = { scanned: number; truncated: boolean }
+type AttributeSetSummary = { scanned: number; truncated: boolean }
 
 export type AttributeComparison = {
   selection: AttributeSetSummary
@@ -647,7 +647,7 @@ export type HeatmapScope = {
   maxSpans?: number
 }
 
-export type HeatmapCell = { time: number; duration: number; count: number }
+type HeatmapCell = { time: number; duration: number; count: number }
 
 export type HeatmapResult = {
   from: string
@@ -705,7 +705,7 @@ export type AnalyzeResponse = {
   maxSpans: number
 }
 
-export type AnalyzeSeriesLine = {
+type AnalyzeSeriesLine = {
   group: string[]
   other?: boolean
   values: (number | null)[]

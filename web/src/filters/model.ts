@@ -68,7 +68,7 @@ export function takesList(op: FilterOp): boolean {
 }
 
 /** True when the row is filled in enough to send. */
-export function isComplete(c: Condition): boolean {
+function isComplete(c: Condition): boolean {
   if (!c.key.trim()) return false
   if (takesNoValue(c.op)) return true
   if (takesList(c.op)) return (c.values ?? []).some((v) => v !== '')

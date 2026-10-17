@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 
 /** Span columns the filter model reads besides attributes. */
-export const COLUMN_KEYS = [
+const COLUMN_KEYS = [
   'service',
   'name',
   'kind',

@@ -44,8 +44,8 @@ export function getDashboardWindow(rangeValue: string, offset: number, now: Date
 }
 
 /** Narrowest and widest custom window; they match what the server accepts. */
-export const MIN_ZOOM_MS = 60_000
-export const MAX_ZOOM_MS = 48 * 3600_000
+const MIN_ZOOM_MS = 60_000
+const MAX_ZOOM_MS = 48 * 3600_000
 
 function windowOf(fromMs: number, toMs: number): DashboardWindow {
   return { from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString(), fromMs, toMs }

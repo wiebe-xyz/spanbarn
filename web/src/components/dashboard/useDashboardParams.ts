@@ -29,7 +29,7 @@ function nonNegative(v: string | null): number {
   return Math.max(0, Number(v) || 0)
 }
 
-export function readDashboardState(params: URLSearchParams): DashboardState {
+function readDashboardState(params: URLSearchParams): DashboardState {
   const group = params.get('cg')
   return {
     range: findDashboardRange(params.get('range') ?? DEFAULT_DASHBOARD_RANGE).value,
