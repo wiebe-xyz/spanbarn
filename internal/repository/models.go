@@ -96,10 +96,35 @@ type Aggregate struct {
 // older binary during a rollback, or a bucket that mixes both. The caller then
 // falls back to scaling Count by the current sample ratio.
 func (a Aggregate) WeightedEstimate() (n int64, ok bool) {
-	if a.Count == 0 || a.WeightedSpans != a.Count {
+	return SpanWeights{Count: a.WeightedCount, Spans: a.WeightedSpans}.Estimate(a.Count)
+}
+
+// SpanWeights sums the sample weights of spans read straight from the spans
+// table, the raw-span counterpart of an aggregate's weighted_count and
+// weighted_spans. Count is the sum of the known weights and Spans the number
+// of spans that carried one.
+type SpanWeights struct {
+	Count int64
+	Spans int64
+}
+
+// Add folds in one span's sample weight. 0 means unknown and is not counted,
+// so a set that mixes weighted and unweighted spans reports no estimate.
+func (w *SpanWeights) Add(sampleWeight int) {
+	if sampleWeight > 0 {
+		w.Count += int64(sampleWeight)
+		w.Spans++
+	}
+}
+
+// Estimate returns the span population that total spans stand for. ok is
+// false when any of them has no known weight; the caller then scales total by
+// the current sample ratio.
+func (w SpanWeights) Estimate(total int64) (n int64, ok bool) {
+	if total == 0 || w.Spans != total {
 		return 0, false
 	}
-	return a.WeightedCount, true
+	return w.Count, true
 }
 
 type SpanFilter struct {
@@ -141,6 +166,7 @@ type RootSpanGroup struct {
 	Service    string
 	Count      int64
 	ErrorCount int64
+	Weights    SpanWeights
 	Durations  []int64 // raw durations for percentile computation in the service layer
 }
 

@@ -51,6 +51,7 @@ type dependencyKey struct {
 type dependencyStats struct {
 	count      int64
 	errorCount int64
+	weights    repository.SpanWeights
 	durations  []int64
 }
 
@@ -71,6 +72,7 @@ func (a *dependencyAggregator) add(target, targetType string, sp repository.Span
 		a.byDep[k] = st
 	}
 	st.count++
+	st.weights.Add(sp.SampleWeight)
 	if sp.Status == "error" {
 		st.errorCount++
 	}
@@ -110,12 +112,13 @@ func (a *dependencyAggregator) addCrossServiceCalls(spans []repository.Span) {
 	}
 }
 
-// summaries turns the statistics into summaries, inflating counts for the
-// project's sample rate and ordering by call count.
+// summaries turns the statistics into summaries, estimating each call count
+// from the spans' sample weights (or the project's sample rate for unweighted
+// spans) and ordering by call count.
 func (a *dependencyAggregator) summaries(sampleRate float64) []DependencySummary {
 	result := make([]DependencySummary, 0, len(a.byDep))
 	for k, st := range a.byDep {
-		effective := inflateCount(st.count, st.errorCount, sampleRate)
+		effective := estimateSpans(st.count, st.errorCount, st.weights, sampleRate)
 		var errorRate float64
 		if effective > 0 {
 			errorRate = float64(st.errorCount) / float64(effective)

@@ -20,7 +20,7 @@ import (
 type SLOReader interface {
 	ListSLOs(projectID int64) ([]repository.SLO, error)
 	ListSLOBurnAlerts(projectID, sloID int64) ([]repository.SLOBurnAlert, error)
-	CountSpans(f repository.SpanFilter) (total, errors int64, err error)
+	CountSpans(f repository.SpanFilter) (repository.SpanCount, error)
 	LatestSLOBucket(sloID int64) (time.Time, error)
 	SumSLOCounts(sloID int64, from, to time.Time) (good, total int64, err error)
 }

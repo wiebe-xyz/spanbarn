@@ -13,6 +13,7 @@ type ServiceStats struct {
 	Service    string
 	Count      int64
 	ErrorCount int64
+	Weights    SpanWeights
 	P50Us      int64
 	P95Us      int64
 	P99Us      int64
@@ -44,7 +45,7 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 		whereClause = "WHERE " + strings.Join(where, " AND ")
 	}
 
-	q := fmt.Sprintf(`SELECT service, duration_us, status FROM spans %s ORDER BY service, duration_us`, whereClause)
+	q := fmt.Sprintf(`SELECT service, duration_us, status, COALESCE(sample_weight, 0) FROM spans %s ORDER BY service, duration_us`, whereClause)
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -57,12 +58,14 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 	type svcBucket struct {
 		durations  []int64
 		errorCount int64
+		weights    SpanWeights
 	}
 	byService := make(map[string]*svcBucket)
 	for rows.Next() {
 		var service, status string
 		var durationUs int64
-		if err := rows.Scan(&service, &durationUs, &status); err != nil {
+		var weight int
+		if err := rows.Scan(&service, &durationUs, &status, &weight); err != nil {
 			return nil, err
 		}
 		b, ok := byService[service]
@@ -71,6 +74,7 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 			byService[service] = b
 		}
 		b.durations = append(b.durations, durationUs)
+		b.weights.Add(weight)
 		if status == "error" || status == "ERROR" || status == "Error" {
 			b.errorCount++
 		}
@@ -85,6 +89,7 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 			Service:    svc,
 			Count:      int64(len(b.durations)),
 			ErrorCount: b.errorCount,
+			Weights:    b.weights,
 			P50Us:      percentileFromSorted(b.durations, 50),
 			P95Us:      percentileFromSorted(b.durations, 95),
 			P99Us:      percentileFromSorted(b.durations, 99),
@@ -99,6 +104,7 @@ type OperationStats struct {
 	Kind       string
 	Count      int64
 	ErrorCount int64
+	Weights    SpanWeights
 	P50Us      int64
 	P95Us      int64
 	P99Us      int64
@@ -130,7 +136,7 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 
 	whereClause := strings.Join(where, " AND ")
 
-	q := fmt.Sprintf(`SELECT name, resource, kind, duration_us, status FROM spans WHERE %s ORDER BY name, resource, kind, duration_us`, whereClause)
+	q := fmt.Sprintf(`SELECT name, resource, kind, duration_us, status, COALESCE(sample_weight, 0) FROM spans WHERE %s ORDER BY name, resource, kind, duration_us`, whereClause)
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -144,12 +150,14 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 	type opBucket struct {
 		durations  []int64
 		errorCount int64
+		weights    SpanWeights
 	}
 	byOp := make(map[opKey]*opBucket)
 	for rows.Next() {
 		var name, resource, kind, status string
 		var durationUs int64
-		if err := rows.Scan(&name, &resource, &kind, &durationUs, &status); err != nil {
+		var weight int
+		if err := rows.Scan(&name, &resource, &kind, &durationUs, &status, &weight); err != nil {
 			return nil, err
 		}
 		k := opKey{name, resource, kind}
@@ -159,6 +167,7 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 			byOp[k] = b
 		}
 		b.durations = append(b.durations, durationUs)
+		b.weights.Add(weight)
 		if status == "error" || status == "ERROR" || status == "Error" {
 			b.errorCount++
 		}
@@ -175,6 +184,7 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 			Kind:       k.kind,
 			Count:      int64(len(b.durations)),
 			ErrorCount: b.errorCount,
+			Weights:    b.weights,
 			P50Us:      percentileFromSorted(b.durations, 50),
 			P95Us:      percentileFromSorted(b.durations, 95),
 			P99Us:      percentileFromSorted(b.durations, 99),
@@ -191,7 +201,8 @@ func (r *Repository) QueryRootSpanGroups(ctx context.Context, f SpanFilter) ([]R
 
 	q := fmt.Sprintf(`
 		SELECT name, service, duration_us,
-		       CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END AS is_error
+		       CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END AS is_error,
+		       COALESCE(sample_weight, 0)
 		FROM spans
 		WHERE %s
 		ORDER BY name, service, duration_us`, strings.Join(where, " AND "))
@@ -225,7 +236,7 @@ func (f SpanFilter) rootSpanGroupWhere() ([]string, []any) {
 	return b.where, b.args
 }
 
-// groupRootSpanRows folds the (name, service, duration, is_error) rows into one
+// groupRootSpanRows folds the (name, service, duration, is_error, weight) rows into one
 // group per operation and service, keeping first-seen order.
 func groupRootSpanRows(rows *sql.Rows) ([]RootSpanGroup, error) {
 	type groupKey struct{ operation, service string }
@@ -234,8 +245,8 @@ func groupRootSpanRows(rows *sql.Rows) ([]RootSpanGroup, error) {
 	for rows.Next() {
 		var name, service string
 		var dur int64
-		var isError int
-		if err := rows.Scan(&name, &service, &dur, &isError); err != nil {
+		var isError, weight int
+		if err := rows.Scan(&name, &service, &dur, &isError, &weight); err != nil {
 			return nil, err
 		}
 		k := groupKey{name, service}
@@ -246,6 +257,7 @@ func groupRootSpanRows(rows *sql.Rows) ([]RootSpanGroup, error) {
 			order = append(order, k)
 		}
 		g.Count++
+		g.Weights.Add(weight)
 		g.Durations = append(g.Durations, dur)
 		if isError == 1 {
 			g.ErrorCount++

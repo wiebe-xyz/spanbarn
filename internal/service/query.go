@@ -151,6 +151,16 @@ func estimateCount(a repository.Aggregate, sampleRate float64) int64 {
 	return inflateCount(a.Count, a.ErrorCount, sampleRate)
 }
 
+// estimateSpans is estimateCount for count spans read straight from the spans
+// table: their summed sample weights when every one carried a weight,
+// otherwise the ok spans scaled by the current rate.
+func estimateSpans(count, errorCount int64, w repository.SpanWeights, sampleRate float64) int64 {
+	if n, ok := w.Estimate(count); ok {
+		return n
+	}
+	return inflateCount(count, errorCount, sampleRate)
+}
+
 func (s *QueryService) SetCache(c *cache.Cache) {
 	s.cache = c
 }
