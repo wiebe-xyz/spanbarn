@@ -28,8 +28,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  tag:
-    name: Create Release Tag
+  head:
+    name: Check the commit is still the head of main
     runs-on: [self-hosted, build]
     # A manual run releases the current default branch. An automatic run
     # releases only a push that CI passed; a failed, cancelled or skipped CI run
@@ -38,6 +38,35 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.conclusion == 'success')
+    outputs:
+      current: ${{ steps.head.outputs.current }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # GitHub refuses a tag from GITHUB_TOKEN on a commit behind main that
+      # changed a workflow file, by git push and by the REST API alike (run
+      # 38998741136 tagging fa725ec). When main has moved on, the newer commit's
+      # run releases this commit as part of its own tag, so this run tags
+      # nothing. That also keeps tags in commit order.
+      - name: Compare with the head of main
+        id: head
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          HEAD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          if [ "$SHA" = "$HEAD_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${SHA} is behind main (${HEAD_SHA}); the run for the newer commit releases it."
+          fi
+
+  tag:
+    name: Create Release Tag
+    needs: [head]
+    runs-on: [self-hosted, build]
+    if: needs.head.outputs.current == 'true'
     outputs:
       version: ${{ steps.next_version.outputs.version }}
       version_num: ${{ steps.next_version.outputs.version_num }}
