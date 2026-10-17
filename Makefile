@@ -159,6 +159,7 @@ quality-gate-test:
 	for dir in $(GOCACHE) $(GOMODCACHE); do mkdir -p "$$dir"; done; \
 	bash scripts/quality-lib.test.sh; \
 	bash scripts/e2e-targets.test.sh; \
+	sh scripts/diff-coverage.test.sh; \
 	go test ./scripts/...
 
 build:
