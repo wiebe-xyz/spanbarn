@@ -32,6 +32,7 @@ func (tb *TraceBuffer) evictOne(keep *bufferedTrace) bool {
 		if !tb.rescueAtCap(tr) {
 			tb.evictedSacrif += int64(len(tr.spans))
 			tb.evictedSTotal += int64(len(tr.spans))
+			tb.carry.drop(tr, tb.now())
 		}
 		return true
 	}
@@ -39,6 +40,7 @@ func (tb *TraceBuffer) evictOne(keep *bufferedTrace) bool {
 		tb.evictedKept += int64(len(tr.spans))
 		tb.evictedKTotal += int64(len(tr.spans))
 		tb.remove(tr)
+		tb.carry.drop(tr, tb.now())
 		return true
 	}
 	return false

@@ -88,6 +88,12 @@ func (m *Metrics) RegisterTraceBuffer(stats func() ingest.BufferStats) {
 			func(s ingest.BufferStats) float64 { return float64(s.MaxSpans) }),
 		counter("trace_buffer_spans_shed_total", "Spans freed at cap from traces sampling was going to discard anyway. Expected under load; costs no stored telemetry.",
 			func(s ingest.BufferStats) float64 { return float64(s.EvictedSacrificialSpans) }),
+		gauge("trace_buffer_carrier_spans", "Spans of dropped traces held to be stored as the carrier of their operation's drop count when no sampled trace comes.",
+			func(s ingest.BufferStats) float64 { return float64(s.CarrierSpans) }),
+		counter("trace_buffer_drops_carried_total", "Dropped traces counted into the sample weight of a kept trace of the same root operation.",
+			func(s ingest.BufferStats) float64 { return float64(s.CarriedDrops) }),
+		counter("trace_buffer_drops_uncarried_total", "Dropped traces that no stored weight counts: their operation had no sampled trace within an hour and no held carrier fit the budget.",
+			func(s ingest.BufferStats) float64 { return float64(s.UncarriedDrops) }),
 		counter("trace_buffer_spans_lost_total", "Spans lost at cap that would have been stored: evicted from keepable traces, refused outright, or undeliverable to the drain. Non-zero means the cap is too small for the span rate.",
 			func(s ingest.BufferStats) float64 {
 				return float64(s.EvictedKeptSpans + s.RefusedSpans + s.UndeliveredSpans)
