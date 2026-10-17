@@ -30,6 +30,12 @@
 // same file, and so the type-aware soak (currently report-only in CI, same
 // shape as the original oxlint soak before it started gating) can carry a
 // non-zero baseline without touching the syntax one.
+//
+// A floor sits under every mode, --write and --report-only included: a run
+// that lints fewer than MIN_LINTED_FILES files exits 2. oxlint reports zero
+// findings when it reads nothing (a target that moved, an ignore pattern that
+// swallows src), and zero findings on a zero baseline reads as clean
+// (vibecortex#29).
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -39,6 +45,21 @@ import { fileURLToPath } from "node:url";
 export const BASELINE_FILE = "oxlint-baseline.json";
 export const TYPE_AWARE_BASELINE_FILE = "oxlint-type-aware-baseline.json";
 export const LINT_TARGETS = ["src"];
+
+// web/src holds 133 TypeScript files (2026-10-17). The floor sits well under
+// that, so normal deletions pass and a run that reads a fraction of the tree
+// does not.
+export const MIN_LINTED_FILES = 100;
+
+/**
+ * The floor check: an error message when the run linted too few files, else
+ * null. A report without a file count counts as zero files, since it cannot
+ * show that anything was read.
+ */
+export function floorProblem(files, min = MIN_LINTED_FILES) {
+  if (Number.isInteger(files) && files >= min) return null;
+  return `oxlint linted ${Number.isInteger(files) ? files : 0} file(s), expected at least ${min}: the run did not read the tree`;
+}
 
 /**
  * The command that refreshes the baseline. Printed verbatim on every failure
@@ -82,7 +103,11 @@ export function compare(baseline, counts) {
   };
 }
 
-export function runOxlint(webDir, { typeAware = false } = {}) {
+/**
+ * Run oxlint and return { counts, files }: findings per rule, and the number
+ * of files oxlint says it linted.
+ */
+export function runOxlint(webDir, { typeAware = false, targets = LINT_TARGETS } = {}) {
   let raw = "";
   try {
     raw = execFileSync(
@@ -90,7 +115,7 @@ export function runOxlint(webDir, { typeAware = false } = {}) {
       // bare-string config path here reads as an unresolved import to knip's
       // static analysis (it flags the literal as an import specifier).
       "npx",
-      ["oxlint", ...(typeAware ? ["--type-aware"] : []), "-f", "json", ...LINT_TARGETS],
+      ["oxlint", ...(typeAware ? ["--type-aware"] : []), "-f", "json", ...targets],
       { cwd: webDir, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
     );
   } catch (err) {
@@ -98,14 +123,16 @@ export function runOxlint(webDir, { typeAware = false } = {}) {
     raw = err.stdout;
   }
   // oxlint returns a bare array in some versions and { diagnostics } in others.
-  const parsed = JSON.parse(raw);
+  // With no files to lint it prints "No files found to lint." ahead of the
+  // JSON and exits 1, so parse from the first bracket.
+  const parsed = JSON.parse(raw.slice(Math.max(raw.search(/[[{]/), 0)));
   const findings = Array.isArray(parsed) ? parsed : (parsed.diagnostics ?? []);
   const counts = {};
   for (const f of findings) {
     const code = f.code ?? "unknown";
     counts[code] = (counts[code] ?? 0) + 1;
   }
-  return counts;
+  return { counts, files: Array.isArray(parsed) ? undefined : parsed.number_of_files };
 }
 
 function main() {
@@ -115,7 +142,12 @@ function main() {
   const write = process.argv.includes("--write");
   const reportOnly = process.argv.includes("--report-only");
 
-  const counts = runOxlint(webDir, { typeAware });
+  const { counts, files } = runOxlint(webDir, { typeAware });
+  const problem = floorProblem(files);
+  if (problem) {
+    console.error(`oxlint floor FAILED: ${problem}`);
+    process.exit(2);
+  }
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
 
   if (write) {

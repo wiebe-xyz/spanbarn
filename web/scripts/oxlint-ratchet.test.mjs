@@ -2,17 +2,27 @@
 // like a clean repo, which is why it is tested before it is trusted — same
 // shape as this repo's other ratchets (file-length, i18n literals).
 //
-// `compare` is the whole decision, so it is the whole test surface: running
-// oxlint itself is not what can silently break.
+// `compare` is the decision on oxlint's findings. The floor tests run the real
+// oxlint, since an oxlint that reads nothing is the false green the floor
+// exists for (vibecortex#29).
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   compare,
   refreshCommand,
+  floorProblem,
+  runOxlint,
   BASELINE_FILE,
   TYPE_AWARE_BASELINE_FILE,
+  MIN_LINTED_FILES,
 } from "./oxlint-ratchet.mjs";
+
+const webDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const clean = { total: 0, counts: {} };
 
@@ -122,4 +132,28 @@ test("a type-aware-only rule regresses independently of the syntax baseline", ()
   assert.deepEqual(res.regressions, [
     { rule: "typescript(no-floating-promises)", was: 23, now: 24 },
   ]);
+});
+
+test("a file count at the floor passes and one below it fails", () => {
+  assert.equal(floorProblem(MIN_LINTED_FILES), null);
+  assert.match(floorProblem(MIN_LINTED_FILES - 1), /expected at least 100: the run did not read the tree/);
+});
+
+test("a report without a file count fails the floor", () => {
+  assert.match(floorProblem(undefined), /linted 0 file\(s\)/);
+});
+
+test("the real oxlint over an empty directory trips the floor", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "oxlint-floor-"));
+  try {
+    const { files } = runOxlint(webDir, { targets: [root] });
+    assert.match(floorProblem(files), /did not read the tree/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the real web tree clears the floor", () => {
+  const { files } = runOxlint(webDir);
+  assert.equal(floorProblem(files), null, `oxlint linted ${files} files in web/src`);
 });

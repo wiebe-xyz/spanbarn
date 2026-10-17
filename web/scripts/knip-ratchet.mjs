@@ -13,6 +13,13 @@
 //
 // Items are keyed `type:file:name`, without line numbers, so moving code inside
 // a file does not read as one finding gone and another new.
+//
+// A floor sits under every mode, --write and --report-only included: knip
+// exits 0 with no findings when it parses nothing (a TypeScript major its
+// parser does not support, a project glob that matches no file), and no
+// findings on a zero baseline reads as clean (vibecortex#29). Each run first
+// asks `knip --performance` how many files it analysed, and exits 2 below
+// MIN_ANALYSED_FILES.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -20,6 +27,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const BASELINE_FILE = "knip-baseline.json";
+
+// knip analyses 139 files in web/ (2026-10-17: the 133 under src plus configs
+// and scripts). The floor sits well under that, so normal deletions pass and a
+// run that reads a fraction of the tree does not.
+export const MIN_ANALYSED_FILES = 100;
 
 // The issue types knip reports that mean "this is unused". `duplicates` and
 // `enumMembers` are left out on purpose: they are style findings, not dead code.
@@ -80,6 +92,38 @@ export function compare(baselineItems, currentItems) {
   };
 }
 
+/**
+ * Files knip analysed, read from the `getImportsAndExports` row of the
+ * `--performance` table (its second column is the call count, one per file).
+ * Output without that row counts as zero files.
+ */
+export function analysedFiles(output) {
+  const row = output.split("\n").find((line) => line.trimStart().startsWith("getImportsAndExports"));
+  if (!row) return 0;
+  const count = Number(row.trim().split(/\s+/)[1]);
+  return Number.isInteger(count) ? count : 0;
+}
+
+/** The floor check: an error message when knip analysed too few files, else null. */
+export function floorProblem(analysed, min = MIN_ANALYSED_FILES) {
+  if (analysed >= min) return null;
+  return `knip analysed ${analysed} file(s), expected at least ${min}: the run did not read the tree`;
+}
+
+/** Run `knip --performance` in dir and return its output. */
+export function runKnipPerformance(dir, knip = ["npx", "knip"]) {
+  try {
+    return execFileSync(knip[0], [...knip.slice(1), "--performance", "--no-exit-code"], {
+      cwd: dir,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (err) {
+    return err.stdout ?? "";
+  }
+}
+
 export function runKnip(webDir) {
   let raw = "";
   try {
@@ -100,6 +144,12 @@ function main() {
   const baselinePath = path.join(webDir, BASELINE_FILE);
   const write = process.argv.includes("--write");
   const reportOnly = process.argv.includes("--report-only");
+
+  const problem = floorProblem(analysedFiles(runKnipPerformance(webDir)));
+  if (problem) {
+    console.error(`knip floor FAILED: ${problem}`);
+    process.exit(2);
+  }
 
   const items = flatten(runKnip(webDir));
 
