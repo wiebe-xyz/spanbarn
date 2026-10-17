@@ -84,6 +84,15 @@ type HealthResponse struct {
 	Version string `json:"version"`
 }
 
+// VersionResponse is returned by the version endpoint. Version is what the
+// deploy says is running; Commit and Built are baked into the binary, so a
+// check can compare the claim with the fact.
+type VersionResponse struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	Built   string `json:"built"`
+}
+
 // ErrorResponse is returned for client/server errors.
 type ErrorResponse struct {
 	Error   string `json:"error"`

@@ -7,6 +7,27 @@ resources:
   - ../base/cronjob-settings-snapshot
   - ingress.yaml
 patches:
+  # The deploy replaces __VERSION__ (testing/staging: main-<sha7>, production:
+  # the release tag). It lives in the pod spec so the pods roll when only the
+  # version changes, which happens when a tag is cut on an already-deployed sha.
+  - target:
+      kind: Deployment
+      name: spanbarn
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: SPANBARN_VERSION
+          value: "__VERSION__"
+  - target:
+      kind: Deployment
+      name: spanbarn-ingest
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: SPANBARN_VERSION
+          value: "__VERSION__"
   - path: writer-resources-patch.yaml
     target:
       kind: Deployment

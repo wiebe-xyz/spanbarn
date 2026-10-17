@@ -263,3 +263,60 @@ func newServer(t *testing.T, version string) *api.Server {
 
 	return api.NewServer(api.ServerConfig{APIKey: testAPIKey, Version: version}, h, slog.Default())
 }
+
+func TestVersionEndpoint(t *testing.T) {
+	q := ingest.NewQueue(1024)
+	sp, err := spool.NewSpool(t.TempDir(), 0)
+	if err != nil {
+		t.Fatalf("spool: %v", err)
+	}
+	t.Cleanup(func() { sp.Close() })
+	h := ingest.NewHandler(q, sp, 0, slog.Default())
+	h.Start(t.Context())
+	t.Cleanup(func() { h.Stop() })
+
+	srv := api.NewServer(api.ServerConfig{
+		APIKey:    testAPIKey,
+		Version:   "v1.2.3",
+		Commit:    "0123456789abcdef0123456789abcdef01234567",
+		BuildTime: "2026-10-17T12:00:00Z",
+	}, h, slog.Default())
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	// No credentials: the endpoint is public.
+	resp, err := http.Get(ts.URL + "/api/v1/version")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var got api.VersionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := api.VersionResponse{
+		Version: "v1.2.3",
+		Commit:  "0123456789abcdef0123456789abcdef01234567",
+		Built:   "2026-10-17T12:00:00Z",
+	}
+	if got != want {
+		t.Fatalf("version response = %+v, want %+v", got, want)
+	}
+
+	// The health endpoint reads the same source.
+	hr, err := http.Get(ts.URL + "/api/v1/health")
+	if err != nil {
+		t.Fatalf("health request failed: %v", err)
+	}
+	defer hr.Body.Close()
+	var health api.HealthResponse
+	if err := json.NewDecoder(hr.Body).Decode(&health); err != nil {
+		t.Fatalf("decode health: %v", err)
+	}
+	if health.Version != got.Version {
+		t.Fatalf("health version %q disagrees with /version %q", health.Version, got.Version)
+	}
+}

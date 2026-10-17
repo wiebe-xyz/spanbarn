@@ -15,6 +15,18 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// handleVersion reports the running version, commit and build time. It reads
+// the same Server.version as the health endpoint, so the two cannot disagree.
+func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(VersionResponse{
+		Version: s.version,
+		Commit:  s.commit,
+		Built:   s.buildTime,
+	})
+}
+
 // handleClientConfig returns the public runtime config the SPA needs at boot.
 // Only non-secret values that the browser is expected to send back upstream are
 // included. When an integration is not configured server-side, its block is

@@ -55,6 +55,10 @@ func (s *Server) registerPublicRoutes(env *routeEnv) {
 	// Health endpoint — no auth required.
 	s.mux.HandleFunc("/api/v1/health", s.handleHealth)
 
+	// Version endpoint — no auth required. Under /api so the ingress sends it
+	// to the API pods like health (a bare /version would reach the SPA).
+	s.mux.HandleFunc("GET /api/v1/version", s.handleVersion)
+
 	// Client-config endpoint — public, no auth. Exposes only non-secret values
 	// (e.g. funnelbarn project + ingest API key) that the SPA needs at boot.
 	s.mux.HandleFunc("/api/v1/client-config", s.handleClientConfig)

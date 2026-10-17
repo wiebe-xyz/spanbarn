@@ -9,10 +9,24 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
 )
 
+// Version, Commit and BuildTime are injected at build time via -ldflags. Commit
+// and BuildTime are facts about the binary. Version starts as the build's
+// default and is replaced by SPANBARN_VERSION when the deploy sets it, because
+// the image is built once per commit and retagged to the semver at release, so
+// the semver is only known to the deploy.
 var (
 	Version   = "dev"
+	Commit    = "unknown"
 	BuildTime = "unknown"
 )
+
+// runtimeVersion returns the deploy-provided version, or the build's default.
+func runtimeVersion(buildDefault string) string {
+	if v := os.Getenv("SPANBARN_VERSION"); v != "" {
+		return v
+	}
+	return buildDefault
+}
 
 func main() {
 	// A panic on the main goroutine would exit before the 2s BugBarn flush
@@ -25,6 +39,9 @@ func main() {
 }
 
 func run() error {
+	// Resolve once, before anything reads Version, so health, /version, traces
+	// and release tags cannot disagree.
+	Version = runtimeVersion(Version)
 	logger, shutdownObservability := observability.Setup(Version)
 	slog.SetDefault(logger)
 	defer shutdownObservability()
