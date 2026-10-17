@@ -51,20 +51,14 @@ jobs:
           echo "Releasing ${SHA}"
 
       - name: Reclaim workspace (clear read-only Go cache from prior runs)
-
         shell: bash
-
+        # Only this job's own checkout: never another runner's work directory.
         run: |
-
-          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
-
-            [ -d "$c" ] || continue
-
+          c="${GITHUB_WORKSPACE:?}/.cache"
+          if [ -d "$c" ]; then
             chmod -R u+w "$c" 2>/dev/null || true
-
             rm -rf "$c" 2>/dev/null || true
-
-          done
+          fi
 
       - name: Checkout code
         uses: actions/checkout@v6
@@ -110,12 +104,13 @@ jobs:
     steps:
       - name: Reclaim workspace (clear read-only Go cache from prior runs)
         shell: bash
+        # Only this job's own checkout: never another runner's work directory.
         run: |
-          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
-            [ -d "$c" ] || continue
+          c="${GITHUB_WORKSPACE:?}/.cache"
+          if [ -d "$c" ]; then
             chmod -R u+w "$c" 2>/dev/null || true
             rm -rf "$c" 2>/dev/null || true
-          done
+          fi
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.tag.outputs.sha }}
@@ -151,12 +146,13 @@ jobs:
     steps:
       - name: Reclaim workspace (clear read-only Go cache from prior runs)
         shell: bash
+        # Only this job's own checkout: never another runner's work directory.
         run: |
-          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
-            [ -d "$c" ] || continue
+          c="${GITHUB_WORKSPACE:?}/.cache"
+          if [ -d "$c" ]; then
             chmod -R u+w "$c" 2>/dev/null || true
             rm -rf "$c" 2>/dev/null || true
-          done
+          fi
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.tag.outputs.sha }}
@@ -183,12 +179,13 @@ jobs:
     steps:
       - name: Reclaim workspace (clear read-only Go cache from prior runs)
         shell: bash
+        # Only this job's own checkout: never another runner's work directory.
         run: |
-          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
-            [ -d "$c" ] || continue
+          c="${GITHUB_WORKSPACE:?}/.cache"
+          if [ -d "$c" ]; then
             chmod -R u+w "$c" 2>/dev/null || true
             rm -rf "$c" 2>/dev/null || true
-          done
+          fi
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.tag.outputs.sha }}
@@ -258,12 +255,13 @@ jobs:
     steps:
       - name: Reclaim workspace (clear read-only Go cache from prior runs)
         shell: bash
+        # Only this job's own checkout: never another runner's work directory.
         run: |
-          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
-            [ -d "$c" ] || continue
+          c="${GITHUB_WORKSPACE:?}/.cache"
+          if [ -d "$c" ]; then
             chmod -R u+w "$c" 2>/dev/null || true
             rm -rf "$c" 2>/dev/null || true
-          done
+          fi
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.tag.outputs.sha }}
@@ -368,12 +366,13 @@ jobs:
     steps:
       - name: Reclaim workspace (clear read-only Go cache from prior runs)
         shell: bash
+        # Only this job's own checkout: never another runner's work directory.
         run: |
-          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
-            [ -d "$c" ] || continue
+          c="${GITHUB_WORKSPACE:?}/.cache"
+          if [ -d "$c" ]; then
             chmod -R u+w "$c" 2>/dev/null || true
             rm -rf "$c" 2>/dev/null || true
-          done
+          fi
       - name: Checkout code
         uses: actions/checkout@v6
         with:
@@ -513,12 +512,13 @@ jobs:
     steps:
       - name: Reclaim workspace (clear read-only Go cache from prior runs)
         shell: bash
+        # Only this job's own checkout: never another runner's work directory.
         run: |
-          for c in /Users/wiebe/github-runners/*/_work/spanbarn/spanbarn/.cache; do
-            [ -d "$c" ] || continue
+          c="${GITHUB_WORKSPACE:?}/.cache"
+          if [ -d "$c" ]; then
             chmod -R u+w "$c" 2>/dev/null || true
             rm -rf "$c" 2>/dev/null || true
-          done
+          fi
       - name: Checkout code
         uses: actions/checkout@v6
         with:

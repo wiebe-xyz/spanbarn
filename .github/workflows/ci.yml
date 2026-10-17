@@ -201,6 +201,11 @@ jobs:
           bash scripts/quality-lib.test.sh
           bash scripts/e2e-targets.test.sh
           go test ./scripts/...
+          # test_runner_scope.py fails if a workflow step globs over other
+          # runners' directories on the shared host again.
+          python3 -m venv "$RUNNER_TEMP/gate-venv"
+          "$RUNNER_TEMP/gate-venv/bin/python" -m pip install --quiet --disable-pip-version-check 'pyyaml==6.0.3'
+          "$RUNNER_TEMP/gate-venv/bin/python" -m unittest discover -s scripts -p 'test_*.py' -v
       - name: Quality gate
         shell: bash
         env:
