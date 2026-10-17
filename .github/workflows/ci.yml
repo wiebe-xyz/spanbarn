@@ -95,6 +95,11 @@ jobs:
       - name: Node checks
         if: steps.detect.outputs.node_manifests != '0'
         shell: bash
+        # The runners share one host with every other repo's CI. vitest's
+        # default of one fork per core let worker start-up time out (60s,
+        # hardcoded in vitest) when the host was at 0% idle (run 38996476179).
+        env:
+          VITEST_MAX_WORKERS: '2'
         run: |
           set -euo pipefail
           # This runner is shared with other repos' jobs. `corepack enable`

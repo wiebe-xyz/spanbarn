@@ -224,6 +224,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run Vitest
+        # The runners share one host with every other repo's CI. vitest's
+        # default of one fork per core let worker start-up time out (60s,
+        # hardcoded in vitest) when the host was at 0% idle (run 38996476179).
+        env:
+          VITEST_MAX_WORKERS: '2'
         run: pnpm --filter @spanbarn/web test
 
   deploy:
