@@ -15,7 +15,7 @@ export const REFRESH_OPTIONS: { seconds: number; label: string }[] = [
 ]
 
 /** How many groups a chart panel draws. */
-export const PANEL_CHART_GROUPS = 8
+const PANEL_CHART_GROUPS = 8
 
 export type Window = { fromMs: number; toMs: number }
 

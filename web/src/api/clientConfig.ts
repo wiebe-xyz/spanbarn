@@ -29,11 +29,6 @@ export function fetchClientConfig(): Promise<ClientConfig> {
   return cached
 }
 
-// Reset is exported for tests; production code does not need it.
-export function _resetClientConfigCache(): void {
-  cached = null
-}
-
 // True only when the current session was established via the iambarn OIDC
 // callback. Local password sessions don't have a remote profile to link to.
 export function isOIDCSession(): boolean {

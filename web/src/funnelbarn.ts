@@ -81,15 +81,10 @@ export async function initFunnelBarn(): Promise<void> {
   } catch { /* leave unconfigured; tracking calls no-op */ }
 }
 
-export function fbPage(properties?: Record<string, unknown>): void {
+function fbPage(properties?: Record<string, unknown>): void {
   void send(makeEvent('page_view', {
     path: location.pathname,
     referrer: document.referrer || undefined,
     ...properties,
   }))
-}
-
-export function fbTrack(name: string, properties?: Record<string, unknown>): void {
-  if (!name) return
-  void send(makeEvent(name, properties))
 }

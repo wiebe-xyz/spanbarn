@@ -108,6 +108,11 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --filter @spanbarn/web --if-present run lint:ratchet-test
           pnpm -r --if-present run lint
+          # Dead code in the web app (knip). The gate's own test blocks; the
+          # gate itself reports only while it soaks on real pull requests.
+          # Drop --report-only to enforce (web/scripts/knip-ratchet.mjs).
+          pnpm --filter @spanbarn/web --if-present run lint:knip-test
+          pnpm --filter @spanbarn/web --if-present run lint:knip -- --report-only
           pnpm -r --if-present run test
           pnpm -r --if-present run build
 

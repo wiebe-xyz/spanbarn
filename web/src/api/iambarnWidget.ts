@@ -127,7 +127,7 @@ export function useIambarnSession(): IambarnSession | null {
 // widget's own builder: client_id + post_logout_redirect_uri, no id_token_hint
 // (IAMBarn relies on the browser session cookie + the client's registered
 // post-logout allowlist).
-export function endSessionUrl(
+function endSessionUrl(
   issuer: string,
   opts: { clientId?: string; postLogoutRedirectUri?: string },
 ): string {

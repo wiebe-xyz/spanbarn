@@ -9,6 +9,8 @@
     "typecheck": "tsc -b",
     "lint": "tsc -b && node scripts/oxlint-ratchet.mjs",
     "lint:ratchet-test": "node --test scripts/oxlint-ratchet.test.mjs",
+    "lint:knip": "node scripts/knip-ratchet.mjs",
+    "lint:knip-test": "node --test scripts/knip-ratchet.test.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview"
@@ -29,6 +31,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-v8": "^4.1.5",
     "jsdom": "^29.1.1",
+    "knip": "6.34.0",
     "oxlint": "1.82.0",
     "typescript": "catalog:",
     "vite": "^8.0.10",

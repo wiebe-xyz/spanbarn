@@ -73,6 +73,16 @@ packages import nothing else from the module. `api` -> `repository` stays with
 `boundarycheck`. One baselined exclusion exists (`internal/api/setup.go`); its
 exit criterion is in `scripts/quality-thresholds.conf`. Do not add exclusions.
 
+Dead code has two gates. Go uses the `unused` linter in `.golangci.yml`
+(blocking in `make lint` and the `code` CI job, zero findings, no baseline). The
+web app uses knip through `web/scripts/knip-ratchet.mjs`: unused files, exports,
+types and dependencies are compared item by item with `web/knip-baseline.json`,
+and the gate fails both when an item appears and when a baseline item is gone
+(`pnpm --filter @spanbarn/web run lint:knip -- --write` refreshes the baseline).
+Its test (`lint:knip-test`) blocks in CI. The gate itself runs with
+`--report-only` in `ci.yml` while it soaks on real pull requests; drop the flag
+to enforce. The baseline is 0.
+
 The gate scripts have their own tests: `make quality-gate-test` runs the ratchet
 semantics (violation present, violation baselined, baseline beatable, clean
 tree) against fixtures without touching the real tree.

@@ -8,7 +8,7 @@ export const RENDER_HINT: Record<string, string> = {
   percentile: 'p50 / p95 / p99 reconstructed from the distribution',
 }
 
-export function labelText(labels: Record<string, string>): string {
+function labelText(labels: Record<string, string>): string {
   const entries = Object.entries(labels)
   if (entries.length === 0) return 'value'
   return entries.map(([k, v]) => `${k}=${v}`).join(', ')

@@ -1,6 +1,6 @@
 import type { DashboardHeatmapCell } from '../api/dashboardTypes'
 
-export type SeriesRow = {
+type SeriesRow = {
   /** Bucket start, epoch milliseconds. */
   time: number
   /** Value per group. Groups are looked up by key, never used as object paths. */

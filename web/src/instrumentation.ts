@@ -4,7 +4,6 @@ const SERVICE_NAME = 'spanbarn-web'
 const SAMPLE_PERCENT = 1 // 1 in 100 traces sampled
 
 const spanQueue: SpanPayload[] = []
-let flushTimer: ReturnType<typeof setInterval> | null = null
 
 let pageTraceId = ''
 let pageSpanId = ''
@@ -365,17 +364,9 @@ export function initInstrumentation() {
   instrumentFetch()
   instrumentNavigation()
   observeWebVitals()
-  flushTimer = setInterval(flushSpans, 5000)
+  setInterval(flushSpans, 5000)
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') commitTrace()
   })
-}
-
-export function shutdownInstrumentation() {
-  if (flushTimer) {
-    clearInterval(flushTimer)
-    flushTimer = null
-  }
-  commitTrace()
 }
