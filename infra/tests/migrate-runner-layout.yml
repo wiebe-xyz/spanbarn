@@ -1,0 +1,216 @@
+---
+# Exercises migrate-runner-layout.yml against a throwaway runner tree.
+#
+# launchctl, pgrep and pkill are stubs on PATH: launchctl and pkill record
+# their calls, pgrep reports a listener or a job from marker files. Directory
+# moves are real. Nothing touches launchd or this host's runners, and nothing
+# escalates. Run from infra/:
+#
+#   ansible-playbook -i inventory.ini tests/migrate-runner-layout.yml
+#
+# Remove together with migrate-runner-layout.yml (vibecortex#40).
+
+- name: The layout move is safe, complete and idempotent
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+    test_root: /tmp/spanbarn-migrate-runner-layout-test
+    legacy: "{{ test_root }}/github-runners"
+    agents: "{{ test_root }}/LaunchAgents"
+    state: "{{ test_root }}/state"
+    github_runner_user: "{{ lookup('env', 'USER') }}"
+    github_runner_base_dir: "{{ test_root }}/github-runners/spanbarn"
+    github_runners:
+      - { name: spanbarn-mac-1, repo: wiebe-xyz/spanbarn }
+      - { name: spanbarn-mac-2, repo: wiebe-xyz/spanbarn }
+    move_vars: &move_vars
+      runner_legacy_base_dir: "{{ legacy }}"
+      runner_legacy_launchagents: "{{ agents }}"
+  environment:
+    PATH: "{{ test_root }}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    STUB_STATE: "{{ test_root }}/state"
+
+  tasks:
+    - name: Start from a clean tree
+      file:
+        path: "{{ test_root }}"
+        state: absent
+
+    - name: Create the stub, state and LaunchAgents directories
+      file:
+        path: "{{ item }}"
+        state: directory
+      loop: ["{{ test_root }}/bin", "{{ state }}", "{{ agents }}"]
+
+    - name: Write the stubs
+      copy:
+        dest: "{{ test_root }}/bin/{{ item.name }}"
+        mode: '0755'
+        content: "{{ item.body }}"
+      loop:
+        - name: launchctl
+          body: |
+            #!/bin/bash
+            echo "launchctl $*" >> "$STUB_STATE/calls"
+            [ "$1" = bootout ] && rm -f "$STUB_STATE/up-${2##*.}"
+            exit 0
+        - name: pkill
+          body: |
+            #!/bin/bash
+            echo "pkill $*" >> "$STUB_STATE/calls"
+            exit 0
+        - name: pgrep
+          body: |
+            #!/bin/bash
+            name=$(echo "$2" | sed -n 's|.*/\(spanbarn-[a-z]*-[0-9]*\)/bin.*|\1|p')
+            case "$2" in
+              *Runner.Worker*) [ -e "$STUB_STATE/busy-$name" ] && { echo 777; exit 0; } ;;
+              *Runner.Listener*) [ -e "$STUB_STATE/up-$name" ] && { echo 4242; exit 0; } ;;
+            esac
+            exit 1
+      loop_control:
+        label: "{{ item.name }}"
+
+    # Two spanbarn runners in the legacy layout, rapid-root's runner-0 beside
+    # them, and a directory whose name only starts like a spanbarn runner.
+    - name: Create the legacy runner directories
+      file:
+        path: "{{ legacy }}/{{ item }}"
+        state: directory
+      loop: [spanbarn-mac-1, spanbarn-mac-2, runner-0, spanbarn-mac-1-old]
+
+    - name: Lay down the legacy tree
+      copy:
+        dest: "{{ legacy }}/{{ item.0 }}/{{ item.1 }}"
+        content: "{{ item.0 }}"
+      loop: "{{ ['spanbarn-mac-1', 'spanbarn-mac-2', 'runner-0', 'spanbarn-mac-1-old'] | product(['.runner', '.credentials']) | list }}"
+      loop_control:
+        label: "{{ item.0 }}/{{ item.1 }}"
+
+    - name: Lay down the legacy plists, and rapid-root's
+      copy:
+        dest: "{{ agents }}/com.github.actions.{{ item }}.plist"
+        content: "{{ item }}"
+      loop: [spanbarn-mac-1, spanbarn-mac-2, rapid-root-runner0]
+
+    - name: Mark the legacy listeners as running
+      file:
+        path: "{{ state }}/up-{{ item }}"
+        state: touch
+      loop: [spanbarn-mac-1, spanbarn-mac-2]
+
+    - name: First run moves both runners
+      include_tasks: ../migrate-runner-layout.yml
+      vars: *move_vars
+
+    - name: Read the tree after the first run
+      set_fact:
+        calls: "{{ lookup('file', state ~ '/calls').splitlines() }}"
+        moved0: "{{ lookup('file', github_runner_base_dir ~ '/runner-0/.runner') }}"
+        moved1: "{{ lookup('file', github_runner_base_dir ~ '/runner-1/.credentials') }}"
+        neighbour: "{{ lookup('file', legacy ~ '/runner-0/.runner') }}"
+        lookalike: "{{ lookup('file', legacy ~ '/spanbarn-mac-1-old/.runner') }}"
+        legacy_left: "{{ lookup('pipe', 'ls ' ~ legacy) }}"
+        plists_left: "{{ lookup('pipe', 'ls ' ~ agents) }}"
+
+    - assert:
+        that:
+          - moved0 == 'spanbarn-mac-1'
+          - moved1 == 'spanbarn-mac-2'
+          - neighbour == 'runner-0'
+          - lookalike == 'spanbarn-mac-1-old'
+          - "'spanbarn-mac-1\n' not in legacy_left ~ '\n'"
+          - "'spanbarn-mac-2' not in legacy_left"
+          - plists_left == 'com.github.actions.rapid-root-runner0.plist'
+          - calls | select('search', 'bootout') | list | length == 2
+          - calls | select('search', 'rapid-root|runner-0|old') | list | length == 0
+        fail_msg: "legacy={{ legacy_left }} plists={{ plists_left }} calls={{ calls }}"
+        success_msg: >-
+          both runners moved with .runner and .credentials; rapid-root's runner-0,
+          its plist and the look-alike dir untouched
+
+    - name: Second run
+      block:
+        - file:
+            path: "{{ state }}/calls"
+            state: absent
+        - include_tasks: ../migrate-runner-layout.yml
+          vars: *move_vars
+        - stat:
+            path: "{{ state }}/calls"
+          register: second_calls
+
+    - assert:
+        that:
+          - not second_calls.stat.exists
+          - lookup('file', github_runner_base_dir ~ '/runner-0/.runner') == 'spanbarn-mac-1'
+        success_msg: "second run: no launchctl or pkill call, nothing moved"
+
+    - name: A legacy dir beside an existing target stops the play
+      block:
+        - file:
+            path: "{{ legacy }}/spanbarn-mac-1"
+            state: directory
+        - copy:
+            dest: "{{ legacy }}/spanbarn-mac-1/.runner"
+            content: "a different runner"
+        - include_tasks: ../migrate-runner-layout.yml
+          vars: *move_vars
+        - set_fact:
+            conflict_failed: false
+      rescue:
+        - set_fact:
+            conflict_failed: true
+            conflict_msg: "{{ ansible_failed_result.results | default([]) | selectattr('msg', 'defined') | map(attribute='msg') | join(' ') }}"
+
+    - assert:
+        that:
+          - conflict_failed
+          - "'both exist' in conflict_msg"
+          - lookup('file', github_runner_base_dir ~ '/runner-0/.runner') == 'spanbarn-mac-1'
+          - lookup('file', legacy ~ '/spanbarn-mac-1/.runner') == 'a different runner'
+          - lookup('pipe', 'ls ' ~ state) is not search('calls')
+        fail_msg: "failed={{ conflict_failed }} msg={{ conflict_msg | default('') }}"
+        success_msg: "conflict: the play stops before any bootout; both dirs as they were"
+
+    - name: A runner with a job running stops the play
+      block:
+        - file:
+            path: "{{ legacy }}/spanbarn-mac-1"
+            state: absent
+        - file:
+            path: "{{ github_runner_base_dir }}/runner-1"
+            state: absent
+        - file:
+            path: "{{ legacy }}/spanbarn-mac-2"
+            state: directory
+        - copy:
+            dest: "{{ legacy }}/spanbarn-mac-2/.runner"
+            content: "spanbarn-mac-2"
+        - file:
+            path: "{{ state }}/busy-spanbarn-mac-2"
+            state: touch
+        - include_tasks: ../migrate-runner-layout.yml
+          vars: *move_vars
+        - set_fact:
+            busy_failed: false
+      rescue:
+        - set_fact:
+            busy_failed: true
+            busy_msg: "{{ ansible_failed_result.results | default([]) | selectattr('msg', 'defined') | map(attribute='msg') | join(' ') }}"
+
+    - assert:
+        that:
+          - busy_failed
+          - "'running a job' in busy_msg"
+          - lookup('file', legacy ~ '/spanbarn-mac-2/.runner') == 'spanbarn-mac-2'
+          - lookup('pipe', 'ls ' ~ state) is not search('calls')
+        fail_msg: "failed={{ busy_failed }} msg={{ busy_msg | default('') }}"
+        success_msg: "busy runner: the play stops before any bootout; nothing moved"
+
+    - name: Clean up
+      file:
+        path: "{{ test_root }}"
+        state: absent

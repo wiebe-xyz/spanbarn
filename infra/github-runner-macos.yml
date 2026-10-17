@@ -1,17 +1,23 @@
 ---
 # GitHub Actions Runner setup for macOS (Mac Mini + Mac Laptop)
-# Run with: GITHUB_TOKEN=<token> make setup-runners-macos
+# Run with: GITHUB_TOKEN=<token> make setup-runners-macos LIMIT=<host>
+#
+# The role is rapid-root's shared github-runner-macos, found through
+# ANSIBLE_ROLES_PATH (see the Makefile). spanbarn keeps no copy of it.
 
 - hosts: macos_runners
-  # No play-level become. Each task decides for itself, and skips escalation
-  # entirely when the playbook already runs as the runner user (the normal case
-  # on these Macs — everything a per-user LaunchAgent runner touches lives in
-  # that user's home). A play-level become: yes also applies to fact gathering,
-  # so it demanded a sudo password before any of that logic could run.
+  # The role escalates per task. A play-level become also applies to fact
+  # gathering, which needs none.
   serial: 1
 
   vars:
     github_runner_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
+
+  # One-time move from spanbarn's old per-name layout into the role's
+  # runner-<i> layout. Remove once both Macs are applied (vibecortex#40).
+  pre_tasks:
+    - name: Move spanbarn's runners into the shared layout
+      import_tasks: migrate-runner-layout.yml
 
   roles:
     - github-runner-macos
