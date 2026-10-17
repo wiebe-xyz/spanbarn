@@ -88,6 +88,10 @@ type TraceBuffer struct {
 	rescue RescueRules
 	floor  *sampling.MinuteFloor
 
+	// carry counts the clean traces the buffer drops, so the next trace kept
+	// as a sample of their operation counts them. See trace_buffer_carry.go.
+	carry *carryTally
+
 	// Eviction order. sacrificeQ holds traces the ratio sample skips. Eviction
 	// gives each its flush-time decision first (rescueAtCap), so freeing one
 	// costs nothing the slow-root and floor rules would keep. anyQ holds every trace
@@ -162,6 +166,14 @@ type BufferStats struct {
 	// UndeliveredSpans is spans that survived sampling but could not be handed
 	// to the drain goroutine in time.
 	UndeliveredSpans int64
+	// CarrierSpans is spans of dropped traces held to be stored as the
+	// carrier of their operation's drop count if no sampled trace comes.
+	CarrierSpans int
+	// CarriedDrops is dropped traces counted into a kept trace's weight.
+	CarriedDrops int64
+	// UncarriedDrops is dropped traces that waited out carryWait with no
+	// carrier held for them, so no stored weight counts them.
+	UncarriedDrops int64
 }
 
 // NewTraceBuffer creates a buffer with the given TTL and ratio lookup, capped at
@@ -198,6 +210,7 @@ func NewTraceBufferWithRules(ttl time.Duration, maxSpans int, rules RescueRules,
 		logger:   logger,
 		maxSpans: maxSpans,
 		rescue:   rules.normalised(),
+		carry:    newCarryTally(maxSpans),
 		out:      ch,
 		Out:      ch,
 		stop:     make(chan struct{}),
@@ -297,9 +310,13 @@ func (tb *TraceBuffer) newTrace(rec model.SpanRecord) *bufferedTrace {
 
 // Stats returns a point-in-time view of the buffer.
 func (tb *TraceBuffer) Stats() BufferStats {
+	held, carried, uncarried := tb.carry.stats()
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 	return BufferStats{
+		CarrierSpans:            held,
+		CarriedDrops:            carried,
+		UncarriedDrops:          uncarried,
 		BufferedSpans:           tb.spanCount,
 		BufferedTraces:          len(tb.traces),
 		MaxSpans:                tb.maxSpans,
@@ -345,8 +362,11 @@ func (tb *TraceBuffer) flush(now time.Time, all bool) (sent int) {
 		if w := tb.keepWeight(tr, now); w > 0 {
 			stampWeight(tr, w)
 			kept = append(kept, tr)
+		} else {
+			tb.carry.drop(tr, now)
 		}
 	}
+	kept = append(kept, tb.carry.expired(now, all)...)
 
 	var undelivered int64
 	for _, tr := range kept {
@@ -390,16 +410,15 @@ func (tb *TraceBuffer) deliver(spans []model.SpanRecord) bool {
 }
 
 // keepWeight decides whether the trace goes to storage and returns the sample
-// weight of its spans: how many traces of the population it stands for. 0
-// drops the trace. now is the flush time, used to place the trace in an hourly
-// rarity bucket.
+// weight of its spans: how many traces it stands for. 0 drops the trace; the
+// caller then counts the drop (carry.drop). now is the flush time, used to
+// place the trace in an hourly rarity bucket.
 //
-// Only the ratio sample is a 1-in-N draw, so only a trace that the ratio
-// sample alone kept stands for N. The error and slow-root rules keep every
-// trace of their kind, so such a trace stands for itself even when the ratio
-// sample also picked it: its kind is seen in full, and scaling it would count
-// the same traces N times. A trace the hourly floor rescued stands for itself
-// too.
+// The error and slow-root rules keep every trace of their kind, so such a
+// trace stands for itself. A clean trace kept as a sample, by the ratio or by
+// the hourly floor, stands for itself and for the clean traces of its
+// operation dropped since the previous such trace, so every trace is counted
+// once whatever the ratio (#333).
 func (tb *TraceBuffer) keepWeight(tr *bufferedTrace, now time.Time) int {
 	if tr.hasError {
 		return 1
@@ -407,10 +426,7 @@ func (tb *TraceBuffer) keepWeight(tr *bufferedTrace, now time.Time) int {
 	if len(tr.spans) == 0 {
 		return 0
 	}
-	op := tr.rootOp
-	if op == "" {
-		op = tr.spans[0].Name
-	}
+	op := traceOp(tr)
 	if tb.slowRoot(tr) {
 		return 1
 	}
@@ -419,10 +435,7 @@ func (tb *TraceBuffer) keepWeight(tr *bufferedTrace, now time.Time) int {
 	if !tb.rescued(tr.projectID, op, now, sampled) {
 		return 0
 	}
-	if sampled {
-		return max(ratio, 1)
-	}
-	return 1
+	return int(1 + tb.carry.take(tr.projectID, op))
 }
 
 // ratio returns the 1-in-N sample ratio for a root operation.

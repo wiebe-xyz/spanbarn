@@ -60,14 +60,23 @@ func TestCapEvictionKeepsFloorTraces(t *testing.T) {
 	}
 
 	// The floor is spent for both operations in this hour: another rare trace
-	// and the health traces still buffered are all dropped.
+	// (which evicts one more health trace) and the health traces still
+	// buffered are all dropped. Close stores one carrier per operation for the
+	// drops, so each operation's weights add up to the traces it had.
 	tb.Add(rootSpan(unsampledID(100), "GET /security", 1000))
 	out := collect(tb)
-	if res := tb.Close(at); res.Kept != 0 {
-		t.Fatalf("Close kept %d spans, want 0 once the floor is spent", res.Kept)
+	if res := tb.Close(at); res.Kept != 2 {
+		t.Fatalf("Close kept %d spans, want the 2 carriers", res.Kept)
 	}
-	if spans := <-out; len(spans) != 0 {
-		t.Fatalf("Close delivered %d spans, want 0", len(spans))
+	totals := map[string]int{}
+	for _, s := range <-out {
+		totals[s.Name] += s.SampleWeight
+	}
+	for _, s := range got {
+		totals[s[0].Name] += s[0].SampleWeight
+	}
+	if totals["GET /security"] != 2 || totals["GET /health/ready"] != 20 {
+		t.Errorf("weight totals = %v, want GET /security 2 and GET /health/ready 20", totals)
 	}
 }
 

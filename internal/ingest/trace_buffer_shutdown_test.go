@@ -22,7 +22,9 @@ func collect(tb *TraceBuffer) <-chan []model.SpanRecord {
 
 // A trace still inside its TTL at shutdown is decided then. Before Close
 // existed the process exited with it still in the map, and every rollout lost
-// the last TTL of traffic, error traces included.
+// the last TTL of traffic, error traces included. The dropped health trace
+// is stored too, as the carrier of its own drop, so the next process does not
+// lose its count.
 func TestTraceBufferCloseDecidesTracesInsideTheirTTL(t *testing.T) {
 	tb := NewTraceBuffer(time.Hour, NewStaticRatioLookup(1000000), testLogger())
 	noSample := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -33,13 +35,18 @@ func TestTraceBufferCloseDecidesTracesInsideTheirTTL(t *testing.T) {
 
 	res := tb.Close(time.Now())
 
-	if res.Traces != 2 || res.Spans != 3 || res.Kept != 2 {
-		t.Errorf("Close = %+v, want 2 traces, 3 spans, 2 kept", res)
+	if res.Traces != 2 || res.Spans != 3 || res.Kept != 3 {
+		t.Errorf("Close = %+v, want 2 traces, 3 spans, 3 kept", res)
 	}
 	select {
 	case got := <-out:
-		if len(got) != 2 || got[0].TraceID != "errtrace" {
-			t.Errorf("Out carried %d spans, want the 2 of the error trace", len(got))
+		if len(got) != 3 {
+			t.Fatalf("Out carried %d spans, want the error trace and the carrier", len(got))
+		}
+		for _, s := range got {
+			if s.SampleWeight != 1 {
+				t.Errorf("span %s/%s: SampleWeight = %d, want 1", s.TraceID, s.SpanID, s.SampleWeight)
+			}
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Out not closed after Close")

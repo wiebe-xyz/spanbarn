@@ -43,8 +43,8 @@ func weightTrace(id string, root model.SpanRecord, extra ...model.SpanRecord) *b
 }
 
 // TestKeepWeight covers every way a trace can be kept, alone and combined
-// with the ratio sample. A trace kept for a reason that keeps every trace of
-// its kind stands for itself, even when the ratio sample also picked it.
+// with the ratio sample. With no drops to carry, every kept trace stands for
+// itself, whatever the ratio.
 func TestKeepWeight(t *testing.T) {
 	now := time.Now()
 	sampled := weightTraceID(t, true, 0)
@@ -57,12 +57,12 @@ func TestKeepWeight(t *testing.T) {
 		tr    *bufferedTrace
 		want  int
 	}{
-		{"sampled only", RescueRules{}, weightTrace(sampled, rootSpan(sampled, "GET /", 1000)), weightRatio},
+		{"sampled only", RescueRules{}, weightTrace(sampled, rootSpan(sampled, "GET /", 1000)), 1},
 		{"error and sampled", RescueRules{}, weightTrace(sampled, rootSpan(sampled, "GET /", 1000), span(sampled, "s2", "s1", "db", "error")), 1},
 		{"error only", RescueRules{}, weightTrace(dropped, rootSpan(dropped, "GET /", 1000), span(dropped, "s2", "s1", "db", "error")), 1},
 		{"slow and sampled", RescueRules{SlowThresholdUs: 500}, weightTrace(sampled, rootSpan(sampled, "GET /", 1000)), 1},
 		{"slow only", RescueRules{SlowThresholdUs: 500}, weightTrace(dropped, rootSpan(dropped, "GET /", 1000)), 1},
-		{"sampled and counted by the floor", RescueRules{MinTracesPerHour: 1}, weightTrace(sampled, rootSpan(sampled, "GET /", 1000)), weightRatio},
+		{"sampled and counted by the floor", RescueRules{MinTracesPerHour: 1}, weightTrace(sampled, rootSpan(sampled, "GET /", 1000)), 1},
 		{"rescued by the floor only", RescueRules{MinTracesPerHour: 1}, weightTrace(dropped, rootSpan(dropped, "GET /", 1000)), 1},
 		{"dropped", RescueRules{}, weightTrace(dropped, rootSpan(dropped, "GET /", 1000)), 0},
 		{"empty", RescueRules{}, &bufferedTrace{id: sampled}, 0},
@@ -96,13 +96,21 @@ func TestKeepWeight(t *testing.T) {
 }
 
 // TestFlushStampsWeightOnEverySpan checks that the weight reaches every span
-// of a kept trace, children included, since aggregation counts spans.
+// of a kept trace, children included, since aggregation counts spans. The
+// sampled trace carries the trace dropped before it, so its weight is 2.
 func TestFlushStampsWeightOnEverySpan(t *testing.T) {
 	tb := weightBuffer(RescueRules{})
+	start := time.Now()
+	gone := weightTraceID(t, false, 0)
+	tb.Add(rootSpan(gone, "GET /", 1000))
+	tb.Flush(start.Add(time.Second))
+	if len(drain(tb)) != 0 {
+		t.Fatal("unsampled trace was stored")
+	}
 	id := weightTraceID(t, true, 0)
 	tb.Add(rootSpan(id, "GET /", 1000))
 	tb.Add(span(id, "s2", "s1", "db.query", "OK"))
-	tb.Flush(time.Now().Add(time.Second))
+	tb.Flush(start.Add(2 * time.Second))
 
 	select {
 	case spans := <-tb.Out:
@@ -110,8 +118,8 @@ func TestFlushStampsWeightOnEverySpan(t *testing.T) {
 			t.Fatalf("got %d spans, want 2", len(spans))
 		}
 		for _, s := range spans {
-			if s.SampleWeight != weightRatio {
-				t.Errorf("span %s: SampleWeight = %d, want %d", s.SpanID, s.SampleWeight, weightRatio)
+			if s.SampleWeight != 2 {
+				t.Errorf("span %s: SampleWeight = %d, want 2", s.SpanID, s.SampleWeight)
 			}
 		}
 	case <-time.After(time.Second):
