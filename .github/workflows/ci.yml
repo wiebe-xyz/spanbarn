@@ -23,6 +23,9 @@ jobs:
     runs-on: [self-hosted, build]
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Full history, so diff-coverage can find the merge base with the base branch.
+          fetch-depth: 0
       - name: Detect manifests
         id: detect
         shell: bash
@@ -61,7 +64,12 @@ jobs:
             dir="$(dirname "$mod")"
             if find "$dir" -name '*.go' -print -quit | grep -q .; then
               echo "[go] $dir"
-              (cd "$dir" && go test ./...)
+              if [ "$dir" = "." ]; then
+                # The root module's profile feeds the changed-line coverage step below.
+                (cd "$dir" && go test -coverprofile="${RUNNER_TEMP}/coverage.profile" ./...)
+              else
+                (cd "$dir" && go test ./...)
+              fi
               # Repository tests again with every table family in its own file
               # (internal/repository/split_test.go), so a write routed to the
               # wrong file fails here.
@@ -84,6 +92,28 @@ jobs:
               (cd "$dir" && go build ./...)
             fi
           done < <(find . "${prune[@]}" -name go.mod -print)
+
+      # Changed-line coverage, report only until 2026-10-31 (then add --enforce).
+      # 40% of the coverable Go lines a change adds must be executed by a test;
+      # diffs under 10 coverable lines are exempt. A pull request is measured
+      # against its base branch, a merge-queue group against the commit it
+      # was queued on top of.
+      - name: Diff coverage (report only)
+        if: steps.detect.outputs.go_mods != '0' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+        # Report only: a failure of the measurement itself must not block a merge
+        # either. Remove this line together with adding --enforce.
+        continue-on-error: true
+        shell: bash
+        env:
+          PR_BASE: origin/${{ github.base_ref }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          base="$PR_BASE"
+          if [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; then
+            base="$QUEUE_BASE"
+          fi
+          sh scripts/diff-coverage.sh "${RUNNER_TEMP}/coverage.profile" "$base"
 
       - name: Set up Node
         if: steps.detect.outputs.node_manifests != '0'
@@ -204,6 +234,7 @@ jobs:
         run: |
           bash scripts/quality-lib.test.sh
           bash scripts/e2e-targets.test.sh
+          sh scripts/diff-coverage.test.sh
           go test ./scripts/...
           # test_runner_scope.py fails if a workflow step globs over other
           # runners' directories on the shared host again.
