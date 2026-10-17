@@ -95,6 +95,13 @@ and the gate fails both when an item appears and when a baseline item is gone
 Its test (`lint:knip-test`) and the gate itself both block in CI. The baseline
 is 0.
 
+knip and oxlint report zero findings when they read nothing, which on a zero
+baseline reads as clean. Both ratchets therefore carry a file-count floor that
+exits 2 in every mode, `--write` and `--report-only` included: knip must analyse
+at least `MIN_ANALYSED_FILES` (100; 139 today) and oxlint must lint at least
+`MIN_LINTED_FILES` (100; 133 today). The floor tests run the real tool over an
+empty tree. `tsc` needs no floor: it fails with TS18003 when it finds no input.
+
 The gate scripts have their own tests: `make quality-gate-test` runs the ratchet
 semantics (violation present, violation baselined, baseline beatable, clean
 tree) against fixtures without touching the real tree.
