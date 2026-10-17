@@ -60,16 +60,16 @@ jobs:
         run: |
           set -euo pipefail
           prune=( \( -path './.git' -o -path './.cache' -o -path './.ci-venv' -o -path '*/node_modules' -o -path '*/.venv' \) -prune -o )
+          : > "${RUNNER_TEMP}/coverage.profile"
           while IFS= read -r mod; do
             dir="$(dirname "$mod")"
             if find "$dir" -name '*.go' -print -quit | grep -q .; then
               echo "[go] $dir"
-              if [ "$dir" = "." ]; then
-                # The root module's profile feeds the changed-line coverage step below.
-                (cd "$dir" && go test -coverprofile="${RUNNER_TEMP}/coverage.profile" ./...)
-              else
-                (cd "$dir" && go test ./...)
-              fi
+              # Every module's profile is appended to one file for the changed-line
+              # coverage step below, so a change in sdks/go is measured like one in
+              # the root module. The gate skips the extra "mode:" headers.
+              (cd "$dir" && go test -coverprofile="${RUNNER_TEMP}/module.profile" ./...)
+              cat "${RUNNER_TEMP}/module.profile" >> "${RUNNER_TEMP}/coverage.profile"
               # Repository tests again with every table family in its own file
               # (internal/repository/split_test.go), so a write routed to the
               # wrong file fails here.
@@ -100,6 +100,9 @@ jobs:
       # against its base branch, a merge-queue group against the commit it
       # was queued on top of. Report only means low coverage warns; a missing
       # profile, an unknown base or a git error exits non-zero and fails the job.
+      # So do the input floors: a profile listing fewer than 300 repository files,
+      # and 10 or more changed lines in files that add a function but have no
+      # block in the profile.
       - name: Diff coverage (report only)
         if: steps.detect.outputs.go_mods != '0' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
         shell: bash
