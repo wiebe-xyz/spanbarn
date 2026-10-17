@@ -114,7 +114,7 @@ into per-mode files (`mode_*.go`) plus shared helpers (`serve.go`,
 
 ## CI/CD (GitHub Actions)
 
-- `ci.yml` — spec, lint/test/build (`code`), and the `quality` gate on every push/PR
+- `ci.yml` — spec, lint/test/build (`code`), the `quality` gate and `secret-scan` (gitleaks 8.30.1 via `scripts/secret-scan.sh`, self-tested with a planted fake secret; report-only until 2026-10-31; known history hits are fingerprints in `.gitleaksignore`, which may only shrink) on every push/PR
 - `build-and-test.yml` — Docker build + deploy to k3s testing, then staging + E2E. The
   `quality-backend` job runs the same `scripts/quality-gate.sh`, so the gate is in the
   deploy path and not only in a `quality` job no deploy job depends on
