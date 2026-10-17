@@ -1,6 +1,14 @@
 SHELL := /bin/bash
 
-ANSIBLE_ROLES_PATH ?= roles:../rapid-root/infra/roles
+# rapid-root's shared roles, probed from THIS file's location. The relative
+# roles_path in ansible.cfg only resolves from the primary checkout; from a git
+# worktree (.claude/worktrees/<name>/infra) rapid-root is three levels further
+# up. The first probe that exists wins.
+INFRA_DIR   := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+ROLES_PROBE := $(abspath $(INFRA_DIR)/../../rapid-root/infra/roles) \
+               $(abspath $(INFRA_DIR)/../../../../../rapid-root/infra/roles) \
+               $(HOME)/webwiebe/rapid-root/infra/roles
+ANSIBLE_ROLES_PATH ?= $(firstword $(wildcard $(ROLES_PROBE)) $(firstword $(ROLES_PROBE)))
 INVENTORY ?= inventory.ini
 
 # Each Mac is addressed by name (see host_vars/) and connects locally when it IS
@@ -48,12 +56,22 @@ endif
 restart-runners-macos:
 	ANSIBLE_ROLES_PATH=$(ANSIBLE_ROLES_PATH) ansible-playbook -i $(INVENTORY) github-runner-macos.yml -K $(RESTART_EXTRA) $(ANSIBLE_LIMIT) $(ANSIBLE_EXTRA)
 
+# Shows which role a run would load, before anything runs.
+preflight:
+	@if [ -f "$(ANSIBLE_ROLES_PATH)/github-runner-macos/tasks/main.yml" ]; then \
+	  echo "role  $(ANSIBLE_ROLES_PATH)/github-runner-macos"; \
+	else \
+	  echo "role  NOT FOUND at $(ANSIBLE_ROLES_PATH)/github-runner-macos"; \
+	  echo "      (clone wiebe-xyz/rapid-root beside spanbarn, or set ANSIBLE_ROLES_PATH)"; exit 1; \
+	fi
+
 ping:
 	ansible -i $(INVENTORY) -m ping runners
 	ansible -i $(INVENTORY) -m ping macos_runners
 
 help:
 	@echo "Available targets:"
+	@echo "  preflight               Show which github-runner-macos role a run loads"
 	@echo "  setup-runners           Provision Linux GitHub Actions runners"
 	@echo "  setup-runners-macos     Provision macOS GitHub Actions runners"
 	@echo "  restart-runners-macos   Recover wedged/stale runners (RUNNER=<name>, RECONFIGURE=1)"

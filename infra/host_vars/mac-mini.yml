@@ -15,7 +15,11 @@ ansible_user: "{{ lookup('env', 'SPANBARN_MAC_MINI_USER') | default('wiebe', tru
 
 github_runner_enabled: true
 github_runner_version: "2.334.0"
-github_runner_base_dir: /Users/wiebe/github-runners
+# spanbarn's own base dir. The shared role keeps runner <i> in
+# <base>/runner-<i>, and /Users/wiebe/github-runners/runner-<i> belongs to
+# rapid-root's runners on both Macs. The runners used to live in
+# /Users/wiebe/github-runners/<name>; migrate-runner-layout.yml moves them.
+github_runner_base_dir: /Users/wiebe/github-runners/spanbarn
 github_runner_user: wiebe
 github_runner_battery_aware: false
 github_runners:

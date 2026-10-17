@@ -1,0 +1,197 @@
+---
+# One-time move of spanbarn's runners into the shared role's layout.
+#
+# spanbarn's own copy of github-runner-macos kept each runner in
+# <legacy base>/<runner name> under the launchd label
+# com.github.actions.<runner name>, with the legacy base
+# /Users/wiebe/github-runners. The shared rapid-root role keeps runner <i> of
+# github_runners in <github_runner_base_dir>/runner-<i> under
+# com.github.actions.spanbarn-runner<i>. rapid-root's own runners already live in
+# /Users/wiebe/github-runners/runner-<i>, so spanbarn moves to its own base dir
+# (host_vars) and this file moves each runner directory there before the role
+# runs.
+#
+# Moving the directory keeps .runner and .credentials, so the role finds the
+# runner configured under the agent name GitHub already knows and registers
+# nothing new.
+#
+# Per runner, from github_runners:
+#   legacy dir absent                -> nothing to do (already moved, or new)
+#   legacy dir and target both exist -> stop the play; a human decides
+#   runner has a job running         -> stop the play; run again when idle
+#   otherwise                        -> boot out the legacy service, wait for
+#                                       its listener to exit, move the dir,
+#                                       remove the legacy plist
+#
+# Only directories named spanbarn-<mac|laptop>-<n> directly under the legacy
+# base are touched. Remove this file and its import once both Macs are applied
+# (vibecortex#40).
+
+- name: Note the legacy runner layout
+  set_fact:
+    runner_legacy_base_dir: /Users/wiebe/github-runners
+    runner_legacy_launchagents: "/Users/{{ github_runner_user }}/Library/LaunchAgents"
+
+- name: Refuse runner names outside the legacy spanbarn pattern
+  assert:
+    that:
+      - github_runners | map(attribute='name') | reject('match', '^spanbarn-(mac|laptop)-[0-9]+$') | list | length == 0
+      - github_runner_base_dir != runner_legacy_base_dir
+    fail_msg: >-
+      The layout move only handles runners named spanbarn-<mac|laptop>-<n> and a
+      base dir other than {{ runner_legacy_base_dir }}; got
+      {{ github_runners | map(attribute='name') | list }} and {{ github_runner_base_dir }}.
+
+- name: Look for legacy runner directories
+  stat:
+    path: "{{ runner_legacy_base_dir }}/{{ item.1.name }}"
+  with_indexed_items: "{{ github_runners }}"
+  loop_control:
+    label: "{{ item.1.name }}"
+  register: runner_legacy_dirs
+
+- name: Look for the target runner directories
+  stat:
+    path: "{{ github_runner_base_dir }}/runner-{{ item.item.0 }}"
+  loop: "{{ runner_legacy_dirs.results }}"
+  when: item.stat.isdir | default(false)
+  loop_control:
+    label: "runner-{{ item.item.0 }}"
+  register: runner_layout_targets
+
+- name: Stop when a target directory already exists
+  fail:
+    msg: >-
+      {{ runner_legacy_base_dir }}/{{ item.item.item.1.name }} and
+      {{ github_runner_base_dir }}/runner-{{ item.item.item.0 }} both exist.
+      The move would overwrite one runner with another. Compare the agentName in
+      each .runner, keep the one GitHub lists for wiebe-xyz/spanbarn, and move
+      the other aside by hand before running the play again.
+  loop: "{{ runner_layout_targets.results }}"
+  when: item.stat is defined and item.stat.exists
+  loop_control:
+    label: "runner-{{ item.item.item.0 }}"
+
+- name: Note the runners to move
+  set_fact:
+    runner_moves: >-
+      {{ runner_legacy_dirs.results | selectattr('stat.isdir', 'defined')
+         | selectattr('stat.isdir') | map(attribute='item') | list }}
+
+# A job on the runner is a Runner.Worker started from bin/ or bin.<version>/.
+- name: Check whether a runner to move has a job running
+  shell: pgrep -f "{{ runner_legacy_base_dir }}/{{ item.1.name }}/bin[^/]*/Runner.Worker" || true
+  loop: "{{ runner_moves }}"
+  loop_control:
+    label: "{{ item.1.name }}"
+  register: runner_move_busy
+  changed_when: false
+
+- name: Stop when a runner to move has a job running
+  fail:
+    msg: >-
+      {{ item.item.1.name }} is running a job (Runner.Worker pid
+      {{ item.stdout | trim }}). Run the play again once it is idle.
+  loop: "{{ runner_move_busy.results }}"
+  when: item.stdout | trim | length > 0
+  loop_control:
+    label: "{{ item.item.1.name }}"
+
+- name: Note which runners to move hold an identity
+  stat:
+    path: "{{ runner_legacy_base_dir }}/{{ item.1.name }}/.runner"
+  loop: "{{ runner_moves }}"
+  loop_control:
+    label: "{{ item.1.name }}"
+  register: runner_move_identity_before
+
+- name: Create the new runner base directory
+  file:
+    path: "{{ github_runner_base_dir }}"
+    state: directory
+    owner: "{{ github_runner_user }}"
+    group: staff
+    mode: '0755'
+  become: true
+  when: runner_moves | length > 0
+
+- name: Get the runner user UID
+  command: id -u {{ github_runner_user }}
+  register: runner_move_uid
+  changed_when: false
+  when: runner_moves | length > 0
+
+- name: Boot out the legacy runner services
+  shell: >-
+    launchctl bootout gui/{{ runner_move_uid.stdout }}/com.github.actions.{{ item.1.name }}
+    2>/dev/null || true
+  become: true
+  loop: "{{ runner_moves }}"
+  loop_control:
+    label: "{{ item.1.name }}"
+  changed_when: true
+
+- name: Wait for the legacy listeners to exit
+  shell: pgrep -f "{{ runner_legacy_base_dir }}/{{ item.1.name }}/bin[^/]*/Runner.Listener" || true
+  loop: "{{ runner_moves }}"
+  loop_control:
+    label: "{{ item.1.name }}"
+  register: runner_move_listeners
+  retries: 6
+  delay: 5
+  until: runner_move_listeners.stdout | trim | length == 0
+  failed_when: false
+  changed_when: false
+
+- name: Kill legacy listeners that did not exit
+  shell: pkill -9 -f "{{ runner_legacy_base_dir }}/{{ item.item.1.name }}/bin[^/]*/Runner.Listener" || true
+  become: true
+  loop: "{{ runner_move_listeners.results }}"
+  when: item.stdout | default('') | trim | length > 0
+  loop_control:
+    label: "{{ item.item.1.name }}"
+  changed_when: true
+
+# The target was checked above. -n and creates keep the move from replacing
+# anything that appeared since.
+- name: Move each legacy runner directory into the shared layout
+  command:
+    argv:
+      - mv
+      - -n
+      - "{{ runner_legacy_base_dir }}/{{ item.1.name }}"
+      - "{{ github_runner_base_dir }}/runner-{{ item.0 }}"
+    creates: "{{ github_runner_base_dir }}/runner-{{ item.0 }}"
+  become: true
+  loop: "{{ runner_moves }}"
+  loop_control:
+    label: "{{ item.1.name }} -> runner-{{ item.0 }}"
+
+- name: Confirm each identity arrived intact
+  stat:
+    path: "{{ github_runner_base_dir }}/runner-{{ item.0 }}/{{ item.1 }}"
+  loop: >-
+    {{ runner_move_identity_before.results | selectattr('stat.exists')
+       | map(attribute='item.0') | product(['.runner', '.credentials']) | list }}
+  loop_control:
+    label: "runner-{{ item.0 }}/{{ item.1 }}"
+  register: runner_moved_identity
+
+- name: Stop when a moved runner lost its identity
+  fail:
+    msg: >-
+      runner-{{ item.item.0 }} has no {{ item.item.1 }} after the move. The
+      legacy service is booted out and its plist kept; nothing else ran.
+  loop: "{{ runner_moved_identity.results }}"
+  when: not item.stat.exists
+  loop_control:
+    label: "runner-{{ item.item.0 }}/{{ item.item.1 }}"
+
+- name: Remove the legacy runner plists
+  file:
+    path: "{{ runner_legacy_launchagents }}/com.github.actions.{{ item.1.name }}.plist"
+    state: absent
+  become: true
+  loop: "{{ runner_moves }}"
+  loop_control:
+    label: "{{ item.1.name }}"
