@@ -97,10 +97,9 @@ test: spec-check
 	done; \
 	if [ "$$found" -eq 0 ]; then echo "[test] no code manifests found yet"; fi
 
-# Pinned like golangci-lint; the same version runs in ci.yml (code, on every PR
-# and in the merge queue) and in build-and-test.yml (quality-backend), so a
-# finding fails locally before it can reach main.
-STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.1
+# staticcheck is pinned in scripts/staticcheck-gate.py, which ci.yml (code, on
+# every PR and in the merge queue) and build-and-test.yml (quality-backend) run
+# too, so a finding fails locally before it can reach main.
 
 lint:
 	@set -eu; \
@@ -112,7 +111,7 @@ lint:
 		if find "$$dir" -name '*.go' -print -quit | grep -q .; then \
 			echo "[lint] go $$dir"; \
 			(cd "$$dir" && go vet ./...); \
-			(cd "$$dir" && go run $(STATICCHECK) ./...); \
+			python3 scripts/staticcheck-gate.py "$$dir"; \
 			if [ -f "$$dir/.golangci.yml" ]; then \
 				(cd "$$dir" && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run --allow-parallel-runners ./...); \
 			fi; \

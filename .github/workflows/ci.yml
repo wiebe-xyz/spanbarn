@@ -79,8 +79,9 @@ jobs:
               (cd "$dir" && go vet ./...)
               # Same pinned staticcheck as quality-backend in build-and-test.yml,
               # which runs only after merge. Without it here a finding passes the
-              # PR and the merge queue and first fails on main.
-              (cd "$dir" && go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...)
+              # PR and the merge queue and first fails on main. The gate also
+              # fails when U1000 analysed fewer packages than the module's floor.
+              python3 scripts/staticcheck-gate.py "$dir"
               # Layering rules (depguard) from .golangci.yml. Pinned like gocyclo/dupl.
               # --allow-parallel-runners: every self-hosted runner on the host runs as
               # one user and golangci-lint locks a file in that user's temp dir, so a
