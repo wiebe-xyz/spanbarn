@@ -23,6 +23,8 @@ func serverConfigFrom(cfg config.Config) api.ServerConfig {
 		MaxBodyBytes:       cfg.MaxBodyBytes,
 		AllowedOrigins:     cfg.AllowedOrigins,
 		Version:            Version,
+		Commit:             Commit,
+		BuildTime:          BuildTime,
 		Environment:        cfg.Environment,
 		LoginRate:          cfg.LoginRatePerMinute,
 		IngestRate:         cfg.IngestRatePerMinute,

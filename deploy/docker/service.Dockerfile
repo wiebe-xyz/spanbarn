@@ -9,8 +9,8 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 
-ARG VERSION=dev BUILD_TIME=unknown
-RUN go build -ldflags "-X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" -o /out/spanbarn ./cmd/spanbarn
+ARG VERSION=dev COMMIT=unknown BUILD_TIME=unknown
+RUN go build -ldflags "-X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}" -o /out/spanbarn ./cmd/spanbarn
 
 FROM alpine:3.20
 

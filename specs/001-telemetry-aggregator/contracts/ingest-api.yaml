@@ -86,6 +86,32 @@ paths:
                   version:
                     type: string
 
+  /api/v1/version:
+    get:
+      summary: Running version and commit
+      description: >
+        Public. `version` is what the deploy states (the release tag, or
+        main-<sha7> outside production) and matches the version in the health
+        response. `commit` and `built` are baked into the binary at build time.
+      operationId: getVersion
+      responses:
+        '200':
+          description: The running build
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                    example: v0.5.2
+                  commit:
+                    type: string
+                    example: 0123456789abcdef0123456789abcdef01234567
+                  built:
+                    type: string
+                    example: '2026-10-17T12:00:00Z'
+
   /api/v1/services:
     get:
       summary: List services with metrics summary

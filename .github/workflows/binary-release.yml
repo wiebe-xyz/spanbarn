@@ -245,7 +245,7 @@ jobs:
           GOARCH="${{ matrix.arch }}"
           export GOARCH
           BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-          LDFLAGS="-X main.Version=v${VERSION} -X main.BuildTime=${BUILD_TIME}"
+          LDFLAGS="-X main.Version=v${VERSION} -X main.Commit=${GITHUB_SHA} -X main.BuildTime=${BUILD_TIME}"
           mkdir -p dist
           go build -ldflags "${LDFLAGS}" -o dist/spanbarn-linux-${GOARCH} ./cmd/spanbarn
           go build -ldflags "${LDFLAGS}" -o dist/sb-linux-${GOARCH} ./cmd/sb
@@ -315,7 +315,7 @@ jobs:
           VERSION: ${{ needs.tag.outputs.version_num }}
         run: |
           BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-          LDFLAGS="-X main.Version=v${VERSION} -X main.BuildTime=${BUILD_TIME}"
+          LDFLAGS="-X main.Version=v${VERSION} -X main.Commit=${GITHUB_SHA} -X main.BuildTime=${BUILD_TIME}"
           mkdir -p dist
           go build -ldflags "${LDFLAGS}" -o dist/spanbarn ./cmd/spanbarn
           go build -ldflags "${LDFLAGS}" -o dist/sb ./cmd/sb
