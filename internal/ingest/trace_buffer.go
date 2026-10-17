@@ -88,9 +88,9 @@ type TraceBuffer struct {
 	rescue RescueRules
 	floor  *sampling.MinuteFloor
 
-	// Eviction order. sacrificeQ holds traces whose flush-time sampling decision
-	// is already known to be "discard" — freeing one of those costs nothing at
-	// all, because it was never going to reach storage. anyQ holds every trace
+	// Eviction order. sacrificeQ holds traces the ratio sample skips. Eviction
+	// gives each its flush-time decision first (rescueAtCap), so freeing one
+	// costs nothing the slow-root and floor rules would keep. anyQ holds every trace
 	// in insertion order and is the fallback for when nothing is sacrificial.
 	// Entries are skipped lazily: a queued trace may since have been flushed,
 	// evicted, or latched as an error trace.
@@ -108,6 +108,15 @@ type TraceBuffer struct {
 	evictedSTotal  int64
 	evictedKTotal  int64
 	undeliverTotal int64
+
+	// rescuedAtCap holds traces that eviction picked but the slow-root or
+	// hourly floor rule keeps, weighted and waiting for the next flush.
+	rescuedAtCap  []*bufferedTrace
+	evictedRescue int64
+	evictedRTotal int64
+
+	// now is the clock for decisions made at eviction. Tests replace it.
+	now func() time.Time
 
 	// Accepted spans are sent to this channel for the caller to drain. Close
 	// closes it.
@@ -128,7 +137,7 @@ type bufferedTrace struct {
 	rootOp      string // operation name of the root span (no parentSpanID)
 	projectID   int64
 	firstSeen   time.Time
-	sacrificial bool // sampling already says "discard"; evict this one first
+	sacrificial bool // the ratio sample skips it; evict this one first
 }
 
 // BufferStats is a point-in-time view of the buffer, for metrics and health
@@ -147,6 +156,9 @@ type BufferStats struct {
 	// EvictedKeptSpans is spans freed from traces that *would* have been kept.
 	// Non-zero means the cap is genuinely too small for the span rate.
 	EvictedKeptSpans int64
+	// RescuedAtCapSpans is spans of traces eviction picked that the slow-root
+	// or hourly floor rule kept instead. They are stored, not lost.
+	RescuedAtCapSpans int64
 	// UndeliveredSpans is spans that survived sampling but could not be handed
 	// to the drain goroutine in time.
 	UndeliveredSpans int64
@@ -190,6 +202,7 @@ func NewTraceBufferWithRules(ttl time.Duration, maxSpans int, rules RescueRules,
 		Out:      ch,
 		stop:     make(chan struct{}),
 		gcDone:   make(chan struct{}),
+		now:      time.Now,
 	}
 	if tb.rescue.MinTracesPerHour > 0 {
 		tb.floor = sampling.NewBucketFloor(time.Hour)
@@ -293,6 +306,7 @@ func (tb *TraceBuffer) Stats() BufferStats {
 		RefusedSpans:            tb.refusedTotal,
 		EvictedSacrificialSpans: tb.evictedSTotal,
 		EvictedKeptSpans:        tb.evictedKTotal,
+		RescuedAtCapSpans:       tb.evictedRTotal,
 		UndeliveredSpans:        tb.undeliverTotal,
 	}
 }
@@ -319,21 +333,23 @@ func (tb *TraceBuffer) flush(now time.Time, all bool) (sent int) {
 		tb.remove(tr)
 	}
 	tb.pruneEvictionQueues()
+	kept := tb.rescuedAtCap
+	tb.rescuedAtCap = nil
 	loss := tb.takeLossWindow()
 	loss.buffered, loss.traces = tb.spanCount, len(tb.traces)
 	tb.mu.Unlock()
 
 	tb.reportLoss(loss)
 
-	var undelivered int64
 	for _, tr := range toDecide {
-		w := tb.keepWeight(tr, now)
-		if w == 0 {
-			continue
+		if w := tb.keepWeight(tr, now); w > 0 {
+			stampWeight(tr, w)
+			kept = append(kept, tr)
 		}
-		for i := range tr.spans {
-			tr.spans[i].SampleWeight = w
-		}
+	}
+
+	var undelivered int64
+	for _, tr := range kept {
 		// A trace that survived sampling has already been paid for; dropping it
 		// here silently would discard error traces too — the one guarantee the
 		// buffer makes. Give the drain a bounded chance to catch up, then count
