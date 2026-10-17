@@ -113,8 +113,9 @@ func (e *SLOEvaluator) countSLO(ctx context.Context, s repository.SLO, closeBefo
 }
 
 // countBucket counts the good and total spans that were ingested in the bucket
-// starting at b. Error spans are always kept by the sampler and only ok spans
-// are sampled, so inflateCount scales the ok spans alone.
+// starting at b, each estimated from the spans' sample weights. Spans without
+// a weight fall back to inflateCount, which scales the ok spans alone because
+// error spans are always kept.
 func (e *SLOEvaluator) countBucket(s repository.SLO, f sloFilters, b time.Time, sampleRate float64) (repository.SLOCount, error) {
 	// The span filter bounds are inclusive, so the upper bound stops a
 	// nanosecond short of the next bucket.
@@ -122,19 +123,19 @@ func (e *SLOEvaluator) countBucket(s repository.SLO, f sloFilters, b time.Time, 
 
 	gf := base
 	gf.Expr = f.good
-	good, goodErr, err := e.reads.CountSpans(gf)
+	goodSpans, err := e.reads.CountSpans(gf)
 	if err != nil {
 		return repository.SLOCount{}, fmt.Errorf("count good: %w", err)
 	}
 	tf := base
 	tf.Expr = f.total
-	total, totalErr, err := e.reads.CountSpans(tf)
+	totalSpans, err := e.reads.CountSpans(tf)
 	if err != nil {
 		return repository.SLOCount{}, fmt.Errorf("count total: %w", err)
 	}
 
-	good = inflateCount(good, goodErr, sampleRate)
-	total = inflateCount(total, totalErr, sampleRate)
+	good := estimateSpans(goodSpans, sampleRate)
+	total := estimateSpans(totalSpans, sampleRate)
 	if good > total {
 		// A good filter wider than the total filter, or a rounding difference
 		// between the two scalings, must not report a negative bad count.

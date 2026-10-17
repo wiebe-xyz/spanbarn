@@ -42,6 +42,7 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 		dbName     string
 		count      int64
 		errorCount int64
+		weights    repository.SpanWeights
 		totalTime  int64
 		durations  []int64
 	}
@@ -89,6 +90,7 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 			byPattern[pattern] = st
 		}
 		st.count++
+		st.weights.Add(sp.SampleWeight)
 		if sp.Status == "error" {
 			st.errorCount++
 		}
@@ -99,7 +101,7 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 	sr := s.projectSampleRate(ctx, projectID)
 	result := make([]DatabaseQuerySummary, 0, len(byPattern))
 	for pattern, st := range byPattern {
-		effective := inflateCount(st.count, st.errorCount, sr)
+		effective := estimateSpans(st.count, st.errorCount, st.weights, sr)
 		var errorRate float64
 		if effective > 0 {
 			errorRate = float64(st.errorCount) / float64(effective)

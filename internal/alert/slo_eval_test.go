@@ -19,9 +19,10 @@ const (
 )
 
 type fakeSpan struct {
-	at    time.Time
-	good  bool
-	isErr bool
+	at     time.Time
+	good   bool
+	isErr  bool
+	weight int // sample weight; 0 is unknown
 }
 
 // fakeSLORepo is an in-memory SLORepository. Spans carry whether they match the
@@ -59,22 +60,23 @@ func (f *fakeSLORepo) ListSLOBurnAlerts(_, sloID int64) ([]repository.SLOBurnAle
 	return append([]repository.SLOBurnAlert(nil), f.alerts[sloID]...), nil
 }
 
-func (f *fakeSLORepo) CountSpans(q repository.SpanFilter) (int64, int64, error) {
+func (f *fakeSLORepo) CountSpans(q repository.SpanFilter) (repository.SpanCount, error) {
 	if err := f.countErr[q.ProjectID]; err != nil {
-		return 0, 0, err
+		return repository.SpanCount{}, err
 	}
 	wantGood := q.Expr != nil && len(q.Expr.Filters) == 1 && q.Expr.Filters[0].Value == "good"
-	var total, errs int64
+	var c repository.SpanCount
 	for _, s := range f.spans[q.ProjectID] {
 		if s.at.Before(q.From) || s.at.After(q.To) || (wantGood && !s.good) {
 			continue
 		}
-		total++
+		c.Total++
+		c.Weights.Add(s.weight)
 		if s.isErr {
-			errs++
+			c.Errors++
 		}
 	}
-	return total, errs, nil
+	return c, nil
 }
 
 func (f *fakeSLORepo) LatestSLOBucket(sloID int64) (time.Time, error) {
@@ -248,6 +250,28 @@ func TestSLOSamplingScalesOkSpansOnly(t *testing.T) {
 	got := h.repo.counts[1][base.Add(-time.Minute)]
 	if got.Good != 80 || got.Total != 82 {
 		t.Fatalf("scaled bucket = %+v, want 80/82", got)
+	}
+}
+
+// TestSLOCountsSampleWeights checks that weighted spans are counted by their
+// weight and the current ratio is ignored: a trace the floor or the error rule
+// kept stands for itself, a ratio-sampled trace for its ratio (#333).
+func TestSLOCountsSampleWeights(t *testing.T) {
+	h := newSLOHarness(t, fixedRatio(1000))
+	h.addSLO(1, 1, 0.9, 30)
+	minute := base.Add(-time.Minute)
+	h.repo.spans[1] = append(h.repo.spans[1],
+		fakeSpan{at: minute, good: true, weight: 1},                            // kept by the hourly floor
+		fakeSpan{at: minute.Add(time.Millisecond), good: true, weight: 10},     // ratio-sampled at 10 when it was kept
+		fakeSpan{at: minute.Add(2 * time.Millisecond), isErr: true, weight: 1}, // error trace
+		fakeSpan{at: minute.Add(3 * time.Millisecond), isErr: true, weight: 1}, // error trace
+	)
+
+	h.tick(base.Add(40 * time.Second))
+
+	got := h.repo.counts[1][minute]
+	if got.Good != 11 || got.Total != 13 {
+		t.Fatalf("weighted bucket = %+v, want 11/13 from the weights, unscaled by the ratio", got)
 	}
 }
 

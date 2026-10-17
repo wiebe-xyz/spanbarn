@@ -275,7 +275,7 @@ func (r *Repository) scanSpans(query string, args ...any) ([]Span, error) {
 		if err := rows.Scan(
 			&s.ID, &s.ProjectID, &s.TraceID, &s.SpanID, &s.ParentSpanID,
 			&s.Name, &s.Service, &s.Resource, &s.Kind, &s.Status,
-			&s.StartTimeUs, &s.DurationUs, &s.Attributes, &s.Events, &s.IngestedAt,
+			&s.StartTimeUs, &s.DurationUs, &s.Attributes, &s.Events, &s.IngestedAt, &s.SampleWeight,
 		); err != nil {
 			return nil, err
 		}

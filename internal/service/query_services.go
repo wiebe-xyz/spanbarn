@@ -45,10 +45,11 @@ func (a *aggStats) foldAggregate(rate float64, row repository.Aggregate) {
 	a.aggCount += row.Count
 }
 
-// foldSpanFallback folds a raw-span-derived row in. Such rows may carry no
-// percentile data, so the percentile sums are only weighted in when present.
-func (a *aggStats) foldSpanFallback(rate float64, count, errorCount, p50, p95, p99 int64) {
-	a.effective += inflateCount(count, errorCount, rate)
+// foldSpanFallback folds a raw-span-derived row in, estimated by
+// estimateSpans. Such rows may carry no percentile data, so the percentile sums
+// are only weighted in when present.
+func (a *aggStats) foldSpanFallback(rate float64, count, errorCount int64, w repository.SpanWeights, p50, p95, p99 int64) {
+	a.effective += estimateSpans(count, errorCount, w, rate)
 	a.count += count
 	a.errorCount += errorCount
 	if p50 > 0 || p95 > 0 || p99 > 0 {
@@ -165,7 +166,7 @@ func (s *QueryService) foldRecentServiceStats(merged map[string]*aggStats, rates
 		s.logger.Warn("failed to query service stats from spans", "error", err)
 	}
 	for _, ss := range spanStats {
-		statsFor(merged, ss.Service).foldSpanFallback(rates.rate(""), ss.Count, ss.ErrorCount, ss.P50Us, ss.P95Us, ss.P99Us)
+		statsFor(merged, ss.Service).foldSpanFallback(rates.rate(""), ss.Count, ss.ErrorCount, ss.Weights, ss.P50Us, ss.P95Us, ss.P99Us)
 	}
 }
 
@@ -268,7 +269,7 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 					st = &aggStats{}
 					byOp[k] = st
 				}
-				st.foldSpanFallback(rates.rate(ss.Operation), ss.Count, ss.ErrorCount, ss.P50Us, ss.P95Us, ss.P99Us)
+				st.foldSpanFallback(rates.rate(ss.Operation), ss.Count, ss.ErrorCount, ss.Weights, ss.P50Us, ss.P95Us, ss.P99Us)
 			}
 		}
 	}
@@ -370,7 +371,7 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 					st = &aggStats{}
 					byBucket[b] = st
 				}
-				st.foldSpanFallback(rates.rate(operation), sb.Count, sb.ErrorCount, sb.P50Us, sb.P95Us, sb.P99Us)
+				st.foldSpanFallback(rates.rate(operation), sb.Count, sb.ErrorCount, sb.Weights, sb.P50Us, sb.P95Us, sb.P99Us)
 			}
 		}
 	}

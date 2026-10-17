@@ -131,6 +131,16 @@ func estimateCount(a repository.Aggregate, sampleRate float64) int64 {
 	return inflateCount(a.Count, a.ErrorCount, sampleRate)
 }
 
+// estimateSpans mirrors service.estimateSpans: the summed sample weights of
+// spans read from the spans table when every one carried a weight, otherwise
+// inflateCount.
+func estimateSpans(c repository.SpanCount, sampleRate float64) int64 {
+	if n, ok := c.Weights.Estimate(c.Total); ok {
+		return n
+	}
+	return inflateCount(c.Total, c.Errors, sampleRate)
+}
+
 // Evaluate checks all enabled alerts for a project and sends notifications for triggered ones.
 func (e *Evaluator) Evaluate(ctx context.Context, projectID int64) error {
 	ctx, span := alertTracer.Start(ctx, "alert.evaluate_project")

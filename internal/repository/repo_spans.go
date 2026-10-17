@@ -113,7 +113,7 @@ func (r *Repository) QuerySpans(f SpanFilter) ([]Span, error) {
 		return nil, err
 	}
 
-	q := "SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at FROM spans"
+	q := "SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at, COALESCE(sample_weight, 0) FROM spans"
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -133,7 +133,7 @@ func (r *Repository) QuerySpans(f SpanFilter) ([]Span, error) {
 
 func (r *Repository) GetTraceByID(traceID string) ([]Span, error) {
 	return r.scanSpans(
-		"SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at FROM spans WHERE trace_id = ? ORDER BY start_time_us",
+		"SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at, COALESCE(sample_weight, 0) FROM spans WHERE trace_id = ? ORDER BY start_time_us",
 		traceID,
 	)
 }
@@ -149,7 +149,7 @@ func (r *Repository) GetSpansBySpanIDs(spanIDs []string) ([]Span, error) {
 		args[i] = id
 	}
 	return r.scanSpans(
-		"SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at FROM spans WHERE span_id IN ("+strings.Join(placeholders, ",")+")",
+		"SELECT id, project_id, trace_id, span_id, COALESCE(parent_span_id,''), name, service, resource, kind, status, start_time_us, duration_us, attributes, events, ingested_at, COALESCE(sample_weight, 0) FROM spans WHERE span_id IN ("+strings.Join(placeholders, ",")+")",
 		args...,
 	)
 }

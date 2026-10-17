@@ -11,6 +11,7 @@ type SpanBucket struct {
 	Bucket     time.Time
 	Count      int64
 	ErrorCount int64
+	Weights    SpanWeights
 	P50Us      int64
 	P95Us      int64
 	P99Us      int64
@@ -39,7 +40,7 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 	whereClause := strings.Join(where, " AND ")
 	bucketExpr := fmt.Sprintf("datetime((%s / %d) * %d, 'unixepoch')", ingestedEpochSQL, intervalSec, intervalSec)
 
-	q := fmt.Sprintf(`SELECT %s as bucket, duration_us, status FROM spans WHERE %s ORDER BY bucket, duration_us`, bucketExpr, whereClause)
+	q := fmt.Sprintf(`SELECT %s as bucket, duration_us, status, COALESCE(sample_weight, 0) FROM spans WHERE %s ORDER BY bucket, duration_us`, bucketExpr, whereClause)
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
@@ -52,13 +53,15 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 	type rawBucket struct {
 		durations  []int64
 		errorCount int64
+		weights    SpanWeights
 	}
 	byBucket := make(map[string]*rawBucket)
 	var bucketOrder []string
 	for rows.Next() {
 		var bucketStr, status string
 		var durationUs int64
-		if err := rows.Scan(&bucketStr, &durationUs, &status); err != nil {
+		var weight int
+		if err := rows.Scan(&bucketStr, &durationUs, &status, &weight); err != nil {
 			return nil, err
 		}
 		b, ok := byBucket[bucketStr]
@@ -68,6 +71,7 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 			bucketOrder = append(bucketOrder, bucketStr)
 		}
 		b.durations = append(b.durations, durationUs)
+		b.weights.Add(weight)
 		if status == "error" || status == "ERROR" || status == "Error" {
 			b.errorCount++
 		}
@@ -84,6 +88,7 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 			Bucket:     t,
 			Count:      int64(len(b.durations)),
 			ErrorCount: b.errorCount,
+			Weights:    b.weights,
 			P50Us:      percentileFromSorted(b.durations, 50),
 			P95Us:      percentileFromSorted(b.durations, 95),
 			P99Us:      percentileFromSorted(b.durations, 99),
