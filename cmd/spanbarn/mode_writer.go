@@ -156,7 +156,11 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	defer workerCancel()
 	startWriteSchedulers(workerCtx, &wg, store, repo, logger)
 
-	boringPolicy := worker.NewCachedBoringPolicy(repo, 30*time.Second)
+	// Background workers read through the read-only pool and write through the
+	// schedulers: a long read on the single writer connection would hold every
+	// scheduled write behind it (#360).
+	bgRepo := repo.WithReads(roDB.DB)
+	boringPolicy := worker.NewCachedBoringPolicy(bgRepo, 30*time.Second)
 
 	// The writer is the single SQLite writer, so an in-memory per-minute floor
 	// counts boring-trace survivals accurately across batches.
@@ -206,12 +210,12 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
-	releaseMarker := releasemark.New(repo, releasemark.DefaultInterval, logger)
+	releaseMarker := releasemark.New(bgRepo, releasemark.DefaultInterval, logger)
 	safeGo("release-marks", &wg, func() { releaseMarker.Run(retentionCtx) })
 
-	// Shares retentionRepo for the same reason retention does: a longer query
-	// timeout and the write scheduler, on the one writer connection.
-	compactor := newRollupCompactor(retentionRepo, cfg, logger)
+	// Shares retentionRepo's longer query timeout and write schedulers, and
+	// reads its compaction windows through the read-only pool like bgRepo.
+	compactor := newRollupCompactor(retentionRepo.WithReads(roDB.DB), cfg, logger)
 	safeGo("rollup-compactor", &wg, func() { compactor.Run(retentionCtx) })
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
