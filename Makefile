@@ -8,7 +8,7 @@ export XDG_CACHE_HOME := $(CURDIR)/.cache
 export GOCACHE := $(CURDIR)/.cache/go-build
 export GOMODCACHE := $(CURDIR)/.cache/go-mod
 
-.PHONY: help setup test lint build dev docker-build spec-check quality-gate quality-gate-update quality-gate-test
+.PHONY: help setup test lint build dev docker-build spec-check quality-gate quality-gate-update quality-gate-test secret-scan
 
 help:
 	@printf '%s\n' \
@@ -19,6 +19,7 @@ help:
 		'  quality-gate enforce coverage/complexity/file-length/duplication baselines' \
 		'  quality-gate-update  refresh the count baselines in scripts/quality-thresholds.conf' \
 		'  quality-gate-test    run the gate scripts own tests' \
+		'  secret-scan          scan git history for secrets (gitleaks, report-only until 2026-10-31)' \
 		'  build        run available build checks' \
 		'  dev          start the local compose stack if available' \
 		'  docker-build build placeholder images when Dockerfiles exist' \
@@ -159,7 +160,11 @@ quality-gate-test:
 	bash scripts/quality-lib.test.sh; \
 	bash scripts/e2e-targets.test.sh; \
 	sh scripts/diff-coverage.test.sh; \
+	bash scripts/tests/secret-scan.test.sh; \
 	go test ./scripts/...
+
+secret-scan:
+	@bash scripts/secret-scan.sh history
 
 build:
 	@set -eu; \

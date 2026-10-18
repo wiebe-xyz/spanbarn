@@ -1,0 +1,12 @@
+# gitleaks ignore list: fingerprints only (commit:file:rule:line), never a secret value.
+# It may only shrink; scripts/secret-scan.sh fails a pull request that adds a line.
+# These are the findings in history when the gate was added (2026-10-17).
+37c4d74747c134f93f3f7eb1ffd0c4a84a619fda:README.md:curl-auth-header:33
+e1593ca4db16c7176bd73cdf8f33db8bef3cda39:deploy/k8s/staging/configmap-seed-patch.yaml:generic-api-key:22
+e1593ca4db16c7176bd73cdf8f33db8bef3cda39:deploy/k8s/staging/configmap-seed-patch.yaml:generic-api-key:23
+e1593ca4db16c7176bd73cdf8f33db8bef3cda39:deploy/k8s/staging/configmap-seed-patch.yaml:generic-api-key:24
+e1593ca4db16c7176bd73cdf8f33db8bef3cda39:deploy/k8s/staging/configmap-seed-patch.yaml:generic-api-key:25
+e1593ca4db16c7176bd73cdf8f33db8bef3cda39:deploy/k8s/testing/configmap-seed-patch.yaml:generic-api-key:22
+e1593ca4db16c7176bd73cdf8f33db8bef3cda39:deploy/k8s/testing/configmap-seed-patch.yaml:generic-api-key:23
+e1593ca4db16c7176bd73cdf8f33db8bef3cda39:deploy/k8s/testing/configmap-seed-patch.yaml:generic-api-key:24
+e1593ca4db16c7176bd73cdf8f33db8bef3cda39:deploy/k8s/testing/configmap-seed-patch.yaml:generic-api-key:25
