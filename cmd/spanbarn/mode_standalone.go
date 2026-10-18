@@ -128,10 +128,13 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })
-	releaseMarker := releasemark.New(repo, releasemark.DefaultInterval, logger)
+	// The release marker and the compactor read through the read-only pool, so
+	// their reads do not hold the single writer connection (#360).
+	bgRepo := repo.WithReads(roDB.DB)
+	releaseMarker := releasemark.New(bgRepo, releasemark.DefaultInterval, logger)
 	safeGo("release-marks", &wg, func() { releaseMarker.Run(retentionCtx) })
 
-	compactor := newRollupCompactor(repo, cfg, logger)
+	compactor := newRollupCompactor(bgRepo, cfg, logger)
 	safeGo("rollup-compactor", &wg, func() { compactor.Run(retentionCtx) })
 
 	ratioLookup := ingest.NewCachedRatioLookup(queryRepo, time.Minute)

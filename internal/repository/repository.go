@@ -166,6 +166,24 @@ func (r *Repository) WithQueryTimeout(timeout time.Duration) *Repository {
 	return &c
 }
 
+// WithReads returns a copy of r that reads through db and still writes every
+// family through r's writers and schedulers. The writer's background workers
+// (rollup compactor, release marker, boring policy) use it with the read-only
+// pool. Their reads otherwise run on the single writer connection outside the
+// write scheduler, and one long read there made TouchAPIKey wait 30s for the
+// connection until the watchdog reported a wedge (#360). Call after the write
+// schedulers are set, since the copy takes the schedulers r has at that point.
+func (r *Repository) WithReads(db *sql.DB) *Repository {
+	c := *r
+	for f := range c.writers {
+		if c.writers[f] == nil {
+			c.writers[f] = r.db
+		}
+	}
+	c.db = db
+	return &c
+}
+
 // writer returns the handle f's writes run on.
 func (r *Repository) writer(f Family) *sql.DB {
 	if w := r.writers[f]; w != nil {
