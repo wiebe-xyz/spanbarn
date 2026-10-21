@@ -149,3 +149,16 @@ func (a *userLookupAdapter) GetUserByUsername(username string) (auth.UserRecord,
 		PasswordHash: u.PasswordHash,
 	}, nil
 }
+
+// retentionReads returns a copy of repo for the retention worker that reads
+// through the read-only pool and still writes every family through repo's
+// writers and schedulers. The log trim reads its windows on the same pool.
+// Retention's own reads otherwise run on the single writer connection outside
+// the write scheduler: on 2026-10-20 at 13:13Z GetSpansForAggregation held it
+// while TouchAPIKey waited 30s and the watchdog reported a wedge (#360). Call
+// after the write schedulers are set.
+func retentionReads(repo *repository.Repository, roDB *repository.DB) *repository.Repository {
+	r := repo.WithReads(roDB.DB)
+	r.SetLogTrimReads(roDB.DB)
+	return r
+}

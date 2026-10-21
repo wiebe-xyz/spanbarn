@@ -124,10 +124,9 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	warnObsoleteRetentionEnv(cfg, logger)
 	retentionCfg := retentionConfigFrom(cfg)
 	repo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
-	// The log trim reads its windows through the read-only pool and holds the
-	// write slot only for each DELETE (#360).
-	repo.SetLogTrimReads(roDB.DB)
-	retentionWorker := retention.NewRetentionWorker(repo, aggregator, retentionCfg, logger)
+	// Retention reads through the read-only pool, so its reads do not hold the
+	// single writer connection (#360).
+	retentionWorker := retention.NewRetentionWorker(retentionReads(repo, roDB), aggregator, retentionCfg, logger)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })

@@ -292,7 +292,7 @@ func (r *Repository) DeleteProjectLogsOlderThan(ctx context.Context, projectID i
 	var total int64
 	for _, table := range []string{"logs", "kept_logs"} {
 		// Main drops a sharded family's table once it is empty.
-		if has, err := hasTable(ctx, r.writer(TableFamily(table)), table); err != nil {
+		if has, err := r.readsHaveTable(ctx, table); err != nil {
 			return total, err
 		} else if !has {
 			continue
