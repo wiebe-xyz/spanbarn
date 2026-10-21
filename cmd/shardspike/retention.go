@@ -146,7 +146,7 @@ func expireSingle(ctx context.Context, o options, ws *retWork) (retResult, []ret
 	cutoff := o.window().Start.Add(24 * time.Hour)
 	repo := repository.NewRepository(db.DB)
 	tables, err := measureExpiry(ctx, &res, path, repo, func() ([]retTable, error) {
-		dctx, cancel := context.WithTimeout(ctx, o.duration)
+		dctx, cancel := expiryContext(ctx, o.duration)
 		defer cancel()
 		return runRetentionDeletes(dctx, repo, cutoff)
 	})
@@ -162,6 +162,17 @@ func expireSingle(ctx context.Context, o options, ws *retWork) (retResult, []ret
 	}
 	res.rowsLeft, err = countLeft(ctx, db.DB, tables, cutoff)
 	return res, tables, err
+}
+
+// expiryContext caps the L1 delete phase at limit. A limit of 0 leaves it
+// uncapped, which the tests use: a cap makes their result depend on how busy
+// the host is, and under -race on a loaded CI runner the tiny delete ran past
+// 2s.
+func expiryContext(ctx context.Context, limit time.Duration) (context.Context, context.CancelFunc) {
+	if limit <= 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, limit)
 }
 
 // measureExpiry times expire with the insert loop and the WAL watch around it.
@@ -364,8 +375,8 @@ func printRetention(out io.Writer, o options, l1, l3 retResult, tables []retTabl
 	fmt.Fprintf(out, "## Retention: expire the oldest day\n\n")
 	fmt.Fprintf(out, "Expire every row older than %s (the oldest of %d days), on copies of the generated files. "+
 		"During the expiry a loop inserts %d spans every %s: on L1 through the same writer connection as the deletes, "+
-		"on L3 into the newest day file. The L1 delete phase is capped at %s.\n\n",
-		sqlTime(cutoff), o.days, retInsertSpans, retInsertEvery, o.duration)
+		"on L3 into the newest day file. The L1 delete phase is %s.\n\n",
+		sqlTime(cutoff), o.days, retInsertSpans, retInsertEvery, retCap(o.duration))
 	fmt.Fprintln(out, "| metric | L1 row DELETE | L3 file delete |")
 	fmt.Fprintln(out, "|---|---:|---:|")
 	for _, r := range retentionRows(o, l1, l3) {
@@ -412,6 +423,13 @@ func retStatus(r retResult, limit time.Duration) string {
 		return fmt.Sprintf("did not finish within %s, %d rows remained", limit, r.rowsLeft)
 	}
 	return "finished"
+}
+
+func retCap(limit time.Duration) string {
+	if limit <= 0 {
+		return "uncapped"
+	}
+	return "capped at " + limit.String()
 }
 
 // retBytes formats a byte count in MiB with two decimals, keeping the sign.
