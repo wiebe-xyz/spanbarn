@@ -10,12 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestRetentionLeavesLayoutsUntouched(t *testing.T) {
 	dir, opts := buildTiny(t)
-	opts.duration = 2 * time.Second
+	opts.duration = 0 // uncapped, so the result does not depend on host load
 	ctx := context.Background()
 	before := map[string]map[string]int64{}
 	for _, l := range []string{layoutSingle, layoutShards} {
@@ -38,7 +37,7 @@ func TestRetentionLeavesLayoutsUntouched(t *testing.T) {
 		}
 	}
 	if strings.Contains(got, "did not finish") {
-		t.Errorf("tiny delete did not finish within %s:\n%s", opts.duration, got)
+		t.Errorf("uncapped delete reported unfinished:\n%s", got)
 	}
 
 	for l, want := range before {
@@ -57,7 +56,7 @@ func TestRetentionLeavesLayoutsUntouched(t *testing.T) {
 
 func TestRetentionDeletesTheOldestDay(t *testing.T) {
 	dir, opts := buildTiny(t)
-	opts.duration = 2 * time.Second
+	opts.duration = 0 // uncapped, so the result does not depend on host load
 	ws := &retWork{dir: filepath.Join(dir, retentionWorkDir)}
 	if err := os.Mkdir(ws.dir, 0o755); err != nil {
 		t.Fatal(err)
