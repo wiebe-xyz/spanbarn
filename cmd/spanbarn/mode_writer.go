@@ -198,12 +198,10 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// several minutes when the backlog is large. Give it a copy of repo with a
 	// longer timeout so individual queries don't abort mid-cycle. The copy
 	// shares repo's handles and write schedulers, so all writes are still
-	// serialised and prioritised per file.
-	retentionRepo := repo.WithQueryTimeout(5 * time.Minute)
+	// serialised and prioritised per file. Its reads go through the read-only
+	// pool (#360).
+	retentionRepo := retentionReads(repo.WithQueryTimeout(5*time.Minute), roDB)
 	retentionRepo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
-	// The log trim reads its windows through the read-only pool and holds the
-	// write slot only for each DELETE (#360).
-	retentionRepo.SetLogTrimReads(roDB.DB)
 
 	warnObsoleteRetentionEnv(cfg, logger)
 	retentionCfg := retentionConfigFrom(cfg)
@@ -216,9 +214,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	releaseMarker := releasemark.New(bgRepo, releasemark.DefaultInterval, logger)
 	safeGo("release-marks", &wg, func() { releaseMarker.Run(retentionCtx) })
 
-	// Shares retentionRepo's longer query timeout and write schedulers, and
-	// reads its compaction windows through the read-only pool like bgRepo.
-	compactor := newRollupCompactor(retentionRepo.WithReads(roDB.DB), cfg, logger)
+	// Shares retentionRepo's longer query timeout, write schedulers and
+	// read-only pool.
+	compactor := newRollupCompactor(retentionRepo, cfg, logger)
 	safeGo("rollup-compactor", &wg, func() { compactor.Run(retentionCtx) })
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)

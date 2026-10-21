@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"runtime"
 	"strings"
 	"time"
@@ -266,15 +267,29 @@ func (r *Repository) execHighExpectingRows(f Family, query string, args ...any) 
 // guarantees the checkpoint a contention-free window.
 func (r *Repository) SetDeleteBatchYield(d time.Duration) { r.deleteBatchYield = d }
 
+// readsHaveTable reports whether table exists in any schema of r.db, which is
+// where an unqualified query on r.db finds it. It reads on r.db, so a copy made
+// by WithReads checks on the read-only pool and does not wait for the writer
+// connection (#360).
+func (r *Repository) readsHaveTable(ctx context.Context, table string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM pragma_table_list WHERE type = 'table' AND name = ?`, table).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("inspect schema: %w", err)
+	}
+	return n > 0, nil
+}
+
 // distinctProjectIDs enumerates the distinct project_ids present in a
 // project-keyed table using a loose-index-scan: each step seeks the next
 // project_id via the leading index column, so it is cheap even on a huge table
 // and — unlike reading the projects table — also covers rows of deleted
 // projects. table is a trusted internal constant, never user input.
 func (r *Repository) distinctProjectIDs(ctx context.Context, table string) ([]int64, error) {
-	if f := TableFamily(table); heavyFamily(f) {
+	if heavyFamily(TableFamily(table)) {
 		// Main drops a sharded family's table once it is empty.
-		if has, err := hasTable(ctx, r.writer(f), table); err != nil || !has {
+		if has, err := r.readsHaveTable(ctx, table); err != nil || !has {
 			return nil, err
 		}
 	}
