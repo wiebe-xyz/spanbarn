@@ -69,6 +69,24 @@ func (c *logTrimCursors) store(key string, cur logTrimCursor) {
 	c.cur[key] = cur
 }
 
+// logProtectedSQL is true for a row of table that retention keeps: its trace
+// is pinned, or it has an error sample newer than the errorLogCutoff bound to
+// the placeholder sampledAfter.
+func logProtectedSQL(table, sampledAfter string) string {
+	return table + `.trace_id IS NOT NULL AND (
+		           EXISTS (
+		               SELECT 1 FROM pinned_traces p
+		               WHERE p.project_id = ` + table + `.project_id
+		                 AND p.trace_id = ` + table + `.trace_id
+		           )
+		           OR EXISTS (
+		               SELECT 1 FROM error_samples e
+		               WHERE e.trace_id = ` + table + `.trace_id
+		                 AND e.sampled_at > ` + sampledAfter + `
+		           )
+		       )`
+}
+
 // logTrimSelectSQL reads one window of rows older than the cutoff in index
 // order, each with whether it is protected. The cursor clause is added once
 // the scan has moved past the start of the index. Bounding the window by rows
@@ -78,86 +96,156 @@ func (c *logTrimCursors) store(key string, cur logTrimCursor) {
 func logTrimSelectSQL(table string, resume bool) string {
 	after := ""
 	if resume {
-		after = ` AND (l.ingested_at, l.rowid) > (?3, ?4)`
+		after = ` AND (` + table + `.ingested_at, ` + table + `.rowid) > (?3, ?4)`
 	}
 	return `
-		SELECT l.rowid, CAST(l.ingested_at AS TEXT),
-		       l.trace_id IS NOT NULL AND (
-		           EXISTS (
-		               SELECT 1 FROM pinned_traces p
-		               WHERE p.project_id = l.project_id
-		                 AND p.trace_id = l.trace_id
-		           )
-		           OR EXISTS (
-		               SELECT 1 FROM error_samples e
-		               WHERE e.trace_id = l.trace_id
-		                 AND e.sampled_at > ?5
-		           )
-		       )
-		FROM ` + table + ` l
-		WHERE l.project_id = ?1 AND l.ingested_at < ?2` + after + `
-		ORDER BY l.ingested_at, l.rowid
+		SELECT ` + table + `.rowid, CAST(` + table + `.ingested_at AS TEXT),
+		       ` + logProtectedSQL(table, "?5") + `
+		FROM ` + table + `
+		WHERE ` + table + `.project_id = ?1 AND ` + table + `.ingested_at < ?2` + after + `
+		ORDER BY ` + table + `.ingested_at, ` + table + `.rowid
 		LIMIT ?6`
 }
 
-// trimLogsBatch scans up to limit rows of one project that were ingested
-// before cutoff, deletes the unprotected ones and moves the cursor past the
-// last row it scanned. more is false once the scan reached the cutoff.
+// logTrimDeleteSQL deletes the listed rows and checks each one again: when the
+// window was read outside the write slot, a row can have been pinned or given
+// an error sample since, and a row id can have been reused by a newer row.
+func logTrimDeleteSQL(table string) string {
+	return `DELETE FROM ` + table + `
+		WHERE rowid IN (SELECT value FROM json_each(?1))
+		  AND project_id = ?2 AND ingested_at < ?3
+		  AND NOT (` + logProtectedSQL(table, "?4") + `)`
+}
+
+// logTrimWindow is one scanned window: the unprotected row ids and the last
+// row scanned.
+type logTrimWindow struct {
+	ids     []int64
+	scanned int
+	lastAt  string
+	lastID  int64
+}
+
+// advance moves cur past the window and reports whether rows before the
+// cutoff remain.
+func (w logTrimWindow) advance(cur *logTrimCursor, limit int) (more bool) {
+	if w.scanned == 0 {
+		return false
+	}
+	cur.set, cur.ingestedAt, cur.rowid = true, w.lastAt, w.lastID
+	return w.scanned == limit
+}
+
+// scanLogTrimWindow reads up to limit rows of one project that were ingested
+// before cutoff, starting after cur.
+func scanLogTrimWindow(
+	ctx context.Context, db *sql.DB, table string, pid int64, cutoff, errorLogCutoff time.Time,
+	cur logTrimCursor, limit int,
+) (logTrimWindow, error) {
+	var w logTrimWindow
+	rows, err := db.QueryContext(ctx, logTrimSelectSQL(table, cur.set),
+		pid, cutoff, cur.ingestedAt, cur.rowid, errorLogCutoff, limit)
+	if err != nil {
+		return w, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var protected bool
+		if err := rows.Scan(&w.lastID, &w.lastAt, &protected); err != nil {
+			return w, err
+		}
+		w.scanned++
+		if !protected {
+			w.ids = append(w.ids, w.lastID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return w, err
+	}
+	return w, rows.Close()
+}
+
+// deleteLogTrimRows deletes the rows of ids that are still unprotected.
+func deleteLogTrimRows(
+	ctx context.Context, db *sql.DB, table string, pid int64, cutoff, errorLogCutoff time.Time, ids []int64,
+) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	payload, err := json.Marshal(ids)
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.ExecContext(ctx, logTrimDeleteSQL(table), string(payload), pid, cutoff, errorLogCutoff)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// trimLogsBatch scans one window on db and deletes its unprotected rows on
+// the same handle, then moves the cursor past the last row it scanned. more is
+// false once the scan reached the cutoff.
 func trimLogsBatch(
 	ctx context.Context, db *sql.DB, table string, pid int64, cutoff, errorLogCutoff time.Time,
 	cur *logTrimCursor, limit int,
 ) (deleted int64, more bool, err error) {
-	rows, err := db.QueryContext(ctx, logTrimSelectSQL(table, cur.set),
-		pid, cutoff, cur.ingestedAt, cur.rowid, errorLogCutoff, limit)
+	w, err := scanLogTrimWindow(ctx, db, table, pid, cutoff, errorLogCutoff, *cur, limit)
 	if err != nil {
 		return 0, false, err
 	}
-	var ids []int64
-	var scanned int
-	var lastAt string
-	var lastID int64
-	for rows.Next() {
-		var protected bool
-		if err := rows.Scan(&lastID, &lastAt, &protected); err != nil {
-			_ = rows.Close()
-			return 0, false, err
-		}
-		scanned++
-		if !protected {
-			ids = append(ids, lastID)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
+	deleted, err = deleteLogTrimRows(ctx, db, table, pid, cutoff, errorLogCutoff, w.ids)
+	if err != nil {
 		return 0, false, err
 	}
-	if err := rows.Close(); err != nil {
-		return 0, false, err
-	}
-	if scanned == 0 {
-		return 0, false, nil
-	}
+	return deleted, w.advance(cur, limit), nil
+}
 
-	if len(ids) > 0 {
-		payload, err := json.Marshal(ids)
-		if err != nil {
-			return 0, false, err
-		}
-		res, err := db.ExecContext(ctx, `DELETE FROM `+table+` WHERE rowid IN (SELECT value FROM json_each(?))`, string(payload))
-		if err != nil {
-			return 0, false, err
-		}
-		deleted, _ = res.RowsAffected()
+// SetLogTrimReads gives the log trim a read-only pool for its window reads.
+// With it, each batch reads its window outside the write slot and holds the
+// slot only for the DELETE. Without it the read runs inside the slot on the
+// writer, where one window of cold pages held the slot for 31s and the
+// watchdog reported a wedge (#360).
+func (r *Repository) SetLogTrimReads(db *sql.DB) { r.logTrimReads = db }
+
+// trimLogsWindow trims one window of one project's rows and reports whether
+// rows before the cutoff remain.
+func (r *Repository) trimLogsWindow(
+	ctx context.Context, table string, pid int64, cutoff, errorLogCutoff time.Time, cur *logTrimCursor,
+) (int64, bool, error) {
+	f := TableFamily(table)
+	label := "deleteLogsFrom:" + f.String()
+	var n int64
+	if r.logTrimReads == nil {
+		var more bool
+		err := r.submit(f, writescheduler.Low, label, func(db *sql.DB) error {
+			var e error
+			n, more, e = trimLogsBatch(ctx, db, table, pid, cutoff, errorLogCutoff, cur, retentionDeleteBatch)
+			return e
+		})
+		return n, more, err
 	}
-	cur.set, cur.ingestedAt, cur.rowid = true, lastAt, lastID
-	return deleted, scanned == limit, nil
+	w, err := scanLogTrimWindow(ctx, r.logTrimReads, table, pid, cutoff, errorLogCutoff, *cur, retentionDeleteBatch)
+	if err != nil {
+		return 0, false, err
+	}
+	if len(w.ids) > 0 {
+		err = r.submit(f, writescheduler.Low, label, func(db *sql.DB) error {
+			var e error
+			n, e = deleteLogTrimRows(ctx, db, table, pid, cutoff, errorLogCutoff, w.ids)
+			return e
+		})
+		if err != nil {
+			return n, false, err
+		}
+	}
+	return n, w.advance(cur, retentionDeleteBatch), nil
 }
 
 // trimLogsFrom trims one project's rows of table, a window per low-priority
 // write, resuming from the cursor the previous pass left.
 func (r *Repository) trimLogsFrom(ctx context.Context, table string, pid int64, cutoff, errorLogCutoff time.Time) (int64, error) {
-	f := TableFamily(table)
-	label := "deleteLogsFrom:" + f.String()
 	key := logTrimKey(table, pid)
 	cur := r.logTrim.load(key, time.Now())
 	var total int64
@@ -165,13 +253,7 @@ func (r *Repository) trimLogsFrom(ctx context.Context, table string, pid int64, 
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
-		var n int64
-		var more bool
-		err := r.submit(f, writescheduler.Low, label, func(db *sql.DB) error {
-			var e error
-			n, more, e = trimLogsBatch(ctx, db, table, pid, cutoff, errorLogCutoff, &cur, retentionDeleteBatch)
-			return e
-		})
+		n, more, err := r.trimLogsWindow(ctx, table, pid, cutoff, errorLogCutoff, &cur)
 		total += n
 		if err != nil {
 			return total, err
