@@ -201,6 +201,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// serialised and prioritised per file.
 	retentionRepo := repo.WithQueryTimeout(5 * time.Minute)
 	retentionRepo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
+	// The log trim reads its windows through the read-only pool and holds the
+	// write slot only for each DELETE (#360).
+	retentionRepo.SetLogTrimReads(roDB.DB)
 
 	warnObsoleteRetentionEnv(cfg, logger)
 	retentionCfg := retentionConfigFrom(cfg)

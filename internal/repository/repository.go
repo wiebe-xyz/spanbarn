@@ -85,6 +85,9 @@ type Repository struct {
 	shardReaders *ShardReaders
 	// logTrim carries the log trim's cursors between retention passes.
 	logTrim *logTrimCursors
+	// logTrimReads, when set, serves the log trim's window reads outside the
+	// write slot. See SetLogTrimReads.
+	logTrimReads *sql.DB
 }
 
 // retentionDeleteBatch caps the rows touched by a single batched retention
