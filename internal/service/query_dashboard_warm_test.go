@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -82,5 +83,31 @@ func TestWarmDashboardFillsTheLandingViewCache(t *testing.T) {
 		if err := call(); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// The warmer scans on its own budget. On the 200m reader pod the 24h landing
+// view outlasts the 30s per-query timeout at busy quarter hours, and every warm
+// that did failed (SPA-78, SPA-81), because the cache detached the scan from
+// the warmer's 5-minute deadline. The per-query timeout here has already
+// expired, so a scan that falls back to it fails at once.
+func TestWarmDashboardScansOnTheWarmersBudget(t *testing.T) {
+	repo := setupTestRepo(t)
+	seedDashboardSpans(t, repo)
+	repo.SetQueryTimeout(-time.Second)
+	svc := NewQueryService(repo, nil, nil)
+	svc.SetCache(cache.New(cache.NewMemoryStore(), time.Minute))
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	now := time.Now().UTC()
+	if err := svc.WarmDashboard(ctx, now); err != nil {
+		t.Fatalf("warm on a 1m budget: %v", err)
+	}
+
+	// A window nobody warmed, asked for without a deadline, keeps the cap.
+	q := DashboardQuery{From: now.Add(-time.Hour), To: now}
+	if _, err := svc.GetDashboardCounts(context.Background(), q, "service", true); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("request without a deadline: err = %v, want the per-query timeout", err)
 	}
 }

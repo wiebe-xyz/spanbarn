@@ -34,9 +34,9 @@ type QueryRepository interface {
 	StreamSpans(filter repository.SpanFilter, fn func(repository.Span) error) error
 	QueryWebVitals(service string, from, to time.Time) ([]repository.WebVitalRow, error)
 	QueryWebVitalsTimeseries(service, page, metric string, from, to time.Time, intervalSec int64) ([]repository.WebVitalBucket, error)
-	QueryDashboardCounts(f repository.SpanFilter, intervalSec int64, group repository.DashboardGroup, topN int) ([]repository.DashboardCountPoint, error)
-	QueryDashboardPercentiles(f repository.SpanFilter, intervalSec int64, group repository.DashboardGroup, topN int) ([]repository.DashboardPercentilePoint, error)
-	QueryDashboardHeatmap(f repository.SpanFilter, intervalSec int64) ([]repository.DashboardHeatmapCell, error)
+	QueryDashboardCounts(ctx context.Context, f repository.SpanFilter, intervalSec int64, group repository.DashboardGroup, topN int) ([]repository.DashboardCountPoint, error)
+	QueryDashboardPercentiles(ctx context.Context, f repository.SpanFilter, intervalSec int64, group repository.DashboardGroup, topN int) ([]repository.DashboardPercentilePoint, error)
+	QueryDashboardHeatmap(ctx context.Context, f repository.SpanFilter, intervalSec int64) ([]repository.DashboardHeatmapCell, error)
 	QueryOrphanSpanGroups(ctx context.Context, w repository.HealthWindow) ([]repository.OrphanSpanGroup, error)
 	QuerySingleSpanTraceGroups(ctx context.Context, w repository.HealthWindow) ([]repository.SingleSpanTraceGroup, error)
 	QuerySpanNameSummary(ctx context.Context, w repository.HealthWindow) ([]repository.SpanNameSummary, error)

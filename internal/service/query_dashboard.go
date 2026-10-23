@@ -73,16 +73,31 @@ func (q DashboardQuery) cacheKey(kind, group string, rootOnly bool) string {
 		q.MinDurationUs, q.MaxDurationUs, q.From.Unix(), q.To.Unix())
 }
 
+// dashboardDetached returns a context that a cancelled ctx does not cancel but
+// that keeps ctx's deadline. context.WithoutCancel drops the deadline too, and
+// the repository then caps the scan at its per-query timeout: the 24h warm
+// failed at 30s on its 5-minute budget (SPA-78, SPA-81).
+func dashboardDetached(ctx context.Context) (context.Context, context.CancelFunc) {
+	detached := context.WithoutCancel(ctx)
+	if deadline, ok := ctx.Deadline(); ok {
+		return context.WithDeadline(detached, deadline)
+	}
+	return detached, func() {}
+}
+
 // dashboardCached returns the cached result for key, computing it once on a
 // miss. compute runs on a context detached from the request, so a viewer who
-// navigates away does not cancel the work other viewers wait on.
+// navigates away does not cancel the work other viewers wait on. It keeps the
+// caller's deadline, so a caller with a budget sets how long the scan may take.
 func dashboardCached[T any](ctx context.Context, c *cache.Cache, key string, grain time.Duration, compute func(context.Context) (*T, error)) (*T, error) {
 	if c == nil {
 		return compute(ctx)
 	}
 	load := func() (*T, error) {
 		v, err, _ := dashboardFlight.Do(key, func() (any, error) {
-			res, err := compute(context.WithoutCancel(ctx))
+			cctx, cancel := dashboardDetached(ctx)
+			defer cancel()
+			res, err := compute(cctx)
 			if err != nil {
 				return nil, err
 			}
@@ -239,11 +254,11 @@ func (s *QueryService) GetDashboardCounts(ctx context.Context, q DashboardQuery,
 	}
 	q = q.snapped()
 	return dashboardCached(ctx, s.cache, q.cacheKey("counts", group, rootOnly), q.grain(), func(ctx context.Context) (*DashboardCounts, error) {
-		return s.dashboardCountsUncached(q, group, rootOnly)
+		return s.dashboardCountsUncached(ctx, q, group, rootOnly)
 	})
 }
 
-func (s *QueryService) dashboardCountsUncached(q DashboardQuery, group string, rootOnly bool) (*DashboardCounts, error) {
+func (s *QueryService) dashboardCountsUncached(ctx context.Context, q DashboardQuery, group string, rootOnly bool) (*DashboardCounts, error) {
 	interval, err := q.validate()
 	if err != nil {
 		return nil, err
@@ -252,7 +267,7 @@ func (s *QueryService) dashboardCountsUncached(q DashboardQuery, group string, r
 	if err != nil {
 		return nil, err
 	}
-	pts, err := s.repo.QueryDashboardCounts(q.spanFilter(rootOnly), interval, g, dashboardTopN)
+	pts, err := s.repo.QueryDashboardCounts(ctx, q.spanFilter(rootOnly), interval, g, dashboardTopN)
 	if err != nil {
 		s.logger.Error("dashboard counts query failed", "error", err, "group_by", group)
 		return nil, err
@@ -276,11 +291,11 @@ func (s *QueryService) GetDashboardPercentiles(ctx context.Context, q DashboardQ
 	}
 	q = q.snapped()
 	return dashboardCached(ctx, s.cache, q.cacheKey("percentiles", group, false), q.grain(), func(ctx context.Context) (*DashboardPercentiles, error) {
-		return s.dashboardPercentilesUncached(q, group)
+		return s.dashboardPercentilesUncached(ctx, q, group)
 	})
 }
 
-func (s *QueryService) dashboardPercentilesUncached(q DashboardQuery, group string) (*DashboardPercentiles, error) {
+func (s *QueryService) dashboardPercentilesUncached(ctx context.Context, q DashboardQuery, group string) (*DashboardPercentiles, error) {
 	interval, err := q.validate()
 	if err != nil {
 		return nil, err
@@ -289,7 +304,7 @@ func (s *QueryService) dashboardPercentilesUncached(q DashboardQuery, group stri
 	if err != nil {
 		return nil, err
 	}
-	pts, err := s.repo.QueryDashboardPercentiles(q.spanFilter(false), interval, g, dashboardTopN)
+	pts, err := s.repo.QueryDashboardPercentiles(ctx, q.spanFilter(false), interval, g, dashboardTopN)
 	if err != nil {
 		s.logger.Error("dashboard percentiles query failed", "error", err, "group_by", group)
 		return nil, err
@@ -315,16 +330,16 @@ func (s *QueryService) GetDashboardHeatmap(ctx context.Context, q DashboardQuery
 	}
 	q = q.snapped()
 	return dashboardCached(ctx, s.cache, q.cacheKey("heatmap", "", rootOnly), q.grain(), func(ctx context.Context) (*DashboardHeatmap, error) {
-		return s.dashboardHeatmapUncached(q, rootOnly)
+		return s.dashboardHeatmapUncached(ctx, q, rootOnly)
 	})
 }
 
-func (s *QueryService) dashboardHeatmapUncached(q DashboardQuery, rootOnly bool) (*DashboardHeatmap, error) {
+func (s *QueryService) dashboardHeatmapUncached(ctx context.Context, q DashboardQuery, rootOnly bool) (*DashboardHeatmap, error) {
 	interval, err := q.validate()
 	if err != nil {
 		return nil, err
 	}
-	cells, err := s.repo.QueryDashboardHeatmap(q.spanFilter(rootOnly), interval)
+	cells, err := s.repo.QueryDashboardHeatmap(ctx, q.spanFilter(rootOnly), interval)
 	if err != nil {
 		s.logger.Error("dashboard heatmap query failed", "error", err)
 		return nil, err
