@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/XSAM/otelsql"
@@ -19,6 +20,13 @@ import (
 type DB struct {
 	*sql.DB
 	setupKey string // connSetups key, "" when the handle attaches nothing
+
+	// path is the file a writable handle opened, "" for a read-only or
+	// in-memory handle. The periodic checkpoint opens its own connection to it.
+	path     string
+	ckptOnce sync.Once
+	ckptDB   *sql.DB
+	ckptErr  error
 }
 
 func sqliteSpanName(_ context.Context, _ otelsql.Method, query string) string {
@@ -84,6 +92,10 @@ const (
 // busyTimeoutMs is how long a connection waits on a lock before SQLITE_BUSY.
 const busyTimeoutMs = 30000
 
+// walSizeLimitBytes is the size SQLite truncates a WAL file to when the writer
+// restarts it (journal_size_limit).
+const walSizeLimitBytes = 64 << 20
+
 func buildDSN(dbPath string, readOnly bool, cacheMB, mmapMB int, setupKey string) string {
 	q := url.Values{}
 	q.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeoutMs))
@@ -97,6 +109,11 @@ func buildDSN(dbPath string, readOnly bool, cacheMB, mmapMB int, setupKey string
 		// silently stop at any reader snapshot boundary, so they cannot prevent
 		// unbounded WAL growth under sustained read load.
 		q.Add("_pragma", "wal_autocheckpoint(0)")
+		// The periodic checkpoint is PASSIVE and leaves the WAL file at its
+		// largest size; the writer reuses it from the start once a checkpoint
+		// has backfilled it. When it does, SQLite truncates the file to this
+		// limit, so one burst does not keep a large WAL on disk.
+		q.Add("_pragma", fmt.Sprintf("journal_size_limit(%d)", walSizeLimitBytes))
 	}
 	if readOnly {
 		q.Set("mode", "ro")
@@ -173,12 +190,16 @@ func Open(dbPath string, o OpenOptions) (*DB, error) {
 		}
 		return nil, fmt.Errorf("open %s %s: %w", mode, dbPath, err)
 	}
+	h := &DB{DB: db, setupKey: key}
 	if !o.ReadOnly {
 		db.SetMaxOpenConns(1)
 		// Expose connection pool stats as OTel metrics (best-effort).
 		_, _ = otelsql.RegisterDBStatsMetrics(db, otelsql.WithAttributes(semconv.DBSystemSqlite))
+		if dbPath != ":memory:" && !strings.Contains(dbPath, "mode=memory") {
+			h.path = dbPath
+		}
 	}
-	return &DB{DB: db, setupKey: key}, nil
+	return h, nil
 }
 
 // NewReadOnlyDB opens an existing SQLite database at dbPath in read-only mode
@@ -201,29 +222,14 @@ func (d *DB) Close() error {
 	if d.setupKey != "" {
 		connSetups.Delete(d.setupKey)
 	}
+	if d.ckptDB != nil {
+		_ = d.ckptDB.Close()
+	}
 	return d.DB.Close()
 }
 
-// RunPeriodicCheckpoint blocks until ctx is cancelled, issuing a TRUNCATE WAL
-// checkpoint on each tick. When a checkpoint returns busy=1 (a reader snapshot
-// blocks full WAL backfill) it retries every retryInterval until the readers
-// release or the next full-interval tick arrives.
-//
-// SQLite calls the busy handler while a TRUNCATE checkpoint waits for readers
-// to release the WAL, so with the connection's busy_timeout the checkpoint
-// would hold the only writer connection for up to 30s and every write would
-// queue behind it (SPA-74, #337). checkpointOnce turns busy_timeout off for the
-// attempt, so a reader makes it return busy=1 at once, and the retry here waits
-// with the connection released.
-//
-// Call on the same writer *DB as every other writer. An earlier version used a
-// dedicated second connection to avoid queueing behind worker transactions, but
-// SQLite still only allows one writer at a time at the file level — a second
-// connection just moves the contention from Go's pool into SQLite's lock
-// machinery, where a deferred-tx upgrade against this connection's RESERVED
-// lock returns SQLITE_BUSY immediately and bypasses busy_timeout (root cause of
-// SPA-27). In-process serialisation via MaxOpenConns(1) is cheap because the
-// write transactions are tiny (small aggregate upserts, short CRUD txs).
+// RunPeriodicCheckpoint blocks until ctx is cancelled, issuing a PASSIVE WAL
+// checkpoint on each tick (see periodicCheckpoint).
 //
 // The checkpoint runs unconditionally on every tick. An earlier version skipped
 // checkpoints while the Redis write-queue backlog was deep, on the theory that a
@@ -234,7 +240,6 @@ func (d *DB) Close() error {
 // and even stalled a schema migration on first open. Running it every tick
 // keeps the WAL small and writes fast, so there is no gate.
 func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, log *slog.Logger) {
-	retryInterval := 5 * time.Second
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {
@@ -242,9 +247,90 @@ func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, 
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			d.checkpoint(ctx, retryInterval, log)
+			d.periodicCheckpoint(ctx, log)
 		}
 	}
+}
+
+// periodicCheckpoint runs one PASSIVE checkpoint on a connection of its own and
+// returns the WAL frames it could not backfill, or -1 if it errored.
+//
+// A checkpoint ends in fsync of the WAL and the database file. It used to run
+// as TRUNCATE on the handle's single writer connection, so every write to the
+// file waited for those fsyncs. On production's shared disk they take seconds
+// and sometimes more than 30s: on 2026-10-23 a third of the writer's slow
+// writes started within 3s of a checkpoint tick, and at 14:36Z the writers of
+// four files waited 32s to 39s behind checkpoints in fsync (SPA-74, #360).
+//
+// PASSIVE takes no write lock, so it can run beside the writer. An earlier
+// version ran TRUNCATE on a second connection, and TRUNCATE does take the
+// write lock: a deferred write transaction on the writer then got SQLITE_BUSY
+// at once (SPA-27). PASSIVE also never waits for readers; frames a reader
+// still needs are left for the next tick. After a full backfill the writer
+// starts the WAL over on its next write, and journal_size_limit bounds the
+// file. A handle without a file (in-memory) checkpoints on its writer.
+func (d *DB) periodicCheckpoint(ctx context.Context, log *slog.Logger) int {
+	ckpt, err := d.checkpointer()
+	if err != nil {
+		log.Warn("wal checkpoint: open connection", "error", err)
+		return -1
+	}
+	var busy, walFrames, checkpointed int
+	if err := ckpt.QueryRowContext(ctx, "PRAGMA main.wal_checkpoint(PASSIVE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
+		if ctx.Err() == nil {
+			log.Warn("wal checkpoint error", "error", err)
+		}
+		return -1
+	}
+	left := walFrames - checkpointed
+	if walFrames < 0 || checkpointed < 0 {
+		// -1 means the file is not in WAL mode.
+		left = 0
+	}
+	if left > 0 {
+		log.Debug("wal checkpoint left frames a reader still uses", "wal_frames", walFrames, "checkpointed", checkpointed)
+		return left
+	}
+	// Reclaim up to 5000 freed pages (~20 MiB) per tick. It is a write, so it
+	// takes the writer; the check on the checkpoint connection keeps a file
+	// with nothing to reclaim, or without auto_vacuum = INCREMENTAL (before
+	// migration 018 has run), off the writer.
+	if reclaimable(ctx, ckpt) {
+		_, _ = d.ExecContext(ctx, "PRAGMA main.incremental_vacuum(5000)")
+	}
+	return 0
+}
+
+// reclaimable reports whether incremental_vacuum would free pages in db's main
+// file: auto_vacuum is INCREMENTAL (2) and the freelist is not empty.
+func reclaimable(ctx context.Context, db *sql.DB) bool {
+	var mode, free int
+	if err := db.QueryRowContext(ctx, "PRAGMA main.auto_vacuum").Scan(&mode); err != nil || mode != 2 {
+		return false
+	}
+	if err := db.QueryRowContext(ctx, "PRAGMA main.freelist_count").Scan(&free); err != nil {
+		return false
+	}
+	return free > 0
+}
+
+// checkpointer returns the connection the periodic checkpoint runs on: a pool
+// of one connection to the handle's file with no attachments, opened on first
+// use. A handle without a file returns its own pool.
+func (d *DB) checkpointer() (*sql.DB, error) {
+	if d.path == "" {
+		return d.DB, nil
+	}
+	d.ckptOnce.Do(func() {
+		db, err := sql.Open("sqlite", buildDSN(d.path, false, 1, 0, ""))
+		if err != nil {
+			d.ckptErr = err
+			return
+		}
+		db.SetMaxOpenConns(1)
+		d.ckptDB = db
+	})
+	return d.ckptDB, d.ckptErr
 }
 
 // FinalCheckpoint runs one WAL checkpoint on a fresh context. Call after all
@@ -254,40 +340,30 @@ func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, 
 func (d *DB) FinalCheckpoint(log *slog.Logger) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	d.checkpoint(ctx, 0, log)
+	d.checkpoint(ctx, log)
 }
 
-// checkpoint runs one wal_checkpoint(TRUNCATE) on the handle's own file. Both
-// pragmas name main: unqualified, wal_checkpoint would also try every attached
-// file, and those are attached read-only and checkpointed by their own writer.
-// It returns the WAL size in frames after the attempt (the pragma's `log` column), or -1 if it errored.
-// It retries on busy=1 (reader snapshot blocking backfill) so the WAL is
-// actually reset once the reader releases.
-func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) int {
-	for {
-		busy, walFrames, checkpointed, err := d.checkpointOnce(ctx)
-		if err != nil {
-			if ctx.Err() == nil {
-				log.Warn("wal checkpoint error", "error", err)
-			}
-			return -1
+// checkpoint runs one wal_checkpoint(TRUNCATE) on the handle's writer, for
+// the times no write runs beside it: shutdown, closing a shard, a cutover copy.
+// Both pragmas name main: unqualified, wal_checkpoint would also try every
+// attached file, and those are attached read-only and checkpointed by their
+// own writer. It returns the WAL size in frames after the attempt (the
+// pragma's `log` column), or -1 if it errored. A reader snapshot makes it
+// return busy at once with the WAL still in use (see checkpointOnce).
+func (d *DB) checkpoint(ctx context.Context, log *slog.Logger) int {
+	_, walFrames, _, err := d.checkpointOnce(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Warn("wal checkpoint error", "error", err)
 		}
-		if busy == 0 {
-			// Reclaim up to 5000 freed pages (~20 MiB) per tick. No-op when
-			// auto_vacuum != INCREMENTAL (i.e. before migration 018 has run).
-			_, _ = d.ExecContext(ctx, "PRAGMA main.incremental_vacuum(5000)")
-			return walFrames
-		}
-		log.Debug("wal checkpoint blocked by reader, retrying", "wal_frames", walFrames, "checkpointed", checkpointed)
-		if retryInterval == 0 {
-			return walFrames
-		}
-		select {
-		case <-ctx.Done():
-			return walFrames
-		case <-time.After(retryInterval):
-		}
+		return -1
 	}
+	if walFrames == 0 {
+		// Reclaim up to 5000 freed pages (~20 MiB). No-op when
+		// auto_vacuum != INCREMENTAL (i.e. before migration 018 has run).
+		_, _ = d.ExecContext(ctx, "PRAGMA main.incremental_vacuum(5000)")
+	}
+	return walFrames
 }
 
 // checkpointOnce runs one TRUNCATE checkpoint with busy_timeout off on the

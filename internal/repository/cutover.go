@@ -168,7 +168,7 @@ func copySpansFamily(ctx context.Context, dbPath, tmp string, o StorageOptions) 
 			return 0, fmt.Errorf("copy %s: %w", table, err)
 		}
 		total += n
-		dst.checkpoint(ctx, 0, o.logger())
+		dst.checkpoint(ctx, o.logger())
 	}
 	if err := copySequences(ctx, dst.DB); err != nil {
 		return 0, err
@@ -179,7 +179,7 @@ func copySpansFamily(ctx context.Context, dbPath, tmp string, o StorageOptions) 
 	if _, err := dst.ExecContext(ctx, `INSERT INTO `+cutoverMarkerTable+` VALUES (?, ?)`, time.Now().UTC().Format(time.RFC3339), total); err != nil {
 		return 0, err
 	}
-	if dst.checkpoint(ctx, 0, o.logger()) != 0 {
+	if dst.checkpoint(ctx, o.logger()) != 0 {
 		return 0, errors.New("final checkpoint of the copy did not complete")
 	}
 	return total, nil
