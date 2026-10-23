@@ -81,7 +81,7 @@ func TestCheckpointFrameCount(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	if n := db.checkpoint(ctx, 0, discard); n != 0 {
+	if n := db.checkpoint(ctx, discard); n != 0 {
 		t.Fatalf("TRUNCATE checkpoint should report 0 WAL frames after reset, got %d", n)
 	}
 }
@@ -134,7 +134,7 @@ func TestCheckpointDoesNotWaitForReader(t *testing.T) {
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	start := time.Now()
-	frames := db.checkpoint(cctx, 0, discard)
+	frames := db.checkpoint(cctx, discard)
 	if took := time.Since(start); took > 2*time.Second {
 		t.Fatalf("checkpoint waited %s for the reader; it must return busy at once", took)
 	}
@@ -153,7 +153,77 @@ func TestCheckpointDoesNotWaitForReader(t *testing.T) {
 	if err := tx.Rollback(); err != nil {
 		t.Fatalf("end read tx: %v", err)
 	}
-	if n := db.checkpoint(ctx, 0, discard); n != 0 {
+	if n := db.checkpoint(ctx, discard); n != 0 {
 		t.Fatalf("checkpoint after the reader released reported %d frames, want 0", n)
+	}
+}
+
+// TestPeriodicCheckpointLeavesTheWriterFree holds a write transaction open on
+// the handle's only writer connection, the way a slow write does, and requires
+// the periodic checkpoint to backfill the WAL anyway. It used to run on that
+// connection, so every write waited for its fsyncs (SPA-74, #360). Once the
+// writer lets go, the next writes start the WAL over instead of growing it.
+func TestPeriodicCheckpointLeavesTheWriterFree(t *testing.T) {
+	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	path := filepath.Join(t.TempDir(), "cp.db")
+	db, err := NewDB(path)
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	ctx := context.Background()
+	if err := MigrateSingleFile(ctx, db.DB); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	repo := NewRepository(db.DB)
+	write := func(prefix string) {
+		t.Helper()
+		for i := 0; i < 20; i++ {
+			if _, err := repo.CreateProject(fmt.Sprintf("%s%d", prefix, i), "x"); err != nil {
+				t.Fatalf("CreateProject %s%d: %v", prefix, i, err)
+			}
+		}
+	}
+	walSize := func() int64 {
+		t.Helper()
+		fi, err := os.Stat(path + "-wal")
+		if err != nil {
+			t.Fatalf("stat WAL: %v", err)
+		}
+		return fi.Size()
+	}
+	write("a")
+	db.FinalCheckpoint(discard)
+	write("b")
+	grown := walSize()
+
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("hold the writer: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		t.Fatalf("begin write tx: %v", err)
+	}
+	done := make(chan int, 1)
+	go func() { done <- db.periodicCheckpoint(ctx, discard) }()
+	select {
+	case left := <-done:
+		if left != 0 {
+			t.Errorf("checkpoint left %d frames, want the WAL backfilled", left)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("periodic checkpoint is still waiting while a write transaction holds the writer")
+	}
+	if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+		t.Fatalf("end write tx: %v", err)
+	}
+	conn.Close()
+
+	write("c")
+	if got := walSize(); got > grown {
+		t.Errorf("WAL grew to %d bytes after a backfilled checkpoint, want it started over (was %d)", got, grown)
+	}
+	if got, err := repo.GetProjectBySlug("b19"); err != nil || got.Slug != "b19" {
+		t.Errorf("project written before the checkpoint: %+v, %v", got, err)
 	}
 }
