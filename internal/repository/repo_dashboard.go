@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -179,7 +180,7 @@ func (m *bucketMemo) epoch(prefix string) (int64, error) {
 // QueryDashboardCounts counts spans per time bucket and group. Only the topN
 // groups by volume keep their own series; the rest fold into DashboardOtherGroup.
 // Spans without an HTTP status code are skipped when grouping by http_status.
-func (r *Repository) QueryDashboardCounts(f SpanFilter, intervalSec int64, group DashboardGroup, topN int) ([]DashboardCountPoint, error) {
+func (r *Repository) QueryDashboardCounts(ctx context.Context, f SpanFilter, intervalSec int64, group DashboardGroup, topN int) ([]DashboardCountPoint, error) {
 	expr, ok := group.groupExpr()
 	if !ok {
 		return nil, fmt.Errorf("unsupported dashboard group %q", group)
@@ -195,7 +196,7 @@ func (r *Repository) QueryDashboardCounts(f SpanFilter, intervalSec int64, group
 	q := fmt.Sprintf(`SELECT %s AS bucket, %s AS grp, COUNT(*) FROM %s%s GROUP BY bucket, grp ORDER BY bucket`,
 		bk.sql, expr, table, where)
 
-	ctx, cancel := r.queryContext()
+	ctx, cancel := r.readContext(ctx)
 	defer cancel()
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -299,7 +300,7 @@ func topGroups(totals map[string]int64, n int) map[string]bool {
 // topN groups by span count. Percentiles do not merge, so groups outside the
 // top N are omitted instead of folded into an "other" series. Percentiles are
 // computed from the raw durations, never by averaging stored aggregate values.
-func (r *Repository) QueryDashboardPercentiles(f SpanFilter, intervalSec int64, group DashboardGroup, topN int) ([]DashboardPercentilePoint, error) {
+func (r *Repository) QueryDashboardPercentiles(ctx context.Context, f SpanFilter, intervalSec int64, group DashboardGroup, topN int) ([]DashboardPercentilePoint, error) {
 	expr, ok := group.groupExpr()
 	if !ok || group == DashboardGroupHTTPStatus {
 		return nil, fmt.Errorf("unsupported percentile group %q", group)
@@ -309,7 +310,7 @@ func (r *Repository) QueryDashboardPercentiles(f SpanFilter, intervalSec int64, 
 	bk := newBucketKey(intervalSec)
 	q := fmt.Sprintf(`SELECT %s, %s, duration_us FROM `+dashboardSpans+`%s LIMIT %d`,
 		bk.sql, expr, where, dashboardRowCap)
-	ctx, cancel := r.queryContext()
+	ctx, cancel := r.readContext(ctx)
 	defer cancel()
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -379,13 +380,13 @@ func (r *Repository) QueryDashboardPercentiles(f SpanFilter, intervalSec int64, 
 
 // QueryDashboardHeatmap counts spans per (time bucket, duration bucket). The
 // duration bucket index follows HeatmapBucketIndexSQL.
-func (r *Repository) QueryDashboardHeatmap(f SpanFilter, intervalSec int64) ([]DashboardHeatmapCell, error) {
+func (r *Repository) QueryDashboardHeatmap(ctx context.Context, f SpanFilter, intervalSec int64) ([]DashboardHeatmapCell, error) {
 	where, args := dashboardWhere(f)
 	bk := newBucketKey(intervalSec)
 	q := fmt.Sprintf(`SELECT %s AS bucket, %s AS dbucket, COUNT(*) FROM `+dashboardSpans+`%s GROUP BY bucket, dbucket`,
 		bk.sql, HeatmapBucketIndexSQL, where)
 
-	ctx, cancel := r.queryContext()
+	ctx, cancel := r.readContext(ctx)
 	defer cancel()
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {

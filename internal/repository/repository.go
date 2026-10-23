@@ -123,6 +123,17 @@ func (r *Repository) queryContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), r.queryTimeout)
 }
 
+// readContext bounds a read by ctx. A ctx that carries a deadline keeps it, so
+// a background caller such as the dashboard warmer can grant a longer budget
+// than the per-query timeout. A ctx without one gets the per-query timeout, the
+// cap an interactive request has always had.
+func (r *Repository) readContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, r.queryTimeout)
+}
+
 // DB returns the underlying *sql.DB, useful for testing.
 func (r *Repository) DB() *sql.DB {
 	return r.db

@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -70,7 +72,7 @@ func TestQueryDashboardCountsByStatusSkipsMissing(t *testing.T) {
 	dashSpan(t, repo, "c", "", "x", "web", `{"http.status_code": 500}`, 10, at)
 	dashSpan(t, repo, "d", "", "x", "web", `{}`, 10, at)
 
-	pts, err := repo.QueryDashboardCounts(SpanFilter{ProjectID: 1}, 3600, DashboardGroupHTTPStatus, 10)
+	pts, err := repo.QueryDashboardCounts(context.Background(), SpanFilter{ProjectID: 1}, 3600, DashboardGroupHTTPStatus, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +91,7 @@ func TestQueryDashboardCountsFoldsTail(t *testing.T) {
 	for i, svc := range []string{"big", "big", "big", "mid", "mid", "s1", "s2"} {
 		dashSpan(t, repo, fmt.Sprintf("s%d", i), "", "x", svc, `{}`, 10, at)
 	}
-	pts, err := repo.QueryDashboardCounts(SpanFilter{ProjectID: 1}, 3600, DashboardGroupService, 2)
+	pts, err := repo.QueryDashboardCounts(context.Background(), SpanFilter{ProjectID: 1}, 3600, DashboardGroupService, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +114,7 @@ func TestQueryDashboardCountsRootOnlyAndProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pts, err := repo.QueryDashboardCounts(SpanFilter{ProjectID: 1, RootOnly: true}, 3600, DashboardGroupService, 10)
+	pts, err := repo.QueryDashboardCounts(context.Background(), SpanFilter{ProjectID: 1, RootOnly: true}, 3600, DashboardGroupService, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +134,7 @@ func TestQueryDashboardCountsMaxDurationAndStatusGroup(t *testing.T) {
 	dashSpan(t, repo, "b", "", "x", "web", `{}`, 1000, at)
 	dashSpan(t, repo, "c", "", "x", "web", `{}`, 10000, at)
 
-	pts, err := repo.QueryDashboardCounts(SpanFilter{MinDuration: 500, MaxDuration: 2000}, 3600, DashboardGroupStatus, 10)
+	pts, err := repo.QueryDashboardCounts(context.Background(), SpanFilter{MinDuration: 500, MaxDuration: 2000}, 3600, DashboardGroupStatus, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +154,7 @@ func TestQueryDashboardPercentilesExact(t *testing.T) {
 	for i := 1; i <= 100; i++ {
 		dashSpan(t, repo, fmt.Sprintf("p%d", i), "", "op", "web", `{}`, int64(i)*1000, at)
 	}
-	pts, err := repo.QueryDashboardPercentiles(SpanFilter{ProjectID: 1}, 3600, DashboardGroupService, 10)
+	pts, err := repo.QueryDashboardPercentiles(context.Background(), SpanFilter{ProjectID: 1}, 3600, DashboardGroupService, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +173,7 @@ func TestQueryDashboardPercentilesTopNOmitsTail(t *testing.T) {
 	for i, name := range []string{"hot", "hot", "hot", "warm", "warm", "cold"} {
 		dashSpan(t, repo, fmt.Sprintf("n%d", i), "", name, "web", `{}`, 5, at)
 	}
-	pts, err := repo.QueryDashboardPercentiles(SpanFilter{ProjectID: 1}, 3600, DashboardGroupName, 2)
+	pts, err := repo.QueryDashboardPercentiles(context.Background(), SpanFilter{ProjectID: 1}, 3600, DashboardGroupName, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +188,7 @@ func TestQueryDashboardPercentilesTopNOmitsTail(t *testing.T) {
 
 func TestQueryDashboardPercentilesRejectsStatusGroup(t *testing.T) {
 	repo := setupTestDB(t)
-	if _, err := repo.QueryDashboardPercentiles(SpanFilter{}, 60, DashboardGroupHTTPStatus, 5); err == nil {
+	if _, err := repo.QueryDashboardPercentiles(context.Background(), SpanFilter{}, 60, DashboardGroupHTTPStatus, 5); err == nil {
 		t.Error("want error grouping percentiles by http_status")
 	}
 }
@@ -198,7 +200,7 @@ func TestQueryDashboardHeatmapBuckets(t *testing.T) {
 	dashSpan(t, repo, "fast2", "", "x", "web", `{}`, 0, at)
 	dashSpan(t, repo, "slow", "", "x", "web", `{}`, 1_000_000, at)
 
-	cells, err := repo.QueryDashboardHeatmap(SpanFilter{ProjectID: 1}, 3600)
+	cells, err := repo.QueryDashboardHeatmap(context.Background(), SpanFilter{ProjectID: 1}, 3600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +219,7 @@ func TestQueryDashboardHeatmapBuckets(t *testing.T) {
 
 func TestQueryDashboardRejectsUnknownGroup(t *testing.T) {
 	repo := setupTestDB(t)
-	if _, err := repo.QueryDashboardCounts(SpanFilter{}, 60, DashboardGroup("x; DROP TABLE spans"), 5); err == nil {
+	if _, err := repo.QueryDashboardCounts(context.Background(), SpanFilter{}, 60, DashboardGroup("x; DROP TABLE spans"), 5); err == nil {
 		t.Error("want error for unknown group")
 	}
 }
@@ -273,5 +275,32 @@ func TestDashboardQueriesUseCoveringIndex(t *testing.T) {
 				t.Errorf("%s / %s is not served by %q: %s", label, name, want, joined)
 			}
 		}
+	}
+}
+
+// A caller's deadline sets how long a dashboard scan may run, and a caller
+// without one gets the per-query timeout. The per-query timeout here has
+// already expired, so a scan that falls back to it fails at once.
+func TestDashboardQueriesKeepTheCallersDeadline(t *testing.T) {
+	repo := setupTestDB(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	dashSpan(t, repo, "a", "", "GET /", "web", `{"http.status_code": 200}`, 10, at)
+	repo.SetQueryTimeout(-time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	f := SpanFilter{ProjectID: 1}
+	if pts, err := repo.QueryDashboardCounts(ctx, f, 3600, DashboardGroupService, 10); err != nil || len(pts) != 1 {
+		t.Errorf("counts with a deadline: %d points, err %v", len(pts), err)
+	}
+	if pts, err := repo.QueryDashboardPercentiles(ctx, f, 3600, DashboardGroupService, 10); err != nil || len(pts) != 1 {
+		t.Errorf("percentiles with a deadline: %d points, err %v", len(pts), err)
+	}
+	if cells, err := repo.QueryDashboardHeatmap(ctx, f, 3600); err != nil || len(cells) != 1 {
+		t.Errorf("heatmap with a deadline: %d cells, err %v", len(cells), err)
+	}
+
+	if _, err := repo.QueryDashboardCounts(context.Background(), f, 3600, DashboardGroupService, 10); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("counts without a deadline: err = %v, want the per-query timeout", err)
 	}
 }

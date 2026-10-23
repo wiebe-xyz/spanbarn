@@ -73,7 +73,7 @@ func insertAndReadSpan(t *testing.T, store *Storage, path string) {
 	}
 
 	read := openTestReadRepo(t, path)
-	pts, err := read.QueryDashboardCounts(SpanFilter{ProjectID: p.ID}, 3600, DashboardGroupService, 5)
+	pts, err := read.QueryDashboardCounts(context.Background(), SpanFilter{ProjectID: p.ID}, 3600, DashboardGroupService, 5)
 	if err != nil {
 		t.Fatalf("dashboard counts: %v", err)
 	}
