@@ -19,7 +19,7 @@ data:
   # point per this many seconds (aggregation.MetricRepeatFilter). "0" writes
   # every point. The writer reads it at start: a change here takes a
   # `kubectl rollout restart deployment/spanbarn`, since the pipeline only
-  # rolls pods when the image changes.
+  # rolls pods when the image changes. Rollback: deploy/docs/metric-repeat-filter.md.
   SPANBARN_METRIC_REPEAT_HEARTBEAT_SECONDS: "300"
   # Metric rollup tiers. The writer compacts rollups 5m → 1h → 1d → 1w → 1mo and
   # each tier keeps its own window, so storage is bounded by resolution rather
