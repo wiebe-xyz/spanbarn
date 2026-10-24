@@ -85,7 +85,9 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	logsHandler := ingest.NewLogsHandler(repo, logger)
 
 	// Fold every ingested metric data point into downsampled rollups so
-	// long-range queries don't scan the raw metrics table.
+	// long-range queries don't scan the raw metrics table. The flush reads its
+	// keys on the read-only pool before each write slot (#371).
+	repo.SetRollupReads(roDB.DB)
 	metricAccumulator := aggregation.NewMetricAccumulator(repo, parseAggregationInterval(cfg.AggregationInterval), 30*time.Second, logger)
 	metricsHandler.SetRollupSink(metricAccumulator)
 

@@ -89,6 +89,9 @@ type Repository struct {
 	// logTrimReads, when set, serves the log trim's window reads outside the
 	// write slot. See SetLogTrimReads.
 	logTrimReads *sql.DB
+	// rollupReads, when set, warms the rollup upsert's pages outside the
+	// write slot. See SetRollupReads.
+	rollupReads *sql.DB
 }
 
 // retentionDeleteBatch caps the rows touched by a single batched retention

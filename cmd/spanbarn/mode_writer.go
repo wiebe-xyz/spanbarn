@@ -145,6 +145,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 
 	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
 	accumulator := aggregation.NewAccumulator(repo, aggInterval, 30*time.Second, logger)
+	// The rollup flush reads its keys on the read-only pool before each write
+	// slot, so a cold page cache costs the read and not the writer (#371).
+	repo.SetRollupReads(roDB.DB)
 	metricAccumulator := aggregation.NewMetricAccumulator(repo, aggInterval, 30*time.Second, logger)
 
 	// Complete self-metrics wiring: rollup callback + queue depth gauges + reporter.
