@@ -258,6 +258,31 @@ const (
 	aggregateRowCap   = 50000
 )
 
+// Lookback sizing: a rule reads its current bucket plus ComparisonWindow
+// history buckets, so it needs about ComparisonWindow+1 buckets, not a day.
+// bucketAllowance leaves room for gaps and for intervals above one minute;
+// aggregateLookback stays the ceiling and minLookback the floor.
+const (
+	bucketAllowance = 10 * time.Minute
+	minLookback     = time.Hour
+)
+
+// lookbackFor returns how far back an alert with the given comparison window
+// reads aggregate rows.
+func lookbackFor(comparisonWindow int) time.Duration {
+	if comparisonWindow < 0 {
+		comparisonWindow = 0
+	}
+	d := time.Duration(comparisonWindow+1) * bucketAllowance
+	if d < minLookback {
+		return minLookback
+	}
+	if d > aggregateLookback {
+		return aggregateLookback
+	}
+	return d
+}
+
 // serviceBuckets returns the alert's aggregates summed per bucket, newest first.
 // A bucket holds one row per (operation, resource, kind), so an alert without
 // an operation, or an operation seen under several kinds, has many rows per
@@ -269,7 +294,7 @@ func (e *Evaluator) serviceBuckets(a repository.Alert, now time.Time) ([]reposit
 		ProjectID: a.ProjectID,
 		Service:   a.Service,
 		Operation: a.Operation,
-		From:      now.Add(-aggregateLookback),
+		From:      now.Add(-lookbackFor(a.ComparisonWindow)),
 		To:        now,
 		Limit:     aggregateRowCap,
 	})
