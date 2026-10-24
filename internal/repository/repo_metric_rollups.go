@@ -50,10 +50,27 @@ type MetricRollupFilter struct {
 // an already-written bucket still folds in); min/max take the extreme; last and
 // extra are replaced by the newest flush, which is correct because the
 // accumulator only emits a bucket once it is closed.
+//
+// The batch is written in chunks of metricRollupChunk rows, one transaction
+// each, so a flush that backs up (after a restart the page cache is cold and
+// every conflict probe reads an index page from disk) holds the write slot for
+// one chunk at a time instead of the whole batch (#371). A later chunk's
+// failure leaves the earlier chunks committed; the caller has already dropped
+// the slots it flushed, so retrying the batch would double-count them.
 func (r *Repository) UpsertMetricRollups(rollups []MetricRollup) error {
-	if len(rollups) == 0 {
-		return nil
+	for start := 0; start < len(rollups); start += metricRollupChunk {
+		chunk := rollups[start:min(start+metricRollupChunk, len(rollups))]
+		if err := r.upsertMetricRollupChunk(chunk); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// metricRollupChunk is how many rollup rows one upsert transaction writes.
+const metricRollupChunk = 200
+
+func (r *Repository) upsertMetricRollupChunk(rollups []MetricRollup) error {
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx := WithoutSpanTracing(context.Background())
 	return r.execLow(FamilyCore, func(db *sql.DB) error {

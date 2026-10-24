@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 )
@@ -33,6 +34,34 @@ func TestUpsertAndQueryMetricRollups(t *testing.T) {
 	}
 	if got[0].Sum != 30 || got[0].Max != 20 {
 		t.Errorf("first rollup wrong: %+v", got[0])
+	}
+}
+
+// A large flush is written in separate transactions, so one write slot stays
+// short on a cold page cache (#371). A failing row only rolls back its own
+// chunk: the chunks before it stay committed.
+func TestUpsertMetricRollupsWritesInChunks(t *testing.T) {
+	repo := setupTestDB(t)
+	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+
+	n := 2*metricRollupChunk + 50
+	rollups := make([]MetricRollup, n)
+	for i := range rollups {
+		rollups[i] = MetricRollup{ProjectID: 1, Name: "g", Type: "gauge", AttrFingerprint: "fp", Bucket: base.Add(time.Duration(i) * time.Minute), Count: 1, Sum: 1, Min: 1, Max: 1, Last: 1}
+	}
+	rollups[n-1].Sum = math.NaN() // stored as NULL, violates NOT NULL
+
+	if err := repo.UpsertMetricRollups(rollups); err == nil {
+		t.Fatal("want the failing row's error")
+	}
+	got, err := repo.QueryMetricRollups(context.Background(), MetricRollupFilter{
+		ProjectID: 1, Name: "g", From: base.Add(-time.Hour), To: base.Add(time.Duration(n) * time.Minute), Limit: n,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2*metricRollupChunk {
+		t.Errorf("committed %d rows, want the %d rows of the chunks before the failing one", len(got), 2*metricRollupChunk)
 	}
 }
 
