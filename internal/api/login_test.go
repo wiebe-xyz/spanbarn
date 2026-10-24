@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 )
@@ -133,9 +134,15 @@ func TestLoginWrongPassword(t *testing.T) {
 // TestLoginAccountThrottle verifies the per-username limiter bounds attempts
 // against one account regardless of source IP: with a 2/min account limit, the
 // third attempt is refused with 429 even before password checking.
+//
+// The limiter's clock is frozen. A 2/min bucket refills a token every 30s, and
+// on a loaded CI host the three bcrypt checks took 35s, so on the real clock
+// the third attempt got a fresh token and a 401.
 func TestLoginAccountThrottle(t *testing.T) {
 	userAuth, sm := setupLoginTest(t)
 	limiter := NewRateLimiter(2 /*login*/, 1000, 1000)
+	frozen := time.Now()
+	limiter.nowFunc = func() time.Time { return frozen }
 	handler := HandleLogin(userAuth, sm, limiter, nil)
 
 	do := func() int {
