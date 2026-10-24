@@ -3,6 +3,7 @@ package aggregation
 import (
 	"bytes"
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -21,6 +22,9 @@ import (
 // start time. Two pods that export the same attribute set have different
 // start times, so they never mix. Only cumulative sums and histograms are
 // filtered; gauges, delta points and points without a start time pass.
+// When a series gains a stream, a restarted process, the other streams of the
+// series write their held points first, so the old process's last total is
+// stored and the restart's increase is measured from it.
 //
 // Rates stay exact. A repeat is held, not dropped outright: when the stream
 // changes, the held point is written just before the change, so the increase
@@ -32,16 +36,22 @@ type MetricRepeatFilter struct {
 	heartbeat uint64 // nanoseconds
 	now       func() time.Time
 
-	mu        sync.Mutex
-	streams   map[repeatKey]*repeatStream
+	mu      sync.Mutex
+	streams map[repeatKey]*repeatStream
+	// starts lists the start times of each series' streams.
+	starts    map[repeatSeries][]uint64
 	lastSweep time.Time
 }
 
-type repeatKey struct {
+type repeatSeries struct {
 	projectID int64
 	name      string
 	attrs     string
-	start     uint64
+}
+
+type repeatKey struct {
+	repeatSeries
+	start uint64
 }
 
 type repeatStream struct {
@@ -64,6 +74,7 @@ func NewMetricRepeatFilter(heartbeat time.Duration) *MetricRepeatFilter {
 		heartbeat: uint64(heartbeat),
 		now:       time.Now,
 		streams:   map[repeatKey]*repeatStream{},
+		starts:    map[repeatSeries][]uint64{},
 	}
 }
 
@@ -87,9 +98,12 @@ func (f *MetricRepeatFilter) keep(out []model.MetricRecord, rec model.MetricReco
 	if !repeatFiltered(rec) {
 		return append(out, rec)
 	}
-	key := repeatKey{rec.ProjectID, rec.Name, string(rec.Attributes), rec.StartTimeUnixNano}
+	series := repeatSeries{rec.ProjectID, rec.Name, string(rec.Attributes)}
+	key := repeatKey{series, rec.StartTimeUnixNano}
 	st := f.streams[key]
 	if st == nil {
+		out = f.release(out, series)
+		f.starts[series] = append(f.starts[series], key.start)
 		f.streams[key] = &repeatStream{value: rec.Value, count: rec.Count, extra: rec.Extra, written: rec.TimeUnixNano, seen: now}
 		return append(out, rec)
 	}
@@ -109,6 +123,18 @@ func (f *MetricRepeatFilter) keep(out []model.MetricRecord, rec model.MetricReco
 	st.value, st.count, st.extra = rec.Value, rec.Count, rec.Extra
 	st.written, st.held = rec.TimeUnixNano, nil
 	return append(out, rec)
+}
+
+// release writes the held points of series' streams.
+func (f *MetricRepeatFilter) release(out []model.MetricRecord, series repeatSeries) []model.MetricRecord {
+	for _, start := range f.starts[series] {
+		st := f.streams[repeatKey{series, start}]
+		if st.held != nil {
+			out = append(out, *st.held)
+			st.written, st.held = st.held.TimeUnixNano, nil
+		}
+	}
+	return out
 }
 
 // repeatFiltered reports whether rec belongs to a stream the filter tracks.
@@ -135,6 +161,10 @@ func (f *MetricRepeatFilter) sweep(now time.Time) {
 	for k, st := range f.streams {
 		if now.Sub(st.seen) >= idle {
 			delete(f.streams, k)
+			f.starts[k.repeatSeries] = slices.DeleteFunc(f.starts[k.repeatSeries], func(s uint64) bool { return s == k.start })
+			if len(f.starts[k.repeatSeries]) == 0 {
+				delete(f.starts, k.repeatSeries)
+			}
 		}
 	}
 }
