@@ -32,31 +32,46 @@ type aggStats struct {
 	effective int64
 }
 
+// mixWeight is how much a row's percentiles count when rows are combined: the
+// population the row stands for, not the spans it kept. The trace buffer keeps
+// every slow and error trace, so a bucket of a few kept slow traces would
+// otherwise outweigh the sampled traffic of its neighbours.
+func mixWeight(estimate, kept int64) int64 {
+	if estimate > 0 {
+		return estimate
+	}
+	return kept
+}
+
 // foldAggregate folds a pre-aggregated row in, estimated by estimateCount; its
-// percentiles are always meaningful, so they are always count-weighted into the
-// sums.
+// percentiles are always meaningful, so they are always weighted into the sums
+// by that estimate.
 func (a *aggStats) foldAggregate(rate float64, row repository.Aggregate) {
-	a.effective += estimateCount(row, rate)
+	est := estimateCount(row, rate)
+	a.effective += est
 	a.count += row.Count
 	a.errorCount += row.ErrorCount
-	a.aggP50Sum += row.P50Us * row.Count
-	a.aggP95Sum += row.P95Us * row.Count
-	a.aggP99Sum += row.P99Us * row.Count
-	a.aggCount += row.Count
+	w := mixWeight(est, row.Count)
+	a.aggP50Sum += row.P50Us * w
+	a.aggP95Sum += row.P95Us * w
+	a.aggP99Sum += row.P99Us * w
+	a.aggCount += w
 }
 
 // foldSpanFallback folds a raw-span-derived row in, estimated by
 // estimateSpans. Such rows may carry no percentile data, so the percentile sums
 // are only weighted in when present.
 func (a *aggStats) foldSpanFallback(rate float64, count, errorCount int64, w repository.SpanWeights, p50, p95, p99 int64) {
-	a.effective += estimateSpans(count, errorCount, w, rate)
+	est := estimateSpans(count, errorCount, w, rate)
+	a.effective += est
 	a.count += count
 	a.errorCount += errorCount
 	if p50 > 0 || p95 > 0 || p99 > 0 {
-		a.aggP50Sum += p50 * count
-		a.aggP95Sum += p95 * count
-		a.aggP99Sum += p99 * count
-		a.aggCount += count
+		mw := mixWeight(est, count)
+		a.aggP50Sum += p50 * mw
+		a.aggP95Sum += p95 * mw
+		a.aggP99Sum += p99 * mw
+		a.aggCount += mw
 	}
 }
 

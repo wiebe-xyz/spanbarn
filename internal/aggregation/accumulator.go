@@ -44,7 +44,9 @@ type accSlot struct {
 	count      int64
 	errorCount int64
 	durations  []int64
-	weights    spanWeights
+	// sampleWeights runs parallel to durations; 0 marks an unknown weight.
+	sampleWeights []int64
+	weights       spanWeights
 }
 
 // NewAccumulator creates an Accumulator.
@@ -86,6 +88,7 @@ func (a *Accumulator) Add(s repository.Span) {
 		sl.errorCount++
 	}
 	sl.durations = append(sl.durations, s.DurationUs)
+	sl.sampleWeights = append(sl.sampleWeights, int64(s.SampleWeight))
 	a.mu.Unlock()
 }
 
@@ -116,8 +119,7 @@ func (a *Accumulator) QueryRecent(f repository.AggregateFilter) []repository.Agg
 		if !f.To.IsZero() && k.bucket.After(f.To) {
 			continue
 		}
-		durations := make([]int64, len(sl.durations))
-		copy(durations, sl.durations)
+		p50, p95, p99 := percentilesOf(sl.durations, sl.sampleWeights)
 		result = append(result, repository.Aggregate{
 			ProjectID:     k.projectID,
 			Service:       k.service,
@@ -127,9 +129,9 @@ func (a *Accumulator) QueryRecent(f repository.AggregateFilter) []repository.Agg
 			Bucket:        k.bucket,
 			Count:         sl.count,
 			ErrorCount:    sl.errorCount,
-			P50Us:         P50(durations),
-			P95Us:         P95(durations),
-			P99Us:         P99(durations),
+			P50Us:         p50,
+			P95Us:         p95,
+			P99Us:         p99,
 			WeightedCount: sl.weights.count,
 			WeightedSpans: sl.weights.spans,
 		})
@@ -159,6 +161,7 @@ func (a *Accumulator) Flush(ctx context.Context) error {
 				maxUs = d
 			}
 		}
+		p50, p95, p99 := percentilesOf(sl.durations, sl.sampleWeights)
 		aggs = append(aggs, repository.Aggregate{
 			ProjectID:     k.projectID,
 			Service:       k.service,
@@ -168,9 +171,9 @@ func (a *Accumulator) Flush(ctx context.Context) error {
 			Bucket:        k.bucket,
 			Count:         sl.count,
 			ErrorCount:    sl.errorCount,
-			P50Us:         P50(sl.durations),
-			P95Us:         P95(sl.durations),
-			P99Us:         P99(sl.durations),
+			P50Us:         p50,
+			P95Us:         p95,
+			P99Us:         p99,
 			MaxUs:         maxUs,
 			SumDurationUs: sumUs,
 			WeightedCount: sl.weights.count,
@@ -233,11 +236,13 @@ func (a *Accumulator) AggregateSpans(ctx context.Context, spans []repository.Spa
 	out := make([]repository.Aggregate, 0, len(groups))
 	for k, batch := range groups {
 		durations := make([]int64, len(batch))
+		sampleWeights := make([]int64, len(batch))
 		var errorCount, sumDuration, maxDuration int64
 		var weights spanWeights
 		for i, s := range batch {
 			weights.add(s)
 			durations[i] = s.DurationUs
+			sampleWeights[i] = int64(s.SampleWeight)
 			sumDuration += s.DurationUs
 			if s.DurationUs > maxDuration {
 				maxDuration = s.DurationUs
@@ -246,6 +251,7 @@ func (a *Accumulator) AggregateSpans(ctx context.Context, spans []repository.Spa
 				errorCount++
 			}
 		}
+		p50, p95, p99 := percentilesOf(durations, sampleWeights)
 		out = append(out, repository.Aggregate{
 			ProjectID:     k.projectID,
 			Service:       k.service,
@@ -255,9 +261,9 @@ func (a *Accumulator) AggregateSpans(ctx context.Context, spans []repository.Spa
 			Bucket:        k.bucket,
 			Count:         int64(len(batch)),
 			ErrorCount:    errorCount,
-			P50Us:         P50(durations),
-			P95Us:         P95(durations),
-			P99Us:         P99(durations),
+			P50Us:         p50,
+			P95Us:         p95,
+			P99Us:         p99,
 			MaxUs:         maxDuration,
 			SumDurationUs: sumDuration,
 			WeightedCount: weights.count,

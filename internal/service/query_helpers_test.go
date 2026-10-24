@@ -123,6 +123,24 @@ func TestServiceSummariesWeightsAndOrder(t *testing.T) {
 	}
 }
 
+// Per-bucket percentiles are mixed by the population each bucket stands for, so
+// a bucket that only holds a slow error trace the sampler kept (weight 1) does
+// not pull the median of an operation whose traffic is fast (spanbarn#367).
+func TestPercentilesMixByEstimatedPopulation(t *testing.T) {
+	var st aggStats
+	st.foldAggregate(1, repository.Aggregate{
+		Count: 10, P50Us: 50_000, P95Us: 60_000, P99Us: 70_000,
+		WeightedCount: 10_000, WeightedSpans: 10,
+	})
+	st.foldAggregate(1, repository.Aggregate{
+		Count: 10, ErrorCount: 10, P50Us: 15_000_000, P95Us: 15_000_000, P99Us: 15_000_000,
+		WeightedCount: 10, WeightedSpans: 10,
+	})
+	if got := st.aggP50Sum / st.aggCount; got > 100_000 {
+		t.Errorf("mixed p50 = %d us, want about 50 ms: the slow bucket stands for 10 requests, the fast one for 10,000", got)
+	}
+}
+
 // TestEstimateCount checks that a fully weighted row counts its weights and
 // any other row falls back to scaling its ok spans by the current rate.
 func TestEstimateCount(t *testing.T) {
