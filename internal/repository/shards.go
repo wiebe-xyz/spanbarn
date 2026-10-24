@@ -237,7 +237,7 @@ func (m *ShardManager) Maintain(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 	for _, h := range open {
-		h.checkpoint(ctx, 0, m.logger)
+		h.periodicCheckpoint(ctx, 0, m.logger)
 	}
 	return nil
 }
