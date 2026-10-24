@@ -155,6 +155,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	// writer connection; the rare trigger write stays on the writable repo.
 	alertEval := alert.NewEvaluator(queryRepo, alertNotifier, logger, ratioLookup)
 	alertEval.SetTriggerWriter(repo)
+	alertEval.SetAggregateInterval(aggInterval)
 	alertRunner := alert.NewRunner(alertEval, queryRepo, time.Minute, logger)
 	// SLO counting scans spans on the read-only connection; counts and burn
 	// state are written on the writable repo.

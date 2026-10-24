@@ -244,6 +244,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// on the writable repo. Keeps alert evaluation off the single writer path.
 	alertEval := alert.NewEvaluator(queryRepo, alertNotifier, logger, writerRatioLookup)
 	alertEval.SetTriggerWriter(repo)
+	alertEval.SetAggregateInterval(aggInterval)
 	alertRunner := alert.NewRunner(alertEval, queryRepo, time.Minute, logger)
 	// SLO counting scans spans on the read-only connection; counts and burn
 	// state are written on the writable repo.
