@@ -197,6 +197,12 @@ func (f *RedisForwarder) forwardBatch(ctx context.Context, cursor int64) (int64,
 	err = f.queue.Publish(pubCtx, records)
 	cancel()
 	if err != nil {
+		if ctx.Err() != nil {
+			// Shutdown ended the publish. The cursor stays, so Drain sends the
+			// batch; nothing is lost, which is why this is not an ERROR.
+			f.logger.Warn("redis forwarder: publish interrupted, the spool keeps the batch", "error", err, "count", len(records))
+			return cursor, 0, err
+		}
 		if !isQueueFullError(err) {
 			f.logger.Error("redis forwarder: publish failed, will retry", "error", err, "count", len(records))
 			return cursor, 0, err

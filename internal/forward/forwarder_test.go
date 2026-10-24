@@ -63,6 +63,63 @@ func TestRedisForwarderDrainPublishesTheRestOfTheSpool(t *testing.T) {
 	}
 }
 
+// levelRecorder remembers the highest level it was asked to log.
+type levelRecorder struct {
+	slog.Handler
+	max slog.Level
+}
+
+func (r *levelRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (r *levelRecorder) Handle(_ context.Context, rec slog.Record) error {
+	if rec.Level > r.max {
+		r.max = rec.Level
+	}
+	return nil
+}
+
+// ctxPublisher fails the way a Redis client does when its context ends.
+type ctxPublisher struct{}
+
+func (ctxPublisher) Publish(ctx context.Context, _ []model.SpanRecord) error {
+	<-ctx.Done()
+	return errors.New("queue: lpush: " + ctx.Err().Error())
+}
+
+// Shutdown cancelling a publish loses nothing: the cursor stays and Drain sends
+// the batch. selflog turns every ERROR into a BugBarn issue, so it must stay
+// below ERROR (SPA-79).
+func TestRedisForwarderShutdownInterruptedPublishIsNotAnError(t *testing.T) {
+	sp := spoolWith(t, 3)
+	rec := &levelRecorder{max: slog.LevelDebug}
+	f := &RedisForwarder{spool: sp, queue: ctxPublisher{}, logger: slog.New(rec)}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, _, err := f.forwardBatch(ctx, 0); err == nil {
+		t.Fatal("forwardBatch returned no error for an interrupted publish")
+	}
+	if rec.max >= slog.LevelError {
+		t.Errorf("logged at %v, want below ERROR", rec.max)
+	}
+	if cur, _ := sp.LoadCursor(); cur != 0 {
+		t.Errorf("cursor moved to %d after an interrupted publish", cur)
+	}
+}
+
+// A publish that fails while the process is running still logs ERROR.
+func TestRedisForwarderPublishFailureWhileRunningIsAnError(t *testing.T) {
+	sp := spoolWith(t, 3)
+	rec := &levelRecorder{max: slog.LevelDebug}
+	f := &RedisForwarder{spool: sp, queue: &fakePublisher{fail: errors.New("down")}, logger: slog.New(rec)}
+
+	if _, _, err := f.forwardBatch(context.Background(), 0); err == nil {
+		t.Fatal("forwardBatch returned no error")
+	}
+	if rec.max < slog.LevelError {
+		t.Errorf("logged at %v, want ERROR", rec.max)
+	}
+}
+
 // A failed publish stops Drain and keeps the cursor, so the spans are not
 // counted as forwarded.
 func TestRedisForwarderDrainStopsOnPublishError(t *testing.T) {
