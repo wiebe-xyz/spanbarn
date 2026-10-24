@@ -66,6 +66,7 @@ type Evaluator struct {
 	now         func() time.Time // injectable clock for testing
 	ratioLookup SampleRatioLookup
 	failures    evalFailures
+	aggInterval time.Duration // width of one aggregate bucket
 }
 
 // NewEvaluator creates an Evaluator with the given dependencies. ratioLookup
@@ -84,6 +85,15 @@ func NewEvaluator(repo AlertRepository, notifier Notifier, logger *slog.Logger, 
 		logger:      logger,
 		now:         time.Now,
 		ratioLookup: ratioLookup,
+		aggInterval: time.Minute,
+	}
+}
+
+// SetAggregateInterval sets the width of one aggregate bucket, which sizes how
+// far back each alert reads. Non-positive values are ignored.
+func (e *Evaluator) SetAggregateInterval(d time.Duration) {
+	if d > 0 {
+		e.aggInterval = d
 	}
 }
 
@@ -259,21 +269,18 @@ const (
 )
 
 // Lookback sizing: a rule reads its current bucket plus ComparisonWindow
-// history buckets, so it needs about ComparisonWindow+1 buckets, not a day.
-// bucketAllowance leaves room for gaps and for intervals above one minute;
-// aggregateLookback stays the ceiling and minLookback the floor.
-const (
-	bucketAllowance = 10 * time.Minute
-	minLookback     = time.Hour
-)
+// history buckets, so it needs ComparisonWindow+1 buckets of the aggregate
+// interval, not a day. The floor leaves room for gaps; aggregateLookback stays
+// the ceiling.
+const minLookback = time.Hour
 
 // lookbackFor returns how far back an alert with the given comparison window
-// reads aggregate rows.
-func lookbackFor(comparisonWindow int) time.Duration {
+// reads aggregate rows when one bucket spans interval.
+func lookbackFor(comparisonWindow int, interval time.Duration) time.Duration {
 	if comparisonWindow < 0 {
 		comparisonWindow = 0
 	}
-	d := time.Duration(comparisonWindow+1) * bucketAllowance
+	d := time.Duration(comparisonWindow+1) * interval
 	if d < minLookback {
 		return minLookback
 	}
@@ -294,7 +301,7 @@ func (e *Evaluator) serviceBuckets(a repository.Alert, now time.Time) ([]reposit
 		ProjectID: a.ProjectID,
 		Service:   a.Service,
 		Operation: a.Operation,
-		From:      now.Add(-lookbackFor(a.ComparisonWindow)),
+		From:      now.Add(-lookbackFor(a.ComparisonWindow, e.aggInterval)),
 		To:        now,
 		Limit:     aggregateRowCap,
 	})
