@@ -81,7 +81,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	ingestQueue := ingest.NewQueue(32768)
 	ingestHandler := ingest.NewHandler(ingestQueue, eventSpool, 5*time.Millisecond, logger)
 
-	metricsHandler := ingest.NewMetricsHandler(repo, logger)
+	metricsHandler := ingest.NewMetricsHandler(filteredRawMetrics(cfg, repo), logger)
 	logsHandler := ingest.NewLogsHandler(repo, logger)
 
 	// Fold every ingested metric data point into downsampled rollups so
