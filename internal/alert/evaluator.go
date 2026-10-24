@@ -65,6 +65,7 @@ type Evaluator struct {
 	logger      *slog.Logger
 	now         func() time.Time // injectable clock for testing
 	ratioLookup SampleRatioLookup
+	failures    evalFailures
 }
 
 // NewEvaluator creates an Evaluator with the given dependencies. ratioLookup
@@ -174,8 +175,11 @@ func (e *Evaluator) Evaluate(ctx context.Context, projectID int64) error {
 			}
 		}
 
-		if err := e.evaluateAlert(ctx, a, now); err != nil {
+		err := e.evaluateAlert(ctx, a, now)
+		if e.failures.record(a.ID, err) {
 			e.logger.Error("evaluate alert", "alertID", a.ID, "error", err)
+		} else if err != nil {
+			e.logger.Warn("evaluate alert timed out, retrying next tick", "alertID", a.ID, "error", err)
 		}
 		evaluated++
 	}
