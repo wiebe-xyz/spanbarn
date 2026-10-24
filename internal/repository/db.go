@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/XSAM/otelsql"
@@ -20,13 +19,6 @@ import (
 type DB struct {
 	*sql.DB
 	setupKey string // connSetups key, "" when the handle attaches nothing
-
-	// path is the file a writable handle opened, "" for a read-only or
-	// in-memory handle. The checkpoint pre-pass opens its own connection to it.
-	path     string
-	ckptOnce sync.Once
-	ckptDB   *sql.DB
-	ckptErr  error
 }
 
 func sqliteSpanName(_ context.Context, _ otelsql.Method, query string) string {
@@ -186,11 +178,7 @@ func Open(dbPath string, o OpenOptions) (*DB, error) {
 		// Expose connection pool stats as OTel metrics (best-effort).
 		_, _ = otelsql.RegisterDBStatsMetrics(db, otelsql.WithAttributes(semconv.DBSystemSqlite))
 	}
-	h := &DB{DB: db, setupKey: key}
-	if !o.ReadOnly && dbPath != ":memory:" && !strings.Contains(dbPath, "mode=memory") {
-		h.path = dbPath
-	}
-	return h, nil
+	return &DB{DB: db, setupKey: key}, nil
 }
 
 // NewReadOnlyDB opens an existing SQLite database at dbPath in read-only mode
@@ -212,9 +200,6 @@ func NewReadOnlyDBWithCache(dbPath string, cacheMB, mmapMB int) (*DB, error) {
 func (d *DB) Close() error {
 	if d.setupKey != "" {
 		connSetups.Delete(d.setupKey)
-	}
-	if d.ckptDB != nil {
-		_ = d.ckptDB.Close()
 	}
 	return d.DB.Close()
 }
@@ -248,9 +233,6 @@ func (d *DB) Close() error {
 // write slow (each op walks the WAL), the exact opposite of the intended effect,
 // and even stalled a schema migration on first open. Running it every tick
 // keeps the WAL small and writes fast, so there is no gate.
-//
-// Each attempt starts with a PASSIVE pre-pass on a connection of its own (see
-// backfill), so the TRUNCATE on the writer only copies what was written since.
 func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, log *slog.Logger) {
 	retryInterval := 5 * time.Second
 	t := time.NewTicker(interval)
@@ -260,76 +242,9 @@ func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, 
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			d.periodicCheckpoint(ctx, retryInterval, log)
+			d.checkpoint(ctx, retryInterval, log)
 		}
 	}
-}
-
-// periodicCheckpoint is checkpoint with a backfill before every TRUNCATE
-// attempt.
-//
-// A checkpoint ends in fsync of the WAL and the database file. Run as TRUNCATE
-// on the handle's single writer connection, every write to the file waits for
-// those fsyncs, and on production's shared disk they take seconds and
-// sometimes more than 30s: on 2026-10-23 a third of the writer's slow writes
-// started within 3s of a checkpoint tick, and at 14:36Z the writers of four
-// files waited 32s to 39s behind checkpoints in fsync (SPA-74, #360).
-//
-// The TRUNCATE has to stay on the writer. Only a checkpoint that keeps the
-// writer out can catch up with it and reset the WAL: with PASSIVE alone, and a
-// reader pod scanning the file, production's spans WAL grew from 57 MB to
-// 283 MB in 22 minutes (#368, reverted in #369). The backfill moves the bulk of
-// the copy, and its fsync, off the writer, so the TRUNCATE has only the frames
-// written during the backfill left to copy.
-func (d *DB) periodicCheckpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) int {
-	return d.checkpointWith(ctx, retryInterval, log, func() { d.backfill(ctx, log) })
-}
-
-// backfill runs one PASSIVE checkpoint on the handle's checkpoint connection
-// and returns the WAL frames it could not copy, or -1 if it did not run.
-// PASSIVE takes no write lock, so writes go on beside it. That keeps it clear
-// of SPA-27, where a TRUNCATE on a second connection took the write lock and a
-// deferred write transaction on the writer got SQLITE_BUSY at once. A handle
-// without a file (in-memory, read-only) has nothing to backfill.
-func (d *DB) backfill(ctx context.Context, log *slog.Logger) int {
-	ckpt, err := d.checkpointer()
-	if ckpt == nil || err != nil {
-		if err != nil {
-			log.Warn("wal backfill: open connection", "error", err)
-		}
-		return -1
-	}
-	var busy, walFrames, checkpointed int
-	if err := ckpt.QueryRowContext(ctx, "PRAGMA main.wal_checkpoint(PASSIVE)").Scan(&busy, &walFrames, &checkpointed); err != nil {
-		if ctx.Err() == nil {
-			log.Warn("wal backfill error", "error", err)
-		}
-		return -1
-	}
-	if walFrames < 0 || checkpointed < 0 {
-		// -1 means the file is not in WAL mode.
-		return 0
-	}
-	return walFrames - checkpointed
-}
-
-// checkpointer returns the connection the backfill runs on: a pool of one
-// connection to the handle's file with no attachments, opened on first use,
-// or nil for a handle without a file.
-func (d *DB) checkpointer() (*sql.DB, error) {
-	if d.path == "" {
-		return nil, nil
-	}
-	d.ckptOnce.Do(func() {
-		db, err := sql.Open("sqlite", buildDSN(d.path, false, 1, 0, ""))
-		if err != nil {
-			d.ckptErr = err
-			return
-		}
-		db.SetMaxOpenConns(1)
-		d.ckptDB = db
-	})
-	return d.ckptDB, d.ckptErr
 }
 
 // FinalCheckpoint runs one WAL checkpoint on a fresh context. Call after all
@@ -349,13 +264,7 @@ func (d *DB) FinalCheckpoint(log *slog.Logger) {
 // It retries on busy=1 (reader snapshot blocking backfill) so the WAL is
 // actually reset once the reader releases.
 func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) int {
-	return d.checkpointWith(ctx, retryInterval, log, func() {})
-}
-
-// checkpointWith is checkpoint with before run ahead of every attempt.
-func (d *DB) checkpointWith(ctx context.Context, retryInterval time.Duration, log *slog.Logger, before func()) int {
 	for {
-		before()
 		busy, walFrames, checkpointed, err := d.checkpointOnce(ctx)
 		if err != nil {
 			if ctx.Err() == nil {
