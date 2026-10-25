@@ -12,6 +12,14 @@ The writer reads the setting once at start. The pipeline applies the configmap
 but only rolls pods when the image changes, so every change of the value needs
 a writer restart.
 
+## Rollout
+
+Staging runs the filter first. Production keeps it off through
+`deploy/k8s/production/configmap-metric-repeat-patch.yaml` ("0") until the
+staging check below matches; a PR that deletes the patch turns it on. Every
+merge cuts a release whose version is in the pod spec, so the pods roll with
+it and read the new value.
+
 ## Rollback
 
 Documented path:

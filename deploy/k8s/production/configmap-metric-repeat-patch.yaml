@@ -1,0 +1,9 @@
+# The metric repeat filter stays off in production until staging shows the
+# expected raw metrics growth and matching rates. Removing this patch turns it
+# on (deploy/docs/metric-repeat-filter.md).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spanbarn-config
+data:
+  SPANBARN_METRIC_REPEAT_HEARTBEAT_SECONDS: "0"
