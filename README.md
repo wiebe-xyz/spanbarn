@@ -279,6 +279,7 @@ project automatically.
 | `SPANBARN_SLOW_THRESHOLD_MS` | `500` | Slow span threshold (ms) |
 | `SPANBARN_QUERY_TIMEOUT_SECONDS` | `30` | Query timeout for dashboard queries |
 | `SPANBARN_AGGREGATION_INTERVAL` | `1m` | Aggregation bucket size |
+| `SPANBARN_METRIC_REPEAT_HEARTBEAT_SECONDS` | `300` | A cumulative sum or histogram stream whose point repeats the previous one is written to the raw metrics table once per this many seconds; the last repeat is written just before the stream changes, so rates stay exact. Rollups still see every point. `0` writes every point. |
 | `SPANBARN_ALLOWED_ORIGINS` | (empty) | CORS origins (CSV) for the dashboard API and the session-authed `/api/v1/telemetry` and `/api/v1/client-errors`. Empty sends no CORS headers there. `/v1/traces` and `/api/v1/spans` allow any origin regardless |
 | `SPANBARN_SELF_ENDPOINT` | | Self-reporting endpoint |
 | `SPANBARN_SELF_API_KEY` | | Self-reporting API key |

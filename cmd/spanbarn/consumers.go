@@ -14,8 +14,9 @@ import (
 )
 
 // runMetricsConsumer drains the metrics queue into the rollup accumulator and
-// the metrics table until ctx is cancelled.
-func runMetricsConsumer(ctx context.Context, q *queue.RedisQueue, acc *aggregation.MetricAccumulator, repo *repository.Repository, logger *slog.Logger) {
+// the metrics table until ctx is cancelled. The accumulator sees every point;
+// repo is the raw insert, usually behind a MetricRepeatFilter.
+func runMetricsConsumer(ctx context.Context, q *queue.RedisQueue, acc *aggregation.MetricAccumulator, repo aggregation.MetricWriter, logger *slog.Logger) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -84,4 +85,10 @@ func newStagingFlusher(cfg config.Config, queryRepo, repo *repository.Repository
 	logger.Info("span staging enabled: worker stages spans, flusher classifies per trace",
 		"window_s", cfg.TraceBufferWindowSeconds, "max_age_s", cfg.StagingMaxAgeSeconds)
 	return flusher
+}
+
+// filteredRawMetrics is repo's raw metrics insert behind the repeat filter.
+func filteredRawMetrics(cfg config.Config, repo *repository.Repository) *aggregation.FilteredMetricWriter {
+	heartbeat := time.Duration(cfg.MetricRepeatHeartbeatSeconds) * time.Second
+	return aggregation.NewFilteredMetricWriter(repo, aggregation.NewMetricRepeatFilter(heartbeat))
 }

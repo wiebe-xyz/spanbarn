@@ -157,24 +157,28 @@ type Config struct {
 	TraceBufferMinPerHour    int  // SPANBARN_TRACE_BUFFER_MIN_TRACES_PER_HOUR — traces per (project, root op) per hour the trace buffer keeps regardless of the sample ratio (default 1, 0 disables)
 	SlowThresholdMS          int
 	AggregationInterval      string
-	AllowedOrigins           []string
-	Self                     SelfConfig
-	BugBarn                  BugBarnConfig
-	FunnelBarn               FunnelBarnConfig
-	Environment              string
-	LoginRatePerMinute       int
-	IngestRatePerMinute      int
-	APIRatePerMinute         int
-	MetricsToken             string
-	QueryTimeoutSeconds      int
-	RedisURL                 string
-	RedisQueueURL            string // SPANBARN_REDIS_QUEUE_URL — write queue Redis (separate from cache)
-	CacheTTLSeconds          int
-	Mode                     string // "standalone" (default), "reader", "writer", or "ingest" (legacy)
-	WriterURL                string // URL of writer pod, used when Mode=ingest (legacy)
-	OIDC                     OIDCConfig
-	GRPCAddr                 string // SPANBARN_GRPC_ADDR — gRPC listener for OTLP; empty = disabled
-	TrustProxy               bool   // SPANBARN_TRUST_PROXY — trust X-Forwarded-For/X-Real-IP for client IP (rate limiting); defaults to true outside dev
+	// MetricRepeatHeartbeatSeconds is how often a cumulative metric stream
+	// that has not changed still writes a raw point. Repeats in between are
+	// not stored (aggregation.MetricRepeatFilter). 0 stores every point.
+	MetricRepeatHeartbeatSeconds int // SPANBARN_METRIC_REPEAT_HEARTBEAT_SECONDS (default 300)
+	AllowedOrigins               []string
+	Self                         SelfConfig
+	BugBarn                      BugBarnConfig
+	FunnelBarn                   FunnelBarnConfig
+	Environment                  string
+	LoginRatePerMinute           int
+	IngestRatePerMinute          int
+	APIRatePerMinute             int
+	MetricsToken                 string
+	QueryTimeoutSeconds          int
+	RedisURL                     string
+	RedisQueueURL                string // SPANBARN_REDIS_QUEUE_URL — write queue Redis (separate from cache)
+	CacheTTLSeconds              int
+	Mode                         string // "standalone" (default), "reader", "writer", or "ingest" (legacy)
+	WriterURL                    string // URL of writer pod, used when Mode=ingest (legacy)
+	OIDC                         OIDCConfig
+	GRPCAddr                     string // SPANBARN_GRPC_ADDR — gRPC listener for OTLP; empty = disabled
+	TrustProxy                   bool   // SPANBARN_TRUST_PROXY — trust X-Forwarded-For/X-Real-IP for client IP (rate limiting); defaults to true outside dev
 	// TraceBufferMaxSpans caps how many spans the in-memory tail-sampling trace
 	// buffer holds across all in-flight traces. Above it the buffer sheds
 	// traces sampling was going to discard anyway; a deployment whose span rate
@@ -251,17 +255,18 @@ func Load() Config {
 			// the env var set to 0 and compaction still running.
 			CompactEnabled: getenvBool("SPANBARN_ROLLUP_COMPACT_ENABLED", true),
 		},
-		Shards:                   getenvBool("SPANBARN_SHARDS", false),
-		CompactMainOnStart:       getenvBool("SPANBARN_COMPACT_MAIN_ON_START", false),
-		CompactMainMaxLiveMB:     getenvInt("SPANBARN_COMPACT_MAIN_MAX_LIVE_MB", 1024),
-		SpanStagingEnabled:       getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
-		TraceBufferWindowSeconds: getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
-		TraceBufferMaxSpans:      getenvInt("SPANBARN_TRACE_BUFFER_MAX_SPANS", 50000),
-		TraceBufferTTLSeconds:    getenvInt("SPANBARN_TRACE_BUFFER_TTL_SECONDS", 600),
-		StagingMaxAgeSeconds:     getenvInt("SPANBARN_STAGING_MAX_AGE_SECONDS", 900),
-		TraceBufferMinPerHour:    getenvIntAllowZero("SPANBARN_TRACE_BUFFER_MIN_TRACES_PER_HOUR", 1),
-		SlowThresholdMS:          getenvInt("SPANBARN_SLOW_THRESHOLD_MS", 500),
-		AggregationInterval:      getenv("SPANBARN_AGGREGATION_INTERVAL", "1m"),
+		Shards:                       getenvBool("SPANBARN_SHARDS", false),
+		CompactMainOnStart:           getenvBool("SPANBARN_COMPACT_MAIN_ON_START", false),
+		CompactMainMaxLiveMB:         getenvInt("SPANBARN_COMPACT_MAIN_MAX_LIVE_MB", 1024),
+		SpanStagingEnabled:           getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
+		TraceBufferWindowSeconds:     getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
+		TraceBufferMaxSpans:          getenvInt("SPANBARN_TRACE_BUFFER_MAX_SPANS", 50000),
+		TraceBufferTTLSeconds:        getenvInt("SPANBARN_TRACE_BUFFER_TTL_SECONDS", 600),
+		StagingMaxAgeSeconds:         getenvInt("SPANBARN_STAGING_MAX_AGE_SECONDS", 900),
+		TraceBufferMinPerHour:        getenvIntAllowZero("SPANBARN_TRACE_BUFFER_MIN_TRACES_PER_HOUR", 1),
+		SlowThresholdMS:              getenvInt("SPANBARN_SLOW_THRESHOLD_MS", 500),
+		AggregationInterval:          getenv("SPANBARN_AGGREGATION_INTERVAL", "1m"),
+		MetricRepeatHeartbeatSeconds: getenvIntAllowZero("SPANBARN_METRIC_REPEAT_HEARTBEAT_SECONDS", 300),
 		Self: SelfConfig{
 			Endpoint:           os.Getenv("SPANBARN_SELF_ENDPOINT"),
 			APIKey:             os.Getenv("SPANBARN_SELF_API_KEY"),

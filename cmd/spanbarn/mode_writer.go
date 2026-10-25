@@ -187,9 +187,10 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		flusher := newStagingFlusher(cfg, queryRepo, repo, accumulator, boringPolicy, minuteFloor, hourFloor, logger)
 		safeGo("staging-flusher", &wg, func() { flusher.Run(workerCtx) })
 	}
+	rawMetrics := filteredRawMetrics(cfg, repo)
 	safeGo("accumulator", &wg, func() { accumulator.Run(workerCtx) })
 	safeGo("metric-accumulator", &wg, func() { metricAccumulator.Run(workerCtx) })
-	safeGo("metrics-consumer", &wg, func() { runMetricsConsumer(workerCtx, writeQueue, metricAccumulator, repo, logger) })
+	safeGo("metrics-consumer", &wg, func() { runMetricsConsumer(workerCtx, writeQueue, metricAccumulator, rawMetrics, logger) })
 	safeGo("logs-consumer", &wg, func() { runLogsConsumer(workerCtx, writeQueue, repo, logger) })
 	safeGo("apikey-touch-consumer", &wg, func() { runTouchConsumer(workerCtx, writeQueue, repo, logger) })
 	startCheckpoints(workerCtx, &wg, store, logger)
