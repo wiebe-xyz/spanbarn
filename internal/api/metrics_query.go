@@ -61,7 +61,7 @@ func (h *metricsQueryHandlers) handleMetricNames(w http.ResponseWriter, r *http.
 
 	names, err := h.svc.Names(r.Context(), projectID, from, to)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 	if names == nil {
@@ -113,7 +113,7 @@ func (h *metricsQueryHandlers) handleMetricCatalog(w http.ResponseWriter, r *htt
 
 	entries, err := h.svc.Catalog(r.Context(), projectID, from, to)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 
@@ -200,7 +200,7 @@ func (h *metricsQueryHandlers) loadMetricQuery(w http.ResponseWriter, r *http.Re
 		metricType, unit, in, queryErr = h.rawInput(r, projectID, name, from, to, labels, limit)
 	}
 	if queryErr != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", queryErr.Error())
+		writeServerError(w, r, "query failed", queryErr)
 		return metricQuery{}, false
 	}
 

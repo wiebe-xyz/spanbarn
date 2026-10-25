@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -95,6 +96,7 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 
 // ListTraceGroups returns per-operation aggregates over root spans for the grouped traces view.
 // Results are sorted by error count descending, then by total count descending.
+// They are cached per filter, with the range snapped to its grain.
 func (s *QueryService) ListTraceGroups(ctx context.Context, filter TraceSearchFilter) ([]TraceGroupSummary, error) {
 	_, span := tracer.Start(ctx, "query.list_trace_groups")
 	span.SetAttributes(
@@ -103,6 +105,16 @@ func (s *QueryService) ListTraceGroups(ctx context.Context, filter TraceSearchFi
 	)
 	defer span.End()
 
+	var grain time.Duration
+	filter.From, filter.To, grain = snapRange(filter.From, filter.To)
+	key := fmt.Sprintf("tracegroups:%d:%q:%q:%d:%q:%d:%d", filter.ProjectID, filter.Service, filter.Status,
+		filter.MinDurationUs, strings.Join(filter.ExcludeOperations, ","), filter.From.Unix(), filter.To.Unix())
+	return readCached(ctx, s.cache, key, grain, func(ctx context.Context) ([]TraceGroupSummary, error) {
+		return s.listTraceGroupsUncached(ctx, filter)
+	})
+}
+
+func (s *QueryService) listTraceGroupsUncached(ctx context.Context, filter TraceSearchFilter) ([]TraceGroupSummary, error) {
 	// Merge saved exclusions with caller-supplied ones.
 	excluded := filter.ExcludeOperations
 	if filter.ProjectID != 0 {

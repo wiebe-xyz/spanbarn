@@ -7,10 +7,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
-	"golang.org/x/sync/singleflight"
 
-	"github.com/wiebe-xyz/spanbarn/internal/cache"
-	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -29,11 +26,10 @@ const MinDashboardWindow = time.Minute
 // dashboardTopN is how many groups keep their own series.
 const dashboardTopN = 10
 
-// Dashboard results are cached per filter so a reload, a second viewer or a
-// retry does not scan the raw spans again. The range is snapped down to a grain
-// that grows with the window, so requests inside one grain share one entry. A
-// fresh entry is served for one grain, a stale one for four while one
-// background refresh runs.
+// Dashboard results are cached per filter (readCached) so a reload, a second
+// viewer or a retry does not scan the raw spans again. The range is snapped
+// down to a grain that grows with the window, so requests inside one grain
+// share one entry.
 const (
 	// dashboardFineGrain keeps short windows close to live.
 	dashboardFineGrain = 15 * time.Second
@@ -53,9 +49,6 @@ func dashboardGrain(window time.Duration) time.Duration {
 	return dashboardFineGrain
 }
 
-// dashboardFlight collapses identical concurrent dashboard queries into one.
-var dashboardFlight singleflight.Group
-
 // grain is the snapping grain of q's window.
 func (q DashboardQuery) grain() time.Duration { return dashboardGrain(q.To.Sub(q.From)) }
 
@@ -71,54 +64,6 @@ func (q DashboardQuery) cacheKey(kind, group string, rootOnly bool) string {
 	return fmt.Sprintf("dashboard:%s:%s:%t:%d:%q:%q:%q:%d:%d:%d:%d",
 		kind, group, rootOnly, q.ProjectID, q.Service, q.Name, q.Status,
 		q.MinDurationUs, q.MaxDurationUs, q.From.Unix(), q.To.Unix())
-}
-
-// dashboardDetached returns a context that a cancelled ctx does not cancel but
-// that keeps ctx's deadline. context.WithoutCancel drops the deadline too, and
-// the repository then caps the scan at its per-query timeout: the 24h warm
-// failed at 30s on its 5-minute budget (SPA-78, SPA-81).
-func dashboardDetached(ctx context.Context) (context.Context, context.CancelFunc) {
-	detached := context.WithoutCancel(ctx)
-	if deadline, ok := ctx.Deadline(); ok {
-		return context.WithDeadline(detached, deadline)
-	}
-	return detached, func() {}
-}
-
-// dashboardCached returns the cached result for key, computing it once on a
-// miss. compute runs on a context detached from the request, so a viewer who
-// navigates away does not cancel the work other viewers wait on. It keeps the
-// caller's deadline, so a caller with a budget sets how long the scan may take.
-func dashboardCached[T any](ctx context.Context, c *cache.Cache, key string, grain time.Duration, compute func(context.Context) (*T, error)) (*T, error) {
-	if c == nil {
-		return compute(ctx)
-	}
-	load := func() (*T, error) {
-		v, err, _ := dashboardFlight.Do(key, func() (any, error) {
-			cctx, cancel := dashboardDetached(ctx)
-			defer cancel()
-			res, err := compute(cctx)
-			if err != nil {
-				return nil, err
-			}
-			cache.SetSWR(c, context.Background(), key, res, grain, 4*grain)
-			return res, nil
-		})
-		if err != nil {
-			return nil, err
-		}
-		return v.(*T), nil
-	}
-	if hit, found, fresh := cache.GetSWR[*T](c, ctx, key); found && hit != nil {
-		if !fresh {
-			go func() {
-				defer observability.RecoverAndReport("dashboard-revalidate", false)
-				_, _ = load()
-			}()
-		}
-		return hit, nil
-	}
-	return load()
 }
 
 // DashboardQuery is the filter shared by every dashboard card.
@@ -253,7 +198,7 @@ func (s *QueryService) GetDashboardCounts(ctx context.Context, q DashboardQuery,
 		return nil, err
 	}
 	q = q.snapped()
-	return dashboardCached(ctx, s.cache, q.cacheKey("counts", group, rootOnly), q.grain(), func(ctx context.Context) (*DashboardCounts, error) {
+	return readCached(ctx, s.cache, q.cacheKey("counts", group, rootOnly), q.grain(), func(ctx context.Context) (*DashboardCounts, error) {
 		return s.dashboardCountsUncached(ctx, q, group, rootOnly)
 	})
 }
@@ -290,7 +235,7 @@ func (s *QueryService) GetDashboardPercentiles(ctx context.Context, q DashboardQ
 		return nil, err
 	}
 	q = q.snapped()
-	return dashboardCached(ctx, s.cache, q.cacheKey("percentiles", group, false), q.grain(), func(ctx context.Context) (*DashboardPercentiles, error) {
+	return readCached(ctx, s.cache, q.cacheKey("percentiles", group, false), q.grain(), func(ctx context.Context) (*DashboardPercentiles, error) {
 		return s.dashboardPercentilesUncached(ctx, q, group)
 	})
 }
@@ -329,7 +274,7 @@ func (s *QueryService) GetDashboardHeatmap(ctx context.Context, q DashboardQuery
 		return nil, err
 	}
 	q = q.snapped()
-	return dashboardCached(ctx, s.cache, q.cacheKey("heatmap", "", rootOnly), q.grain(), func(ctx context.Context) (*DashboardHeatmap, error) {
+	return readCached(ctx, s.cache, q.cacheKey("heatmap", "", rootOnly), q.grain(), func(ctx context.Context) (*DashboardHeatmap, error) {
 		return s.dashboardHeatmapUncached(ctx, q, rootOnly)
 	})
 }

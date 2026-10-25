@@ -59,6 +59,8 @@ import type {
 
 export class ApiError extends Error {
   status: number
+  /** How long the server asked the client to wait before retrying. */
+  retryAfterMs?: number
 
   constructor(status: number, message: string) {
     super(message)
@@ -82,7 +84,7 @@ function scheduleSessionRefresh(): void {
   }).catch(() => undefined)
 }
 
-export async function fetchJSON<T>(
+async function fetchJSONOnce<T>(
   url: string,
   init?: RequestInit,
 ): Promise<T> {
@@ -112,12 +114,46 @@ export async function fetchJSON<T>(
     } catch {
       // ignore parse errors
     }
-    throw new ApiError(res.status, msg)
+    const err = new ApiError(res.status, msg)
+    const retryAfter = Number(res.headers?.get('Retry-After'))
+    if (retryAfter > 0) err.retryAfterMs = retryAfter * 1000
+    throw err
   }
 
   const text = await res.text()
   if (!text) return undefined as T
   return JSON.parse(text) as T
+}
+
+// A read that outruns the server's budget answers 503 query_timeout while the
+// server keeps scanning into its cache, so a retry joins that scan or reads its
+// result. The retries cover the server's 60s scan budget.
+const QUERY_TIMEOUT_RETRIES = 5
+const QUERY_TIMEOUT_DEFAULT_WAIT_MS = 2000
+
+function isQueryTimeout(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.status === 503 && err.message === 'query_timeout'
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+export async function fetchJSON<T>(
+  url: string,
+  init?: RequestInit,
+): Promise<T> {
+  const isRead = !init?.method || init.method.toUpperCase() === 'GET'
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetchJSONOnce<T>(url, init)
+    } catch (err) {
+      if (!isRead || !isQueryTimeout(err) || attempt >= QUERY_TIMEOUT_RETRIES || init?.signal?.aborted) {
+        throw err
+      }
+      await sleep(err.retryAfterMs ?? QUERY_TIMEOUT_DEFAULT_WAIT_MS)
+    }
+  }
 }
 
 function qs(params: Record<string, string | number | undefined>): string {

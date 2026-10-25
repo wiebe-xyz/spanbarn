@@ -197,6 +197,8 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 // returning count, error count, and raw durations for percentile computation.
 // Uses the idx_spans_root_ingested partial index for efficient scanning.
 func (r *Repository) QueryRootSpanGroups(ctx context.Context, f SpanFilter) ([]RootSpanGroup, error) {
+	ctx, cancel := r.readContext(ctx)
+	defer cancel()
 	where, args := f.rootSpanGroupWhere()
 
 	q := fmt.Sprintf(`

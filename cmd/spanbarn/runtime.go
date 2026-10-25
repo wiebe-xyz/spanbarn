@@ -35,6 +35,7 @@ func serverConfigFrom(cfg config.Config) api.ServerConfig {
 		FunnelBarnAPIKey:   cfg.FunnelBarn.APIKey,
 		FunnelBarnProject:  cfg.FunnelBarn.Project,
 		E2EEnabled:         cfg.E2EEnabled,
+		ReadBudget:         time.Duration(cfg.ReadBudgetSeconds) * time.Second,
 	}
 }
 
