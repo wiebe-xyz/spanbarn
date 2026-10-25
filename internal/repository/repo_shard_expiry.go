@@ -3,8 +3,6 @@ package repository
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"path/filepath"
 	"time"
 )
 
@@ -151,38 +149,6 @@ func (r *Repository) retireShard(ctx context.Context, row shardRow, now, errorLo
 	return r.shards.markRetiring(ctx, row, now)
 }
 
-// keepLogs copies the logs of error-sampled and pinned traces ingested before
-// before from a logs shard into kept_logs. It runs on main's queue, where
-// pinned_traces lives and error_samples is attached (or in main, in the
-// single-file layout). kept_logs keeps the source ids, so a repeated copy
-// inserts nothing.
-func (r *Repository) keepLogs(ctx context.Context, row shardRow, before, errorLogCutoff time.Time) error {
-	path := filepath.Join(r.shards.dir, row.file)
-	return r.execLow(FamilyCore, func(db *sql.DB) error {
-		conn, err := db.Conn(ctx)
-		if err != nil {
-			return err
-		}
-		defer conn.Close()
-		if _, err := conn.ExecContext(ctx, `ATTACH DATABASE ? AS expiring`, "file:"+path+"?mode=ro"); err != nil {
-			return fmt.Errorf("attach %s: %w", row.file, err)
-		}
-		defer func() { _, _ = conn.ExecContext(context.Background(), `DETACH DATABASE expiring`) }()
-		_, err = conn.ExecContext(ctx, `INSERT OR IGNORE INTO main.kept_logs
-			SELECT * FROM expiring.logs l
-			WHERE l.ingested_at < ? AND l.trace_id IS NOT NULL
-			  AND (EXISTS (SELECT 1 FROM pinned_traces p
-			               WHERE p.project_id = l.project_id AND p.trace_id = l.trace_id)
-			       OR EXISTS (SELECT 1 FROM error_samples e
-			                  WHERE e.trace_id = l.trace_id AND e.sampled_at > ?))`,
-			before.UTC(), errorLogCutoff.UTC())
-		if err != nil {
-			return fmt.Errorf("keep logs of %s: %w", row.file, err)
-		}
-		return nil
-	})
-}
-
 // trimShard deletes the rows ingested before cutoff from one shard, per
 // project and in batches along its (project_id, ingested_at) index, then
 // returns the freed pages to the volume.
@@ -231,7 +197,7 @@ func (r *Repository) trimShard(ctx context.Context, row shardRow, cutoff, errorL
 	return total, err
 }
 
-func projectIDs(ctx context.Context, db *sql.DB, table string) ([]int64, error) {
+func projectIDs(ctx context.Context, db rowQuerier, table string) ([]int64, error) {
 	rows, err := db.QueryContext(ctx, `SELECT DISTINCT project_id FROM `+table)
 	if err != nil {
 		return nil, err

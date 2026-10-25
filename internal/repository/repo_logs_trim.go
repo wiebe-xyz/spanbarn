@@ -94,16 +94,22 @@ func logProtectedSQL(table, sampledAfter string) string {
 // window bounded by deletable rows found scans every protected row in one
 // write slot when nothing is deletable.
 func logTrimSelectSQL(table string, resume bool) string {
+	return logWindowSelectSQL(table, table, resume)
+}
+
+// logWindowSelectSQL is logTrimSelectSQL over any FROM clause; alias is how
+// the clause names the logs table.
+func logWindowSelectSQL(from, alias string, resume bool) string {
 	after := ""
 	if resume {
-		after = ` AND (` + table + `.ingested_at, ` + table + `.rowid) > (?3, ?4)`
+		after = ` AND (` + alias + `.ingested_at, ` + alias + `.rowid) > (?3, ?4)`
 	}
 	return `
-		SELECT ` + table + `.rowid, CAST(` + table + `.ingested_at AS TEXT),
-		       ` + logProtectedSQL(table, "?5") + `
-		FROM ` + table + `
-		WHERE ` + table + `.project_id = ?1 AND ` + table + `.ingested_at < ?2` + after + `
-		ORDER BY ` + table + `.ingested_at, ` + table + `.rowid
+		SELECT ` + alias + `.rowid, CAST(` + alias + `.ingested_at AS TEXT),
+		       ` + logProtectedSQL(alias, "?5") + `
+		FROM ` + from + `
+		WHERE ` + alias + `.project_id = ?1 AND ` + alias + `.ingested_at < ?2` + after + `
+		ORDER BY ` + alias + `.ingested_at, ` + alias + `.rowid
 		LIMIT ?6`
 }
 
@@ -117,13 +123,19 @@ func logTrimDeleteSQL(table string) string {
 		  AND NOT (` + logProtectedSQL(table, "?4") + `)`
 }
 
-// logTrimWindow is one scanned window: the unprotected row ids and the last
-// row scanned.
+// logTrimWindow is one scanned window: the unprotected and the protected row
+// ids, and the last row scanned.
 type logTrimWindow struct {
-	ids     []int64
-	scanned int
-	lastAt  string
-	lastID  int64
+	ids       []int64
+	protected []int64
+	scanned   int
+	lastAt    string
+	lastID    int64
+}
+
+// rowQuerier is a *sql.DB or a *sql.Conn.
+type rowQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 // advance moves cur past the window and reports whether rows before the
@@ -142,9 +154,16 @@ func scanLogTrimWindow(
 	ctx context.Context, db *sql.DB, table string, pid int64, cutoff, errorLogCutoff time.Time,
 	cur logTrimCursor, limit int,
 ) (logTrimWindow, error) {
+	return scanLogWindow(ctx, db, logTrimSelectSQL(table, cur.set), pid, cutoff, errorLogCutoff, cur, limit)
+}
+
+// scanLogWindow runs query, a logWindowSelectSQL, from cur on.
+func scanLogWindow(
+	ctx context.Context, q rowQuerier, query string, pid int64, cutoff, errorLogCutoff time.Time,
+	cur logTrimCursor, limit int,
+) (logTrimWindow, error) {
 	var w logTrimWindow
-	rows, err := db.QueryContext(ctx, logTrimSelectSQL(table, cur.set),
-		pid, cutoff, cur.ingestedAt, cur.rowid, errorLogCutoff, limit)
+	rows, err := q.QueryContext(ctx, query, pid, cutoff, cur.ingestedAt, cur.rowid, errorLogCutoff, limit)
 	if err != nil {
 		return w, err
 	}
@@ -155,7 +174,9 @@ func scanLogTrimWindow(
 			return w, err
 		}
 		w.scanned++
-		if !protected {
+		if protected {
+			w.protected = append(w.protected, w.lastID)
+		} else {
 			w.ids = append(w.ids, w.lastID)
 		}
 	}
