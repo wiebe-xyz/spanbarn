@@ -174,7 +174,7 @@ Each requirement names the issue that asked for it and the test that proves it. 
 - **FR-023**: Responses MUST carry security headers, and the ingest and OTLP endpoints MUST allow cross-origin calls while the live tail MUST NOT use a wildcard origin. Issues: [#13](https://github.com/wiebe-xyz/spanbarn/issues/13). Tests: `internal/api/security_test.go::TestSecurityHeaders`, `internal/api/middleware_test.go::TestCORSIngestEndpoint`, `::TestCORSLiveTailNotWildcard`.
 - **FR-024**: The server MUST support a split role: ingest pods spool and forward to a writer through `/internal/v1/ingest`. Issues: none found. [inferred]
 - **FR-025**: The system MUST stream live spans over SSE at `GET /api/v1/spans/live` for an authenticated session. Issues: none found. [inferred]
-- **FR-026**: The system MUST accept browser error payloads at `POST /api/v1/client-errors`, truncating oversized fields. Issues: none found. Tests: `internal/api/client_errors_test.go::TestHandleClientErrorTruncatesAndAccepts`.
+- **FR-026**: The system MUST accept browser error payloads at `POST /api/v1/client-errors`, truncating oversized fields and recording up to 16 attributes with capped keys and values and sensitive values replaced. Issues: none found. Tests: `internal/api/client_errors_test.go::TestHandleClientErrorTruncatesAndAccepts`, `::TestClientErrorAttributesAreRecordedScrubbedAndCapped`.
 - **FR-027**: The system MUST store, list and delete saved queries per project, including their filters. Issues: [#193](https://github.com/wiebe-xyz/spanbarn/issues/193). Tests: `internal/repository/repo_saved_queries_test.go::TestSavedQueriesCRUD`, `internal/api/query_filter_test.go::TestSavedQueriesCarryFilters`.
 - **FR-028**: The system MUST return aggregated web vitals per page and as a time series. Issues: none found. Tests: `internal/service/query_test.go::TestGetWebVitals`, `::TestGetWebVitalsTimeseries`.
 - **FR-029**: The system MUST group database queries by fingerprint and return example spans. Issues: none found. Tests: `internal/service/query_database_test.go::TestListDatabaseQueries`.
@@ -225,7 +225,6 @@ Each requirement names the issue that asked for it and the test that proves it. 
 | `SPANBARN_MODE=ingest` starts an ingest-only pod (US-11). | Original spec | The config marks `ingest` legacy; the modes are `standalone`, `reader`, `writer` and `ingest` (`internal/config/config.go`). Production runs reader and writer pods. |
 | Email (SMTP) is a notification channel (US-7). | Original spec | `internal/alert/notifier.go` references SMTP. No test sends email. Whether email ships: not established. |
 | Production is deployed manually with a confirmation. | CLAUDE.md before this PR | `.github/workflows/deploy-production.yml` runs on `workflow_run` after "Build and Deploy Testing" succeeds; `workflow_dispatch` stays as the override ([#315](https://github.com/wiebe-xyz/spanbarn/issues/315)). CLAUDE.md corrected in this PR. |
-| Browser error attributes reach the error log (FR-036 sends the chunk URL as one). | This PR | `internal/api/client_errors.go` decodes `attributes` and does not log them, so the chunk URL is sent and not yet recorded. Logging them: not established. |
 
 ## Proof contract
 
