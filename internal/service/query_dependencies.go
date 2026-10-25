@@ -7,7 +7,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -16,31 +15,30 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 	_, span := tracer.Start(ctx, "query.list_dependencies")
 	defer span.End()
 
-	cacheKey := fmt.Sprintf("deps:%d:%s:%d:%d", projectID, svcFilter, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
-	if cached, ok := cache.Get[[]DependencySummary](s.cache, ctx, cacheKey); ok {
-		return cached, nil
-	}
+	from, to, grain := snapRange(from, to)
+	cacheKey := fmt.Sprintf("deps:%d:%s:%d:%d", projectID, svcFilter, from.Unix(), to.Unix())
+	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]DependencySummary, error) {
 
-	sf := repository.SpanFilter{
-		ProjectID: projectID,
-		Service:   svcFilter,
-		From:      from,
-		To:        to,
-		Limit:     10000,
-	}
+		sf := repository.SpanFilter{
+			ProjectID: projectID,
+			Service:   svcFilter,
+			From:      from,
+			To:        to,
+			Limit:     10000,
+		}
 
-	spans, err := s.repo.QuerySpans(sf)
-	if err != nil {
-		return nil, err
-	}
+		spans, err := s.repo.QuerySpans(sf)
+		if err != nil {
+			return nil, err
+		}
 
-	agg := newDependencyAggregator()
-	agg.addClientSpans(spans)
-	agg.addCrossServiceCalls(spans)
-	result := agg.summaries(s.projectSampleRate(ctx, projectID))
+		agg := newDependencyAggregator()
+		agg.addClientSpans(spans)
+		agg.addCrossServiceCalls(spans)
+		result := agg.summaries(s.projectSampleRate(ctx, projectID))
 
-	cache.Set(s.cache, ctx, cacheKey, result)
-	return result, nil
+		return result, nil
+	})
 }
 
 type dependencyKey struct {

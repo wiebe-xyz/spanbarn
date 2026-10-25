@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -188,6 +189,13 @@ func writeError(w http.ResponseWriter, status int, msg, details string) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// queryTimeoutError is the error code of a read that outran its budget; the
+// web client retries on it after queryTimeoutRetrySeconds.
+const (
+	queryTimeoutError        = "query_timeout"
+	queryTimeoutRetrySeconds = 2
+)
+
 // statusClientClosedRequest is nginx's 499: the client went away before the
 // response was ready.
 const statusClientClosedRequest = 499
@@ -203,6 +211,16 @@ func writeServerError(w http.ResponseWriter, r *http.Request, msg string, err er
 	attrs := []any{"error", err, "method", r.Method, "path", r.URL.Path}
 	if id := getRequestID(r); id != "" {
 		attrs = append(attrs, "request_id", id)
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(r.Context().Err(), context.DeadlineExceeded) {
+		// The read outran its budget. A cached read is still scanning and its
+		// result lands in the cache, so the client retries shortly. The
+		// response itself must not be cached.
+		slog.Info(msg+": read budget exceeded", attrs...)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Retry-After", strconv.Itoa(queryTimeoutRetrySeconds))
+		writeError(w, http.StatusServiceUnavailable, queryTimeoutError, msg)
+		return
 	}
 	slog.Error(msg, attrs...)
 	writeError(w, http.StatusInternalServerError, msg, "")

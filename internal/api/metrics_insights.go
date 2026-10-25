@@ -42,7 +42,7 @@ func (h *metricsQueryHandlers) handleMetricInsights(w http.ResponseWriter, r *ht
 
 	rows, err := h.svc.ProjectRollups(r.Context(), projectID, from, to, 0)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 

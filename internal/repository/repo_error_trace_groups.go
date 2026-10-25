@@ -43,6 +43,8 @@ type errorTraceRow struct {
 // QueryRootSpanGroups reads root spans in the raw span window only. f.Status is
 // ignored: every trace it returns has an error.
 func (r *Repository) QueryErrorTraceGroups(ctx context.Context, f SpanFilter) ([]ErrorTraceGroup, error) {
+	ctx, cancel := r.readContext(ctx)
+	defer cancel()
 	f.Status = "error"
 	traces, err := r.errorTraces(ctx, f)
 	if err != nil || len(traces) == 0 {

@@ -85,7 +85,7 @@ func (h *logsQueryHandlers) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 	rows, total, err := h.svc.Query(r.Context(), f)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 
@@ -166,7 +166,7 @@ func (h *logsQueryHandlers) handleLogsHistogram(w http.ResponseWriter, r *http.R
 
 	buckets, err := h.svc.Histogram(r.Context(), f, bucketSecs)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "histogram query failed", err.Error())
+		writeServerError(w, r, "histogram query failed", err)
 		return
 	}
 
@@ -198,7 +198,7 @@ func (h *logsQueryHandlers) listPinnedTraces(w http.ResponseWriter, r *http.Requ
 	projectID := parseInt64Param(r, "project_id", 0)
 	pins, err := h.svc.ListPinned(r.Context(), projectID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed", err.Error())
+		writeServerError(w, r, "query failed", err)
 		return
 	}
 	out := make([]pinnedTraceJSON, 0, len(pins))

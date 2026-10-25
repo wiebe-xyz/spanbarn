@@ -8,8 +8,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/wiebe-xyz/spanbarn/internal/cache"
-	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -82,31 +80,11 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 	_, span := tracer.Start(ctx, "query.list_services")
 	defer span.End()
 
-	cacheKey := fmt.Sprintf("services:%d:%d:%d:%v", projectID, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix(), serverOnly)
-	if cached, ok := cache.Get[[]ServiceSummary](s.cache, ctx, cacheKey); ok {
-		return cached, nil
-	}
-
-	if stale, found, _ := cache.GetStale[[]ServiceSummary](s.cache, ctx, cacheKey); found {
-		if _, already := revalidating.LoadOrStore(cacheKey, true); !already {
-			go func() {
-				defer observability.RecoverAndReport("services-revalidate", false)
-				defer revalidating.Delete(cacheKey)
-				if result, err := s.listServicesUncached(context.Background(), projectID, from, to, serverOnly); err == nil {
-					cache.Set(s.cache, context.Background(), cacheKey, result)
-				}
-			}()
-		}
-		return stale, nil
-	}
-
-	result, err := s.listServicesUncached(ctx, projectID, from, to, serverOnly)
-	if err != nil {
-		return nil, err
-	}
-
-	cache.Set(s.cache, ctx, cacheKey, result)
-	return result, nil
+	from, to, grain := snapRange(from, to)
+	cacheKey := fmt.Sprintf("services:%d:%d:%d:%v", projectID, from.Unix(), to.Unix(), serverOnly)
+	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]ServiceSummary, error) {
+		return s.listServicesUncached(ctx, projectID, from, to, serverOnly)
+	})
 }
 
 func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64, from, to time.Time, serverOnly bool) ([]ServiceSummary, error) {
@@ -212,100 +190,99 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 	span.SetAttributes(attribute.String("service", service))
 	defer span.End()
 
-	cacheKey := fmt.Sprintf("ops:%d:%s:%s:%d:%d", projectID, service, kind, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
-	if cached, ok := cache.Get[[]OperationSummary](s.cache, ctx, cacheKey); ok {
-		return cached, nil
-	}
+	from, to, grain := snapRange(from, to)
+	cacheKey := fmt.Sprintf("ops:%d:%s:%s:%d:%d", projectID, service, kind, from.Unix(), to.Unix())
+	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]OperationSummary, error) {
 
-	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
-		ProjectID: projectID,
-		Service:   service,
-		Kind:      kind,
-		From:      from,
-		To:        to,
-		Limit:     10000,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	type opKey struct {
-		operation, resource, kind string
-	}
-	rates := s.newOpRates(ctx, projectID)
-	byOp := make(map[opKey]*aggStats)
-	for _, a := range aggs {
-		k := opKey{a.Operation, a.Resource, a.Kind}
-		st, ok := byOp[k]
-		if !ok {
-			st = &aggStats{}
-			byOp[k] = st
-		}
-		st.foldAggregate(rates.rate(a.Operation), a)
-	}
-
-	if fbFrom, ok := narrowFallback(from, to); ok {
-		if s.accumulator != nil {
-			for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
-				ProjectID: projectID, Service: service, Kind: kind, From: fbFrom, To: to,
-			}) {
-				k := opKey{CollapseParamLists(a.Operation), CollapseParamLists(a.Resource), a.Kind}
-				st := byOp[k]
-				if st == nil {
-					st = &aggStats{}
-					byOp[k] = st
-				}
-				st.foldAggregate(rates.rate(a.Operation), a)
-			}
-		} else {
-			spanStats, err := s.repo.QueryOperationStatsFromSpans(projectID, service, fbFrom, to, kind)
-			if err != nil {
-				s.logger.Warn("failed to query operation stats from spans", "error", err)
-			}
-			for _, ss := range spanStats {
-				k := opKey{CollapseParamLists(ss.Operation), CollapseParamLists(ss.Resource), ss.Kind}
-				st := byOp[k]
-				if st == nil {
-					st = &aggStats{}
-					byOp[k] = st
-				}
-				st.foldSpanFallback(rates.rate(ss.Operation), ss.Count, ss.ErrorCount, ss.Weights, ss.P50Us, ss.P95Us, ss.P99Us)
-			}
-		}
-	}
-
-	result := make([]OperationSummary, 0, len(byOp))
-	for k, st := range byOp {
-		effective := st.effective
-		var errorRate float64
-		if effective > 0 {
-			errorRate = float64(st.errorCount) / float64(effective)
-		}
-		var p50, p95, p99 int64
-		if st.aggCount > 0 {
-			p50 = st.aggP50Sum / st.aggCount
-			p95 = st.aggP95Sum / st.aggCount
-			p99 = st.aggP99Sum / st.aggCount
-		}
-		result = append(result, OperationSummary{
-			Operation:  k.operation,
-			Resource:   k.resource,
-			Kind:       k.kind,
-			SpanCount:  effective,
-			ErrorCount: st.errorCount,
-			ErrorRate:  errorRate,
-			P50Us:      p50,
-			P95Us:      p95,
-			P99Us:      p99,
+		aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
+			ProjectID: projectID,
+			Service:   service,
+			Kind:      kind,
+			From:      from,
+			To:        to,
+			Limit:     10000,
 		})
-	}
+		if err != nil {
+			return nil, err
+		}
 
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].SpanCount > result[j].SpanCount
+		type opKey struct {
+			operation, resource, kind string
+		}
+		rates := s.newOpRates(ctx, projectID)
+		byOp := make(map[opKey]*aggStats)
+		for _, a := range aggs {
+			k := opKey{a.Operation, a.Resource, a.Kind}
+			st, ok := byOp[k]
+			if !ok {
+				st = &aggStats{}
+				byOp[k] = st
+			}
+			st.foldAggregate(rates.rate(a.Operation), a)
+		}
+
+		if fbFrom, ok := narrowFallback(from, to); ok {
+			if s.accumulator != nil {
+				for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
+					ProjectID: projectID, Service: service, Kind: kind, From: fbFrom, To: to,
+				}) {
+					k := opKey{CollapseParamLists(a.Operation), CollapseParamLists(a.Resource), a.Kind}
+					st := byOp[k]
+					if st == nil {
+						st = &aggStats{}
+						byOp[k] = st
+					}
+					st.foldAggregate(rates.rate(a.Operation), a)
+				}
+			} else {
+				spanStats, err := s.repo.QueryOperationStatsFromSpans(projectID, service, fbFrom, to, kind)
+				if err != nil {
+					s.logger.Warn("failed to query operation stats from spans", "error", err)
+				}
+				for _, ss := range spanStats {
+					k := opKey{CollapseParamLists(ss.Operation), CollapseParamLists(ss.Resource), ss.Kind}
+					st := byOp[k]
+					if st == nil {
+						st = &aggStats{}
+						byOp[k] = st
+					}
+					st.foldSpanFallback(rates.rate(ss.Operation), ss.Count, ss.ErrorCount, ss.Weights, ss.P50Us, ss.P95Us, ss.P99Us)
+				}
+			}
+		}
+
+		result := make([]OperationSummary, 0, len(byOp))
+		for k, st := range byOp {
+			effective := st.effective
+			var errorRate float64
+			if effective > 0 {
+				errorRate = float64(st.errorCount) / float64(effective)
+			}
+			var p50, p95, p99 int64
+			if st.aggCount > 0 {
+				p50 = st.aggP50Sum / st.aggCount
+				p95 = st.aggP95Sum / st.aggCount
+				p99 = st.aggP99Sum / st.aggCount
+			}
+			result = append(result, OperationSummary{
+				Operation:  k.operation,
+				Resource:   k.resource,
+				Kind:       k.kind,
+				SpanCount:  effective,
+				ErrorCount: st.errorCount,
+				ErrorRate:  errorRate,
+				P50Us:      p50,
+				P95Us:      p95,
+				P99Us:      p99,
+			})
+		}
+
+		sort.Slice(result, func(i, j int) bool {
+			return result[i].SpanCount > result[j].SpanCount
+		})
+
+		return result, nil
 	})
-
-	cache.Set(s.cache, ctx, cacheKey, result)
-	return result, nil
 }
 
 // GetTimeseries returns bucketed timeseries data for a specific operation.
@@ -317,87 +294,86 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 	)
 	defer span.End()
 
-	cacheKey := fmt.Sprintf("ts:%d:%s:%s:%d:%d:%d", projectID, svcName, operation, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix(), int64(interval.Seconds()))
-	if cached, ok := cache.Get[[]TimeseriesBucket](s.cache, ctx, cacheKey); ok {
-		return cached, nil
-	}
+	from, to, grain := snapRange(from, to)
+	cacheKey := fmt.Sprintf("ts:%d:%s:%s:%d:%d:%d", projectID, svcName, operation, from.Unix(), to.Unix(), int64(interval.Seconds()))
+	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]TimeseriesBucket, error) {
 
-	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
-		ProjectID: projectID,
-		Service:   svcName,
-		Operation: operation,
-		From:      from,
-		To:        to,
-		Limit:     100000,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	rates := s.newOpRates(ctx, projectID)
-	byBucket := make(map[time.Time]*aggStats)
-	for _, a := range aggs {
-		b := a.Bucket.Truncate(interval)
-		st, ok := byBucket[b]
-		if !ok {
-			st = &aggStats{}
-			byBucket[b] = st
-		}
-		st.foldAggregate(rates.rate(a.Operation), a)
-	}
-
-	if fbFrom, ok := narrowFallback(from, to); ok {
-		if s.accumulator != nil {
-			for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
-				ProjectID: projectID, Service: svcName, Operation: operation, From: fbFrom, To: to,
-			}) {
-				b := a.Bucket.Truncate(interval)
-				st := byBucket[b]
-				if st == nil {
-					st = &aggStats{}
-					byBucket[b] = st
-				}
-				st.foldAggregate(rates.rate(a.Operation), a)
-			}
-		} else {
-			spanBuckets, err := s.repo.QuerySpanTimeseries(projectID, svcName, operation, fbFrom, to, int64(interval.Seconds()))
-			if err != nil {
-				s.logger.Warn("failed to query span timeseries", "error", err)
-			}
-			for _, sb := range spanBuckets {
-				b := sb.Bucket.Truncate(interval)
-				st := byBucket[b]
-				if st == nil {
-					st = &aggStats{}
-					byBucket[b] = st
-				}
-				st.foldSpanFallback(rates.rate(operation), sb.Count, sb.ErrorCount, sb.Weights, sb.P50Us, sb.P95Us, sb.P99Us)
-			}
-		}
-	}
-
-	result := make([]TimeseriesBucket, 0, len(byBucket))
-	for b, st := range byBucket {
-		var p50, p95, p99 int64
-		if st.aggCount > 0 {
-			p50 = st.aggP50Sum / st.aggCount
-			p95 = st.aggP95Sum / st.aggCount
-			p99 = st.aggP99Sum / st.aggCount
-		}
-		result = append(result, TimeseriesBucket{
-			Bucket:     b,
-			Count:      st.effective,
-			ErrorCount: st.errorCount,
-			P50Us:      p50,
-			P95Us:      p95,
-			P99Us:      p99,
+		aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
+			ProjectID: projectID,
+			Service:   svcName,
+			Operation: operation,
+			From:      from,
+			To:        to,
+			Limit:     100000,
 		})
-	}
+		if err != nil {
+			return nil, err
+		}
 
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Bucket.Before(result[j].Bucket)
+		rates := s.newOpRates(ctx, projectID)
+		byBucket := make(map[time.Time]*aggStats)
+		for _, a := range aggs {
+			b := a.Bucket.Truncate(interval)
+			st, ok := byBucket[b]
+			if !ok {
+				st = &aggStats{}
+				byBucket[b] = st
+			}
+			st.foldAggregate(rates.rate(a.Operation), a)
+		}
+
+		if fbFrom, ok := narrowFallback(from, to); ok {
+			if s.accumulator != nil {
+				for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
+					ProjectID: projectID, Service: svcName, Operation: operation, From: fbFrom, To: to,
+				}) {
+					b := a.Bucket.Truncate(interval)
+					st := byBucket[b]
+					if st == nil {
+						st = &aggStats{}
+						byBucket[b] = st
+					}
+					st.foldAggregate(rates.rate(a.Operation), a)
+				}
+			} else {
+				spanBuckets, err := s.repo.QuerySpanTimeseries(projectID, svcName, operation, fbFrom, to, int64(interval.Seconds()))
+				if err != nil {
+					s.logger.Warn("failed to query span timeseries", "error", err)
+				}
+				for _, sb := range spanBuckets {
+					b := sb.Bucket.Truncate(interval)
+					st := byBucket[b]
+					if st == nil {
+						st = &aggStats{}
+						byBucket[b] = st
+					}
+					st.foldSpanFallback(rates.rate(operation), sb.Count, sb.ErrorCount, sb.Weights, sb.P50Us, sb.P95Us, sb.P99Us)
+				}
+			}
+		}
+
+		result := make([]TimeseriesBucket, 0, len(byBucket))
+		for b, st := range byBucket {
+			var p50, p95, p99 int64
+			if st.aggCount > 0 {
+				p50 = st.aggP50Sum / st.aggCount
+				p95 = st.aggP95Sum / st.aggCount
+				p99 = st.aggP99Sum / st.aggCount
+			}
+			result = append(result, TimeseriesBucket{
+				Bucket:     b,
+				Count:      st.effective,
+				ErrorCount: st.errorCount,
+				P50Us:      p50,
+				P95Us:      p95,
+				P99Us:      p99,
+			})
+		}
+
+		sort.Slice(result, func(i, j int) bool {
+			return result[i].Bucket.Before(result[j].Bucket)
+		})
+
+		return result, nil
 	})
-
-	cache.Set(s.cache, ctx, cacheKey, result)
-	return result, nil
 }

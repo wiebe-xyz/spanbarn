@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -18,116 +17,115 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 	_, span := tracer.Start(ctx, "query.list_database_queries")
 	defer span.End()
 
-	cacheKey := fmt.Sprintf("dbq:%d:%s:%d:%d", projectID, svcFilter, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
-	if cached, ok := cache.Get[[]DatabaseQuerySummary](s.cache, ctx, cacheKey); ok {
-		return cached, nil
-	}
+	from, to, grain := snapRange(from, to)
+	cacheKey := fmt.Sprintf("dbq:%d:%s:%d:%d", projectID, svcFilter, from.Unix(), to.Unix())
+	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]DatabaseQuerySummary, error) {
 
-	sf := repository.SpanFilter{
-		ProjectID: projectID,
-		Service:   svcFilter,
-		From:      from,
-		To:        to,
-		Limit:     10000,
-	}
-
-	spans, err := s.repo.QuerySpans(sf)
-	if err != nil {
-		return nil, err
-	}
-
-	type queryStats struct {
-		operation  string
-		dbSystem   string
-		dbName     string
-		count      int64
-		errorCount int64
-		weights    repository.SpanWeights
-		totalTime  int64
-		durations  []int64
-	}
-	byPattern := make(map[string]*queryStats)
-
-	for _, sp := range spans {
-		if sp.Kind != "client" && sp.Kind != "CLIENT" {
-			continue
+		sf := repository.SpanFilter{
+			ProjectID: projectID,
+			Service:   svcFilter,
+			From:      from,
+			To:        to,
+			Limit:     10000,
 		}
 
-		attrs := parseAttrs(sp.Attributes)
-		if attrs == nil {
-			continue
+		spans, err := s.repo.QuerySpans(sf)
+		if err != nil {
+			return nil, err
 		}
 
-		dbSystem, _ := getStringAttr(attrs, "db.system")
-		if dbSystem == "" {
-			continue
+		type queryStats struct {
+			operation  string
+			dbSystem   string
+			dbName     string
+			count      int64
+			errorCount int64
+			weights    repository.SpanWeights
+			totalTime  int64
+			durations  []int64
 		}
+		byPattern := make(map[string]*queryStats)
 
-		statement, _ := getStringAttr(attrs, "db.statement")
-		var pattern string
-		if statement != "" {
-			pattern = NormalizeSQL(statement)
-		} else {
-			pattern = strings.ToLower(sp.Name)
-		}
-		if pattern == "" {
-			continue
-		}
-
-		operation, _ := getStringAttr(attrs, "db.operation")
-		if operation == "" {
-			operation = extractSQLOperation(pattern)
-		}
-		dbName, _ := getStringAttr(attrs, "db.name")
-
-		st, ok := byPattern[pattern]
-		if !ok {
-			st = &queryStats{
-				operation: strings.ToUpper(operation),
-				dbSystem:  dbSystem,
-				dbName:    dbName,
+		for _, sp := range spans {
+			if sp.Kind != "client" && sp.Kind != "CLIENT" {
+				continue
 			}
-			byPattern[pattern] = st
-		}
-		st.count++
-		st.weights.Add(sp.SampleWeight)
-		if sp.Status == "error" {
-			st.errorCount++
-		}
-		st.totalTime += sp.DurationUs
-		st.durations = append(st.durations, sp.DurationUs)
-	}
 
-	sr := s.projectSampleRate(ctx, projectID)
-	result := make([]DatabaseQuerySummary, 0, len(byPattern))
-	for pattern, st := range byPattern {
-		effective := estimateSpans(st.count, st.errorCount, st.weights, sr)
-		var errorRate float64
-		if effective > 0 {
-			errorRate = float64(st.errorCount) / float64(effective)
+			attrs := parseAttrs(sp.Attributes)
+			if attrs == nil {
+				continue
+			}
+
+			dbSystem, _ := getStringAttr(attrs, "db.system")
+			if dbSystem == "" {
+				continue
+			}
+
+			statement, _ := getStringAttr(attrs, "db.statement")
+			var pattern string
+			if statement != "" {
+				pattern = NormalizeSQL(statement)
+			} else {
+				pattern = strings.ToLower(sp.Name)
+			}
+			if pattern == "" {
+				continue
+			}
+
+			operation, _ := getStringAttr(attrs, "db.operation")
+			if operation == "" {
+				operation = extractSQLOperation(pattern)
+			}
+			dbName, _ := getStringAttr(attrs, "db.name")
+
+			st, ok := byPattern[pattern]
+			if !ok {
+				st = &queryStats{
+					operation: strings.ToUpper(operation),
+					dbSystem:  dbSystem,
+					dbName:    dbName,
+				}
+				byPattern[pattern] = st
+			}
+			st.count++
+			st.weights.Add(sp.SampleWeight)
+			if sp.Status == "error" {
+				st.errorCount++
+			}
+			st.totalTime += sp.DurationUs
+			st.durations = append(st.durations, sp.DurationUs)
 		}
-		p50, p95, p99 := computePercentiles(st.durations)
-		result = append(result, DatabaseQuerySummary{
-			Pattern:     pattern,
-			Operation:   st.operation,
-			DBSystem:    st.dbSystem,
-			DBName:      st.dbName,
-			CallCount:   effective,
-			ErrorCount:  st.errorCount,
-			ErrorRate:   errorRate,
-			P50Us:       p50,
-			P95Us:       p95,
-			P99Us:       p99,
-			TotalTimeUs: st.totalTime,
+
+		sr := s.projectSampleRate(ctx, projectID)
+		result := make([]DatabaseQuerySummary, 0, len(byPattern))
+		for pattern, st := range byPattern {
+			effective := estimateSpans(st.count, st.errorCount, st.weights, sr)
+			var errorRate float64
+			if effective > 0 {
+				errorRate = float64(st.errorCount) / float64(effective)
+			}
+			p50, p95, p99 := computePercentiles(st.durations)
+			result = append(result, DatabaseQuerySummary{
+				Pattern:     pattern,
+				Operation:   st.operation,
+				DBSystem:    st.dbSystem,
+				DBName:      st.dbName,
+				CallCount:   effective,
+				ErrorCount:  st.errorCount,
+				ErrorRate:   errorRate,
+				P50Us:       p50,
+				P95Us:       p95,
+				P99Us:       p99,
+				TotalTimeUs: st.totalTime,
+			})
+		}
+
+		sort.Slice(result, func(i, j int) bool {
+			return result[i].TotalTimeUs > result[j].TotalTimeUs
 		})
-	}
 
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].TotalTimeUs > result[j].TotalTimeUs
+		return result, nil
 	})
-
-	cache.Set(s.cache, ctx, cacheKey, result)
-	return result, nil
 }
 
 // GetDatabaseQuerySpans returns individual span executions matching a specific
