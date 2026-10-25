@@ -6,7 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -14,30 +13,29 @@ func (s *QueryService) GetServiceMap(ctx context.Context, projectID int64, from,
 	_, span := tracer.Start(ctx, "query.service_map")
 	defer span.End()
 
-	cacheKey := fmt.Sprintf("svcmap:%d:%d:%d", projectID, from.Truncate(time.Minute).Unix(), to.Truncate(time.Minute).Unix())
-	if cached, ok := cache.Get[*ServiceMap](s.cache, ctx, cacheKey); ok {
-		return cached, nil
-	}
+	from, to, grain := snapRange(from, to)
+	cacheKey := fmt.Sprintf("svcmap:%d:%d:%d", projectID, from.Unix(), to.Unix())
+	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) (*ServiceMap, error) {
 
-	sf := repository.SpanFilter{
-		ProjectID: projectID,
-		From:      from,
-		To:        to,
-		Limit:     10000,
-	}
+		sf := repository.SpanFilter{
+			ProjectID: projectID,
+			From:      from,
+			To:        to,
+			Limit:     10000,
+		}
 
-	spans, err := s.repo.QuerySpans(sf)
-	if err != nil {
-		return nil, err
-	}
+		spans, err := s.repo.QuerySpans(sf)
+		if err != nil {
+			return nil, err
+		}
 
-	b := newServiceMapBuilder()
-	b.addSpans(spans)
-	b.addCrossServiceCalls(spans)
-	result := b.build()
+		b := newServiceMapBuilder()
+		b.addSpans(spans)
+		b.addCrossServiceCalls(spans)
+		result := b.build()
 
-	cache.Set(s.cache, ctx, cacheKey, result)
-	return result, nil
+		return result, nil
+	})
 }
 
 // callStats counts spans and the errors among them.

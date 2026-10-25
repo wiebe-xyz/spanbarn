@@ -246,6 +246,32 @@ func authorizerOrBearerAuth(a *auth.Authorizer, next http.Handler) http.Handler 
 	})
 }
 
+// readBudgetExempt lists the API GETs that stream for as long as the client
+// stays, so a read budget would cut them off.
+var readBudgetExempt = map[string]bool{
+	"/api/v1/spans/live": true,
+	"/api/v1/export":     true,
+}
+
+// readBudgetMiddleware bounds every API GET by budget. A read that runs out
+// answers 503 query_timeout (writeServerError) and the web client retries;
+// a cached read keeps scanning past the budget and fills the cache for that
+// retry. A budget of 0 turns it off.
+func readBudgetMiddleware(budget time.Duration, next http.Handler) http.Handler {
+	if budget <= 0 {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/api/") || readBudgetExempt[r.URL.Path] {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), budget)
+		defer cancel()
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // cacheMiddleware sets Cache-Control on successful GET responses.
 func cacheMiddleware(maxAge int, next http.Handler) http.Handler {
 	val := fmt.Sprintf("private, max-age=%d", maxAge)

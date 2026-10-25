@@ -184,6 +184,7 @@ Each requirement names the issue that asked for it and the test that proves it. 
 - **FR-033**: Dashboard query results MUST be cached for `SPANBARN_CACHE_TTL_SECONDS`, and rate limits MUST use Redis when `SPANBARN_REDIS_URL` is set. Issues: none found. Tests: `internal/service/query_dashboard_test.go::TestDashboardResultsAreCachedPerFilter`.
 - **FR-034**: The server MUST expose `GET /api/v1/version` with version, commit and build time. Issues: [#348](https://github.com/wiebe-xyz/spanbarn/issues/348). Tests: `scripts/test_version_smoke.py`.
 - **FR-035** `[gap]`: Span counts MUST NOT be inflated by the sample ratio for traces that sampling did not choose. Issues: [#333](https://github.com/wiebe-xyz/spanbarn/issues/333).
+- **FR-036**: The web UI MUST reload once when a lazy chunk from a replaced build fails to load (`vite:preloadError`), guarded so a chunk that stays missing cannot loop, and MUST report a failure that survives the reload under one fixed type and message with the chunk URL as an attribute. Issues: [#383](https://github.com/wiebe-xyz/spanbarn/issues/383). Tests: `web/src/staleChunk.test.ts`.
 
 ## Non-Functional Requirements
 
@@ -224,6 +225,7 @@ Each requirement names the issue that asked for it and the test that proves it. 
 | `SPANBARN_MODE=ingest` starts an ingest-only pod (US-11). | Original spec | The config marks `ingest` legacy; the modes are `standalone`, `reader`, `writer` and `ingest` (`internal/config/config.go`). Production runs reader and writer pods. |
 | Email (SMTP) is a notification channel (US-7). | Original spec | `internal/alert/notifier.go` references SMTP. No test sends email. Whether email ships: not established. |
 | Production is deployed manually with a confirmation. | CLAUDE.md before this PR | `.github/workflows/deploy-production.yml` runs on `workflow_run` after "Build and Deploy Testing" succeeds; `workflow_dispatch` stays as the override ([#315](https://github.com/wiebe-xyz/spanbarn/issues/315)). CLAUDE.md corrected in this PR. |
+| Browser error attributes reach the error log (FR-036 sends the chunk URL as one). | This PR | `internal/api/client_errors.go` decodes `attributes` and does not log them, so the chunk URL is sent and not yet recorded. Logging them: not established. |
 
 ## Proof contract
 

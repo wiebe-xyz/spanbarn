@@ -161,3 +161,51 @@ describe('api methods construct correct URLs', () => {
     expect(url).toBe('/api/v1/traces/abc123')
   })
 })
+
+describe('fetchJSON query_timeout retry', () => {
+  beforeEach(() => {
+    mockFetch.mockReset()
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const timeout = () => ({
+    ok: false,
+    status: 503,
+    headers: { get: (h: string) => (h === 'Retry-After' ? '2' : null) },
+    json: () => Promise.resolve({ error: 'query_timeout' }),
+  })
+
+  it('retries a read until the server has the result', async () => {
+    mockFetch
+      .mockResolvedValueOnce(timeout())
+      .mockResolvedValueOnce(timeout())
+      .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('{"n":1}') })
+
+    const p = fetchJSON<{ n: number }>('/api/v1/traces/groups')
+    await vi.advanceTimersByTimeAsync(4000)
+    await expect(p).resolves.toEqual({ n: 1 })
+    expect(mockFetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('gives up after the retry budget', async () => {
+    mockFetch.mockImplementation(() => Promise.resolve(timeout()))
+
+    const p = fetchJSON('/api/v1/traces/groups')
+    const caught = p.catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(20000)
+    const err = await caught
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(503)
+    expect(mockFetch).toHaveBeenCalledTimes(6)
+  })
+
+  it('does not retry a write', async () => {
+    mockFetch.mockResolvedValueOnce(timeout())
+
+    await expect(fetchJSON('/api/v1/boards', { method: 'POST' })).rejects.toThrow(ApiError)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+})

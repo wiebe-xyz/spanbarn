@@ -32,6 +32,9 @@ type ServerConfig struct {
 	FunnelBarnEndpoint string
 	FunnelBarnAPIKey   string
 	FunnelBarnProject  string
+	// ReadBudget bounds every API GET (SPANBARN_READ_BUDGET_SECONDS); 0 turns
+	// the bound off.
+	ReadBudget time.Duration
 	// E2EEnabled explicitly opens the /api/v1/e2e/session endpoint on
 	// non-production environments (SPANBARN_E2E_ENABLED). Default off.
 	E2EEnabled bool
@@ -235,8 +238,9 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 
 	s.registerRoutes()
 
-	// Build middleware chain: recovery -> requestID -> security -> tracing -> metrics -> logging -> CORS -> maxBodyBytes -> routes.
+	// Build middleware chain: recovery -> requestID -> security -> tracing -> metrics -> logging -> CORS -> maxBodyBytes -> readBudget -> routes.
 	var h http.Handler = s.mux
+	h = readBudgetMiddleware(cfg.ReadBudget, h)
 	h = maxBodyBytesMiddleware(s.maxBodyBytes, h)
 	h = corsMiddleware(s.allowedOrigins, h)
 	h = loggingMiddleware(logger, s.selfMetrics, h)

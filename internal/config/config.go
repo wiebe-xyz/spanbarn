@@ -171,6 +171,7 @@ type Config struct {
 	APIRatePerMinute             int
 	MetricsToken                 string
 	QueryTimeoutSeconds          int
+	ReadBudgetSeconds            int // SPANBARN_READ_BUDGET_SECONDS — bound on every API GET; 0 = off
 	RedisURL                     string
 	RedisQueueURL                string // SPANBARN_REDIS_QUEUE_URL — write queue Redis (separate from cache)
 	CacheTTLSeconds              int
@@ -288,6 +289,7 @@ func Load() Config {
 		APIRatePerMinute:    getenvInt("SPANBARN_API_RATE_PER_MINUTE", 300),
 		MetricsToken:        os.Getenv("SPANBARN_METRICS_TOKEN"),
 		QueryTimeoutSeconds: getenvInt("SPANBARN_QUERY_TIMEOUT_SECONDS", 30),
+		ReadBudgetSeconds:   getenvInt("SPANBARN_READ_BUDGET_SECONDS", 10),
 		RedisURL:            os.Getenv("SPANBARN_REDIS_URL"),
 		RedisQueueURL:       os.Getenv("SPANBARN_REDIS_QUEUE_URL"),
 		CacheTTLSeconds:     getenvInt("SPANBARN_CACHE_TTL_SECONDS", 30),

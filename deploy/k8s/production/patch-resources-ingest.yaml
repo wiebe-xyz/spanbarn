@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spanbarn-ingest
+spec:
+  template:
+    spec:
+      containers:
+        - name: spanbarn-ingest
+          # The reader serves every API GET. At the base 200m limit it had been
+          # throttled for 711 s and hit its 512Mi limit 3 times by 2026-10-25,
+          # and one cold dashboard or trace-group scan took 20 s to over 45 s.
+          # The limit is raised to 2 cores and 1Gi; the request stays low, so
+          # scheduling is unchanged (layer7 ran at 22% CPU).
+          env:
+            - name: GOMEMLIMIT
+              value: "900MiB"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
