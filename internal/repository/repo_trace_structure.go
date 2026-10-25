@@ -102,21 +102,56 @@ const deleteSpanlessSummarySQL = `DELETE FROM trace_summaries
 // of a still-listed trace were deleted. In one transaction it deletes the
 // summaries of keys whose spans are all gone and recomputes the structural
 // columns of the rest.
+//
+// The keys run in chunks of refreshKeysPerSlot, one write slot per chunk with
+// deleteBatchYield between them. A refresh costs a seek per span of the trace,
+// so a drain that hands in a few large traces held the spans writer for 33 s in
+// one slot (SPA-74, 2026-10-24) and tripped the watchdog. Each chunk is its own
+// transaction: a trace is pruned or refreshed independently of the others, so a
+// failure after some chunks leaves the earlier ones done and the caller's next
+// cycle repeats the rest.
 func (r *Repository) RefreshTraceStructure(ctx context.Context, keys []TraceKey) error {
-	if len(keys) == 0 {
-		return nil
+	for i, chunk := range chunkTraceKeys(keys, refreshKeysPerSlot) {
+		if i > 0 && r.deleteBatchYield > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(r.deleteBatchYield):
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := r.execLow(FamilySpans, func(db *sql.DB) error {
+			tx, err := db.BeginTx(ctx, nil)
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback()
+			if err := pruneTraceSummariesTx(ctx, tx, chunk); err != nil {
+				return err
+			}
+			return tx.Commit()
+		}); err != nil {
+			return err
+		}
 	}
-	return r.execLow(FamilySpans, func(db *sql.DB) error {
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		if err := pruneTraceSummariesTx(ctx, tx, keys); err != nil {
-			return err
-		}
-		return tx.Commit()
-	})
+	return nil
+}
+
+// refreshKeysPerSlot is how many traces one RefreshTraceStructure write slot
+// handles. Small, because the cost of one key is the size of its trace.
+const refreshKeysPerSlot = 4
+
+// chunkTraceKeys splits keys into consecutive chunks of at most size.
+func chunkTraceKeys(keys []TraceKey, size int) [][]TraceKey {
+	var out [][]TraceKey
+	for len(keys) > 0 {
+		n := min(size, len(keys))
+		out = append(out, keys[:n])
+		keys = keys[n:]
+	}
+	return out
 }
 
 // pruneTraceSummariesTx deletes the summaries of keys that have no span left and
