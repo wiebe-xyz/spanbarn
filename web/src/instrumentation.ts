@@ -1,4 +1,6 @@
-const TELEMETRY_ENDPOINT = '/api/v1/telemetry'
+import { installStaleChunkHandler } from './staleChunk'
+
+const TELEMETRY_ENDPOINT ='/api/v1/telemetry'
 const CLIENT_ERRORS_ENDPOINT = '/api/v1/client-errors'
 const SERVICE_NAME = 'spanbarn-web'
 const SAMPLE_PERCENT = 1 // 1 in 100 traces sampled
@@ -160,6 +162,7 @@ function isInstrumentationUrl(url: string): boolean {
 }
 
 function installErrorHandlers() {
+  installStaleChunkHandler(reportError)
   window.addEventListener('error', (event) => {
     if (event.error instanceof Error) {
       reportError(event.error, { source: event.filename ?? '' })
