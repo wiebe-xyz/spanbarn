@@ -108,6 +108,7 @@ linters:
             - "**/internal/config/**"
             - "**/internal/selfmetrics/**"
             - "**/internal/observability/**"
+            - "**/internal/spanhist/**"
             - "!$test"
           deny:
             - pkg: github.com/wiebe-xyz/spanbarn

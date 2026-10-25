@@ -50,6 +50,7 @@ Spans go to an in-memory queue, then an NDJSON spool, then a background worker.
 **Acceptance Scenarios**:
 
 1. **Given** ingested traces, **When** the operator opens the dashboard, **Then** services show latency percentiles, throughput and error rate for the chosen time range, with a recent-traces table and a trace waterfall.
+2. **Given** a window with many spans, **When** the dashboard or the trace groups show percentiles, **Then** each one comes from a quarter-octave duration histogram and lies inside the observed range of its bin (2^(1/4), about 19%, wide).
 
 ### US6 - Dependency tracking (Priority: P2)
 
@@ -185,11 +186,12 @@ Each requirement names the issue that asked for it and the test that proves it. 
 - **FR-034**: The server MUST expose `GET /api/v1/version` with version, commit and build time. Issues: [#348](https://github.com/wiebe-xyz/spanbarn/issues/348). Tests: `scripts/test_version_smoke.py`.
 - **FR-035** `[gap]`: Span counts MUST NOT be inflated by the sample ratio for traces that sampling did not choose. Issues: [#333](https://github.com/wiebe-xyz/spanbarn/issues/333).
 - **FR-036**: The web UI MUST reload once when a lazy chunk from a replaced build fails to load (`vite:preloadError`), guarded so a chunk that stays missing cannot loop, and MUST report a failure that survives the reload under one fixed type and message with the chunk URL as an attribute. Issues: [#383](https://github.com/wiebe-xyz/spanbarn/issues/383). Tests: `web/src/staleChunk.test.ts`.
+- **FR-037**: Dashboard and trace group percentiles MUST be read from quarter-octave duration histograms that SQLite folds per group (`internal/spanhist`), so a query returns a few rows per operation and never every span in the window. Issues: none found. Tests: `internal/spanhist/spanhist_test.go::TestPercentileWithinOneBin`, `internal/repository/repo_root_groups_test.go::TestSpanhistIndexMatchesSQLite`, `::TestQueryRootSpanGroupsFoldsInSQL`, `::TestQueryRootSpanGroupsPinsItsIndex`.
 
 ## Non-Functional Requirements
 
 - **NFR-001**: Ingest answers in under 5 ms at p99 and sustains 10,000 spans per second on one core. Source: this spec's original acceptance criteria. [inferred] No gate measures it.
-- **NFR-002**: Dashboard aggregate queries answer in under 100 ms and recent span search in under 500 ms. Source: original acceptance criteria. [inferred]
+- **NFR-002**: Dashboard aggregate queries answer in under 100 ms and recent span search in under 500 ms. Source: original acceptance criteria. [inferred] The production target for every UI read is p95 under 2 s and no read over 10 s, for 1h, 24h and 48h windows, one project and all projects; API reads past `SPANBARN_READ_BUDGET_SECONDS` (10 s) answer 503 `query_timeout` and the UI retries.
 - **NFR-003**: Memory stays under 100 MB at baseline and 500 MB under sustained load. Source: `internal/config/config.go` sizes the ingest buffers against a 448 MiB `GOMEMLIMIT` and `BenchmarkOTLPIngestMemory`.
 - **NFR-004**: A malformed span is logged and skipped and never blocks the pipeline; the spool dead-letters after 3 failed attempts. Source: CLAUDE.md, "Key Patterns". [inferred]
 - **NFR-005**: Spool-based ingest survives restarts. Source: `internal/spool/spool_test.go::TestSpoolCursor`.

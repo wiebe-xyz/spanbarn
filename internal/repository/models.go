@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
+	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
 type Project struct {
@@ -167,7 +168,7 @@ type RootSpanGroup struct {
 	Count      int64
 	ErrorCount int64
 	Weights    SpanWeights
-	Durations  []int64 // raw durations for percentile computation in the service layer
+	Hist       spanhist.Hist // root durations, for percentiles in the service layer
 }
 
 type AggregateFilter struct {
