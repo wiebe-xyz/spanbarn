@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -34,6 +32,9 @@ const (
 	contWALPollTick    = 100 * time.Millisecond
 	contReadPause      = 10 * time.Millisecond
 	contIdleMax        = 5 * time.Second
+	// contCommitMax bounds how long a loaded run waits past its duration for
+	// every writer loop to commit once.
+	contCommitMax = 2 * time.Minute
 )
 
 // contQuery is one span query the reader loop times.
@@ -155,7 +156,9 @@ func contIdle(ctx context.Context, o options, layout string, queries []contQuery
 }
 
 // contLoaded runs the reader loop for the whole duration while the writers
-// insert at production rates. It returns only after every goroutine stopped.
+// insert at production rates. The writers run on past the duration until each
+// has committed once, so a loaded host stretches the run instead of leaving a
+// table unwritten. It returns only after every goroutine stopped.
 func contLoaded(ctx context.Context, o options, layout string, queries []contQuery) (*contRun, error) {
 	ws, err := openContWriters(o.dir, layout)
 	if err != nil {
@@ -168,13 +171,16 @@ func contLoaded(ctx context.Context, o options, layout string, queries []contQue
 	}
 	defer db.Close()
 	run := &contRun{loaded: true, spanInsert: &contRecorder{}, heavyInsert: &contRecorder{}}
+	wctx, stop := context.WithCancel(ctx)
+	defer stop()
 	rctx, cancel := context.WithTimeout(ctx, o.duration)
 	defer cancel()
 	var wg sync.WaitGroup
 	errs := make(chan error, 16)
-	ws.start(rctx, &wg, errs, run)
+	committed := ws.start(wctx, &wg, errs, run)
 	reads, rerr := contReadLoop(rctx, repository.NewReadOnlyRepository(db), queries)
-	cancel()
+	rerr = errors.Join(rerr, contAwaitCommits(ctx, committed))
+	stop()
 	wg.Wait()
 	close(errs)
 	run.reads = reads
@@ -182,6 +188,18 @@ func contLoaded(ctx context.Context, o options, layout string, queries []contQue
 		rerr = errors.Join(rerr, err)
 	}
 	return run, rerr
+}
+
+// contAwaitCommits waits until committed closes, or fails after contCommitMax.
+func contAwaitCommits(ctx context.Context, committed <-chan struct{}) error {
+	select {
+	case <-committed:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(contCommitMax):
+		return fmt.Errorf("a writer loop committed nothing within %s", contCommitMax)
+	}
 }
 
 // contReadLoop runs every query back to back with a short pause between
@@ -254,8 +272,9 @@ func (w *contWriters) close() {
 }
 
 // start launches the checkpoint loops, the WAL pollers and the five writer
-// loops. Each goroutine is registered on wg and ends when ctx ends.
-func (w *contWriters) start(ctx context.Context, wg *sync.WaitGroup, errs chan<- error, run *contRun) {
+// loops. Each goroutine is registered on wg and ends when ctx ends. The
+// returned channel closes once every writer loop has committed a batch.
+func (w *contWriters) start(ctx context.Context, wg *sync.WaitGroup, errs chan<- error, run *contRun) <-chan struct{} {
 	log := slog.New(slog.DiscardHandler)
 	for _, db := range w.dbs {
 		contGo(wg, func() { db.RunPeriodicCheckpoint(ctx, contCheckpointTick, log) })
@@ -263,18 +282,26 @@ func (w *contWriters) start(ctx context.Context, wg *sync.WaitGroup, errs chan<-
 	for i, p := range w.paths {
 		contGo(wg, func() { contPollWAL(ctx, p+"-wal", &run.walPeak[i]) })
 	}
+	var commits sync.WaitGroup
 	for i, wr := range w.writerLoops() {
+		commits.Add(1)
+		committed := sync.OnceFunc(commits.Done)
 		rec := run.heavyInsert
 		if wr.span {
 			rec = run.spanInsert
 		}
 		g := newGenerator(prodProfile(), window{}, spikeSeed+uint64(i)+1)
 		contGo(wg, func() {
-			if err := contTickLoop(ctx, wr.every, rec, func(now time.Time) (int, error) { return wr.insert(ctx, g, now) }); err != nil {
+			// A loop that ends on an error stops the wait too; the error is reported.
+			defer committed()
+			if err := contTickLoop(ctx, wr.every, rec, committed, func(now time.Time) (int, error) { return wr.insert(ctx, g, now) }); err != nil {
 				errs <- err
 			}
 		})
 	}
+	all := make(chan struct{})
+	go func() { commits.Wait(); close(all) }()
+	return all
 }
 
 func contGo(wg *sync.WaitGroup, fn func()) {
@@ -314,9 +341,10 @@ func (w *contWriters) writerLoops() []contWriterLoop {
 }
 
 // contTickLoop calls fn once per tick until ctx ends and records the time from
-// tick to commit. A ticker drops ticks while fn is still running, so a slow
-// insert lowers the rate and never queues a burst.
-func contTickLoop(ctx context.Context, every time.Duration, rec *contRecorder, fn func(time.Time) (int, error)) error {
+// tick to commit, calling committed after each commit. A ticker drops ticks
+// while fn is still running, so a slow insert lowers the rate and never queues
+// a burst.
+func contTickLoop(ctx context.Context, every time.Duration, rec *contRecorder, committed func(), fn func(time.Time) (int, error)) error {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -332,6 +360,7 @@ func contTickLoop(ctx context.Context, every time.Duration, rec *contRecorder, f
 				return err
 			}
 			rec.add(time.Since(tick), n)
+			committed()
 		}
 	}
 }
@@ -349,73 +378,6 @@ func contPollWAL(ctx context.Context, path string, peak *atomic.Int64) {
 			return
 		case <-t.C:
 		}
-	}
-}
-
-func contBatch[T any](n int, g *generator, now time.Time, mk func(*generator, time.Time) T) []T {
-	out := make([]T, n)
-	for i := range out {
-		out[i] = mk(g, now)
-	}
-	return out
-}
-
-// contSpans builds one trace of n spans: a root and n-1 children.
-func contSpans(g *generator, now time.Time, n int) []repository.Span {
-	project, traceID, rootID := g.project(), g.hexID(32), g.hexID(16)
-	svc := services[g.rng.IntN(len(services))]
-	out := make([]repository.Span, n)
-	for i := range out {
-		s := repository.Span{
-			ProjectID: project, TraceID: traceID, SpanID: g.hexID(16), ParentSpanID: rootID,
-			Name: operations[3+g.rng.IntN(len(operations)-3)], Service: svc, Kind: "server", Status: "ok",
-			StartTimeUs: now.UnixMicro(), DurationUs: int64(1_000 + g.rng.IntN(80_000)),
-			Attributes: fmt.Sprintf(`{"http.response.status_code":200,"user.id":"u%d"}`, g.rng.IntN(5_000)),
-			Events:     "[]",
-		}
-		if i == 0 {
-			s.SpanID, s.ParentSpanID, s.Name = rootID, "", operations[g.rng.IntN(3)]
-		}
-		out[i] = s
-	}
-	return out
-}
-
-func contMetric(g *generator, now time.Time) model.MetricRecord {
-	return model.MetricRecord{
-		ProjectID: g.project(), Name: metricKeys[g.rng.IntN(len(metricKeys))], Unit: "ms",
-		Type: model.MetricTypeGauge, TimeUnixNano: uint64(now.UnixNano()), Value: g.rng.Float64() * 100, Count: 1,
-		Attributes: json.RawMessage(fmt.Sprintf(`{"service.name":%q,"host.name":"node-%d"}`,
-			services[g.rng.IntN(len(services))], g.rng.IntN(12))),
-	}
-}
-
-func contLog(g *generator, now time.Time) model.LogRecord {
-	return model.LogRecord{
-		ProjectID: g.project(), TraceID: g.hexID(32), SpanID: g.hexID(16), SeverityNumber: 9, SeverityText: "INFO",
-		TimeUnixNano: uint64(now.UnixNano()), Body: g.text(contLogBodyBytes),
-		Attributes: json.RawMessage(fmt.Sprintf(`{"service.name":%q}`, services[g.rng.IntN(len(services))])),
-	}
-}
-
-func contPrompt(g *generator, now time.Time) repository.PromptRecord {
-	in, out := int64(200+g.rng.IntN(2_000)), int64(50+g.rng.IntN(800))
-	return repository.PromptRecord{
-		ProjectID: g.project(), TraceID: g.hexID(32), SpanID: g.hexID(16), Service: "llm", Name: "chat",
-		GenAISystem: "openai", Model: models[g.rng.IntN(len(models))],
-		PromptBody: g.text(contPromptBytes), ResponseBody: g.text(contPromptBytes),
-		InputTokens: in, OutputTokens: out, TotalTokens: in + out, CostUSD: float64(in+out) * 1e-6,
-		DurationUs: int64(200_000 + g.rng.IntN(4_000_000)), StartTimeUs: now.UnixMicro(), Status: "ok",
-	}
-}
-
-func contErrorSample(g *generator, now time.Time) repository.Span {
-	return repository.Span{
-		ProjectID: g.project(), TraceID: g.hexID(32), SpanID: g.hexID(16),
-		Name: operations[g.rng.IntN(len(operations))], Service: services[g.rng.IntN(len(services))],
-		Kind: "server", Status: "error", StartTimeUs: now.UnixMicro(), DurationUs: int64(g.rng.IntN(500_000)),
-		Attributes: `{"http.response.status_code":500}`,
-		Events:     fmt.Sprintf(`[{"name":"exception","attributes":{"exception.message":%q}}]`, g.text(600)),
 	}
 }
 
