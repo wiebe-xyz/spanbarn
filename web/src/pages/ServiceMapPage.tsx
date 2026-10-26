@@ -6,8 +6,14 @@ import { AutoRefresh } from '../components/AutoRefresh'
 import { getTimeRange } from '../utils/timeRange'
 import { useTimeRange } from '../contexts/useTimeRange'
 import { formatCount, formatErrorRate, errorRateColor } from '../utils/format'
+import { coverageNote } from '../utils/coverage'
 
 type SimNode = ServiceMapNode & { x: number; y: number; vx: number; vy: number }
+
+// Stable fallbacks: a fresh [] on every render would re-run the layout effect,
+// whose setSimNodes([]) renders again, so the page never settled while loading.
+const NO_NODES: ServiceMapNode[] = []
+const NO_EDGES: ServiceMapEdge[] = []
 
 function useForceLayout(nodes: ServiceMapNode[], edges: ServiceMapEdge[], width: number, height: number) {
   const [simNodes, setSimNodes] = useState<SimNode[]>([])
@@ -120,6 +126,7 @@ export function ServiceMapPage(): ReactElement {
   const { range, setRange } = useTimeRange()
   const [refreshInterval, setRefreshInterval] = useState(0)
   const [data, setData] = useState<ServiceMap | null>(null)
+  const [rangeEnd, setRangeEnd] = useState<Date | null>(null)
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -149,6 +156,7 @@ export function ServiceMapPage(): ReactElement {
       const sm = await api.getServiceMap(from, to)
       if (id === fetchIdRef.current) {
         setData(sm)
+        setRangeEnd(new Date(to))
       }
     } catch {
       // handled by client
@@ -163,8 +171,8 @@ export function ServiceMapPage(): ReactElement {
     void fetchData() // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   }, [fetchData])
 
-  const nodes = data?.nodes ?? []
-  const edges = data?.edges ?? []
+  const nodes = data?.nodes ?? NO_NODES
+  const edges = data?.edges ?? NO_EDGES
   const simNodes = useForceLayout(nodes, edges, dims.width, dims.height)
 
   const nodeMap = new Map<string, SimNode>()
@@ -193,6 +201,12 @@ export function ServiceMapPage(): ReactElement {
           <TimeRangeSelector value={range} onChange={setRange} />
         </div>
       </div>
+
+      {data?.truncated && data.coveredFrom && rangeEnd && (
+        <p role="note" style={{ marginBottom: '0.75rem', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+          {coverageNote(data.coveredFrom, rangeEnd)}
+        </p>
+      )}
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div ref={containerRef} style={{ width: '100%', height: '60vh', minHeight: 300 }}>
