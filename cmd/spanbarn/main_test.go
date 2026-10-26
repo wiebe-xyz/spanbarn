@@ -112,15 +112,10 @@ func TestAPIKeyCreateAndRevoke(t *testing.T) {
 	}
 
 	// Generate and store an API key.
-	plainKey, err := generateAPIKey()
+	_, keyHash, err := auth.NewAPIKey()
 	if err != nil {
-		t.Fatalf("generateAPIKey: %v", err)
+		t.Fatalf("NewAPIKey: %v", err)
 	}
-	if len(plainKey) != 64 {
-		t.Fatalf("expected 64 char key, got %d", len(plainKey))
-	}
-
-	keyHash := auth.HashKey(plainKey)
 	keyID, err := repo.CreateAPIKey(proj.ID, "my-key", keyHash, "ingest")
 	if err != nil {
 		t.Fatalf("CreateAPIKey: %v", err)

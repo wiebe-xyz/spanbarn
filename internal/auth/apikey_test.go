@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/hex"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -116,5 +117,27 @@ func TestAuthorizeStaticKeyMatchesExactly(t *testing.T) {
 		if _, _, err := a.Authorize(key); !errors.Is(err, ErrUnauthorized) {
 			t.Errorf("Authorize(%q) = %v, want ErrUnauthorized", key, err)
 		}
+	}
+}
+
+// NewAPIKey returns 64 hex characters of fresh randomness and the hash
+// Authorize looks the key up by.
+func TestNewAPIKey(t *testing.T) {
+	key, hash, err := NewAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hex.DecodeString(key); err != nil || len(key) != 64 {
+		t.Errorf("key %d chars, hex error %v; want 64 hex chars", len(key), err)
+	}
+	if hash != HashKey(key) {
+		t.Error("hash is not HashKey(key)")
+	}
+	key2, _, err := NewAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key == key2 {
+		t.Error("two keys are identical")
 	}
 }

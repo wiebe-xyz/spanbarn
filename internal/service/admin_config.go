@@ -122,6 +122,8 @@ type ProjectRepository interface {
 	SetProjectE2E(id int64, enabled bool) error
 	ProjectUsageStatsAll(hours int) ([]repository.ProjectUsageStats, error)
 	ListAPIKeys(projectID int64) ([]repository.APIKey, error)
+	CreateAPIKey(projectID int64, name, keyHash, scope string) (int64, error)
+	RevokeAPIKey(id int64) error
 	UpsertE2EUser(username string, expiresAt time.Time) (repository.User, error)
 }
 

@@ -1,32 +1,8 @@
 package main
 
 import (
-	"encoding/hex"
 	"testing"
 )
-
-func TestGenerateAPIKey(t *testing.T) {
-	key, err := generateAPIKey()
-	if err != nil {
-		t.Fatalf("generateAPIKey() error: %v", err)
-	}
-	if len(key) != 64 {
-		t.Errorf("expected 64 hex chars, got %d", len(key))
-	}
-	// Verify it's valid hex.
-	if _, err := hex.DecodeString(key); err != nil {
-		t.Errorf("key is not valid hex: %v", err)
-	}
-
-	// Verify uniqueness (two calls produce different keys).
-	key2, err := generateAPIKey()
-	if err != nil {
-		t.Fatalf("generateAPIKey() second call error: %v", err)
-	}
-	if key == key2 {
-		t.Error("two generated keys should not be identical")
-	}
-}
 
 func TestSlugFromName(t *testing.T) {
 	tests := []struct {
