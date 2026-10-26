@@ -42,6 +42,29 @@ func readSpanRollups(t *testing.T, repo *Repository, step int64, from, to time.T
 	return rows
 }
 
+// Rows that differ only in response code are separate rows, and each merges
+// on its own key.
+func TestAddSpanRollupsKeysOnHTTPStatus(t *testing.T) {
+	repo := setupTestDB(t)
+	b := time.Date(2026, 10, 26, 12, 5, 0, 0, time.UTC)
+	ok, failed := spanRollupRow(b, "GET /", 10), spanRollupRow(b, "GET /", 20)
+	ok.HTTPStatus, failed.HTTPStatus = 200, 503
+	for range 2 {
+		if err := repo.AddSpanRollups([]SpanRollup{ok, failed}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := readSpanRollups(t, repo, 300, b, b.Add(5*time.Minute))
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2: %+v", len(rows), rows)
+	}
+	for _, r := range rows {
+		if r.Count != 2 || (r.HTTPStatus != 200 && r.HTTPStatus != 503) {
+			t.Errorf("row = %+v", r)
+		}
+	}
+}
+
 // A second flush of the same key adds its counts and merges its histogram.
 func TestAddSpanRollupsMergesOnConflict(t *testing.T) {
 	repo := setupTestDB(t)

@@ -190,6 +190,7 @@ func newSpanRollups(w aggregation.SpanRollupWriter, cfg config.Config, logger *s
 	return aggregation.NewSpanRollups(w, aggregation.SpanRollupConfig{
 		MaxNames:    cfg.SpanRollupMaxNames,
 		MaxServices: cfg.SpanRollupMaxServices,
+		HTTPStatus:  cfg.SpanRollupHTTPStatus,
 	}, logger)
 }
 

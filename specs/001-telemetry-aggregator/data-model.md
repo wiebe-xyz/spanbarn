@@ -263,6 +263,7 @@ empty at the migration.
 | kind | TEXT | Lowercased span kind |
 | is_root | INTEGER | 1 when the span has no parent |
 | status | TEXT | `ok`, `error` or `unset` |
+| http_status | INTEGER | Response code of a root span; 0 for child spans, spans without one, and when `SPANBARN_SPAN_ROLLUP_HTTP_STATUS` is off |
 | count | INTEGER | Spans seen |
 | weighted_count | INTEGER | Sum of sample weights of the spans that had one |
 | weighted_spans | INTEGER | Spans that had a sample weight |
@@ -270,7 +271,7 @@ empty at the migration.
 | min_us, max_us | INTEGER | |
 | hist | BLOB | Quarter-octave duration histogram (`internal/spanhist`, encoding v1) |
 
-**Primary key:** (step_seconds, bucket, project_id, service, name, kind, is_root, status).
+**Primary key:** (step_seconds, bucket, project_id, service, name, kind, is_root, status, http_status).
 Bucket comes first so flushes write to the newest pages. Additive flushes merge
 `hist` with the SQL function `span_hist_merge`.
 

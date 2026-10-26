@@ -268,6 +268,7 @@ project automatically.
 | `SPANBARN_SPAN_ROLLUPS` | `true` | Write span rollups (see [Span rollups](#span-rollups)) |
 | `SPANBARN_SPAN_ROLLUP_MAX_NAMES` | `300` | Span names kept per service per hour; the rest count as `~other` |
 | `SPANBARN_SPAN_ROLLUP_MAX_SERVICES` | `200` | Services kept per project per hour; the rest count as `~other` |
+| `SPANBARN_SPAN_ROLLUP_HTTP_STATUS` | `true` | Split root span rows by response code; `false` writes 0 and keeps the key |
 | `SPANBARN_SPAN_ROLLUP_5M_HOURS` | `72` | Hours to keep 5-minute span rollups |
 | `SPANBARN_SPAN_ROLLUP_HOURLY_DAYS` | `30` | Days to keep hourly span rollups |
 | `SPANBARN_SPAN_ROLLUP_DAILY_DAYS` | `400` | Days to keep daily span rollups |
@@ -351,7 +352,8 @@ compacted away. `GET /api/v1/metrics/series` reports what it used as
 
 `span_rollups` counts every span that reaches the writer, before the boring-span
 sampler decides what is stored, keyed by project, service, span name, kind, whether the
-span is a root, and status (`ok`, `error` or `unset`). Each row holds the count,
+span is a root, status (`ok`, `error` or `unset`) and, for root spans only,
+the HTTP response code (0 when there is none). Each row holds the count,
 the sample-weight sums, the duration sum, min and max, and a quarter-octave
 duration histogram that merges exactly, so percentiles can be read for any range
 of buckets. Buckets go by arrival time.

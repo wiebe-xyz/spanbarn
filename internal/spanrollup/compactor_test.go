@@ -196,3 +196,13 @@ func TestMergeSkipsAHistogramThatDoesNotDecode(t *testing.T) {
 		t.Errorf("merged = %+v, hist count %d, err %v", got[0], h.Count(), err)
 	}
 }
+
+func TestMergeKeepsHTTPStatusesApart(t *testing.T) {
+	b := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
+	ok, failed, ok2 := fiveMinute(b, "op", 10), fiveMinute(b, "op", 20), fiveMinute(b.Add(5*time.Minute), "op", 30)
+	ok.HTTPStatus, failed.HTTPStatus, ok2.HTTPStatus = 200, 500, 200
+	got := Merge([]repository.SpanRollup{ok, failed, ok2}, 3600, b)
+	if len(got) != 2 || got[0].HTTPStatus != 200 || got[0].Count != 2 || got[1].HTTPStatus != 500 || got[1].Count != 1 {
+		t.Errorf("merged = %+v", got)
+	}
+}

@@ -214,6 +214,7 @@ type rowKey struct {
 	service, name, kind string
 	root                bool
 	status              string
+	httpStatus          int64
 }
 
 // Merge folds rows into one row per key at the given step and bucket.
@@ -227,7 +228,7 @@ func Merge(rows []repository.SpanRollup, step int64, bucket time.Time) []reposit
 	byKey := map[rowKey]*acc{}
 	var order []rowKey
 	for _, r := range rows {
-		k := rowKey{r.ProjectID, r.Service, r.Name, r.Kind, r.IsRoot, r.Status}
+		k := rowKey{r.ProjectID, r.Service, r.Name, r.Kind, r.IsRoot, r.Status, r.HTTPStatus}
 		a := byKey[k]
 		if a == nil {
 			a = &acc{row: r}

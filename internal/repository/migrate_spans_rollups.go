@@ -8,7 +8,7 @@ import (
 
 // spansSpanRollupsUp adds span_rollups and its compaction watermarks: span
 // counts and a quarter-octave duration histogram per (step, bucket, project,
-// service, name, kind, root or not, status), written by the accumulator from
+// service, name, kind, root or not, status, HTTP status), written by the accumulator from
 // every span it sees and compacted from 5 minutes to hours to days.
 //
 // bucket is the start of the bucket in unix seconds, by arrival time
@@ -16,6 +16,9 @@ import (
 // bucket, so a flush writes next to the previous one at the end of the tree,
 // a time range reads one contiguous slice, and retention trims the oldest
 // buckets from the front.
+//
+// http_status is the response code of a root span and 0 for every other span,
+// so only root rows split by it.
 //
 // Both tables start empty: nothing is backfilled from spans.
 func spansSpanRollupsUp(ctx context.Context, tx *sql.Tx) error {
@@ -29,6 +32,7 @@ func spansSpanRollupsUp(ctx context.Context, tx *sql.Tx) error {
 			kind            TEXT NOT NULL,
 			is_root         INTEGER NOT NULL,
 			status          TEXT NOT NULL,
+			http_status     INTEGER NOT NULL,
 			count           INTEGER NOT NULL,
 			weighted_count  INTEGER NOT NULL,
 			weighted_spans  INTEGER NOT NULL,
@@ -36,7 +40,7 @@ func spansSpanRollupsUp(ctx context.Context, tx *sql.Tx) error {
 			min_us          INTEGER NOT NULL,
 			max_us          INTEGER NOT NULL,
 			hist            BLOB NOT NULL,
-			PRIMARY KEY (step_seconds, bucket, project_id, service, name, kind, is_root, status)
+			PRIMARY KEY (step_seconds, bucket, project_id, service, name, kind, is_root, status, http_status)
 		) WITHOUT ROWID`,
 		`CREATE TABLE IF NOT EXISTS span_rollup_compaction (
 			step_seconds      INTEGER PRIMARY KEY,

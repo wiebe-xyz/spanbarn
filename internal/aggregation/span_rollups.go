@@ -37,6 +37,9 @@ type SpanRollupConfig struct {
 	MaxServices int
 	// FlushInterval is how often Run writes the open buckets. Default 30s.
 	FlushInterval time.Duration
+	// HTTPStatus splits root rows by the span's response code. Off writes 0
+	// for every span, which keeps the key and turns the split off.
+	HTTPStatus bool
 }
 
 func (c SpanRollupConfig) withDefaults() SpanRollupConfig {
@@ -54,7 +57,8 @@ func (c SpanRollupConfig) withDefaults() SpanRollupConfig {
 
 // SpanRollups folds every span it is given into 5-minute buckets of
 // span_rollups: counts, sample weights, duration sum, min, max and a
-// quarter-octave histogram per (project, service, name, kind, root, status).
+// quarter-octave histogram per (project, service, name, kind, root, status,
+// HTTP status of a root span).
 // A bucket is keyed by arrival time. Each flush adds what arrived since the
 // last one into the stored rows, so the open bucket is written on every flush
 // and a restart loses one flush interval at most.
@@ -76,6 +80,7 @@ type spanRollupKey struct {
 	kind      string
 	root      bool
 	status    string
+	http      int64
 }
 
 type spanRollupSlot struct {
@@ -109,6 +114,10 @@ func (r *SpanRollups) Add(s repository.Span) {
 		at = r.now()
 	}
 	bucket := at.Unix() - at.Unix()%SpanRollupStep
+	var code int64
+	if s.ParentSpanID == "" && r.cfg.HTTPStatus {
+		code = httpStatusOf(s.Attributes) // outside the lock: it scans the attributes
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	service, name, first := r.caps.admit(s.ProjectID, s.Service, s.Name, bucket, r.cfg)
@@ -124,6 +133,7 @@ func (r *SpanRollups) Add(s repository.Span) {
 		kind:      strings.ToLower(s.Kind),
 		root:      s.ParentSpanID == "",
 		status:    rollupStatus(s.Status),
+		http:      code,
 	}
 	sl := r.slots[k]
 	if sl == nil {
@@ -186,6 +196,7 @@ func (sl *spanRollupSlot) row(k spanRollupKey) repository.SpanRollup {
 		Kind:          k.kind,
 		IsRoot:        k.root,
 		Status:        k.status,
+		HTTPStatus:    k.http,
 		Count:         sl.count,
 		WeightedCount: sl.weights.count,
 		WeightedSpans: sl.weights.spans,

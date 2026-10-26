@@ -11,7 +11,7 @@ import (
 )
 
 // SpanRollup is one row of span_rollups: the spans of one (project, service,
-// name, kind, root or not, status) that arrived in one bucket.
+// name, kind, root or not, status, HTTP status) that arrived in one bucket.
 type SpanRollup struct {
 	StepSeconds int64
 	Bucket      time.Time // bucket start, whole seconds, UTC
@@ -21,7 +21,10 @@ type SpanRollup struct {
 	Kind        string
 	IsRoot      bool
 	Status      string
-	Count       int64
+	// HTTPStatus is the response code of a root span; 0 for a span without
+	// one and for every child span.
+	HTTPStatus int64
+	Count      int64
 	// WeightedCount sums the sample weights of the spans that had one and
 	// WeightedSpans counts those spans, as on aggregates (see SpanWeights).
 	WeightedCount int64
@@ -36,15 +39,15 @@ type SpanRollup struct {
 // slot, as metricRollupChunk does for metric rollups.
 const spanRollupChunk = 500
 
-const spanRollupColumns = `step_seconds, bucket, project_id, service, name, kind, is_root, status,
+const spanRollupColumns = `step_seconds, bucket, project_id, service, name, kind, is_root, status, http_status,
 	count, weighted_count, weighted_spans, sum_duration_us, min_us, max_us, hist`
 
 // spanRollupAddSQL folds a flush into its row: counts and sums add, min and
 // max take the extreme and the histograms merge, so the accumulator can write
 // the open bucket on every flush and a late span still lands in its bucket.
 const spanRollupAddSQL = `INSERT INTO span_rollups (` + spanRollupColumns + `)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(step_seconds, bucket, project_id, service, name, kind, is_root, status)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(step_seconds, bucket, project_id, service, name, kind, is_root, status, http_status)
 	DO UPDATE SET
 		count = count + excluded.count,
 		weighted_count = weighted_count + excluded.weighted_count,
@@ -58,7 +61,7 @@ const spanRollupAddSQL = `INSERT INTO span_rollups (` + spanRollupColumns + `)
 // coarse row from every source row of its bucket, so writing it again after an
 // interrupted pass replaces it with the same value instead of counting twice.
 const spanRollupReplaceSQL = `INSERT OR REPLACE INTO span_rollups (` + spanRollupColumns + `)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func spanRollupArgs(s SpanRollup) []any {
 	root := 0
@@ -66,7 +69,7 @@ func spanRollupArgs(s SpanRollup) []any {
 		root = 1
 	}
 	return []any{
-		s.StepSeconds, s.Bucket.Unix(), s.ProjectID, s.Service, s.Name, s.Kind, root, s.Status,
+		s.StepSeconds, s.Bucket.Unix(), s.ProjectID, s.Service, s.Name, s.Kind, root, s.Status, s.HTTPStatus,
 		s.Count, s.WeightedCount, s.WeightedSpans, s.SumDurationUs, s.MinUs, s.MaxUs, s.Hist,
 	}
 }
@@ -118,6 +121,7 @@ func compareSpanRollupKey(a, b SpanRollup) int {
 		strings.Compare(a.Kind, b.Kind),
 		compareBool(a.IsRoot, b.IsRoot),
 		strings.Compare(a.Status, b.Status),
+		cmp.Compare(a.HTTPStatus, b.HTTPStatus),
 	)
 }
 
@@ -166,7 +170,7 @@ func (r *Repository) SpanRollupWindow(ctx context.Context, step int64, from, to 
 	for rows.Next() {
 		var s SpanRollup
 		var bucket int64
-		if err := rows.Scan(&s.StepSeconds, &bucket, &s.ProjectID, &s.Service, &s.Name, &s.Kind, &s.IsRoot, &s.Status,
+		if err := rows.Scan(&s.StepSeconds, &bucket, &s.ProjectID, &s.Service, &s.Name, &s.Kind, &s.IsRoot, &s.Status, &s.HTTPStatus,
 			&s.Count, &s.WeightedCount, &s.WeightedSpans, &s.SumDurationUs, &s.MinUs, &s.MaxUs, &s.Hist); err != nil {
 			return nil, err
 		}
