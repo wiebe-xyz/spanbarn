@@ -15,14 +15,16 @@ import (
 const (
 	// DefaultInterval is how often the recent spans are scanned.
 	DefaultInterval = time.Minute
-	// lookback is the window the first scan after start covers. Later scans
-	// read only the spans stored since the previous scan.
-	lookback = 10 * time.Minute
+	// seedSpans is how many of the newest spans the first scan after start
+	// reads, about 20 minutes of prod traffic. That scan only records the
+	// versions already running. Later scans read only the spans stored since
+	// the previous scan.
+	seedSpans = 20000
 )
 
 // Repository is the storage the marker needs.
 type Repository interface {
-	RecentSpanVersions(afterID int64, since time.Time) ([]repository.VersionSighting, int64, error)
+	RecentSpanVersions(afterID, seed int64) ([]repository.VersionSighting, int64, error)
 	ReleaseExists(projectID int64, version string) (bool, error)
 	CreateRelease(projectID int64, version string, at time.Time) (int64, error)
 }
@@ -32,7 +34,6 @@ type Marker struct {
 	repo     Repository
 	logger   *slog.Logger
 	interval time.Duration
-	now      func() time.Time
 
 	mu    sync.Mutex
 	known map[key]bool
@@ -58,7 +59,7 @@ func New(repo Repository, interval time.Duration, logger *slog.Logger) *Marker {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	return &Marker{repo: repo, logger: logger, interval: interval, now: time.Now, known: map[key]bool{}}
+	return &Marker{repo: repo, logger: logger, interval: interval, known: map[key]bool{}}
 }
 
 // Run scans until ctx is canceled.
@@ -81,7 +82,7 @@ func (m *Marker) Scan() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	sightings, lastID, err := m.repo.RecentSpanVersions(m.lastID, m.now().Add(-lookback))
+	sightings, lastID, err := m.repo.RecentSpanVersions(m.lastID, seedSpans)
 	if err != nil {
 		m.logger.Warn("release marks: cannot scan recent spans", "error", err)
 		return 0
