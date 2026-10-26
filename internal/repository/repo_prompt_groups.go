@@ -9,10 +9,12 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
-// PromptGroup is the prompts in a range for one operation name, model and
-// service: call and error counts, token and cost sums, and a duration
-// histogram for percentiles.
+// PromptGroup is the prompts in a range for one project, operation name,
+// model and service: call and error counts, token and cost sums, and a
+// duration histogram for percentiles. Groups stay per project because each
+// project has its own sample ratio.
 type PromptGroup struct {
+	ProjectID    int64
 	Name         string
 	Model        string
 	Service      string
@@ -27,7 +29,7 @@ type PromptGroup struct {
 }
 
 // QueryPromptGroups folds the prompts that match f (Limit and Offset are
-// ignored) into one group per name, model and service. SQLite returns a row
+// ignored) into one group per project, name, model and service. SQLite returns a row
 // per group and duration bin and reads no prompt or response bodies, so the
 // whole range counts, however many prompts it holds. Over a sharded family
 // each segment is grouped on its own and the groups are merged here.
@@ -37,7 +39,7 @@ func (r *Repository) QueryPromptGroups(ctx context.Context, f PromptFilter) ([]P
 	where, args := f.where()
 	query := func(table string) string {
 		q := fmt.Sprintf(`
-			SELECT name, model, service, MAX(gen_ai_system), %s AS bin, COUNT(*),
+			SELECT project_id, name, model, service, MAX(gen_ai_system), %s AS bin, COUNT(*),
 			       SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),
 			       MIN(duration_us), MAX(duration_us), SUM(duration_us),
 			       SUM(input_tokens), SUM(output_tokens), SUM(cost_usd)
@@ -45,7 +47,7 @@ func (r *Repository) QueryPromptGroups(ctx context.Context, f PromptFilter) ([]P
 		if len(where) > 0 {
 			q += " WHERE " + strings.Join(where, " AND ")
 		}
-		return q + " GROUP BY name, model, service, bin"
+		return q + " GROUP BY project_id, name, model, service, bin"
 	}
 
 	g := promptGrouper{byKey: map[promptGroupKey]*PromptGroup{}}
@@ -65,7 +67,10 @@ func (r *Repository) QueryPromptGroups(ctx context.Context, f PromptFilter) ([]P
 	return out, nil
 }
 
-type promptGroupKey struct{ name, model, service string }
+type promptGroupKey struct {
+	project              int64
+	name, model, service string
+}
 
 // promptGrouper merges per-bin rows into groups, keeping first-seen order.
 type promptGrouper struct {
@@ -82,7 +87,7 @@ func (g *promptGrouper) read(ctx context.Context, db *sql.DB, query string, args
 	for rows.Next() {
 		var row PromptGroup
 		var b spanhist.Bin
-		if err := rows.Scan(&row.Name, &row.Model, &row.Service, &row.GenAISystem, &b.Index, &b.Count,
+		if err := rows.Scan(&row.ProjectID, &row.Name, &row.Model, &row.Service, &row.GenAISystem, &b.Index, &b.Count,
 			&row.ErrorCount, &b.Min, &b.Max, &row.TotalTimeUs,
 			&row.InputTokens, &row.OutputTokens, &row.CostUSD); err != nil {
 			return err
@@ -93,10 +98,10 @@ func (g *promptGrouper) read(ctx context.Context, db *sql.DB, query string, args
 }
 
 func (g *promptGrouper) add(row PromptGroup, b spanhist.Bin) {
-	k := promptGroupKey{row.Name, row.Model, row.Service}
+	k := promptGroupKey{row.ProjectID, row.Name, row.Model, row.Service}
 	cur, ok := g.byKey[k]
 	if !ok {
-		cur = &PromptGroup{Name: row.Name, Model: row.Model, Service: row.Service}
+		cur = &PromptGroup{ProjectID: row.ProjectID, Name: row.Name, Model: row.Model, Service: row.Service}
 		g.byKey[k] = cur
 		g.order = append(g.order, k)
 	}
