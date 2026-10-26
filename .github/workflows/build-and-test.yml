@@ -413,6 +413,13 @@ jobs:
             sh /tmp/spanbarn-deploy-staging/deploy/scripts/assert-version.sh spanbarn-staging spanbarn-ingest spanbarn-ingest ${VERSION} ${GITHUB_SHA}
           "
 
+      # assert-version.sh reads each pod from inside the cluster. This reads
+      # the public hostname, through the ingress, as a user would: health and
+      # version report this commit, the authenticated API refuses a request
+      # without a session with exactly 401, and the page and its bundle load.
+      - name: Smoke staging through its public hostname
+        run: bash scripts/smoke.sh https://spanbarn.staging.wiebe.xyz "main-${GITHUB_SHA:0:7}" "${GITHUB_SHA}"
+
       - name: Post release marker to BugBarn
         if: vars.BUGBARN_ENDPOINT != ''
         env:
@@ -435,18 +442,23 @@ jobs:
           set -euo pipefail
           STAGING_URL=https://spanbarn.staging.wiebe.xyz
           echo "Waiting for staging writer API to finish initializing (migrations may take a while)..."
+          # The route sits behind ingest auth, so a wired writer refuses the
+          # probe bearer with exactly 401. 404 means the API is not wired yet;
+          # a 5xx or no answer is not ready either. Before, anything but 404
+          # and 000 passed, so a 502 from the ingress counted as ready.
+          STATUS=000
           for i in $(seq 1 180); do
-            STATUS=$(curl -sf -o /dev/null -w "%{http_code}" -X POST \
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 -X POST \
               "${STAGING_URL}/api/v1/e2e/session" \
-              -H "Authorization: Bearer probe" 2>/dev/null || echo "000")
-            if [ "$STATUS" != "404" ] && [ "$STATUS" != "000" ]; then
+              -H "Authorization: Bearer probe" 2>/dev/null) || STATUS=000
+            if [ "$STATUS" = "401" ]; then
               echo "Writer API ready (HTTP ${STATUS})"
               exit 0
             fi
             echo "Not ready yet, attempt ${i}/180 (HTTP ${STATUS})"
             sleep 10
           done
-          echo "Timed out waiting for writer API to initialize"
+          echo "::error::writer API not ready after 180 attempts, last HTTP ${STATUS}"
           exit 1
 
       # The full suite runs nightly (e2e-nightly.yml). This gate runs only the
