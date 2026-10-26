@@ -121,31 +121,6 @@ func (r *Repository) QueryCoarseRollups(ctx context.Context, f CoarseRollupFilte
 	return out, nil
 }
 
-// QueryProjectCoarseRollups returns every series of one tier for a project in a
-// range, across all metric names. Insight detection uses it the way it uses
-// QueryProjectRollups for the 5-minute tier.
-func (r *Repository) QueryProjectCoarseRollups(ctx context.Context, projectID, step int64, from, to time.Time, limit int) ([]MetricRollup, error) {
-	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
-	defer cancel()
-
-	if limit <= 0 || limit > 200000 {
-		limit = 50000
-	}
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT `+coarseColumns+`
-		 FROM metric_rollups_coarse
-		 WHERE project_id = ? AND step_seconds = ? AND bucket >= ? AND bucket <= ?
-		 ORDER BY name ASC, attr_fingerprint ASC, bucket ASC LIMIT ?`,
-		projectID, step, from, to, limit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	return scanMetricRollups(rows)
-}
-
 // DeleteCoarseRollupsOlderThanLimited removes at most max rows of one tier older
 // than cutoff, reporting whether more were left for the next cycle.
 func (r *Repository) DeleteCoarseRollupsOlderThanLimited(ctx context.Context, step int64, cutoff time.Time, max int64) (int64, bool, error) {

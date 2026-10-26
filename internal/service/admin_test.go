@@ -175,8 +175,8 @@ func TestLogsMetricsAndExportServices(t *testing.T) {
 	if _, err := ms.CoarseRollups(ctx, CoarseRollupFilter{ProjectID: pid, StepSeconds: 3600, From: from, To: to}); err != nil {
 		t.Fatalf("CoarseRollups: %v", err)
 	}
-	if _, err := ms.ProjectRollups(ctx, pid, from, to, 0); err != nil {
-		t.Fatalf("ProjectRollups: %v", err)
+	if in, err := ms.Insights(ctx, pid, from, to); err != nil || in == nil {
+		t.Fatalf("Insights: %v, %v", in, err)
 	}
 
 	n := 0

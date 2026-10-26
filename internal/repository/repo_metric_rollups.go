@@ -246,32 +246,6 @@ func reverseRollups(rows []MetricRollup) {
 	}
 }
 
-// QueryProjectRollups returns every rollup bucket for a project within a time
-// range, across all metric names, ordered by name then bucket ascending. Used
-// by insight detection to scan all series at once.
-func (r *Repository) QueryProjectRollups(ctx context.Context, projectID int64, from, to time.Time, limit int) ([]MetricRollup, error) {
-	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
-	defer cancel()
-
-	if limit <= 0 || limit > 200000 {
-		limit = 50000
-	}
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT project_id, name, type, unit, temporality, attr_fingerprint, attributes, bucket,
-			count, sum, min, max, last, obs_count, extra
-		 FROM metric_rollups
-		 WHERE project_id = ? AND bucket >= ? AND bucket <= ?
-		 ORDER BY name ASC, attr_fingerprint ASC, bucket ASC LIMIT ?`,
-		projectID, from, to, limit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	return scanMetricRollups(rows)
-}
-
 // DeleteMetricRollupsOlderThan removes rollup buckets older than cutoff, in
 // bounded chunks so the write lock is never held long enough to block ingest.
 func (r *Repository) DeleteMetricRollupsOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
