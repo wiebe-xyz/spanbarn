@@ -15,14 +15,14 @@ import (
 const (
 	// DefaultInterval is how often the recent spans are scanned.
 	DefaultInterval = time.Minute
-	// lookback is the window each scan covers. It is several intervals long, so
-	// a missed or slow tick does not skip a version.
+	// lookback is the window the first scan after start covers. Later scans
+	// read only the spans stored since the previous scan.
 	lookback = 10 * time.Minute
 )
 
 // Repository is the storage the marker needs.
 type Repository interface {
-	RecentSpanVersions(since time.Time) ([]repository.VersionSighting, error)
+	RecentSpanVersions(afterID int64, since time.Time) ([]repository.VersionSighting, int64, error)
 	ReleaseExists(projectID int64, version string) (bool, error)
 	CreateRelease(projectID int64, version string, at time.Time) (int64, error)
 }
@@ -40,6 +40,12 @@ type Marker struct {
 	// already running. Marking them would date a long-running version to the
 	// moment this process started.
 	seeded bool
+	// lastID is the newest span id the previous scan covered, 0 before the
+	// first successful scan. A failed scan leaves it, so the next one rereads.
+	lastID int64
+	// retry holds sightings whose release could not be checked or created.
+	// The next scan reads only newer spans, so it retries these itself.
+	retry []repository.VersionSighting
 }
 
 type key struct {
@@ -75,18 +81,21 @@ func (m *Marker) Scan() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	sightings, err := m.repo.RecentSpanVersions(m.now().Add(-lookback))
+	sightings, lastID, err := m.repo.RecentSpanVersions(m.lastID, m.now().Add(-lookback))
 	if err != nil {
 		m.logger.Warn("release marks: cannot scan recent spans", "error", err)
 		return 0
 	}
+	pending := append(m.retry, sightings...)
+	m.retry = nil
 	created := 0
-	for _, s := range sightings {
+	for _, s := range pending {
 		if m.mark(s) {
 			created++
 		}
 	}
 	m.seeded = true
+	m.lastID = lastID
 	return created
 }
 
@@ -104,6 +113,7 @@ func (m *Marker) mark(s repository.VersionSighting) bool {
 	if err != nil {
 		m.logger.Warn("release marks: cannot check for a release", "project_id", s.ProjectID, "version", s.Version, "error", err)
 		delete(m.known, k)
+		m.retry = append(m.retry, s)
 		return false
 	}
 	if exists {
@@ -112,6 +122,7 @@ func (m *Marker) mark(s repository.VersionSighting) bool {
 	if _, err := m.repo.CreateRelease(s.ProjectID, s.Version, s.FirstSeen); err != nil {
 		m.logger.Warn("release marks: cannot create a release", "project_id", s.ProjectID, "version", s.Version, "error", err)
 		delete(m.known, k)
+		m.retry = append(m.retry, s)
 		return false
 	}
 	m.logger.Info("release marks: new version", "project_id", s.ProjectID, "version", s.Version)

@@ -18,7 +18,7 @@ func TestRecentSpanVersions(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	got, err := repo.RecentSpanVersions(time.Now().UTC().Add(-time.Hour))
+	got, maxID, err := repo.RecentSpanVersions(0, time.Now().UTC().Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("RecentSpanVersions: %v", err)
 	}
@@ -32,10 +32,57 @@ func TestRecentSpanVersions(t *testing.T) {
 	if len(got) != 2 || !versions["1.0.0"] || !versions["2.0.0"] {
 		t.Fatalf("want versions 1.0.0 and 2.0.0 once each, got %+v", got)
 	}
+	if maxID == 0 {
+		t.Fatalf("want the newest span id as the next watermark, got 0")
+	}
 
-	none, err := repo.RecentSpanVersions(time.Now().UTC().Add(time.Hour))
+	none, _, err := repo.RecentSpanVersions(0, time.Now().UTC().Add(time.Hour))
 	if err != nil || len(none) != 0 {
 		t.Fatalf("a window after every span must list nothing, got %+v, %v", none, err)
+	}
+}
+
+// After the first scan, each scan reads only the spans stored since the
+// previous one, by span id. A trace flushed late out of staging keeps its old
+// ingested_at, so an ingested_at window would miss it; the id range does not.
+func TestRecentSpanVersionsReadsOnlyNewSpans(t *testing.T) {
+	repo := setupTestDB(t)
+	p, _ := repo.CreateProject("proj", "Proj")
+	if err := repo.InsertSpans([]Span{versionSpan(p.ID, "1", "web", "ok", `{"service.version":"1.0.0"}`, 10)}); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+	_, watermark, err := repo.RecentSpanVersions(0, time.Now().UTC().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+
+	again, same, err := repo.RecentSpanVersions(watermark, time.Time{})
+	if err != nil || len(again) != 0 || same != watermark {
+		t.Fatalf("no new spans: want nothing and watermark %d, got %+v, %d, %v", watermark, again, same, err)
+	}
+
+	if err := repo.InsertSpans([]Span{
+		versionSpan(p.ID, "2", "web", "ok", `{"service.version":"1.0.0"}`, 10),
+		versionSpan(p.ID, "3", "web", "ok", `{"service.version":"1.1.0"}`, 10),
+	}); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+	if _, err := repo.DB().Exec(`UPDATE spans SET ingested_at = ? WHERE span_id = 's3'`, time.Now().UTC().Add(-48*time.Hour)); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	got, next, err := repo.RecentSpanVersions(watermark, time.Time{})
+	if err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if next <= watermark {
+		t.Fatalf("watermark must move past %d, got %d", watermark, next)
+	}
+	versions := map[string]bool{}
+	for _, s := range got {
+		versions[s.Version] = true
+	}
+	if len(got) != 2 || !versions["1.0.0"] || !versions["1.1.0"] {
+		t.Fatalf("want the two new spans' versions, including the backdated one, got %+v", got)
 	}
 }
 
@@ -90,5 +137,29 @@ func TestRecentSpanVersionsUsesIndex(t *testing.T) {
 	}
 	if joined := strings.Join(plan, " | "); !strings.Contains(joined, "idx_spans_ingested") && !strings.Contains(joined, "idx_spans_project_ingested") {
 		t.Fatalf("plan does not use an ingested_at index: %s", joined)
+	}
+}
+
+// Scans after the first walk only the new span ids, as a rowid range.
+func TestRecentSpanVersionsWatermarkUsesRowidRange(t *testing.T) {
+	repo := setupTestDB(t)
+	rows, err := repo.DB().Query(`EXPLAIN QUERY PLAN SELECT project_id, json_extract(attributes, '$."service.version"') AS version, MIN(ingested_at)
+		FROM spans WHERE id > ? AND id <= ? AND kind = 'server' AND json_extract(attributes, '$."service.version"') IS NOT NULL
+		GROUP BY project_id, version`, 1, 2)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	if joined := strings.Join(plan, " | "); !strings.Contains(joined, "INTEGER PRIMARY KEY (rowid>? AND rowid<?)") {
+		t.Fatalf("plan does not walk a rowid range: %s", joined)
 	}
 }

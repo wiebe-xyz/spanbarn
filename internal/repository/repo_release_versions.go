@@ -11,18 +11,36 @@ type VersionSighting struct {
 }
 
 // RecentSpanVersions lists the distinct service.version values of entry-point
-// spans ingested since the given time, per project. Spans without a version
-// are left out. The scan uses idx_spans_ingested.
-func (r *Repository) RecentSpanVersions(since time.Time) ([]VersionSighting, error) {
+// spans per project, for the spans stored after the span id afterID. It also
+// returns the newest span id, which the caller passes as afterID next time, so
+// each call reads only the spans stored since the previous one. With afterID 0
+// it reads the spans ingested since the given time instead (idx_spans_ingested).
+// Spans without a version are left out.
+//
+// Span ids grow with every insert, including a trace flushed out of staging
+// long after its spans were ingested, so the id range misses nothing that an
+// ingested_at window would miss.
+func (r *Repository) RecentSpanVersions(afterID int64, since time.Time) ([]VersionSighting, int64, error) {
 	ctx, cancel := r.queryContext()
 	defer cancel()
+	var maxID int64
+	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM spans`).Scan(&maxID); err != nil {
+		return nil, afterID, err
+	}
+	if maxID <= afterID {
+		return nil, afterID, nil
+	}
+	window, arg := `id > ?`, any(afterID)
+	if afterID == 0 {
+		window, arg = `ingested_at >= ?`, since.UTC()
+	}
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT project_id, json_extract(attributes, '$."service.version"') AS version, MIN(ingested_at)
 		FROM spans
-		WHERE ingested_at >= ? AND kind = 'server' AND json_extract(attributes, '$."service.version"') IS NOT NULL
-		GROUP BY project_id, version`, since.UTC())
+		WHERE `+window+` AND id <= ? AND kind = 'server' AND json_extract(attributes, '$."service.version"') IS NOT NULL
+		GROUP BY project_id, version`, arg, maxID)
 	if err != nil {
-		return nil, err
+		return nil, afterID, err
 	}
 	defer rows.Close()
 	var out []VersionSighting
@@ -30,14 +48,17 @@ func (r *Repository) RecentSpanVersions(since time.Time) ([]VersionSighting, err
 		var s VersionSighting
 		var first any
 		if err := rows.Scan(&s.ProjectID, &s.Version, &first); err != nil {
-			return nil, err
+			return nil, afterID, err
 		}
 		s.FirstSeen = asTime(first)
 		if s.Version != "" {
 			out = append(out, s)
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, afterID, err
+	}
+	return out, maxID, nil
 }
 
 // ReleaseExists reports whether the project already has a release with this version.
