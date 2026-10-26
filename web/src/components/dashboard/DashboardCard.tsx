@@ -1,5 +1,7 @@
 import { type ReactElement, type ReactNode } from 'react'
 import { Info } from 'lucide-react'
+import type { DataSource } from '../../api/dashboardTypes'
+import { SourceLabel } from '../SourceLabel'
 
 type DashboardCardProps = {
   title: string
@@ -8,11 +10,13 @@ type DashboardCardProps = {
   loading: boolean
   error: string | null
   empty: boolean
+  /** The store the card's data came from, shown next to the title. */
+  source?: DataSource
   children: ReactNode
 }
 
 /** Shared frame for a dashboard chart: title, info tooltip, and the loading, error and empty states. */
-export function DashboardCard({ title, info, loading, error, empty, children }: DashboardCardProps): ReactElement {
+export function DashboardCard({ title, info, loading, error, empty, source, children }: DashboardCardProps): ReactElement {
   let body: ReactNode = children
   if (error) {
     body = <div role="alert" style={messageStyle('var(--error)')}>{error}</div>
@@ -26,8 +30,11 @@ export function DashboardCard({ title, info, loading, error, empty, children }: 
     <section className="card dashboard-card" aria-label={title} style={{ minWidth: 0 }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
         <h3 style={{ fontSize: '0.875rem', fontWeight: 600, margin: 0 }}>{title}</h3>
-        <span title={info} aria-label={info} style={{ color: 'var(--text-muted)', display: 'inline-flex' }}>
-          <Info size={16} aria-hidden="true" />
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+          <SourceLabel source={source} />
+          <span title={info} aria-label={info} style={{ color: 'var(--text-muted)', display: 'inline-flex' }}>
+            <Info size={16} aria-hidden="true" />
+          </span>
         </span>
       </header>
       {body}

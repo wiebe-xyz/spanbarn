@@ -167,17 +167,11 @@ func (r *Repository) SpanRollupWindow(ctx context.Context, step int64, from, to 
 	}
 	defer rows.Close()
 	var out []SpanRollup
-	for rows.Next() {
-		var s SpanRollup
-		var bucket int64
-		if err := rows.Scan(&s.StepSeconds, &bucket, &s.ProjectID, &s.Service, &s.Name, &s.Kind, &s.IsRoot, &s.Status, &s.HTTPStatus,
-			&s.Count, &s.WeightedCount, &s.WeightedSpans, &s.SumDurationUs, &s.MinUs, &s.MaxUs, &s.Hist); err != nil {
-			return nil, err
-		}
-		s.Bucket = time.Unix(bucket, 0).UTC()
+	err = scanSpanRollupRows(rows, func(s SpanRollup) error {
 		out = append(out, s)
-	}
-	return out, rows.Err()
+		return nil
+	})
+	return out, err
 }
 
 // OldestSpanRollupBucket returns the earliest bucket of one tier, read from

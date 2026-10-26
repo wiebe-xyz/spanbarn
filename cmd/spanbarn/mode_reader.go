@@ -94,6 +94,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 			sessions = newSessionService(roRepo, cfg, logger)
 			userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
 			querySvc = service.NewQueryService(roRepo, logger, ingest.NewCachedRatioLookup(roRepo, time.Minute))
+			applySpanRollupReads(querySvc, cfg)
 
 			queryCache = newQueryCache(cfg, logger, false)
 			querySvc.SetCache(queryCache)

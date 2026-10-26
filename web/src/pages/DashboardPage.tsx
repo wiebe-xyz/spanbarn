@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type ReactElement } from 'react'
 import { api } from '../api/client'
-import type { DashboardFilter, DashboardPercentiles } from '../api/dashboardTypes'
+import type { DashboardFilter, DashboardPercentiles, DataSource } from '../api/dashboardTypes'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { ActiveFilters, type ChipKey } from '../components/dashboard/ActiveFilters'
 import { DashboardCard } from '../components/dashboard/DashboardCard'
@@ -169,7 +169,7 @@ export function DashboardPage(): ReactElement {
 
         <PercentileCard
           title="Duration by Service"
-          info="Exact duration percentiles per time bucket for the ten busiest services."
+          info="Duration percentiles per time bucket for the ten busiest services."
           state={byService}
           fromMs={fromMs}
           toMs={toMs}
@@ -179,7 +179,7 @@ export function DashboardPage(): ReactElement {
 
         <PercentileCard
           title="Duration by Name"
-          info="Exact duration percentiles per time bucket for the ten busiest span names."
+          info="Duration percentiles per time bucket for the ten busiest span names."
           state={byName}
           fromMs={fromMs}
           toMs={toMs}
@@ -191,8 +191,8 @@ export function DashboardPage(): ReactElement {
   )
 }
 
-function cardState(q: { loading: boolean; error: string | null }, empty: boolean) {
-  return { loading: q.loading, error: q.error, empty }
+function cardState(q: { loading: boolean; error: string | null; data: { source?: DataSource } | null }, empty: boolean) {
+  return { loading: q.loading, error: q.error, empty, source: q.data?.source }
 }
 
 type PercentileCardProps = {

@@ -10,6 +10,9 @@ export type DashboardFilter = {
   maxDurationUs?: number
 }
 
+/** The store a dashboard result came from: rollups count received spans, spans count stored ones. */
+export type DataSource = 'rollups' | 'spans'
+
 type DashboardCountPoint = {
   time: string
   group: string
@@ -19,6 +22,7 @@ type DashboardCountPoint = {
 export type DashboardCounts = {
   intervalSeconds: number
   points: DashboardCountPoint[]
+  source?: DataSource
 }
 
 /** Durations are microseconds. */
@@ -34,6 +38,7 @@ type DashboardPercentilePoint = {
 export type DashboardPercentiles = {
   intervalSeconds: number
   points: DashboardPercentilePoint[]
+  source?: DataSource
 }
 
 /** One populated heatmap cell; the duration bucket covers [lowerUs, upperUs). */
@@ -48,6 +53,7 @@ export type DashboardHeatmapCell = {
 export type DashboardHeatmap = {
   intervalSeconds: number
   cells: DashboardHeatmapCell[]
+  source?: DataSource
 }
 
 /** Dimensions the counts card can group by. */

@@ -244,6 +244,8 @@ paths:
                 properties:
                   intervalSeconds:
                     type: integer
+                  source:
+                    $ref: '#/components/schemas/DataSource'
                   points:
                     type: array
                     items:
@@ -291,6 +293,8 @@ paths:
                 properties:
                   intervalSeconds:
                     type: integer
+                  source:
+                    $ref: '#/components/schemas/DataSource'
                   points:
                     type: array
                     items:
@@ -343,6 +347,8 @@ paths:
                 properties:
                   intervalSeconds:
                     type: integer
+                  source:
+                    $ref: '#/components/schemas/DataSource'
                   cells:
                     type: array
                     items:
@@ -1405,6 +1411,13 @@ components:
       name: session
 
   schemas:
+    DataSource:
+      type: string
+      enum: [rollups, spans]
+      description: >-
+        The store that answered. rollups counts every span the writer received,
+        with sample weights applied; spans counts the spans it stored.
+
     QueryDefinition:
       type: object
       description: >-

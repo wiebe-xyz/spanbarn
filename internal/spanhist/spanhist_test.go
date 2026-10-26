@@ -97,3 +97,18 @@ func TestEmptyAndSingle(t *testing.T) {
 		t.Errorf("single = %d/%d, count %d", h.Percentile(50), h.Percentile(100), h.Count())
 	}
 }
+
+func TestBetweenKeepsTheBinsInRange(t *testing.T) {
+	var h Hist
+	for _, d := range []int64{1, 10, 100, 1000, 10000} {
+		h.Observe(d)
+	}
+	lo, hi := Index(10), Index(1000)
+	got := h.Between(lo, hi)
+	if got.Count() != 2 || len(got.Bins()) != 2 || got.Bins()[0].Min != 10 || got.Bins()[1].Min != 100 {
+		t.Errorf("Between(%d, %d) = %+v", lo, hi, got.Bins())
+	}
+	if h.Count() != 5 {
+		t.Errorf("Between changed the source: count %d", h.Count())
+	}
+}

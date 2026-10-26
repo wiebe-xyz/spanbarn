@@ -1,3 +1,5 @@
+import type { DataSource } from './dashboardTypes'
+
 /** Aggregated metrics for a single service. */
 export type ServiceSummary = {
   service: string
@@ -111,6 +113,8 @@ export type TraceGroupSummary = {
   p50Us: number
   p95Us: number
   p99Us: number
+  /** rollups: received root spans; spans: stored root spans. */
+  source?: DataSource
 }
 
 /** Full trace with all spans. */

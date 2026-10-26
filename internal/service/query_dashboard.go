@@ -89,6 +89,8 @@ type DashboardCountPoint struct {
 type DashboardCounts struct {
 	IntervalSeconds int64                 `json:"intervalSeconds"`
 	Points          []DashboardCountPoint `json:"points"`
+	// Source is SourceRollups (received spans) or SourceSpans (stored spans).
+	Source string `json:"source"`
 }
 
 // DashboardPercentilePoint is one point of a duration percentile series, in
@@ -106,6 +108,7 @@ type DashboardPercentilePoint struct {
 type DashboardPercentiles struct {
 	IntervalSeconds int64                      `json:"intervalSeconds"`
 	Points          []DashboardPercentilePoint `json:"points"`
+	Source          string                     `json:"source"`
 }
 
 // DashboardHeatmapCell is one populated cell of the duration heatmap. The
@@ -123,6 +126,7 @@ type DashboardHeatmapCell struct {
 type DashboardHeatmap struct {
 	IntervalSeconds int64                  `json:"intervalSeconds"`
 	Cells           []DashboardHeatmapCell `json:"cells"`
+	Source          string                 `json:"source"`
 }
 
 // validate checks the range and returns the bucket width in seconds.
@@ -212,12 +216,12 @@ func (s *QueryService) dashboardCountsUncached(ctx context.Context, q DashboardQ
 	if err != nil {
 		return nil, err
 	}
-	pts, err := s.repo.QueryDashboardCounts(ctx, q.spanFilter(rootOnly), interval, g, dashboardTopN)
+	pts, source, err := s.dashboardCountPoints(ctx, q, interval, g, rootOnly)
 	if err != nil {
-		s.logger.Error("dashboard counts query failed", "error", err, "group_by", group)
+		s.logger.Error("dashboard counts query failed", "error", err, "group_by", group, "source", source)
 		return nil, err
 	}
-	out := &DashboardCounts{IntervalSeconds: interval, Points: make([]DashboardCountPoint, 0, len(pts))}
+	out := &DashboardCounts{IntervalSeconds: interval, Points: make([]DashboardCountPoint, 0, len(pts)), Source: source}
 	for _, p := range pts {
 		out.Points = append(out.Points, DashboardCountPoint{Time: p.Bucket, Group: p.Group, Count: p.Count})
 	}
@@ -249,12 +253,12 @@ func (s *QueryService) dashboardPercentilesUncached(ctx context.Context, q Dashb
 	if err != nil {
 		return nil, err
 	}
-	pts, err := s.repo.QueryDashboardPercentiles(ctx, q.spanFilter(false), interval, g, dashboardTopN)
+	pts, source, err := s.dashboardPercentilePoints(ctx, q, interval, g)
 	if err != nil {
-		s.logger.Error("dashboard percentiles query failed", "error", err, "group_by", group)
+		s.logger.Error("dashboard percentiles query failed", "error", err, "group_by", group, "source", source)
 		return nil, err
 	}
-	out := &DashboardPercentiles{IntervalSeconds: interval, Points: make([]DashboardPercentilePoint, 0, len(pts))}
+	out := &DashboardPercentiles{IntervalSeconds: interval, Points: make([]DashboardPercentilePoint, 0, len(pts)), Source: source}
 	for _, p := range pts {
 		out.Points = append(out.Points, DashboardPercentilePoint{
 			Time: p.Bucket, Group: p.Group, Count: p.Count,
@@ -284,12 +288,12 @@ func (s *QueryService) dashboardHeatmapUncached(ctx context.Context, q Dashboard
 	if err != nil {
 		return nil, err
 	}
-	cells, err := s.repo.QueryDashboardHeatmap(ctx, q.spanFilter(rootOnly), interval)
+	cells, source, err := s.dashboardHeatmapCells(ctx, q, interval, rootOnly)
 	if err != nil {
-		s.logger.Error("dashboard heatmap query failed", "error", err)
+		s.logger.Error("dashboard heatmap query failed", "error", err, "source", source)
 		return nil, err
 	}
-	out := &DashboardHeatmap{IntervalSeconds: interval, Cells: make([]DashboardHeatmapCell, 0, len(cells))}
+	out := &DashboardHeatmap{IntervalSeconds: interval, Cells: make([]DashboardHeatmapCell, 0, len(cells)), Source: source}
 	for _, c := range cells {
 		out.Cells = append(out.Cells, DashboardHeatmapCell{
 			Time:    c.Bucket,
