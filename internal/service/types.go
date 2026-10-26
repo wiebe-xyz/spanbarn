@@ -118,11 +118,7 @@ type ServiceMapEdge struct {
 type ServiceMap struct {
 	Nodes []ServiceMapNode `json:"nodes"`
 	Edges []ServiceMapEdge `json:"edges"`
-	// Truncated is set when the range held more spans than the map reads, so
-	// the map covers only the newest of them. CoveredFrom is then the ingest
-	// time of the oldest span read: the map covers CoveredFrom to the range end.
-	Truncated   bool       `json:"truncated"`
-	CoveredFrom *time.Time `json:"coveredFrom,omitempty"`
+	Coverage
 }
 
 // DatabaseQuerySpan is a single span execution of a database query,

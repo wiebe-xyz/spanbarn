@@ -75,9 +75,9 @@ func TestGetServiceMap(t *testing.T) {
 func TestGetServiceMapReportsTruncatedCoverage(t *testing.T) {
 	repo := setupTestRepo(t)
 	svc := NewQueryService(repo, nil, nil)
-	limit := serviceMapSpanLimit
-	serviceMapSpanLimit = 2
-	t.Cleanup(func() { serviceMapSpanLimit = limit })
+	limit := spanReadLimit
+	spanReadLimit = 2
+	t.Cleanup(func() { spanReadLimit = limit })
 
 	now := time.Now()
 	var spans []repository.Span
@@ -100,7 +100,7 @@ func TestGetServiceMapReportsTruncatedCoverage(t *testing.T) {
 		t.Fatalf("Truncated = %v, CoveredFrom = %v; want a truncated map with its start", m.Truncated, m.CoveredFrom)
 	}
 
-	serviceMapSpanLimit = 10
+	spanReadLimit = 10
 	m, err = svc.GetServiceMap(context.Background(), 1, time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatalf("GetServiceMap: %v", err)
@@ -110,21 +110,21 @@ func TestGetServiceMapReportsTruncatedCoverage(t *testing.T) {
 	}
 }
 
-func TestMarkCoverageTakesTheOldestSpan(t *testing.T) {
-	limit := serviceMapSpanLimit
-	serviceMapSpanLimit = 3
-	t.Cleanup(func() { serviceMapSpanLimit = limit })
+func TestSpanCoverageTakesTheOldestSpan(t *testing.T) {
+	limit := spanReadLimit
+	spanReadLimit = 3
+	t.Cleanup(func() { spanReadLimit = limit })
 	base := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	spans := []repository.Span{{IngestedAt: base.Add(2 * time.Minute)}, {IngestedAt: base}, {IngestedAt: base.Add(time.Minute)}}
 
 	m := &ServiceMap{}
-	markCoverage(m, spans)
+	m.Coverage = spanCoverage(spans)
 	if !m.Truncated || m.CoveredFrom == nil || !m.CoveredFrom.Equal(base) {
 		t.Errorf("Truncated = %v, CoveredFrom = %v; want true, %v", m.Truncated, m.CoveredFrom, base)
 	}
 
 	m = &ServiceMap{}
-	markCoverage(m, spans[:2])
+	m.Coverage = spanCoverage(spans[:2])
 	if m.Truncated || m.CoveredFrom != nil {
 		t.Errorf("under the limit: Truncated = %v, CoveredFrom = %v; want neither", m.Truncated, m.CoveredFrom)
 	}

@@ -13,25 +13,27 @@ import (
 
 // ListDatabaseQueries extracts database query patterns from client spans
 // and returns aggregated performance metrics per normalized query.
-func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64, from, to time.Time, svcFilter string) ([]DatabaseQuerySummary, error) {
+// It reads the range's newest spanReadLimit spans; Coverage says when that
+// was less than the whole range.
+func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64, from, to time.Time, svcFilter string) ([]DatabaseQuerySummary, Coverage, error) {
 	_, span := tracer.Start(ctx, "query.list_database_queries")
 	defer span.End()
 
 	from, to, grain := snapRange(from, to)
 	cacheKey := fmt.Sprintf("dbq:%d:%s:%d:%d", projectID, svcFilter, from.Unix(), to.Unix())
-	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]DatabaseQuerySummary, error) {
+	list, err := readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) (coveredList[DatabaseQuerySummary], error) {
 
 		sf := repository.SpanFilter{
 			ProjectID: projectID,
 			Service:   svcFilter,
 			From:      from,
 			To:        to,
-			Limit:     10000,
+			Limit:     spanReadLimit,
 		}
 
 		spans, err := s.repo.QuerySpans(sf)
 		if err != nil {
-			return nil, err
+			return coveredList[DatabaseQuerySummary]{}, err
 		}
 
 		type queryStats struct {
@@ -124,8 +126,9 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 			return result[i].TotalTimeUs > result[j].TotalTimeUs
 		})
 
-		return result, nil
+		return coveredList[DatabaseQuerySummary]{items: result, coverage: spanCoverage(spans)}, nil
 	})
+	return list.items, list.coverage, err
 }
 
 // GetDatabaseQuerySpans returns individual span executions matching a specific

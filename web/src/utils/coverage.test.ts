@@ -12,6 +12,10 @@ describe('coverageNote', () => {
     expect(coverageNote('2026-10-26T07:20:00Z', end)).toContain('last 5 h of')
   })
 
+  it('names the view', () => {
+    expect(coverageNote('2026-10-26T12:12:00Z', end, 'list')).toContain('this list covers')
+  })
+
   it('never claims less than a minute', () => {
     expect(coverageNote('2026-10-26T12:19:50Z', end)).toContain('last 1 min of')
   })

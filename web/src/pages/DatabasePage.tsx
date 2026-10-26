@@ -8,6 +8,7 @@ import { getTimeRange } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
 import { useTimeRange } from '../contexts/useTimeRange'
+import { CoverageNote } from '../components/CoverageNote'
 
 type SortField = 'pattern' | 'operation' | 'callCount' | 'errorCount' | 'errorRate' | 'p50Us' | 'p95Us' | 'p99Us' | 'totalTimeUs'
 type SortDir = 'asc' | 'desc'
@@ -17,6 +18,8 @@ export function DatabasePage(): ReactElement {
   const [refreshInterval, setRefreshInterval] = useState(0)
   const [serviceFilter, setServiceFilter] = useState('')
   const [queries, setQueries] = useState<DatabaseQuerySummary[]>([])
+  const [coveredFrom, setCoveredFrom] = useState<string | undefined>()
+  const [rangeEnd, setRangeEnd] = useState<Date | null>(null)
   const [loading, setLoading] = useState(true)
   const [sortField, setSortField] = useState<SortField>('totalTimeUs')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -34,7 +37,9 @@ export function DatabasePage(): ReactElement {
     try {
       const data = await api.getDatabaseQueries(from, to, serviceFilter || undefined)
       if (id === fetchIdRef.current) {
-        setQueries(data ?? [])
+        setQueries(data.items)
+        setCoveredFrom(data.coveredFrom)
+        setRangeEnd(new Date(to))
       }
     } catch {
       // handled by client
@@ -116,6 +121,8 @@ export function DatabasePage(): ReactElement {
       </div>
 
       {/* Table */}
+      <CoverageNote coveredFrom={coveredFrom} rangeEnd={rangeEnd} subject="list" />
+
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table>

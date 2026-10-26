@@ -220,12 +220,13 @@ func (h *queryHandlers) handleDependencies(w http.ResponseWriter, r *http.Reques
 
 	svcFilter := r.URL.Query().Get("service")
 
-	deps, err := h.svc.ListDependencies(ctx, parseInt64Param(r, "project_id", 0), from, to, svcFilter)
+	deps, coverage, err := h.svc.ListDependencies(ctx, parseInt64Param(r, "project_id", 0), from, to, svcFilter)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
 	}
 
+	writeCoverage(w, coverage)
 	writeJSON(w, http.StatusOK, deps)
 }
 
@@ -270,12 +271,13 @@ func (h *queryHandlers) handleDatabaseQueries(w http.ResponseWriter, r *http.Req
 
 	svcFilter := r.URL.Query().Get("service")
 
-	queries, err := h.svc.ListDatabaseQueries(ctx, parseInt64Param(r, "project_id", 0), from, to, svcFilter)
+	queries, coverage, err := h.svc.ListDatabaseQueries(ctx, parseInt64Param(r, "project_id", 0), from, to, svcFilter)
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
 	}
 
+	writeCoverage(w, coverage)
 	writeJSON(w, http.StatusOK, queries)
 }
 
@@ -376,6 +378,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// coveredFromHeader carries Coverage.CoveredFrom for list endpoints whose
+// body is a bare JSON array: the header leaves the array as existing clients
+// parse it. It is set only when the list read the newest spans of the range.
+const coveredFromHeader = "X-Spanbarn-Covered-From"
+
+func writeCoverage(w http.ResponseWriter, c service.Coverage) {
+	if c.Truncated && c.CoveredFrom != nil {
+		w.Header().Set(coveredFromHeader, c.CoveredFrom.UTC().Format(time.RFC3339))
+	}
 }
 
 // writeListJSON writes a JSON list response for a list endpoint: a query error

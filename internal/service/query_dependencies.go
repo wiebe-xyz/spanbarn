@@ -11,25 +11,27 @@ import (
 )
 
 // ListDependencies extracts dependency information from client-kind spans.
-func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, from, to time.Time, svcFilter string) ([]DependencySummary, error) {
+// It reads the range's newest spanReadLimit spans; Coverage says when that
+// was less than the whole range.
+func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, from, to time.Time, svcFilter string) ([]DependencySummary, Coverage, error) {
 	_, span := tracer.Start(ctx, "query.list_dependencies")
 	defer span.End()
 
 	from, to, grain := snapRange(from, to)
 	cacheKey := fmt.Sprintf("deps:%d:%s:%d:%d", projectID, svcFilter, from.Unix(), to.Unix())
-	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]DependencySummary, error) {
+	list, err := readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) (coveredList[DependencySummary], error) {
 
 		sf := repository.SpanFilter{
 			ProjectID: projectID,
 			Service:   svcFilter,
 			From:      from,
 			To:        to,
-			Limit:     10000,
+			Limit:     spanReadLimit,
 		}
 
 		spans, err := s.repo.QuerySpans(sf)
 		if err != nil {
-			return nil, err
+			return coveredList[DependencySummary]{}, err
 		}
 
 		agg := newDependencyAggregator()
@@ -37,8 +39,9 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 		agg.addCrossServiceCalls(spans)
 		result := agg.summaries(s.projectSampleRate(ctx, projectID))
 
-		return result, nil
+		return coveredList[DependencySummary]{items: result, coverage: spanCoverage(spans)}, nil
 	})
+	return list.items, list.coverage, err
 }
 
 type dependencyKey struct {

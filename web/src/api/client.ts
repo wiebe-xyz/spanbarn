@@ -87,6 +87,7 @@ function scheduleSessionRefresh(): void {
 async function fetchJSONOnce<T>(
   url: string,
   init?: RequestInit,
+  onHeaders?: (headers: Headers) => void,
 ): Promise<T> {
   const res = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...init?.headers },
@@ -120,6 +121,7 @@ async function fetchJSONOnce<T>(
     throw err
   }
 
+  if (res.headers) onHeaders?.(res.headers)
   const text = await res.text()
   if (!text) return undefined as T
   return JSON.parse(text) as T
@@ -142,11 +144,12 @@ function sleep(ms: number): Promise<void> {
 export async function fetchJSON<T>(
   url: string,
   init?: RequestInit,
+  onHeaders?: (headers: Headers) => void,
 ): Promise<T> {
   const isRead = !init?.method || init.method.toUpperCase() === 'GET'
   for (let attempt = 0; ; attempt++) {
     try {
-      return await fetchJSONOnce<T>(url, init)
+      return await fetchJSONOnce<T>(url, init, onHeaders)
     } catch (err) {
       if (!isRead || !isQueryTimeout(err) || attempt >= QUERY_TIMEOUT_RETRIES || init?.signal?.aborted) {
         throw err
@@ -154,6 +157,24 @@ export async function fetchJSON<T>(
       await sleep(err.retryAfterMs ?? QUERY_TIMEOUT_DEFAULT_WAIT_MS)
     }
   }
+}
+
+/**
+ * A list read from the range's newest spans. coveredFrom is set when the range
+ * held more spans than the server reads, so the list covers only coveredFrom
+ * to the range end.
+ */
+export interface CoveredList<T> {
+  items: T[]
+  coveredFrom?: string
+}
+
+async function fetchCoveredList<T>(url: string): Promise<CoveredList<T>> {
+  let coveredFrom: string | undefined
+  const items = await fetchJSON<T[]>(url, undefined, (h) => {
+    coveredFrom = h.get('X-Spanbarn-Covered-From') ?? undefined
+  })
+  return { items: items ?? [], coveredFrom }
 }
 
 function qs(params: Record<string, string | number | undefined>): string {
@@ -341,9 +362,7 @@ export const api = {
     fetchJSON<TraceDetail>(`/api/v1/traces/${encodeURIComponent(traceId)}`),
 
   getDependencies: (from: string, to: string, service?: string) =>
-    fetchJSON<DependencySummary[]>(
-      `/api/v1/dependencies${qs({ from, to, service })}`,
-    ),
+    fetchCoveredList<DependencySummary>(`/api/v1/dependencies${qs({ from, to, service })}`),
 
   getDependencyTraces: (target: string, targetType: string, from: string, to: string, limit?: number) =>
     fetchJSON<TraceSummary[]>(
@@ -354,9 +373,7 @@ export const api = {
     fetchJSON<ServiceMap>(`/api/v1/service-map${qs({ from, to })}`),
 
   getDatabaseQueries: (from: string, to: string, service?: string) =>
-    fetchJSON<DatabaseQuerySummary[]>(
-      `/api/v1/database${qs({ from, to, service })}`,
-    ),
+    fetchCoveredList<DatabaseQuerySummary>(`/api/v1/database${qs({ from, to, service })}`),
 
   getDatabaseQueryDetail: (from: string, to: string, pattern: string, service?: string) =>
     fetchJSON<DatabaseQuerySpan[]>(

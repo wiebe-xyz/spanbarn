@@ -282,4 +282,7 @@ func TestDatabaseQueriesEndpointRespectsProjectID(t *testing.T) {
 	if len(result) != 1 || result[0].DBName != "project1" {
 		t.Fatalf("expected exactly project1's query pattern, got %+v", result)
 	}
+	if got := rec.Header().Get(coveredFromHeader); got != "" {
+		t.Errorf("a read of every span set %s: %q", coveredFromHeader, got)
+	}
 }
