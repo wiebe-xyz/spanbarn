@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
 func (s *QueryService) ListPrompts(ctx context.Context, projectID int64, from, to time.Time, svcFilter, modelFilter string) ([]PromptSummary, error) {
@@ -28,32 +29,7 @@ func (s *QueryService) ListPrompts(ctx context.Context, projectID int64, from, t
 			return nil, err
 		}
 
-		sr := s.projectSampleRate(ctx, projectID)
-		result := make([]PromptSummary, 0, len(groups))
-		for _, g := range groups {
-			effective := inflateCount(g.Count, g.ErrorCount, sr)
-			var errorRate float64
-			if effective > 0 {
-				errorRate = float64(g.ErrorCount) / float64(effective)
-			}
-			result = append(result, PromptSummary{
-				Name:         g.Name,
-				GenAISystem:  g.GenAISystem,
-				Model:        g.Model,
-				Service:      g.Service,
-				CallCount:    effective,
-				ErrorCount:   g.ErrorCount,
-				ErrorRate:    errorRate,
-				P50Us:        g.Hist.Percentile(50),
-				P95Us:        g.Hist.Percentile(95),
-				P99Us:        g.Hist.Percentile(99),
-				TotalTimeUs:  g.TotalTimeUs,
-				InputTokens:  g.InputTokens,
-				OutputTokens: g.OutputTokens,
-				TotalCostUSD: g.CostUSD,
-			})
-		}
-
+		result := s.summarizePrompts(ctx, groups)
 		sort.Slice(result, func(i, j int) bool {
 			return result[i].TotalCostUSD > result[j].TotalCostUSD
 		})
@@ -77,4 +53,52 @@ func (s *QueryService) GetPromptDetail(ctx context.Context, projectID int64, fro
 		To:           to,
 		Limit:        500,
 	})
+}
+
+type promptSummaryKey struct{ name, model, service string }
+
+// summarizePrompts folds per-project prompt groups into one summary per name,
+// model and service. Each project's ok calls are scaled by that project's own
+// sample ratio before the merge. The all-projects view asks for project 0,
+// which has no ratio of its own, so scaling by it would apply the default
+// 1-in-1000 to every project (#402).
+func (s *QueryService) summarizePrompts(ctx context.Context, groups []repository.PromptGroup) []PromptSummary {
+	rates := map[int64]float64{}
+	index := map[promptSummaryKey]int{}
+	result := make([]PromptSummary, 0, len(groups))
+	var hists []spanhist.Hist
+	for _, g := range groups {
+		sr, ok := rates[g.ProjectID]
+		if !ok {
+			sr = s.projectSampleRate(ctx, g.ProjectID)
+			rates[g.ProjectID] = sr
+		}
+		k := promptSummaryKey{g.Name, g.Model, g.Service}
+		i, ok := index[k]
+		if !ok {
+			i = len(result)
+			index[k] = i
+			result = append(result, PromptSummary{Name: g.Name, Model: g.Model, Service: g.Service})
+			hists = append(hists, spanhist.Hist{})
+		}
+		p := &result[i]
+		p.GenAISystem = max(p.GenAISystem, g.GenAISystem)
+		p.CallCount += inflateCount(g.Count, g.ErrorCount, sr)
+		p.ErrorCount += g.ErrorCount
+		p.TotalTimeUs += g.TotalTimeUs
+		p.InputTokens += g.InputTokens
+		p.OutputTokens += g.OutputTokens
+		p.TotalCostUSD += g.CostUSD
+		hists[i].Merge(g.Hist)
+	}
+	for i := range result {
+		p := &result[i]
+		if p.CallCount > 0 {
+			p.ErrorRate = float64(p.ErrorCount) / float64(p.CallCount)
+		}
+		p.P50Us = hists[i].Percentile(50)
+		p.P95Us = hists[i].Percentile(95)
+		p.P99Us = hists[i].Percentile(99)
+	}
+	return result
 }

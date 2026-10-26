@@ -87,3 +87,27 @@ func TestQueryPromptRecordsFiltersByNameBeforeTheLimit(t *testing.T) {
 		t.Fatalf("got %+v, want the one summarize record", recs)
 	}
 }
+
+// Groups stay per project, so the service can scale each by its own ratio.
+func TestQueryPromptGroupsKeepsProjectsApart(t *testing.T) {
+	repo := setupTestDB(t)
+	recs := []PromptRecord{
+		{ProjectID: 1, TraceID: "t1", SpanID: "s1", Service: "api", Name: "n", Model: "m", DurationUs: 10, Status: "ok"},
+		{ProjectID: 2, TraceID: "t2", SpanID: "s2", Service: "api", Name: "n", Model: "m", DurationUs: 10, Status: "ok"},
+		{ProjectID: 2, TraceID: "t3", SpanID: "s3", Service: "api", Name: "n", Model: "m", DurationUs: 10, Status: "ok"},
+	}
+	if err := repo.InsertPromptRecords(recs); err != nil {
+		t.Fatalf("InsertPromptRecords: %v", err)
+	}
+	groups, err := repo.QueryPromptGroups(context.Background(), PromptFilter{})
+	if err != nil {
+		t.Fatalf("QueryPromptGroups: %v", err)
+	}
+	counts := map[int64]int64{}
+	for _, g := range groups {
+		counts[g.ProjectID] += g.Count
+	}
+	if len(groups) != 2 || counts[1] != 1 || counts[2] != 2 {
+		t.Fatalf("want one group per project (1 and 2 calls), got %+v", groups)
+	}
+}
