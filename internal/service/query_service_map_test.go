@@ -70,3 +70,62 @@ func TestGetServiceMap(t *testing.T) {
 		t.Errorf("expected a web→api edge, got %+v", m.Edges)
 	}
 }
+
+// A range with more spans than the map reads must say which part it covers.
+func TestGetServiceMapReportsTruncatedCoverage(t *testing.T) {
+	repo := setupTestRepo(t)
+	svc := NewQueryService(repo, nil, nil)
+	limit := serviceMapSpanLimit
+	serviceMapSpanLimit = 2
+	t.Cleanup(func() { serviceMapSpanLimit = limit })
+
+	now := time.Now()
+	var spans []repository.Span
+	for _, id := range []string{"s1", "s2", "s3"} {
+		spans = append(spans, repository.Span{
+			ProjectID: 1, TraceID: "t" + id, SpanID: id, Name: "GET /", Service: "web",
+			Kind: "server", Status: "ok", StartTimeUs: now.UnixMicro(), DurationUs: 1000,
+			Attributes: "{}", Events: "[]", IngestedAt: now,
+		})
+	}
+	if err := repo.InsertSpans(spans); err != nil {
+		t.Fatalf("InsertSpans: %v", err)
+	}
+
+	m, err := svc.GetServiceMap(context.Background(), 1, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("GetServiceMap: %v", err)
+	}
+	if !m.Truncated || m.CoveredFrom == nil {
+		t.Fatalf("Truncated = %v, CoveredFrom = %v; want a truncated map with its start", m.Truncated, m.CoveredFrom)
+	}
+
+	serviceMapSpanLimit = 10
+	m, err = svc.GetServiceMap(context.Background(), 1, time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("GetServiceMap: %v", err)
+	}
+	if m.Truncated || m.CoveredFrom != nil {
+		t.Errorf("a map that read every span: Truncated = %v, CoveredFrom = %v; want neither", m.Truncated, m.CoveredFrom)
+	}
+}
+
+func TestMarkCoverageTakesTheOldestSpan(t *testing.T) {
+	limit := serviceMapSpanLimit
+	serviceMapSpanLimit = 3
+	t.Cleanup(func() { serviceMapSpanLimit = limit })
+	base := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	spans := []repository.Span{{IngestedAt: base.Add(2 * time.Minute)}, {IngestedAt: base}, {IngestedAt: base.Add(time.Minute)}}
+
+	m := &ServiceMap{}
+	markCoverage(m, spans)
+	if !m.Truncated || m.CoveredFrom == nil || !m.CoveredFrom.Equal(base) {
+		t.Errorf("Truncated = %v, CoveredFrom = %v; want true, %v", m.Truncated, m.CoveredFrom, base)
+	}
+
+	m = &ServiceMap{}
+	markCoverage(m, spans[:2])
+	if m.Truncated || m.CoveredFrom != nil {
+		t.Errorf("under the limit: Truncated = %v, CoveredFrom = %v; want neither", m.Truncated, m.CoveredFrom)
+	}
+}

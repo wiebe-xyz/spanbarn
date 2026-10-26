@@ -21,7 +21,7 @@ func (s *QueryService) GetServiceMap(ctx context.Context, projectID int64, from,
 			ProjectID: projectID,
 			From:      from,
 			To:        to,
-			Limit:     10000,
+			Limit:     serviceMapSpanLimit,
 		}
 
 		spans, err := s.repo.QuerySpans(sf)
@@ -33,9 +33,31 @@ func (s *QueryService) GetServiceMap(ctx context.Context, projectID int64, from,
 		b.addSpans(spans)
 		b.addCrossServiceCalls(spans)
 		result := b.build()
+		markCoverage(result, spans)
 
 		return result, nil
 	})
+}
+
+// serviceMapSpanLimit is how many of the range's newest spans the map reads.
+// A busy range holds far more, so the map then covers only its last minutes
+// and says so through ServiceMap.Truncated and CoveredFrom.
+var serviceMapSpanLimit = 10000
+
+// markCoverage flags a map built from a full read and records the ingest time
+// of the oldest span in it.
+func markCoverage(m *ServiceMap, spans []repository.Span) {
+	if len(spans) < serviceMapSpanLimit {
+		return
+	}
+	oldest := spans[0].IngestedAt
+	for _, sp := range spans[1:] {
+		if sp.IngestedAt.Before(oldest) {
+			oldest = sp.IngestedAt
+		}
+	}
+	m.Truncated = true
+	m.CoveredFrom = &oldest
 }
 
 // callStats counts spans and the errors among them.
