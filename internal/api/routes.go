@@ -99,11 +99,10 @@ func (s *Server) registerPublicRoutes(env *routeEnv) {
 	// truncates every field, and the global body cap bounds the request.
 	s.mux.Handle("/api/v1/client-errors", env.ingestRL(http.HandlerFunc(s.handleClientError)))
 
-	// Setup endpoint — intentionally public (onboarding), but rate-limited and
-	// GET-only + read-idempotent (see handleSetup) so anonymous callers cannot
-	// use it to spam projects or amplify writes.
+	// Setup guide: it carries an ingest key, so it needs a web session. GET
+	// reads, POST creates the pending project (see handleSetup).
 	if s.repo != nil {
-		s.mux.Handle("/api/v1/setup/{slug}", env.apiRL(http.HandlerFunc(s.handleSetup)))
+		s.mux.Handle("/api/v1/setup/{slug}", env.apiRL(env.sessionAuth(http.HandlerFunc(s.handleSetup))))
 	}
 }
 
