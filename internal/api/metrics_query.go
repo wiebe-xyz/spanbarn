@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -346,29 +345,12 @@ func (h *metricsQueryHandlers) queryTier(r *http.Request, step int64, f service.
 	})
 }
 
-// rollupToInput maps a rollup bucket to a derivation input point. The per-type
-// value choice keeps metrics.Derive working unchanged: gauges use the bucket
-// average, counters use the bucket-end cumulative value (so rate is derived
-// across buckets), distributions carry their merged extra. A delta sum has no
-// running total to difference: its bucket sum is the increase, and the caller
-// sets the interval it covers.
+// rollupToInput maps a rollup bucket to a derivation input point with its
+// attributes, which the series path groups by.
 func rollupToInput(row service.MetricRollup) metrics.InputPoint {
-	value := row.Last
-	if row.Type == "gauge" && row.Count > 0 {
-		value = row.Sum / float64(row.Count)
-	}
-	delta := row.Type == "sum" && row.Temporality == rollup.TemporalityDelta
-	if delta {
-		value = row.Sum
-	}
-	return metrics.InputPoint{
-		T:          row.Bucket.UnixNano(),
-		Value:      value,
-		Count:      row.ObsCount,
-		Extra:      json.RawMessage(row.Extra),
-		Attributes: parseAttrs(row.Attributes),
-		Delta:      delta,
-	}
+	p := service.RollupInputPoint(row)
+	p.Attributes = parseAttrs(row.Attributes)
+	return p
 }
 
 // parseGroupBy reads the comma-separated group_by attribute keys. When empty,

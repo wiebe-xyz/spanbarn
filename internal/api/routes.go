@@ -293,7 +293,9 @@ func (s *Server) registerProjectRoutes(env *routeEnv) {
 // Metrics are session-only; logs accept a read key, except pinned traces, which
 // are per-user state and stay session-only.
 func (s *Server) registerMetricsAndLogsRoutes(env *routeEnv) {
-	mqh := &metricsQueryHandlers{svc: service.NewMetricsService(s.repo)}
+	msvc := service.NewMetricsService(s.repo)
+	msvc.SetCache(s.cache)
+	mqh := &metricsQueryHandlers{svc: msvc}
 	lqh := &logsQueryHandlers{svc: service.NewLogsService(s.repo)}
 	routes := []struct {
 		path string
