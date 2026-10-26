@@ -132,7 +132,8 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: Go tests with race detector
-        run: go test -race -count=1 ./...
+        # internal/repository is split into shards; see the script header.
+        run: bash scripts/race-test.sh
       - name: Ensure kustomize
         # infracheck renders the kustomize overlays. It exits non-zero when
         # neither kustomize nor kubectl is present rather than reporting a clean
