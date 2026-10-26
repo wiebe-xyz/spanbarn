@@ -196,6 +196,25 @@ func TestShardReadsPromptsNewestFirst(t *testing.T) {
 		t.Fatalf("prompts since 23:00 %v", got)
 	}
 
+	groups, err := repo.QueryPromptGroups(context.Background(), PromptFilter{ProjectID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total int64
+	for _, g := range groups {
+		total += g.Count
+	}
+	if len(groups) != 3 || total != 3 {
+		t.Fatalf("prompt groups over main and both shards: %d groups, %d prompts, want 3 and 3", len(groups), total)
+	}
+	recent, err := repo.QueryPromptGroups(context.Background(), PromptFilter{ProjectID: 1, From: mustTime(t, "2026-10-04T23:00:00Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 2 {
+		t.Fatalf("prompt groups since 23:00: %d, want 2", len(recent))
+	}
+
 	byTrace, err := repo.GetPromptRecordsByTraceID("trace-x")
 	if err != nil {
 		t.Fatal(err)
