@@ -67,6 +67,7 @@ type Worker struct {
 	spool          *spool.Spool
 	repo           Repository
 	aggregator     Aggregator
+	rollups        SpanAccumulator
 	logger         *slog.Logger
 	metrics        Metrics
 	retryBaseDelay time.Duration
@@ -88,6 +89,11 @@ func NewWorker(sp *spool.Spool, repo Repository, logger *slog.Logger) *Worker {
 // SetAggregator wires in an aggregator for inline aggregation after each batch.
 func (w *Worker) SetAggregator(a Aggregator) {
 	w.aggregator = a
+}
+
+// SetSpanRollups passes every span of each stored batch to r as well.
+func (w *Worker) SetSpanRollups(r SpanAccumulator) {
+	w.rollups = r
 }
 
 // Run loops on a 1-second ticker, processing spool batches until ctx is cancelled.
@@ -194,6 +200,11 @@ func (w *Worker) processBatch(ctx context.Context) {
 		// Inline aggregation: keep aggregates table current after every batch.
 		if w.aggregator != nil {
 			w.aggregateInline(ctx, spans)
+		}
+		if w.rollups != nil {
+			for i := range spans {
+				w.rollups.Add(spans[i])
+			}
 		}
 	}
 

@@ -34,10 +34,10 @@ func TestCycleStatsReportsEveryCounter(t *testing.T) {
 	st := cycleStats{spansDeleted: 4, backlogRemains: true}
 	attrs := st.attributes()
 	args := st.logArgs()
-	if len(attrs) != 21 {
-		t.Fatalf("attributes = %d, want 21", len(attrs))
+	if len(attrs) != 22 {
+		t.Fatalf("attributes = %d, want 22", len(attrs))
 	}
-	if len(args) != 42 {
-		t.Fatalf("log args = %d, want 42 (21 key/value pairs)", len(args))
+	if len(args) != 44 {
+		t.Fatalf("log args = %d, want 44 (22 key/value pairs)", len(args))
 	}
 }

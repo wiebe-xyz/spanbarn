@@ -5,11 +5,13 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/api"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
 	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/spanrollup"
 )
 
 // serverConfigFrom builds the api.ServerConfig fields shared by every mode.
@@ -149,6 +151,9 @@ func retentionConfigFrom(cfg config.Config) retention.Config {
 		DailyRollupDays:           cfg.Retention.RollupDailyDays,
 		WeeklyRollupDays:          cfg.Retention.RollupWeeklyDays,
 		MonthlyRollupDays:         cfg.Retention.RollupMonthlyDays,
+		SpanRollup5mHours:         cfg.Retention.SpanRollup5mHours,
+		SpanRollupHourlyDays:      cfg.Retention.SpanRollupHourlyDays,
+		SpanRollupDailyDays:       cfg.Retention.SpanRollupDailyDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 		DBPath:                    cfg.DBPath,
 		Watermarks: retention.Watermarks{
@@ -172,5 +177,28 @@ func newRollupCompactor(repo rollup.Repository, cfg config.Config, logger *slog.
 		DBPath:         cfg.DBPath,
 		BucketsPerPass: cfg.Retention.CompactBucketsPerPass,
 		Disabled:       !cfg.Retention.CompactEnabled,
+	}, logger)
+}
+
+// newSpanRollups builds the span_rollups writer for the writer and standalone
+// bootstraps, or returns nil when SPANBARN_SPAN_ROLLUPS is off.
+func newSpanRollups(w aggregation.SpanRollupWriter, cfg config.Config, logger *slog.Logger) *aggregation.SpanRollups {
+	if !cfg.SpanRollups {
+		logger.Info("span rollups are off (SPANBARN_SPAN_ROLLUPS=0)")
+		return nil
+	}
+	return aggregation.NewSpanRollups(w, aggregation.SpanRollupConfig{
+		MaxNames:    cfg.SpanRollupMaxNames,
+		MaxServices: cfg.SpanRollupMaxServices,
+	}, logger)
+}
+
+// newSpanRollupCompactor builds the compactor that turns 5-minute span rollups
+// into hours and days. Retention deletes a span rollup tier only as far as this
+// has compacted it.
+func newSpanRollupCompactor(repo spanrollup.Repository, cfg config.Config, logger *slog.Logger) *spanrollup.Compactor {
+	return spanrollup.New(repo, spanrollup.Config{
+		BucketsPerPass: cfg.Retention.CompactBucketsPerPass,
+		Disabled:       !cfg.SpanRollups,
 	}, logger)
 }

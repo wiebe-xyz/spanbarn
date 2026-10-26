@@ -29,6 +29,8 @@ type Accumulator struct {
 	flushInterval time.Duration
 	repo          AggregateWriter
 	logger        *slog.Logger
+	// rollups, when set, receives every span Add sees (span_rollups).
+	rollups *SpanRollups
 }
 
 type accKey struct {
@@ -63,8 +65,14 @@ func NewAccumulator(repo AggregateWriter, interval, flushInterval time.Duration,
 	}
 }
 
+// SetSpanRollups makes Add pass every span on to r as well.
+func (a *Accumulator) SetSpanRollups(r *SpanRollups) { a.rollups = r }
+
 // Add records a single span into its in-memory slot. Thread-safe; O(1) amortised.
 func (a *Accumulator) Add(s repository.Span) {
+	if a.rollups != nil {
+		a.rollups.Add(s)
+	}
 	bucket := TruncateToBucket(time.UnixMicro(s.StartTimeUs), a.interval)
 	k := accKey{
 		projectID: s.ProjectID,

@@ -247,6 +247,36 @@ Index: unique `idx_calculated_fields_project_name` ON (project_id, name). A proj
 - `idx_agg_lookup` ON (project_id, service, operation, bucket)
 - `idx_agg_bucket` ON (project_id, bucket)
 
+### span_rollups (span counts and duration histograms per bucket)
+
+Spans family, `WITHOUT ROWID`. Written by the writer's accumulator from every
+span before sampling, compacted 5m -> 1h -> 1d. No backfill: the table starts
+empty at the migration.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| step_seconds | INTEGER | 300, 3600 or 86400 |
+| bucket | INTEGER | Unix seconds, arrival time truncated to the step |
+| project_id | INTEGER | |
+| service | TEXT | `~other` past the per-project service cap |
+| name | TEXT | Span name; `~other` past the per-service name cap |
+| kind | TEXT | Lowercased span kind |
+| is_root | INTEGER | 1 when the span has no parent |
+| status | TEXT | `ok`, `error` or `unset` |
+| count | INTEGER | Spans seen |
+| weighted_count | INTEGER | Sum of sample weights of the spans that had one |
+| weighted_spans | INTEGER | Spans that had a sample weight |
+| sum_duration_us | INTEGER | |
+| min_us, max_us | INTEGER | |
+| hist | BLOB | Quarter-octave duration histogram (`internal/spanhist`, encoding v1) |
+
+**Primary key:** (step_seconds, bucket, project_id, service, name, kind, is_root, status).
+Bucket comes first so flushes write to the newest pages. Additive flushes merge
+`hist` with the SQL function `span_hist_merge`.
+
+`span_rollup_compaction(step_seconds PK, compacted_through)` records how far each
+tier has been compacted into the next. Retention deletes a tier only up to it.
+
 ### error_samples (medium-term error/slow spans)
 
 Same schema as `spans` table, but:

@@ -28,6 +28,7 @@ func spansMigrations() []*goose.Migration {
 		goose.NewGoMigration(1, &goose.GoFunc{RunTx: spansBaselineUp}, nil),
 		goose.NewGoMigration(2, &goose.GoFunc{RunTx: spansErrorExemplarsUp}, nil),
 		goose.NewGoMigration(3, &goose.GoFunc{RunTx: spansSampleWeightsUp}, nil),
+		goose.NewGoMigration(4, &goose.GoFunc{RunTx: spansSpanRollupsUp}, nil),
 	}
 }
 

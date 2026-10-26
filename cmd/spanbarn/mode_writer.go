@@ -145,6 +145,8 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 
 	aggInterval := parseAggregationInterval(cfg.AggregationInterval)
 	accumulator := aggregation.NewAccumulator(repo, aggInterval, 30*time.Second, logger)
+	spanRollups := newSpanRollups(repo, cfg, logger)
+	accumulator.SetSpanRollups(spanRollups)
 	// The rollup flush reads its keys on the read-only pool before each write
 	// slot, so a cold page cache costs the read and not the writer (#371).
 	repo.SetRollupReads(roDB.DB)
@@ -192,6 +194,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	}
 	rawMetrics := filteredRawMetrics(cfg, repo)
 	safeGo("accumulator", &wg, func() { accumulator.Run(workerCtx) })
+	if spanRollups != nil {
+		safeGo("span-rollups", &wg, func() { spanRollups.Run(workerCtx) })
+	}
 	safeGo("metric-accumulator", &wg, func() { metricAccumulator.Run(workerCtx) })
 	safeGo("metrics-consumer", &wg, func() { runMetricsConsumer(workerCtx, writeQueue, metricAccumulator, rawMetrics, logger) })
 	safeGo("logs-consumer", &wg, func() { runLogsConsumer(workerCtx, writeQueue, repo, logger) })
@@ -222,6 +227,8 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// read-only pool.
 	compactor := newRollupCompactor(retentionRepo, cfg, logger)
 	safeGo("rollup-compactor", &wg, func() { compactor.Run(retentionCtx) })
+	spanCompactor := newSpanRollupCompactor(retentionRepo, cfg, logger)
+	safeGo("span-rollup-compactor", &wg, func() { spanCompactor.Run(retentionCtx) })
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
 	// Alert reads run on the read-only connection; the rare trigger write stays

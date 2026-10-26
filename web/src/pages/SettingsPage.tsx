@@ -106,6 +106,9 @@ const ROLLUP_FIELDS: RetentionField[] = [
   { key: 'metric_rollup_daily_days', label: 'Daily rollups (days)', placeholder: '365' },
   { key: 'metric_rollup_weekly_days', label: 'Weekly rollups (days)', placeholder: '730' },
   { key: 'metric_rollup_monthly_days', label: 'Monthly rollups (days)', placeholder: '0 keeps all' },
+  { key: 'span_rollup_5m_hours', label: '5-minute span rollups (hours)', placeholder: '72' },
+  { key: 'span_rollup_hourly_days', label: 'Hourly span rollups (days)', placeholder: '30' },
+  { key: 'span_rollup_daily_days', label: 'Daily span rollups (days)', placeholder: '400' },
 ]
 
 const ALL_RETENTION_FIELDS = [...RETENTION_FIELDS, ...ROLLUP_FIELDS]
