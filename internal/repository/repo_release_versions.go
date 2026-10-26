@@ -10,17 +10,26 @@ type VersionSighting struct {
 	FirstSeen time.Time
 }
 
+// recentVersionsQuery reads the versions of entry-point spans in a span id
+// range. Both bounds are on the rowid, so SQLite walks only that range. A
+// bound on ingested_at instead lets the planner pick a full index scan: prod
+// has no index that leads with ingested_at alone, and a filter on both lets
+// it walk every rowid below the upper bound (#399).
+const recentVersionsQuery = `SELECT project_id, json_extract(attributes, '$."service.version"') AS version, MIN(ingested_at)
+	FROM spans
+	WHERE id > ? AND id <= ? AND kind = 'server' AND json_extract(attributes, '$."service.version"') IS NOT NULL
+	GROUP BY project_id, version`
+
 // RecentSpanVersions lists the distinct service.version values of entry-point
 // spans per project, for the spans stored after the span id afterID. It also
 // returns the newest span id, which the caller passes as afterID next time, so
 // each call reads only the spans stored since the previous one. With afterID 0
-// it reads the spans ingested since the given time instead (idx_spans_ingested).
-// Spans without a version are left out.
+// it reads the newest seed spans instead. Spans without a version are left out.
 //
 // Span ids grow with every insert, including a trace flushed out of staging
 // long after its spans were ingested, so the id range misses nothing that an
 // ingested_at window would miss.
-func (r *Repository) RecentSpanVersions(afterID int64, since time.Time) ([]VersionSighting, int64, error) {
+func (r *Repository) RecentSpanVersions(afterID, seed int64) ([]VersionSighting, int64, error) {
 	ctx, cancel := r.queryContext()
 	defer cancel()
 	var maxID int64
@@ -30,15 +39,11 @@ func (r *Repository) RecentSpanVersions(afterID int64, since time.Time) ([]Versi
 	if maxID <= afterID {
 		return nil, afterID, nil
 	}
-	window, arg := `id > ?`, any(afterID)
-	if afterID == 0 {
-		window, arg = `ingested_at >= ?`, since.UTC()
+	from := afterID
+	if from == 0 {
+		from = max(maxID-seed, 0)
 	}
-	rows, err := r.db.QueryContext(ctx,
-		`SELECT project_id, json_extract(attributes, '$."service.version"') AS version, MIN(ingested_at)
-		FROM spans
-		WHERE `+window+` AND id <= ? AND kind = 'server' AND json_extract(attributes, '$."service.version"') IS NOT NULL
-		GROUP BY project_id, version`, arg, maxID)
+	rows, err := r.db.QueryContext(ctx, recentVersionsQuery, from, maxID)
 	if err != nil {
 		return nil, afterID, err
 	}

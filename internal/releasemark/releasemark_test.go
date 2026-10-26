@@ -24,7 +24,7 @@ type fakeRepo struct {
 	createErr error
 }
 
-func (f *fakeRepo) RecentSpanVersions(afterID int64, _ time.Time) ([]repository.VersionSighting, int64, error) {
+func (f *fakeRepo) RecentSpanVersions(afterID, _ int64) ([]repository.VersionSighting, int64, error) {
 	f.afterIDs = append(f.afterIDs, afterID)
 	if f.scanErr != nil {
 		return nil, afterID, f.scanErr
