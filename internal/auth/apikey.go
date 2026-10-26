@@ -1,10 +1,12 @@
 package auth
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 )
@@ -84,6 +86,17 @@ func (a *Authorizer) Authorize(key string) (projectID int64, scope string, err e
 	}
 
 	return 0, "", ErrUnauthorized
+}
+
+// NewAPIKey returns a new API key and its hash: 32 bytes from crypto/rand,
+// hex-encoded. Only the hash is stored.
+func NewAPIKey() (key, hash string, err error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", "", fmt.Errorf("generate API key: %w", err)
+	}
+	key = hex.EncodeToString(b)
+	return key, HashKey(key), nil
 }
 
 // HashKey returns the hex-encoded SHA-256 hash of a raw API key.

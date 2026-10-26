@@ -35,7 +35,7 @@ func (g setupGuide) render() string {
 // writeIntro writes the title, project configuration table and overview.
 func (g setupGuide) writeIntro(b *strings.Builder) {
 	fmt.Fprintf(b, "# SpanBarn Setup: %s\n\n", g.slug)
-	fmt.Fprintf(b, "> **Status**: %s — this page is idempotent. Revisit at any time to retrieve the same configuration.\n\n", g.status)
+	fmt.Fprintf(b, "> **Status**: %s — this page is idempotent. Revisit it while signed in to retrieve the same configuration.\n\n", g.status)
 	fmt.Fprintf(b, "Generated: %s\n\n---\n\n", g.now)
 
 	fmt.Fprintf(b, "## Project Configuration\n\n")

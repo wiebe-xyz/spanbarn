@@ -57,12 +57,12 @@ func TestHandleSetupKeepsBrandedHost(t *testing.T) {
 	repo := newTestRepo(t)
 	s := &Server{logger: slog.Default(), repo: repo, sessionSecret: "test-secret"}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/setup/acme", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/acme", nil)
 	req.Host = "sb.acme.nl"
 	req.SetPathValue("slug", "acme")
 	rec := httptest.NewRecorder()
 	s.handleSetup(rec, req)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
@@ -88,12 +88,12 @@ func TestHandleSetupCanonicalHost(t *testing.T) {
 	repo := newTestRepo(t)
 	s := &Server{logger: slog.Default(), repo: repo, sessionSecret: "test-secret", publicURL: "https://spanbarn.test.wiebe.xyz"}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/setup/acme", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/acme", nil)
 	req.Host = "spanbarn.test.wiebe.xyz"
 	req.SetPathValue("slug", "acme")
 	rec := httptest.NewRecorder()
 	s.handleSetup(rec, req)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if want := "| Endpoint   | https://spanbarn.test.wiebe.xyz/v1/traces |"; !strings.Contains(rec.Body.String(), want) {

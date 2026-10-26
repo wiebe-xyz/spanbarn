@@ -29,10 +29,11 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	_, span := apiTracer.Start(r.Context(), "api.setup")
 	defer span.End()
 
-	// This endpoint is intentionally public (onboarding UX) but must not be a
-	// write amplifier: only GET is allowed and, once a project exists, the page
-	// is served read-only with no further writes.
-	if r.Method != http.MethodGet {
+	// The guide carries an ingest key, so the route requires a web session
+	// (routes.go). GET only reads: an unknown slug is a 404. POST creates the
+	// pending project and registers its setup key, and only when the slug is
+	// new; for an existing project it renders the guide and writes nothing.
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
 	}
@@ -47,14 +48,18 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	// needs to be read back; render it directly.
 	plaintext, keySHA := setupKey(s.sessionSecret, slug)
 
+	status := http.StatusOK
 	project, err := s.projectService().BySlug(slug)
 	if errors.Is(err, sql.ErrNoRows) {
-		// First visit for this slug: create the pending project and register its
-		// setup key. Repeat visits skip both writes.
+		if r.Method == http.MethodGet {
+			writeError(w, http.StatusNotFound, "no project with this slug", "create it with POST /api/v1/setup/"+slug)
+			return
+		}
 		project, err = s.projectService().EnsurePending(slug, slug)
 		if err == nil {
 			err = s.projectService().EnsureSetupAPIKey(project.ID, keySHA)
 		}
+		status = http.StatusCreated
 	}
 	if err != nil {
 		s.logger.Error("setup: ensure project/key", "slug", slug, "error", err)
@@ -87,6 +92,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Robots-Tag", "noindex")
-	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
 	_, _ = w.Write([]byte(g.render()))
 }

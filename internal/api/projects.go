@@ -74,13 +74,19 @@ func (h *projectHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // idRoutes returns the handlers by HTTP method for /projects/{id}/{sub}, or nil
 // when sub is not a known sub-resource. An empty sub is the project itself.
 func (h *projectHandlers) idRoutes(sub string) map[string]projectIDHandler {
+	if keyID, ok := strings.CutPrefix(sub, "apikeys/"); ok {
+		return map[string]projectIDHandler{http.MethodDelete: h.revokeAPIKey(keyID)}
+	}
 	switch sub {
 	case "":
 		return map[string]projectIDHandler{http.MethodDelete: h.handleDelete}
 	case "approve":
 		return map[string]projectIDHandler{http.MethodPost: h.handleApprove}
 	case "apikeys":
-		return map[string]projectIDHandler{http.MethodGet: h.handleListAPIKeys}
+		return map[string]projectIDHandler{
+			http.MethodGet:  h.handleListAPIKeys,
+			http.MethodPost: h.handleCreateAPIKey,
+		}
 	case "e2e":
 		return map[string]projectIDHandler{
 			http.MethodPost:   h.handleEnableE2E,

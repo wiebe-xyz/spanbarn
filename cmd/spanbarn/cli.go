@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -73,14 +71,6 @@ func printTable(headers []string, rows [][]string) {
 		}
 		fmt.Println()
 	}
-}
-
-func generateAPIKey() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate API key: %w", err)
-	}
-	return hex.EncodeToString(b), nil
 }
 
 var nonAlphanumDash = regexp.MustCompile(`[^a-z0-9-]+`)
@@ -312,12 +302,10 @@ func runAPIKeyCreate(cfg config.Config, args []string) error {
 		return fmt.Errorf("project %q not found: %w", *project, err)
 	}
 
-	plainKey, err := generateAPIKey()
+	plainKey, keyHash, err := auth.NewAPIKey()
 	if err != nil {
 		return err
 	}
-
-	keyHash := auth.HashKey(plainKey)
 
 	if _, err := repo.CreateAPIKey(proj.ID, *name, keyHash, *scope); err != nil {
 		return fmt.Errorf("create API key: %w", err)

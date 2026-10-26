@@ -42,7 +42,8 @@ func TestProjectIDRoutes(t *testing.T) {
 	}{
 		{"", []string{http.MethodDelete}, true},
 		{"approve", []string{http.MethodPost}, true},
-		{"apikeys", []string{http.MethodGet}, true},
+		{"apikeys", []string{http.MethodGet, http.MethodPost}, true},
+		{"apikeys/12", []string{http.MethodDelete}, true},
 		{"e2e", []string{http.MethodPost, http.MethodDelete}, true},
 		{"verbose", []string{http.MethodPost, http.MethodDelete}, true},
 		{"unknown", nil, false},
