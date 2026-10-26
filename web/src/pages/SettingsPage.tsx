@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, type ReactElement } from 'react'
-import { CheckCircle, XCircle, ExternalLink, Key, ChevronDown, ChevronRight, Zap, HardDrive, MemoryStick } from 'lucide-react'
+import { CheckCircle, XCircle, ExternalLink, Zap, HardDrive, MemoryStick } from 'lucide-react'
 import { fetchJSON } from '../api/client'
+import { ProjectAPIKeys } from '../components/ProjectAPIKeys'
 
 type DBSize = {
   dbSizeBytes: number
@@ -533,111 +534,6 @@ type ProjectStats = {
   projectId: number
   spanCount: number
   errorCount: number
-}
-
-type APIKey = {
-  id: number
-  projectId: number
-  name: string
-  scope: string
-  lastUsedAt: string | null
-  createdAt: string
-}
-
-function ProjectAPIKeys({ projectId }: { projectId: number }) {
-  const [keys, setKeys] = useState<APIKey[]>([])
-  const [expanded, setExpanded] = useState(false)
-  const [loading, setLoading] = useState(false)
-
-  const fetchKeys = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await fetchJSON<APIKey[]>(`/api/v1/projects/${projectId}/apikeys`)
-      setKeys(data ?? [])
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false)
-    }
-  }, [projectId])
-
-  useEffect(() => {
-    if (expanded && keys.length === 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
-      void fetchKeys()
-    }
-  }, [expanded, keys.length, fetchKeys])
-
-  return (
-    <div>
-      <button
-        onClick={() => setExpanded(!expanded)}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          background: 'none',
-          border: 'none',
-          color: 'var(--accent)',
-          cursor: 'pointer',
-          fontSize: '0.8125rem',
-          fontFamily: 'inherit',
-          padding: 0,
-        }}
-      >
-        <Key size={12} />
-        {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        API Keys
-      </button>
-      {expanded && (
-        <div style={{ marginTop: 8 }}>
-          {loading ? (
-            <div className="skeleton" style={{ height: 40 }} />
-          ) : keys.length === 0 ? (
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-              No API keys
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {keys.map((k) => (
-                <div
-                  key={k.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    fontSize: '0.75rem',
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <span style={{ fontWeight: 500 }}>{k.name}</span>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      background: k.scope === 'ingest' ? 'rgba(59,130,246,0.1)' : 'rgba(168,85,247,0.1)',
-                      color: k.scope === 'ingest' ? '#3b82f6' : '#a855f7',
-                      border: `1px solid ${k.scope === 'ingest' ? 'rgba(59,130,246,0.3)' : 'rgba(168,85,247,0.3)'}`,
-                      borderRadius: 99,
-                      padding: '0.05rem 0.4rem',
-                      textTransform: 'uppercase',
-                    }}
-                  >
-                    {k.scope}
-                  </span>
-                  {k.lastUsedAt && (
-                    <span style={{ color: 'var(--text-muted)' }}>
-                      last used {new Date(k.lastUsedAt).toLocaleDateString()}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
 }
 
 export function SettingsPage(): ReactElement {
