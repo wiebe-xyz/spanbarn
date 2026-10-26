@@ -131,21 +131,21 @@ func TestContentionBodySizes(t *testing.T) {
 }
 
 // The tick loop must stop when ctx ends and never call fn faster than the
-// ticker allows.
+// ticker allows. A loaded host may drop ticks, so only the cap is exact.
 func TestContentionTickLoopIsRateLimited(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	rec := &contRecorder{}
-	calls := 0
-	err := contTickLoop(ctx, 50*time.Millisecond, rec, func(time.Time) (int, error) {
+	calls, commits := 0, 0
+	err := contTickLoop(ctx, 50*time.Millisecond, rec, func() { commits++ }, func(time.Time) (int, error) {
 		calls++
 		return 2, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls > 6 || calls < 3 {
-		t.Errorf("got %d calls in 300ms at 50ms ticks, want 3..6", calls)
+	if calls > 6 || calls < 1 || commits != calls {
+		t.Errorf("got %d calls, %d commits in 300ms at 50ms ticks, want 1..6 of each", calls, commits)
 	}
 	lat, rows := rec.snapshot()
 	if len(lat) != calls || rows != int64(2*calls) {
