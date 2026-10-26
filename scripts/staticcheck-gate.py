@@ -31,7 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Pinned: a new staticcheck release would otherwise change what CI enforces with
 # no commit on our side.
-STATICCHECK = "honnef.co/go/tools/cmd/staticcheck@v0.8.1"
+STATICCHECK = "honnef.co/go/tools/cmd/staticcheck@v0.8.2"
 
 # The analyzer that reports unused code.
 DEAD_CODE_ANALYZER = "U1000"
