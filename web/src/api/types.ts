@@ -261,6 +261,10 @@ export type ServiceMapEdge = {
 export type ServiceMap = {
   nodes: ServiceMapNode[]
   edges: ServiceMapEdge[]
+  /** The range held more spans than the map reads; it covers only the newest. */
+  truncated?: boolean
+  /** Ingest time of the oldest span read, set when truncated. */
+  coveredFrom?: string
 }
 
 /** A saved trace query. */
