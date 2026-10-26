@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, type ReactElement } from 'react'
-import { CheckCircle, XCircle, ExternalLink, Copy, Check, Key, ChevronDown, ChevronRight, Zap, HardDrive, MemoryStick } from 'lucide-react'
+import { CheckCircle, XCircle, ExternalLink, Key, ChevronDown, ChevronRight, Zap, HardDrive, MemoryStick } from 'lucide-react'
 import { fetchJSON } from '../api/client'
 
 type DBSize = {
@@ -544,27 +544,6 @@ type APIKey = {
   createdAt: string
 }
 
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false)
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(value)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  return (
-    <button
-      onClick={handleCopy}
-      className="btn btn-sm"
-      style={{ padding: '0.3rem 0.5rem' }}
-      title="Copy to clipboard"
-    >
-      {copied ? <Check size={13} /> : <Copy size={13} />}
-    </button>
-  )
-}
-
 function ProjectAPIKeys({ projectId }: { projectId: number }) {
   const [keys, setKeys] = useState<APIKey[]>([])
   const [expanded, setExpanded] = useState(false)
@@ -668,6 +647,8 @@ export function SettingsPage(): ReactElement {
   const [approvingProject, setApprovingProject] = useState<number | null>(null)
   const [rejectingProject, setRejectingProject] = useState<number | null>(null)
   const [error, setError] = useState('')
+  const [setupSlug, setSetupSlug] = useState('')
+  const [creatingSetup, setCreatingSetup] = useState(false)
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -690,6 +671,23 @@ export function SettingsPage(): ReactElement {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     void fetchProjects()
   }, [fetchProjects])
+
+  // The guide is served to a signed-in session only. POST creates the pending
+  // project and its key; the project's row below then links to the guide.
+  const handleCreateSetup = async () => {
+    const slug = setupSlug.trim()
+    setCreatingSetup(true)
+    try {
+      const res = await fetch(`/api/v1/setup/${encodeURIComponent(slug)}`, { method: 'POST', credentials: 'same-origin' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setSetupSlug('')
+      await fetchProjects()
+    } catch (e) {
+      setError(`Setup failed: ${String(e)}`)
+    } finally {
+      setCreatingSetup(false)
+    }
+  }
 
   const handleApprove = async (id: number) => {
     setApprovingProject(id)
@@ -758,28 +756,31 @@ export function SettingsPage(): ReactElement {
               Quick Setup
             </div>
             <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: 12 }}>
-              Point an LLM or developer at the setup page to auto-configure a project with an ingest API key.
-              The page returns a markdown guide with OTel integration examples.
+              Create a project with an ingest API key and a setup guide: a markdown page with OTel
+              integration examples to hand to an LLM or developer. Open the guide from the project's
+              Setup link while signed in.
             </div>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                background: 'var(--bg)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                padding: '0.5rem 0.75rem',
+            <form
+              onSubmit={e => {
+                e.preventDefault()
+                void handleCreateSetup()
               }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
             >
-              <code style={{ fontSize: '0.8125rem', color: 'var(--accent)', flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
-                {window.location.origin}/api/v1/setup/<strong>your-project-slug</strong>
-              </code>
-              <CopyButton value={`${window.location.origin}/api/v1/setup/your-project-slug`} />
-            </div>
+              <input
+                type="text"
+                value={setupSlug}
+                onChange={e => setSetupSlug(e.target.value)}
+                placeholder="your-project-slug"
+                aria-label="Project slug"
+                style={{ flex: 1, minWidth: 0, padding: '0.375rem 0.5rem', fontSize: '0.8125rem' }}
+              />
+              <button type="submit" className="btn btn-sm" disabled={creatingSetup || setupSlug.trim() === ''}>
+                {creatingSetup ? 'Creating...' : 'Create project'}
+              </button>
+            </form>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 8 }}>
-              Replace <code style={{ color: 'var(--text)' }}>your-project-slug</code> with the desired project name.
-              The project will appear below as &quot;pending&quot; until you approve it.
+              The project appears below as &quot;pending&quot; until you approve it.
             </div>
           </div>
         </div>
@@ -858,7 +859,6 @@ export function SettingsPage(): ReactElement {
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                <CopyButton value={`${window.location.origin}/api/v1/setup/${p.slug}`} />
                 <a
                   href={`/api/v1/setup/${p.slug}`}
                   target="_blank"
@@ -983,7 +983,6 @@ export function SettingsPage(): ReactElement {
                     </div>
                   )}
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <CopyButton value={`${window.location.origin}/api/v1/setup/${p.slug}`} />
                     <a
                       href={`/api/v1/setup/${p.slug}`}
                       target="_blank"
