@@ -67,7 +67,7 @@ func TestRecentSpanVersionsReadsOnlyNewSpans(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("InsertSpans: %v", err)
 	}
-	if _, err := repo.DB().Exec(`UPDATE spans SET ingested_at = ? WHERE span_id = 's3'`, time.Now().UTC().Add(-48*time.Hour)); err != nil {
+	if _, err := repo.writer(FamilySpans).Exec(`UPDATE spans SET ingested_at = ? WHERE span_id = 's3'`, time.Now().UTC().Add(-48*time.Hour).String()); err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
 	got, next, err := repo.RecentSpanVersions(watermark, time.Time{})
