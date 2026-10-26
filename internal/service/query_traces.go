@@ -153,7 +153,6 @@ func (s *QueryService) listTraceGroupsUncached(ctx context.Context, filter Trace
 	rates := s.newOpRates(ctx, filter.ProjectID)
 	out := make([]TraceGroupSummary, 0, len(groups))
 	for _, g := range groups {
-		p50, p95, p99 := computePercentiles(g.Durations)
 		effective := estimateSpans(g.Count, g.ErrorCount, g.Weights, rates.rate(g.Operation))
 		errorRate := 0.0
 		if effective > 0 {
@@ -165,9 +164,9 @@ func (s *QueryService) listTraceGroupsUncached(ctx context.Context, filter Trace
 			Count:      effective,
 			ErrorCount: g.ErrorCount,
 			ErrorRate:  errorRate,
-			P50Us:      p50,
-			P95Us:      p95,
-			P99Us:      p99,
+			P50Us:      g.Hist.Percentile(50),
+			P95Us:      g.Hist.Percentile(95),
+			P99Us:      g.Hist.Percentile(99),
 		})
 	}
 

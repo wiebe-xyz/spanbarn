@@ -7,16 +7,13 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
 // Dashboard queries read raw spans over a short window (retention keeps ~48h)
 // and bucket on ingested_at, the same server-authoritative key the span indexes
 // and retention use.
-
-// dashboardRowCap bounds how many span rows a single percentile query pulls
-// into memory. It is far above a 48h window of normal traffic and exists so a
-// runaway project cannot exhaust the reader.
-const dashboardRowCap = 5_000_000
 
 // dashboardSpans is the spans table pinned to the covering index of migration
 // 038. Without ANALYZE stats the planner prefers indexes with an equality prefix
@@ -296,10 +293,13 @@ func topGroups(totals map[string]int64, n int) map[string]bool {
 	return keep
 }
 
-// QueryDashboardPercentiles computes exact P90/P95/P99 per time bucket for the
-// topN groups by span count. Percentiles do not merge, so groups outside the
-// top N are omitted instead of folded into an "other" series. Percentiles are
-// computed from the raw durations, never by averaging stored aggregate values.
+// QueryDashboardPercentiles computes P90/P95/P99 per time bucket for the topN
+// groups by span count. SQLite folds the spans into quarter-octave duration
+// bins per bucket and group (see internal/spanhist), so a percentile lands
+// inside the observed range of its bin: exact for evenly spaced durations and
+// within the bin's 19% width otherwise. Percentiles do not merge across
+// groups, so groups outside the top N are omitted instead of folded into an
+// "other" series.
 func (r *Repository) QueryDashboardPercentiles(ctx context.Context, f SpanFilter, intervalSec int64, group DashboardGroup, topN int) ([]DashboardPercentilePoint, error) {
 	expr, ok := group.groupExpr()
 	if !ok || group == DashboardGroupHTTPStatus {
@@ -308,8 +308,9 @@ func (r *Repository) QueryDashboardPercentiles(ctx context.Context, f SpanFilter
 	where, args := dashboardWhere(f)
 
 	bk := newBucketKey(intervalSec)
-	q := fmt.Sprintf(`SELECT %s, %s, duration_us FROM `+dashboardSpans+`%s LIMIT %d`,
-		bk.sql, expr, where, dashboardRowCap)
+	q := fmt.Sprintf(`SELECT %s AS bucket, %s AS grp, %s AS bin, COUNT(*), MIN(duration_us), MAX(duration_us)
+		FROM `+dashboardSpans+`%s GROUP BY bucket, grp, bin`,
+		bk.sql, expr, spanhist.IndexSQL("duration_us"), where)
 	ctx, cancel := r.readContext(ctx)
 	defer cancel()
 	rows, err := r.db.QueryContext(ctx, q, args...)
@@ -324,13 +325,13 @@ func (r *Repository) QueryDashboardPercentiles(ctx context.Context, f SpanFilter
 		sec   int64
 		group string
 	}
-	durations := map[key][]int64{}
+	hists := map[key]*spanhist.Hist{}
 	totals := map[string]int64{}
 	memo := bucketMemo{key: bk}
 	for rows.Next() {
 		var prefix, grp string
-		var dur int64
-		if err := rows.Scan(&prefix, &grp, &dur); err != nil {
+		var b spanhist.Bin
+		if err := rows.Scan(&prefix, &grp, &b.Index, &b.Count, &b.Min, &b.Max); err != nil {
 			return nil, err
 		}
 		sec, err := memo.epoch(prefix)
@@ -338,8 +339,13 @@ func (r *Repository) QueryDashboardPercentiles(ctx context.Context, f SpanFilter
 			return nil, err
 		}
 		k := key{sec, grp}
-		durations[k] = append(durations[k], dur)
-		totals[grp]++
+		h := hists[k]
+		if h == nil {
+			h = &spanhist.Hist{}
+			hists[k] = h
+		}
+		h.Add(b)
+		totals[grp] += b.Count
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -348,26 +354,22 @@ func (r *Repository) QueryDashboardPercentiles(ctx context.Context, f SpanFilter
 		topN = 10
 	}
 	keep := topGroups(totals, topN)
-	for k := range durations {
+	points := make([]DashboardPercentilePoint, 0, len(hists))
+	for k, h := range hists {
 		if !keep[k.group] {
-			delete(durations, k)
+			continue
 		}
-	}
-	if len(durations) == 0 {
-		return nil, nil
-	}
-
-	points := make([]DashboardPercentilePoint, 0, len(durations))
-	for k, d := range durations {
-		sort.Slice(d, func(i, j int) bool { return d[i] < d[j] })
 		points = append(points, DashboardPercentilePoint{
 			Bucket: time.Unix(k.sec, 0).UTC(),
 			Group:  k.group,
-			Count:  int64(len(d)),
-			P90Us:  percentileFromSorted(d, 90),
-			P95Us:  percentileFromSorted(d, 95),
-			P99Us:  percentileFromSorted(d, 99),
+			Count:  h.Count(),
+			P90Us:  h.Percentile(90),
+			P95Us:  h.Percentile(95),
+			P99Us:  h.Percentile(99),
 		})
+	}
+	if len(points) == 0 {
+		return nil, nil
 	}
 	sort.Slice(points, func(i, j int) bool {
 		if !points[i].Bucket.Equal(points[j].Bucket) {

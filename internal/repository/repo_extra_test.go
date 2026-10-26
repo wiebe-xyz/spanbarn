@@ -467,8 +467,8 @@ func TestQueryRootSpanGroups(t *testing.T) {
 	if getGroup.ErrorCount != 1 {
 		t.Fatalf("expected 1 error, got %d", getGroup.ErrorCount)
 	}
-	if len(getGroup.Durations) != 2 {
-		t.Fatalf("expected 2 durations, got %d", len(getGroup.Durations))
+	if getGroup.Hist.Count() != 2 || getGroup.Hist.Percentile(100) != 2000 {
+		t.Fatalf("histogram = %d durations, max %d; want 2, 2000", getGroup.Hist.Count(), getGroup.Hist.Percentile(100))
 	}
 
 	// ExcludeOperations.

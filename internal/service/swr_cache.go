@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -86,8 +87,13 @@ func startRead[T any](ctx context.Context, c *cache.Cache, key string, grain tim
 		case <-cctx.Done():
 			return nil, cctx.Err()
 		}
+		start := time.Now()
 		res, err := compute(cctx)
 		if err != nil {
+			// The request may have left at its budget, so nobody else sees
+			// this error: log it, or a scan that never fills the cache is
+			// invisible. Info, because a waiting request reports it as well.
+			slog.Info("read scan failed", "key", key, "elapsed_ms", time.Since(start).Milliseconds(), "error", err)
 			return nil, err
 		}
 		cache.SetSWR(c, context.Background(), key, res, grain, 4*grain)

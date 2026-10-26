@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
 // ServiceStats holds per-service metrics computed from raw spans.
@@ -193,21 +195,25 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 	return result, nil
 }
 
-// QueryRootSpanGroups aggregates root spans (parent_span_id = ”) by operation name,
-// returning count, error count, and raw durations for percentile computation.
-// Uses the idx_spans_root_ingested partial index for efficient scanning.
+// QueryRootSpanGroups aggregates root spans (spans with no parent) by operation
+// name and service: count, error count, sample weights and a duration
+// histogram. SQLite folds the rows into one per group and duration bin, so the
+// reader receives a few rows per operation instead of every root span.
 func (r *Repository) QueryRootSpanGroups(ctx context.Context, f SpanFilter) ([]RootSpanGroup, error) {
 	ctx, cancel := r.readContext(ctx)
 	defer cancel()
 	where, args := f.rootSpanGroupWhere()
 
 	q := fmt.Sprintf(`
-		SELECT name, service, duration_us,
-		       CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END AS is_error,
-		       COALESCE(sample_weight, 0)
-		FROM spans
+		SELECT name, service, %s AS bin, COUNT(*),
+		       SUM(CASE WHEN status IN ('error','ERROR','Error') THEN 1 ELSE 0 END),
+		       MIN(duration_us), MAX(duration_us),
+		       SUM(CASE WHEN sample_weight > 0 THEN sample_weight ELSE 0 END),
+		       SUM(CASE WHEN sample_weight > 0 THEN 1 ELSE 0 END)
+		FROM %s
 		WHERE %s
-		ORDER BY name, service, duration_us`, strings.Join(where, " AND "))
+		GROUP BY name, service, bin
+		ORDER BY name, service, bin`, spanhist.IndexSQL("duration_us"), rootSpanGroupSource(f), strings.Join(where, " AND "))
 
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -217,7 +223,25 @@ func (r *Repository) QueryRootSpanGroups(ctx context.Context, f SpanFilter) ([]R
 	return groupRootSpanRows(rows)
 }
 
-// rootSpanGroupWhere builds the WHERE conditions for QueryRootSpanGroups.
+// rootSpanGroupSource pins the index the root span groups read. One project
+// reads the root-only partial index (project_id, ingested_at), which visits
+// only that project's root rows. Every project has no project_id to seek on,
+// so it reads the covering dashboard index, which leads with ingested_at and
+// holds parent_span_id: child spans are skipped inside the index and only
+// roots visit the table, for sample_weight. Left to the planner, the
+// all-projects query walked an ingested_at index and read the table row of
+// every span in the window, children included, and ran past 60s in
+// production.
+func rootSpanGroupSource(f SpanFilter) string {
+	if f.ProjectID != 0 {
+		return "spans INDEXED BY idx_spans_root_ingested"
+	}
+	return dashboardSpans
+}
+
+// rootSpanGroupWhere builds the WHERE conditions for QueryRootSpanGroups. The
+// root condition repeats the partial index's WHERE clause verbatim, which
+// SQLite requires before it uses that index.
 func (f SpanFilter) rootSpanGroupWhere() ([]string, []any) {
 	b := &whereBuilder{}
 	b.add("COALESCE(parent_span_id,'') = ''")
@@ -238,17 +262,17 @@ func (f SpanFilter) rootSpanGroupWhere() ([]string, []any) {
 	return b.where, b.args
 }
 
-// groupRootSpanRows folds the (name, service, duration, is_error, weight) rows into one
-// group per operation and service, keeping first-seen order.
+// groupRootSpanRows folds the per-bin rows into one group per operation and
+// service, keeping first-seen order.
 func groupRootSpanRows(rows *sql.Rows) ([]RootSpanGroup, error) {
 	type groupKey struct{ operation, service string }
 	byOp := make(map[groupKey]*RootSpanGroup)
 	var order []groupKey
 	for rows.Next() {
 		var name, service string
-		var dur int64
-		var isError, weight int
-		if err := rows.Scan(&name, &service, &dur, &isError, &weight); err != nil {
+		var b spanhist.Bin
+		var errors, weight, weighted int64
+		if err := rows.Scan(&name, &service, &b.Index, &b.Count, &errors, &b.Min, &b.Max, &weight, &weighted); err != nil {
 			return nil, err
 		}
 		k := groupKey{name, service}
@@ -258,12 +282,11 @@ func groupRootSpanRows(rows *sql.Rows) ([]RootSpanGroup, error) {
 			byOp[k] = g
 			order = append(order, k)
 		}
-		g.Count++
-		g.Weights.Add(weight)
-		g.Durations = append(g.Durations, dur)
-		if isError == 1 {
-			g.ErrorCount++
-		}
+		g.Count += b.Count
+		g.ErrorCount += errors
+		g.Weights.Count += weight
+		g.Weights.Spans += weighted
+		g.Hist.Add(b)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
