@@ -9,6 +9,7 @@ import { AutoRefresh } from '../components/AutoRefresh'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
 import { DependencyDetailPanel } from './DependencyDetailPage'
 import { useTimeRange } from '../contexts/useTimeRange'
+import { CoverageNote } from '../components/CoverageNote'
 
 type SortField = 'target' | 'targetType' | 'callCount' | 'errorCount' | 'errorRate' | 'p50Us' | 'p95Us' | 'p99Us'
 type SortDir = 'asc' | 'desc'
@@ -19,6 +20,8 @@ export function DependenciesPage(): ReactElement {
   const [refreshInterval, setRefreshInterval] = useState(0)
   const [serviceFilter, setServiceFilter] = useState('')
   const [dependencies, setDependencies] = useState<DependencySummary[]>([])
+  const [coveredFrom, setCoveredFrom] = useState<string | undefined>()
+  const [rangeEnd, setRangeEnd] = useState<Date | null>(null)
   const [loading, setLoading] = useState(true)
   const [sortField, setSortField] = useState<SortField>('callCount')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -35,7 +38,9 @@ export function DependenciesPage(): ReactElement {
     try {
       const data = await api.getDependencies(from, to, serviceFilter || undefined)
       if (id === fetchIdRef.current) {
-        setDependencies(data ?? [])
+        setDependencies(data.items)
+        setCoveredFrom(data.coveredFrom)
+        setRangeEnd(new Date(to))
       }
     } catch {
       // handled by client (401 redirect, etc.)
@@ -120,6 +125,8 @@ export function DependenciesPage(): ReactElement {
           <TimeRangeSelector value={range} onChange={setRange} />
         </div>
       </div>
+
+      <CoverageNote coveredFrom={coveredFrom} rangeEnd={rangeEnd} subject="list" />
 
       {/* Table */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
