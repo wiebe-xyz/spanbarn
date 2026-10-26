@@ -75,7 +75,7 @@ describe('DependenciesPage', () => {
   })
 
   it('renders table with dependency data', async () => {
-    mockedGetDependencies.mockResolvedValueOnce(mockDependencies)
+    mockedGetDependencies.mockResolvedValueOnce({ items: mockDependencies })
 
     renderPage()
 
@@ -91,7 +91,7 @@ describe('DependenciesPage', () => {
   })
 
   it('sorts by column when header is clicked', async () => {
-    mockedGetDependencies.mockResolvedValueOnce(mockDependencies)
+    mockedGetDependencies.mockResolvedValueOnce({ items: mockDependencies })
 
     renderPage()
 
@@ -127,8 +127,27 @@ describe('DependenciesPage', () => {
     expect(firstErrors[0].textContent).toBe('stripe.com')
   })
 
+  it('states the window a truncated list covers', async () => {
+    const coveredFrom = new Date(Date.now() - 18 * 60_000).toISOString()
+    mockedGetDependencies.mockResolvedValueOnce({ items: mockDependencies, coveredFrom })
+
+    renderPage()
+
+    const note = await screen.findByRole('note')
+    expect(note.textContent).toContain('this list covers the last 18 min of the selected range')
+  })
+
+  it('shows no coverage note when the list read the whole range', async () => {
+    mockedGetDependencies.mockResolvedValueOnce({ items: mockDependencies })
+
+    renderPage()
+
+    await waitFor(() => expect(screen.getByText('PostgreSQL')).toBeDefined())
+    expect(screen.queryByRole('note')).toBeNull()
+  })
+
   it('shows empty state when no dependencies found', async () => {
-    mockedGetDependencies.mockResolvedValueOnce([])
+    mockedGetDependencies.mockResolvedValueOnce({ items: [] })
 
     renderPage()
 

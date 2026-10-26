@@ -467,7 +467,7 @@ func TestListDependencies(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	deps, err := svc.ListDependencies(context.Background(), 1, time.Time{}, time.Time{}, "")
+	deps, _, err := svc.ListDependencies(context.Background(), 1, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("ListDependencies: %v", err)
 	}

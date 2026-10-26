@@ -120,6 +120,25 @@ describe('api methods construct correct URLs', () => {
     expect(url).toContain('to=')
   })
 
+  it('getDependencies reads the coverage header', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'X-Spanbarn-Covered-From': '2026-10-26T13:01:50Z' }),
+      text: () => Promise.resolve('[{"target":"db"}]'),
+    })
+    const { api } = await import('./client')
+    const res = await api.getDependencies('2026-10-25T13:00:00Z', '2026-10-26T13:20:00Z')
+    expect(res).toEqual({ items: [{ target: 'db' }], coveredFrom: '2026-10-26T13:01:50Z' })
+  })
+
+  it('getDatabaseQueries leaves coveredFrom unset without the header', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, headers: new Headers(), text: () => Promise.resolve('[]') })
+    const { api } = await import('./client')
+    const res = await api.getDatabaseQueries('2026-10-25T13:00:00Z', '2026-10-26T13:20:00Z')
+    expect(res).toEqual({ items: [], coveredFrom: undefined })
+  })
+
   it('getOperations includes service in path', async () => {
     const { api } = await import('./client')
     await api.getOperations('my-service', '2024-01-01T00:00:00Z', '2024-01-02T00:00:00Z')
