@@ -69,7 +69,7 @@ func TestRawSpanViewsCountSampleWeights(t *testing.T) {
 	})
 
 	t.Run("database queries", func(t *testing.T) {
-		got, err := svc.ListDatabaseQueries(ctx, 1, time.Time{}, time.Time{}, "")
+		got, _, err := svc.ListDatabaseQueries(ctx, 1, time.Time{}, time.Time{}, "")
 		if err != nil || len(got) != 1 {
 			t.Fatalf("ListDatabaseQueries = %+v, %v", got, err)
 		}
@@ -79,7 +79,7 @@ func TestRawSpanViewsCountSampleWeights(t *testing.T) {
 	})
 
 	t.Run("dependencies", func(t *testing.T) {
-		got, err := svc.ListDependencies(ctx, 1, time.Time{}, time.Time{}, "")
+		got, _, err := svc.ListDependencies(ctx, 1, time.Time{}, time.Time{}, "")
 		if err != nil || len(got) != 1 {
 			t.Fatalf("ListDependencies = %+v, %v", got, err)
 		}

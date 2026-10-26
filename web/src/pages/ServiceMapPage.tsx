@@ -6,7 +6,7 @@ import { AutoRefresh } from '../components/AutoRefresh'
 import { getTimeRange } from '../utils/timeRange'
 import { useTimeRange } from '../contexts/useTimeRange'
 import { formatCount, formatErrorRate, errorRateColor } from '../utils/format'
-import { coverageNote } from '../utils/coverage'
+import { CoverageNote } from '../components/CoverageNote'
 
 type SimNode = ServiceMapNode & { x: number; y: number; vx: number; vy: number }
 
@@ -202,11 +202,7 @@ export function ServiceMapPage(): ReactElement {
         </div>
       </div>
 
-      {data?.truncated && data.coveredFrom && rangeEnd && (
-        <p role="note" style={{ marginBottom: '0.75rem', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-          {coverageNote(data.coveredFrom, rangeEnd)}
-        </p>
-      )}
+      {data?.truncated && <CoverageNote coveredFrom={data.coveredFrom} rangeEnd={rangeEnd} />}
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div ref={containerRef} style={{ width: '100%', height: '60vh', minHeight: 300 }}>

@@ -54,7 +54,7 @@ func TestListDatabaseQueries(t *testing.T) {
 	}
 
 	// Zero from/to skips the ingested_at filter (see GetServiceMap test).
-	out, err := svc.ListDatabaseQueries(context.Background(), 1, time.Time{}, time.Time{}, "")
+	out, _, err := svc.ListDatabaseQueries(context.Background(), 1, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("ListDatabaseQueries: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestListDatabaseQueriesCollapsesParamLists(t *testing.T) {
 		t.Fatalf("InsertSpans: %v", err)
 	}
 
-	out, err := svc.ListDatabaseQueries(context.Background(), 1, time.Time{}, time.Time{}, "")
+	out, _, err := svc.ListDatabaseQueries(context.Background(), 1, time.Time{}, time.Time{}, "")
 	if err != nil {
 		t.Fatalf("ListDatabaseQueries: %v", err)
 	}
