@@ -220,6 +220,7 @@ type PromptRecord struct {
 type PromptFilter struct {
 	ProjectID    int64
 	Service      string
+	Name         string
 	Model        string
 	GenAISystem  string
 	Status       string

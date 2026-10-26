@@ -70,49 +70,7 @@ func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
 }
 
 func (r *Repository) QueryPromptRecords(f PromptFilter) ([]PromptRecord, error) {
-	var where []string
-	var args []any
-
-	if f.ProjectID != 0 {
-		where = append(where, "project_id = ?")
-		args = append(args, f.ProjectID)
-	}
-	if f.Service != "" {
-		where = append(where, "service = ?")
-		args = append(args, f.Service)
-	}
-	if f.Model != "" {
-		where = append(where, "model = ?")
-		args = append(args, f.Model)
-	}
-	if f.GenAISystem != "" {
-		where = append(where, "gen_ai_system = ?")
-		args = append(args, f.GenAISystem)
-	}
-	if f.Status != "" {
-		where = append(where, "status = ?")
-		args = append(args, f.Status)
-	}
-	if f.FinishReason != "" {
-		where = append(where, "finish_reason = ?")
-		args = append(args, f.FinishReason)
-	}
-	if f.PromptHash != "" {
-		where = append(where, "prompt_hash = ?")
-		args = append(args, f.PromptHash)
-	}
-	if f.MinDuration > 0 {
-		where = append(where, "duration_us >= ?")
-		args = append(args, f.MinDuration)
-	}
-	if !f.From.IsZero() {
-		where = append(where, "ingested_at >= ?")
-		args = append(args, f.From)
-	}
-	if !f.To.IsZero() {
-		where = append(where, "ingested_at <= ?")
-		args = append(args, f.To)
-	}
+	where, args := f.where()
 
 	query := func(table string) string {
 		q := promptRecordColumns + ` FROM ` + table
@@ -134,6 +92,28 @@ func (r *Repository) QueryPromptRecords(f PromptFilter) ([]PromptRecord, error) 
 		q += fmt.Sprintf(" OFFSET %d", f.Offset)
 	}
 	return r.scanPromptRecords(r.db, q, args...)
+}
+
+// where builds the WHERE conditions shared by the prompt list and the prompt
+// groups.
+func (f PromptFilter) where() ([]string, []any) {
+	b := &whereBuilder{}
+	if f.ProjectID != 0 {
+		b.add("project_id = ?", f.ProjectID)
+	}
+	for _, c := range []struct{ col, val string }{
+		{"service", f.Service}, {"name", f.Name}, {"model", f.Model}, {"gen_ai_system", f.GenAISystem},
+		{"status", f.Status}, {"finish_reason", f.FinishReason}, {"prompt_hash", f.PromptHash},
+	} {
+		if c.val != "" {
+			b.add(c.col+" = ?", c.val)
+		}
+	}
+	if f.MinDuration > 0 {
+		b.add("duration_us >= ?", f.MinDuration)
+	}
+	b.addTimeRange("ingested_at", f.From, f.To)
+	return b.where, b.args
 }
 
 // promptRecordsBySegment is the prompts list over a sharded family. Through
