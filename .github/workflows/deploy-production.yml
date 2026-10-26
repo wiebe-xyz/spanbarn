@@ -103,7 +103,9 @@ jobs:
   deploy:
     needs: preflight
     runs-on: [self-hosted, build]
-    timeout-minutes: 35
+    # Apply plus smoke can take about 30 minutes; a rollback after a late
+    # failure needs the same again.
+    timeout-minutes: 60
     env:
       HOME: /Users/wiebe
       PATH: /Users/wiebe/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
@@ -117,6 +119,25 @@ jobs:
             "rm -rf /tmp/spanbarn-deploy && mkdir -p /tmp/spanbarn-deploy"
           scp -o StrictHostKeyChecking=no -r deploy \
             "${K3S_USER}@${K3S_HOST}:/tmp/spanbarn-deploy/deploy"
+
+      - name: Record the running release
+        id: record
+        run: |
+          set -euo pipefail
+          # Every Deployment's revision and every CronJob image, so a failed
+          # deploy can put each one back where it was.
+          STATE="/tmp/spanbarn-release-state-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+            "sh /tmp/spanbarn-deploy/deploy/scripts/release-state.sh record ${NAMESPACE} ${STATE}"
+          echo "state=${STATE}" >> "$GITHUB_OUTPUT"
+          # The release prod serves now, to smoke after a rollback. Prod being
+          # down already does not block the deploy that may fix it.
+          if PREV="$(curl -fsS --max-time 15 https://spanbarn.wiebe.xyz/api/v1/version)"; then
+            echo "prev_version=$(printf '%s' "$PREV" | sed -nE 's/.*"version":"([^"]+)".*/\1/p')" >> "$GITHUB_OUTPUT"
+            echo "prev_commit=$(printf '%s' "$PREV" | sed -nE 's/.*"commit":"([^"]+)".*/\1/p')" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::production /api/v1/version did not answer; a rollback would not be smoked"
+          fi
 
       - name: Ensure namespace exists
         run: |
@@ -146,6 +167,7 @@ jobs:
           "
 
       - name: Apply manifests and roll out
+        id: apply
         run: |
           set -euo pipefail
           SHA="${{ needs.preflight.outputs.sha }}"
@@ -174,15 +196,27 @@ jobs:
             sh /tmp/spanbarn-deploy/deploy/scripts/assert-version.sh ${NAMESPACE} spanbarn-ingest spanbarn-ingest ${VERSION} ${SHA}
           "
 
-      - name: Rollback on failure
-        if: failure()
+      - name: Smoke production through its public hostname
+        run: bash scripts/smoke.sh https://spanbarn.wiebe.xyz "${{ needs.preflight.outputs.version }}" "${{ needs.preflight.outputs.sha }}"
+
+      - name: Roll back to the recorded release
+        if: failure() && steps.record.outcome == 'success'
+        env:
+          STATE: ${{ steps.record.outputs.state }}
+          PREV_VERSION: ${{ steps.record.outputs.prev_version }}
+          PREV_COMMIT: ${{ steps.record.outputs.prev_commit }}
         run: |
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
-            kubectl -n ${NAMESPACE} rollout undo deployment/spanbarn || true
-            kubectl -n ${NAMESPACE} rollout undo deployment/spanbarn-ingest || true
-            kubectl -n ${NAMESPACE} rollout undo deployment/spanbarn-web || true
-            echo 'Rollback triggered'
-          " || true
+          set -euo pipefail
+          # Undo each Deployment to its recorded revision and reset each CronJob
+          # image. restore exits non-zero when any workload cannot be put back,
+          # so a rollback that did not finish fails this step.
+          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+            "sh /tmp/spanbarn-deploy/deploy/scripts/release-state.sh restore ${NAMESPACE} ${STATE}"
+          if [ -n "${PREV_VERSION}" ] && [ -n "${PREV_COMMIT}" ]; then
+            bash scripts/smoke.sh https://spanbarn.wiebe.xyz "${PREV_VERSION}" "${PREV_COMMIT}"
+          else
+            echo "::warning::no previous version was recorded; the rollback is not smoked"
+          fi
 
       - name: Post release marker to BugBarn
         if: vars.BUGBARN_ENDPOINT != ''
