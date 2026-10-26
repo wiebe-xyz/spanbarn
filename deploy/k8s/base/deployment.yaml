@@ -15,6 +15,11 @@ spec:
       labels:
         app.kubernetes.io/name: spanbarn
     spec:
+      # Room for 10s of HTTP shutdown, the workers and the final checkpoint.
+      # No preStop sleep here: with Recreate and one replica the pod leaves the
+      # endpoints at once and no replacement exists yet, so a sleep only adds
+      # downtime to every rollout.
+      terminationGracePeriodSeconds: 90
       imagePullSecrets:
         - name: ghcr-secret
       containers:
