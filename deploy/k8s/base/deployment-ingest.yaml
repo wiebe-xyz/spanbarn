@@ -19,12 +19,21 @@ spec:
         app.kubernetes.io/name: spanbarn-ingest
         spanbarn.io/serves-reads: "true"
     spec:
+      # The grace period counts from the preStop sleep: 10s sleep, then SIGTERM,
+      # then up to 10s for HTTP shutdown and the spool flush.
+      terminationGracePeriodSeconds: 60
       imagePullSecrets:
         - name: ghcr-secret
       containers:
         - name: spanbarn-ingest
           image: ghcr.io/wiebe-xyz/spanbarn/service:latest
           imagePullPolicy: IfNotPresent
+          # Keep the listener up while the endpoint removal propagates, so
+          # requests routed to the old pod are served and not refused.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 10
           ports:
             - containerPort: 8080
               name: http
