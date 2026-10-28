@@ -89,8 +89,8 @@ func (r *Repository) errorTraces(ctx context.Context, f SpanFilter) ([]errorTrac
 type spanOp struct{ name, service string }
 
 // errorSpanOperations returns, per trace id, the distinct operations of its
-// error spans, from spans and error_samples. Both lookups seek the tables'
-// trace_id index.
+// error spans, from spans and error_samples. Both lookups read only the
+// partial error-trace indexes (see spansErrorTraceIndexesUp).
 func (r *Repository) errorSpanOperations(ctx context.Context, projectID int64, ids []string) (map[string][]spanOp, error) {
 	out := make(map[string][]spanOp, len(ids))
 	seen := make(map[string]map[spanOp]bool, len(ids))
@@ -112,20 +112,19 @@ func (r *Repository) errorSpanOperations(ctx context.Context, projectID int64, i
 }
 
 func (r *Repository) errorSpanChunk(ctx context.Context, projectID int64, ids []string, add func(string, spanOp)) error {
-	in := placeholderList(len(ids))
-	project := ""
 	var args []any
 	for _, id := range ids {
 		args = append(args, id)
 	}
 	if projectID != 0 {
-		project = " AND project_id = ?"
 		args = append(args, projectID)
 	}
-	part := `SELECT trace_id, name, service FROM %s
-		WHERE trace_id IN (` + in + `) AND status IN ('error','ERROR','Error')` + project
-	q := fmt.Sprintf(part, "spans") + " UNION " + fmt.Sprintf(part, "error_samples")
-	rows, err := r.db.QueryContext(ctx, q, append(args, args...)...)
+	args = append(args, args...)
+	rows, err := r.db.QueryContext(ctx, errorSpanQuery(len(ids), projectID != 0, true), args...)
+	if err != nil && strings.Contains(err.Error(), "no such index") {
+		// A reader can serve before the writer's migration built the indexes.
+		rows, err = r.db.QueryContext(ctx, errorSpanQuery(len(ids), projectID != 0, false), args...)
+	}
 	if err != nil {
 		return err
 	}
@@ -175,4 +174,24 @@ func groupErrorTraces(traces []errorTraceRow, errOps map[string][]spanOp) []Erro
 		out = append(out, byKey[k].g)
 	}
 	return out
+}
+
+// errorSpanQuery selects the error operations of n traces from spans and
+// error_samples, of one project when project is set. pinned names the partial
+// error-trace indexes.
+func errorSpanQuery(n int, project, pinned bool) string {
+	cond := ""
+	if project {
+		cond = " AND project_id = ?"
+	}
+	from := func(table, index string) string {
+		if pinned {
+			return table + " INDEXED BY " + index
+		}
+		return table
+	}
+	part := `SELECT trace_id, name, service FROM %s
+		WHERE trace_id IN (` + placeholderList(n) + `) AND ` + errorStatusSQL + cond
+	return fmt.Sprintf(part, from("spans", "idx_spans_error_trace")) + " UNION " +
+		fmt.Sprintf(part, from("error_samples", "idx_error_samples_error_trace"))
 }

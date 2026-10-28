@@ -30,6 +30,7 @@ func spansMigrations() []*goose.Migration {
 		goose.NewGoMigration(3, &goose.GoFunc{RunTx: spansSampleWeightsUp}, nil),
 		goose.NewGoMigration(4, &goose.GoFunc{RunTx: spansSpanRollupsUp}, nil),
 		goose.NewGoMigration(5, &goose.GoFunc{RunTx: spansSpanEdgesUp}, nil),
+		goose.NewGoMigration(6, &goose.GoFunc{RunTx: spansErrorTraceIndexesUp}, nil),
 	}
 }
 
@@ -37,16 +38,22 @@ func spansMigrations() []*goose.Migration {
 // track on one pinned connection and writable handles have only one, so every
 // spans migration runs inside the transaction goose passes (GoFunc.RunTx).
 func MigrateSpans(ctx context.Context, db *sql.DB) error {
+	_, err := migrateSpans(ctx, db)
+	return err
+}
+
+// migrateSpans is MigrateSpans returning the migrations it applied, with how
+// long each took.
+func migrateSpans(ctx context.Context, db *sql.DB) ([]*goose.MigrationResult, error) {
 	p, err := goose.NewProvider(goose.DialectSQLite3, db, nil,
 		goose.WithDisableGlobalRegistry(true),
 		goose.WithTableName(spansVersionTable),
 		goose.WithGoMigrations(spansMigrations()...),
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = p.Up(ctx)
-	return err
+	return p.Up(ctx)
 }
 
 // spansBaselineUp creates the span-family tables and indexes as main-track
