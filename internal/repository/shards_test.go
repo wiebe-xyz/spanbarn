@@ -180,6 +180,56 @@ func TestShardCloseEndedThroughQueue(t *testing.T) {
 	}
 }
 
+// The close of an ended shard runs outside the family's write slot: a write
+// queued while the close is still running goes ahead of it, and closing the
+// storage waits for the close to finish. At the 2026-10-25 day rollover the
+// close held the slot 36 to 45s.
+func TestShardCloseEndedOutsideWriteSlot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spanbarn.db")
+	clock := mustTime(t, "2026-10-04T12:00:00Z")
+	store := openShardedStorage(t, path, &clock)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := writescheduler.New()
+	store.Shards.SetScheduler(FamilyLogs, s)
+	go s.Run(ctx)
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	store.Shards.beforeClose = func() {
+		entered <- struct{}{}
+		<-release
+	}
+
+	clock = mustTime(t, "2026-10-05T12:00:00Z")
+	if err := store.Shards.Maintain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the ended shard's close did not start")
+	}
+	wctx, wcancel := context.WithTimeout(ctx, 5*time.Second)
+	defer wcancel()
+	if err := s.Submit(wctx, writescheduler.Low, "write", func() error { return nil }); err != nil {
+		t.Fatalf("write queued during the close: %v", err)
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- store.Close() }()
+	select {
+	case <-closed:
+		t.Fatal("storage closed while an ended shard was still closing")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-closed; err != nil {
+		t.Fatalf("close storage: %v", err)
+	}
+	if fileExists(filepath.Join(ShardsDir(path), "logs-20261004.db-wal")) {
+		t.Error("ended shard still has its WAL after the storage closed")
+	}
+}
+
 func TestShardRowsMatchFilesAfterRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
 	clock := mustTime(t, "2026-10-04T12:00:00Z")
