@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
 func (r *Repository) InsertSpans(spans []Span) error {
@@ -177,8 +179,46 @@ func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
 	return n, err
 }
 
+// spanDeleteChunk is how many spans one write job of DeleteSpansByMaxID
+// deletes. spans carries 16 indexes on prod, and one DELETE of a whole
+// retention batch (6,297 rows) held the write slot 10.2s on 2026-10-28.
+const spanDeleteChunk = 1000
+
+// spanDeleteLabel names every chunk's write job, so slow writes group under
+// the label the single DELETE had.
+var spanDeleteLabel = "DeleteSpansByMaxID:" + FamilySpans.String()
+
+// DeleteSpansByMaxID deletes every span with id <= maxID, the oldest
+// spanDeleteChunk at a time, each chunk in its own write job so other writes
+// run between them. Ids only grow, so no span with id <= maxID arrives while
+// it runs, and the chunks delete what one DELETE would.
 func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
-	return r.execLowAffecting(FamilySpans, "DELETE FROM spans WHERE id <= ?", maxID)
+	return deleteInChunks(spanDeleteChunk, func() (int64, error) {
+		var n int64
+		err := r.submit(FamilySpans, writescheduler.Low, spanDeleteLabel, func(db *sql.DB) error {
+			res, e := db.Exec(`DELETE FROM spans WHERE id IN
+				(SELECT id FROM spans WHERE id <= ? ORDER BY id LIMIT ?)`, maxID, spanDeleteChunk)
+			if e != nil {
+				return e
+			}
+			n, _ = res.RowsAffected()
+			return nil
+		})
+		return n, err
+	})
+}
+
+// deleteInChunks runs chunk until it fails or deletes fewer than size rows,
+// and returns the rows deleted in total.
+func deleteInChunks(size int64, chunk func() (int64, error)) (int64, error) {
+	var total int64
+	for {
+		n, err := chunk()
+		total += n
+		if err != nil || n < size {
+			return total, err
+		}
+	}
 }
 
 func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThresholdUS int64) (int64, error) {

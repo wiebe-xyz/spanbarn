@@ -93,3 +93,38 @@ func TestExecLowAffectingLabelNamesMethodAndFamily(t *testing.T) {
 		t.Errorf("execLowAffecting label %q, want %q", got, want)
 	}
 }
+
+// Every chunk of the span delete runs under the label the single DELETE had,
+// so slow-write history before and after the split groups under one op.
+func TestDeleteSpansByMaxIDLabel(t *testing.T) {
+	repo := setupTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := writescheduler.New()
+	repo.SetWriteScheduler(s)
+	go s.Run(ctx)
+	labelScheduler.Store(s)
+	t.Cleanup(func() { labelScheduler.Store(nil) })
+
+	if err := repo.InsertSpans([]Span{tsSpan("t", "a", "", "op", "web", "ok", 1, 10)}); err != nil {
+		t.Fatal(err)
+	}
+	db := repo.writer(FamilySpans)
+	if _, err := db.Exec(`CREATE TABLE label_probe (label TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER spans_label AFTER DELETE ON spans
+		BEGIN INSERT INTO label_probe VALUES (write_label()); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DeleteSpansByMaxID(1 << 62); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	if err := db.QueryRow(`SELECT label FROM label_probe`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if want := "DeleteSpansByMaxID:" + FamilySpans.String(); got != want {
+		t.Errorf("span delete label %q, want %q", got, want)
+	}
+}
