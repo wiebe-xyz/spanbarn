@@ -127,9 +127,9 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 			return result[i].TotalTimeUs > result[j].TotalTimeUs
 		})
 
-		return coveredList[DatabaseQuerySummary]{items: result, coverage: spanCoverage(spans)}, nil
+		return coveredList[DatabaseQuerySummary]{Items: result, Coverage: spanCoverage(spans)}, nil
 	})
-	return list.items, list.coverage, err
+	return list.Items, list.Coverage, err
 }
 
 // GetDatabaseQuerySpans returns individual span executions matching a specific
