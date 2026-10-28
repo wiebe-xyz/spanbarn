@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, type ReactElement } from 'react'
 import { CheckCircle, XCircle, ExternalLink, Zap, HardDrive, MemoryStick } from 'lucide-react'
 import { fetchJSON } from '../api/client'
 import { ProjectAPIKeys } from '../components/ProjectAPIKeys'
+import { SetupGuideNotice, type SetupResult } from '../components/SetupGuideNotice'
 
 type DBSize = {
   dbSizeBytes: number
@@ -548,6 +549,7 @@ export function SettingsPage(): ReactElement {
   const [error, setError] = useState('')
   const [setupSlug, setSetupSlug] = useState('')
   const [creatingSetup, setCreatingSetup] = useState(false)
+  const [setupResult, setSetupResult] = useState<SetupResult | null>(null)
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -572,13 +574,15 @@ export function SettingsPage(): ReactElement {
   }, [fetchProjects])
 
   // The guide is served to a signed-in session only. POST creates the pending
-  // project and its key; the project's row below then links to the guide.
+  // project and its key and returns the guide, which holds the key this one
+  // time; the project's row below then links to the guide without it.
   const handleCreateSetup = async () => {
     const slug = setupSlug.trim()
     setCreatingSetup(true)
     try {
       const res = await fetch(`/api/v1/setup/${encodeURIComponent(slug)}`, { method: 'POST', credentials: 'same-origin' })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setSetupResult({ slug, created: res.status === 201, guide: await res.text() })
       setSetupSlug('')
       await fetchProjects()
     } catch (e) {
@@ -656,8 +660,8 @@ export function SettingsPage(): ReactElement {
             </div>
             <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: 12 }}>
               Create a project with an ingest API key and a setup guide: a markdown page with OTel
-              integration examples to hand to an LLM or developer. Open the guide from the project's
-              Setup link while signed in.
+              integration examples to hand to an LLM or developer. The ingest key is shown once, here,
+              when the project is created. The project's Setup link shows the guide without it.
             </div>
             <form
               onSubmit={e => {
@@ -681,6 +685,7 @@ export function SettingsPage(): ReactElement {
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 8 }}>
               The project appears below as &quot;pending&quot; until you approve it.
             </div>
+            {setupResult && <SetupGuideNotice result={setupResult} onDismiss={() => setSetupResult(null)} />}
           </div>
         </div>
       </div>

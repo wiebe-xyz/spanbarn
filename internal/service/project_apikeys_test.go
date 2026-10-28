@@ -79,3 +79,31 @@ func TestRevokeAPIKeyStaysInsideTheProject(t *testing.T) {
 		t.Errorf("other project has %d keys, want 1", len(keys))
 	}
 }
+
+// HoldsSetupKey matches only a key named "setup" with the given hash on the
+// given project.
+func TestHoldsSetupKeyMatchesNameHashAndProject(t *testing.T) {
+	store, pid := adminStore(t)
+	ps := NewProjectService(store)
+	if err := ps.EnsureSetupAPIKey(pid, "hash-setup"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ps.CreateAPIKey(pid, "other", "ingest", "hash-other"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		project int64
+		hash    string
+		want    bool
+	}{
+		{pid, "hash-setup", true},
+		{pid, "hash-other", false},
+		{pid, "hash-none", false},
+		{pid + 100, "hash-setup", false},
+	} {
+		got, err := ps.HoldsSetupKey(tc.project, tc.hash)
+		if err != nil || got != tc.want {
+			t.Errorf("HoldsSetupKey(%d, %q) = %v, %v; want %v", tc.project, tc.hash, got, err, tc.want)
+		}
+	}
+}
