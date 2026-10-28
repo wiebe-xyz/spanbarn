@@ -123,9 +123,19 @@ func metricRollupChunks(rollups []MetricRollup) [][]MetricRollup {
 	return slices.Collect(slices.Chunk(sorted, metricRollupChunk))
 }
 
-// warmMetricRollups reads each key of chunk on the read pool. It only moves
-// page reads out of the write slot, so a failed read is left to the upsert.
+// warmMetricRollups reads each key of chunk on the read pool.
 func (r *Repository) warmMetricRollups(ctx context.Context, chunk []MetricRollup) {
+	r.warmRollupKeys(ctx, metricRollupWarmSQL, len(chunk), func(i int) []any {
+		m := chunk[i]
+		return []any{m.ProjectID, m.Name, m.AttrFingerprint, m.Bucket}
+	})
+}
+
+// warmRollupKeys runs query on the read pool once for each of n keys, so the
+// index and table pages an upsert of those keys updates are in the OS page
+// cache before it takes the write slot. It only moves page reads out of the
+// slot, so a failed read is left to the upsert.
+func (r *Repository) warmRollupKeys(ctx context.Context, query string, n int, args func(i int) []any) {
 	if r.rollupReads == nil {
 		return
 	}
@@ -134,14 +144,14 @@ func (r *Repository) warmMetricRollups(ctx context.Context, chunk []MetricRollup
 		return
 	}
 	defer conn.Close()
-	stmt, err := conn.PrepareContext(ctx, metricRollupWarmSQL)
+	stmt, err := conn.PrepareContext(ctx, query)
 	if err != nil {
 		return
 	}
 	defer stmt.Close()
 	var count int64
-	for _, m := range chunk {
-		_ = stmt.QueryRowContext(ctx, m.ProjectID, m.Name, m.AttrFingerprint, m.Bucket).Scan(&count)
+	for i := range n {
+		_ = stmt.QueryRowContext(ctx, args(i)...).Scan(&count)
 	}
 }
 
