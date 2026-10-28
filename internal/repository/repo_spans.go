@@ -194,17 +194,15 @@ var spanDeleteLabel = "DeleteSpansByMaxID:" + FamilySpans.String()
 // it runs, and the chunks delete what one DELETE would.
 func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
 	return deleteInChunks(spanDeleteChunk, func() (int64, error) {
-		var n int64
-		err := r.submit(FamilySpans, writescheduler.Low, spanDeleteLabel, func(db *sql.DB) error {
+		return r.submitRows(FamilySpans, writescheduler.Low, spanDeleteLabel, func(db *sql.DB) (int64, error) {
 			res, e := db.Exec(`DELETE FROM spans WHERE id IN
 				(SELECT id FROM spans WHERE id <= ? ORDER BY id LIMIT ?)`, maxID, spanDeleteChunk)
 			if e != nil {
-				return e
+				return 0, e
 			}
-			n, _ = res.RowsAffected()
-			return nil
+			n, _ := res.RowsAffected()
+			return n, nil
 		})
-		return n, err
 	})
 }
 

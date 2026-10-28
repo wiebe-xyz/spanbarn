@@ -110,6 +110,43 @@ func TestSlowWriteLogCarriesWaitMs(t *testing.T) {
 	}
 }
 
+// A job that reports its rows returns them, and a slow one logs them, so a
+// slow write's time can be read per row. A job that reports none logs no rows.
+func TestSlowWriteLogCarriesRows(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rows int64
+	}{{"counted", 42}, {"uncounted", NoRows}} {
+		s := New()
+		s.slowThreshold = 10 * time.Millisecond
+		h := &captureHandler{}
+		s.SetLogger(slog.New(h))
+		ctx, cancel := context.WithCancel(context.Background())
+		go s.Run(ctx)
+
+		got, err := s.SubmitRows(ctx, Low, "slow", func() (int64, error) {
+			time.Sleep(30 * time.Millisecond)
+			return tc.rows, nil
+		})
+		cancel()
+		if err != nil || got != tc.rows {
+			t.Fatalf("%s: SubmitRows = %d, %v; want %d, nil", tc.name, got, err, tc.rows)
+		}
+		attrs, ok := h.find("write scheduler: slow write")
+		if !ok {
+			t.Fatalf("%s: expected slow write log", tc.name)
+		}
+		logged, has := attrs["rows"]
+		if tc.rows == NoRows {
+			if has {
+				t.Errorf("%s: slow write log has rows %v, want none", tc.name, logged)
+			}
+		} else if !has || logged != tc.rows {
+			t.Errorf("%s: slow write log rows = %v, want %d", tc.name, logged, tc.rows)
+		}
+	}
+}
+
 // Routine slow writes stay at WARN; a write past reportThreshold logs at
 // ERROR, the level that reaches BugBarn.
 func TestSlowWriteLevel(t *testing.T) {
@@ -117,7 +154,7 @@ func TestSlowWriteLevel(t *testing.T) {
 	h := &captureHandler{}
 	s.SetLogger(slog.New(h))
 	for _, d := range []time.Duration{time.Second, 3 * time.Second, 12 * time.Second} {
-		s.logSlowWrite(d.String(), d, 0)
+		s.logSlowWrite(d.String(), d, 0, NoRows)
 	}
 	got := map[string]slog.Level{}
 	for _, r := range h.recs {
