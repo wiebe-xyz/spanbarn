@@ -58,6 +58,14 @@ type ShardManager struct {
 	mu         sync.Mutex
 	handles    map[shardKey]*DB
 	schedulers [numFamilies]*writescheduler.Scheduler
+
+	// closing counts the goroutines closing ended shards, and closeMu runs
+	// those closes one at a time.
+	closing sync.WaitGroup
+	closeMu sync.Mutex
+	// beforeClose, when set, runs ahead of each ended shard's close. Tests
+	// use it to hold a close open.
+	beforeClose func()
 }
 
 // openShardManager prepares the shards directory next to dbPath, brings the
@@ -270,41 +278,85 @@ func (m *ShardManager) ensure(ctx context.Context, t time.Time) error {
 }
 
 // closeEnded closes the handles of periods that ended before now. Writes pick
-// their shard by the time they run, so no write reaches an ended period; the
-// close still goes through the family's queue, after any write already holding
-// the handle.
+// their shard by the time they run, so no write reaches an ended period once
+// its handle is out of the map. A write that picked the handle before then
+// still runs on it, so a no-op barrier goes through the family's queue first;
+// once it has run, the handle is idle and the checkpoint and close run outside
+// the write slot, one shard at a time.
+//
+// They ran inside the slot until 2026-10-28. At the day rollover the close
+// held the slot 36 to 45s, mostly in fsync, and every write of the family
+// waited behind it (#379).
 func (m *ShardManager) closeEnded(now time.Time) {
 	m.mu.Lock()
-	var ended []*DB
+	var ended, inline []*DB
 	var queues []*writescheduler.Scheduler
 	for key, h := range m.handles {
-		if !now.Before(key.start.Add(m.specs[key.family].length())) {
-			delete(m.handles, key)
-			ended = append(ended, h)
-			queues = append(queues, m.schedulers[key.family])
-		}
-	}
-	m.mu.Unlock()
-	for i, h := range ended {
-		closeShard := func() error {
-			h.FinalCheckpoint(m.logger)
-			return h.Close()
-		}
-		if queues[i] == nil {
-			_ = closeShard()
+		if now.Before(key.start.Add(m.specs[key.family].length())) {
 			continue
 		}
-		go func() {
-			if err := queues[i].Submit(context.Background(), writescheduler.Low, "closeShard", closeShard); err != nil {
-				m.logger.Warn("close ended shard", "error", err)
-			}
-		}()
+		delete(m.handles, key)
+		// A family with no queue has no write slot to keep free.
+		if q := m.schedulers[key.family]; q != nil {
+			ended = append(ended, h)
+			queues = append(queues, q)
+		} else {
+			inline = append(inline, h)
+		}
+	}
+	if len(ended) > 0 {
+		m.closing.Add(1)
+		go m.closeAfterQueues(ended, queues)
+	}
+	m.mu.Unlock()
+	for _, h := range inline {
+		m.closeShard(h)
 	}
 }
 
-// Close checkpoints and closes every open shard. Call after the writes have
-// stopped.
+// closeAfterQueues closes each of ended once the writes queued on its family's
+// queue have run.
+func (m *ShardManager) closeAfterQueues(ended []*DB, queues []*writescheduler.Scheduler) {
+	defer m.closing.Done()
+	m.closeMu.Lock()
+	defer m.closeMu.Unlock()
+	for i, h := range ended {
+		m.awaitIdle(queues[i])
+		if m.beforeClose != nil {
+			m.beforeClose()
+		}
+		m.closeShard(h)
+	}
+}
+
+// awaitIdle returns once every write queued on q before the call has run. A
+// stopped queue has run all its writes, so its ErrStopped is a pass too.
+func (m *ShardManager) awaitIdle(q *writescheduler.Scheduler) {
+	if q == nil {
+		return
+	}
+	err := q.Submit(context.Background(), writescheduler.Low, "closeShardBarrier", func() error { return nil })
+	if err != nil && !errors.Is(err, writescheduler.ErrStopped) {
+		m.logger.Error("close ended shard: queue barrier", "error", err)
+	}
+}
+
+// closeShard checkpoints and closes an ended shard's handle. The close no
+// longer reports through a write job, so its errors log at error level here.
+func (m *ShardManager) closeShard(h *DB) {
+	file := filepath.Base(h.path)
+	if frames := h.FinalCheckpoint(m.logger); frames < 0 {
+		m.logger.Error("close ended shard: final checkpoint failed", "file", file)
+	}
+	if err := h.Close(); err != nil {
+		m.logger.Error("close ended shard", "file", file, "error", err)
+	}
+}
+
+// Close waits for the closes of ended shards still running, then checkpoints
+// and closes every open shard. Call after the writes have stopped.
 func (m *ShardManager) Close() error {
+	m.closing.Wait()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var errs []error

@@ -336,10 +336,12 @@ func (d *DB) checkpointer() (*sql.DB, error) {
 // writers have stopped (e.g. after wg.Wait()) and before db.Close(), so the
 // WAL is merged into the main file on every clean shutdown. With
 // wal_autocheckpoint(0), db.Close() does not checkpoint automatically.
-func (d *DB) FinalCheckpoint(log *slog.Logger) {
+// It returns the WAL size in frames after the attempt, or -1 if it errored or
+// timed out.
+func (d *DB) FinalCheckpoint(log *slog.Logger) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	d.checkpoint(ctx, 0, log)
+	return d.checkpoint(ctx, 0, log)
 }
 
 // checkpoint runs one wal_checkpoint(TRUNCATE) on the handle's own file. Both
