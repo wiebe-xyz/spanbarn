@@ -354,7 +354,7 @@ func (w *RetentionWorker) drainOldSpans(ctx context.Context, span trace.Span, cf
 
 		var batchErr error
 		w.lockBatch(ctx, cfg.BatchYield, func() {
-			batchErr = w.aggregateAndDelete(ctx, cfg, batch, st)
+			batchErr = w.aggregateAndDeleteInParts(ctx, cfg, batch, st)
 		})
 		if batchErr != nil {
 			span.RecordError(batchErr)
