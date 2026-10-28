@@ -15,6 +15,7 @@ type setupGuide struct {
 	endpoint   string
 	setupURL   string
 	apiKey     string
+	keyKind    setupKeyKind
 	ingestURL  string
 	publicURL  string
 }
@@ -35,7 +36,7 @@ func (g setupGuide) render() string {
 // writeIntro writes the title, project configuration table and overview.
 func (g setupGuide) writeIntro(b *strings.Builder) {
 	fmt.Fprintf(b, "# SpanBarn Setup: %s\n\n", g.slug)
-	fmt.Fprintf(b, "> **Status**: %s — this page is idempotent. Revisit it while signed in to retrieve the same configuration.\n\n", g.status)
+	fmt.Fprintf(b, "> **Status**: %s. Revisit this page while signed in for the same configuration. The ingest key is shown only when the project is created.\n\n", g.status)
 	fmt.Fprintf(b, "Generated: %s\n\n---\n\n", g.now)
 
 	fmt.Fprintf(b, "## Project Configuration\n\n")
@@ -43,16 +44,40 @@ func (g setupGuide) writeIntro(b *strings.Builder) {
 	fmt.Fprintf(b, "|------------|-------|\n")
 	fmt.Fprintf(b, "| Endpoint   | %s |\n", g.endpoint)
 	fmt.Fprintf(b, "| Project    | %s |\n", g.slug)
-	fmt.Fprintf(b, "| API Key    | %s |\n", g.apiKey)
+	fmt.Fprintf(b, "| API Key    | %s |\n", g.key())
 	fmt.Fprintf(b, "| Status     | %s |\n", g.status)
 	fmt.Fprintf(b, "| Setup URL  | %s |\n\n", g.setupURL)
-	fmt.Fprintf(b, "> The API key above is scoped to **ingest** only (trace data). It is deterministic and will be identical on every visit. No plaintext is stored server-side.\n\n---\n\n")
+	g.writeKeyNote(b)
 
 	fmt.Fprintf(b, "## What SpanBarn Collects\n\n")
 	fmt.Fprintf(b, "- **Distributed traces** — OpenTelemetry-compatible spans via OTLP/HTTP\n")
 	fmt.Fprintf(b, "- **Service metrics** — auto-aggregated from spans (latency percentiles, throughput, error rates)\n")
 	fmt.Fprintf(b, "- **Dependency maps** — automatically detected from client spans\n\n---\n\n")
 
+}
+
+// keyPlaceholder stands in for the ingest key in a guide that carries none.
+const keyPlaceholder = "<your-ingest-key>"
+
+// key returns the ingest key for the examples, or the placeholder.
+func (g setupGuide) key() string {
+	if g.apiKey == "" {
+		return keyPlaceholder
+	}
+	return g.apiKey
+}
+
+// writeKeyNote says what the key in the guide is and what to do when there
+// is none.
+func (g setupGuide) writeKeyNote(b *strings.Builder) {
+	switch g.keyKind {
+	case setupKeyMinted:
+		fmt.Fprintf(b, "> The API key above is scoped to **ingest** only (trace data). SpanBarn stores only its hash, so this is the only time it is shown. Save it now. A lost key is revoked and replaced on the Settings page (%s/settings).\n\n---\n\n", g.publicURL)
+	case setupKeyDerived:
+		fmt.Fprintf(b, "> The API key above is this project's setup key, derived from the project slug. Mint a new ingest key on the Settings page (%s/settings), move the app to it, then revoke the setup key.\n\n---\n\n", g.publicURL)
+	default:
+		fmt.Fprintf(b, "> This project's ingest key was shown once, when the project was created. If you do not have it, mint a new ingest key on the Settings page (%s/settings) and use it in place of `%s` below.\n\n---\n\n", g.publicURL, keyPlaceholder)
+	}
 }
 
 // writeOTelSDK writes the OpenTelemetry SDK examples.
@@ -67,7 +92,7 @@ func (g setupGuide) writeOTelSDK(b *strings.Builder) {
 	fmt.Fprintf(b, "const sdk = new NodeSDK({\n")
 	fmt.Fprintf(b, "  traceExporter: new OTLPTraceExporter({\n")
 	fmt.Fprintf(b, "    url: '%s',\n", g.endpoint)
-	fmt.Fprintf(b, "    headers: { 'Authorization': 'Bearer %s' },\n", g.apiKey)
+	fmt.Fprintf(b, "    headers: { 'Authorization': 'Bearer %s' },\n", g.key())
 	fmt.Fprintf(b, "  }),\n")
 	fmt.Fprintf(b, "  serviceName: '%s',\n", g.slug)
 	fmt.Fprintf(b, "})\n\nsdk.start()\n```\n\n")
@@ -83,7 +108,7 @@ func (g setupGuide) writeOTelSDK(b *strings.Builder) {
 	fmt.Fprintf(b, "provider = TracerProvider(resource=resource)\n")
 	fmt.Fprintf(b, "exporter = OTLPSpanExporter(\n")
 	fmt.Fprintf(b, "    endpoint=\"%s\",\n", g.endpoint)
-	fmt.Fprintf(b, "    headers={\"Authorization\": \"Bearer %s\"},\n", g.apiKey)
+	fmt.Fprintf(b, "    headers={\"Authorization\": \"Bearer %s\"},\n", g.key())
 	fmt.Fprintf(b, ")\n")
 	fmt.Fprintf(b, "provider.add_span_processor(BatchSpanProcessor(exporter))\n")
 	fmt.Fprintf(b, "trace.set_tracer_provider(provider)\n```\n\n")
@@ -99,7 +124,7 @@ func (g setupGuide) writeOTelSDK(b *strings.Builder) {
 	fmt.Fprintf(b, "exporter, _ := otlptracehttp.New(ctx,\n")
 	fmt.Fprintf(b, "    otlptracehttp.WithEndpointURL(\"%s\"),\n", g.endpoint)
 	fmt.Fprintf(b, "    otlptracehttp.WithHeaders(map[string]string{\n")
-	fmt.Fprintf(b, "        \"Authorization\": \"Bearer %s\",\n", g.apiKey)
+	fmt.Fprintf(b, "        \"Authorization\": \"Bearer %s\",\n", g.key())
 	fmt.Fprintf(b, "    }),\n")
 	fmt.Fprintf(b, ")\n\n")
 	fmt.Fprintf(b, "tp := trace.NewTracerProvider(\n")
@@ -112,7 +137,7 @@ func (g setupGuide) writeOTelSDK(b *strings.Builder) {
 
 	fmt.Fprintf(b, "### Environment Variables (any OTel SDK)\n\n")
 	fmt.Fprintf(b, "```bash\nexport OTEL_EXPORTER_OTLP_ENDPOINT=%s\n", g.ingestURL+"/")
-	fmt.Fprintf(b, "export OTEL_EXPORTER_OTLP_HEADERS=\"Authorization=Bearer %s\"\n", g.apiKey)
+	fmt.Fprintf(b, "export OTEL_EXPORTER_OTLP_HEADERS=\"Authorization=Bearer %s\"\n", g.key())
 	fmt.Fprintf(b, "export OTEL_SERVICE_NAME=%s\n```\n\n---\n\n", g.slug)
 
 }
@@ -122,7 +147,7 @@ func (g setupGuide) writeCurl(b *strings.Builder) {
 	fmt.Fprintf(b, "## HTTP API (curl)\n\n")
 	fmt.Fprintf(b, "```bash\ncurl -s -X POST '%s' \\\n", g.endpoint)
 	fmt.Fprintf(b, "  -H 'Content-Type: application/json' \\\n")
-	fmt.Fprintf(b, "  -H 'Authorization: Bearer %s' \\\n", g.apiKey)
+	fmt.Fprintf(b, "  -H 'Authorization: Bearer %s' \\\n", g.key())
 	fmt.Fprintf(b, "  -d '{\n")
 	fmt.Fprintf(b, "    \"resourceSpans\": [{\n")
 	fmt.Fprintf(b, "      \"resource\": {\n")
@@ -302,10 +327,10 @@ func (g setupGuide) writeE2E(b *strings.Builder) {
 		fmt.Fprintf(b, "POST to the session endpoint with your ingest API key. The response sets a `session`\n")
 		fmt.Fprintf(b, "cookie that your test browser context can use immediately.\n\n")
 		fmt.Fprintf(b, "```bash\ncurl -s -c cookies.txt -X POST '%s' \\\n", e2eSessionURL)
-		fmt.Fprintf(b, "  -H 'Authorization: Bearer %s'\n```\n\n", g.apiKey)
+		fmt.Fprintf(b, "  -H 'Authorization: Bearer %s'\n```\n\n", g.key())
 		fmt.Fprintf(b, "### Playwright example\n\n")
 		fmt.Fprintf(b, "```typescript\nawait page.request.post('%s', {\n", e2eSessionURL)
-		fmt.Fprintf(b, "  headers: { Authorization: 'Bearer %s' },\n})\n", g.apiKey)
+		fmt.Fprintf(b, "  headers: { Authorization: 'Bearer %s' },\n})\n", g.key())
 		fmt.Fprintf(b, "await page.goto('%s') // session cookie is now active\n```\n\n", g.publicURL)
 		fmt.Fprintf(b, "| | |\n|---|---|\n")
 		fmt.Fprintf(b, "| Session endpoint | `%s` |\n", e2eSessionURL)

@@ -48,3 +48,19 @@ func (s *ProjectService) RevokeAPIKey(projectID, keyID int64) error {
 	}
 	return ErrNotFound
 }
+
+// HoldsSetupKey reports whether the project still has a setup key with this
+// hash. Projects set up before the setup flow minted random keys hold a key
+// derived from the slug until that key is rotated and revoked.
+func (s *ProjectService) HoldsSetupKey(projectID int64, keyHash string) (bool, error) {
+	keys, err := s.repo.ListAPIKeys(projectID)
+	if err != nil {
+		return false, err
+	}
+	for _, k := range keys {
+		if k.Name == "setup" && k.KeyHash == keyHash {
+			return true, nil
+		}
+	}
+	return false, nil
+}
