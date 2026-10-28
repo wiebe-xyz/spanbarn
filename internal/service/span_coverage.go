@@ -35,8 +35,9 @@ func spanCoverage(spans []repository.Span) Coverage {
 }
 
 // coveredList is a cached list together with the coverage of the read behind
-// it.
+// it. The read cache stores values as JSON, so its fields are exported:
+// unexported ones would come back empty on every cache hit.
 type coveredList[T any] struct {
-	items    []T
-	coverage Coverage
+	Items    []T      `json:"items"`
+	Coverage Coverage `json:"coverage"`
 }

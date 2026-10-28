@@ -34,8 +34,12 @@ type SpanRollupReads struct {
 const spanRollupCoverageTTL = time.Minute
 
 // spanRollupFlushGrace is how long a new 5-minute bucket may hold no rows
-// before a read counts it as a gap. The writer flushes rollups every 30s.
-const spanRollupFlushGrace = 2 * time.Minute
+// before a read counts it as a gap. A bucket is keyed by arrival at the
+// reader, and its first rows reach the table after the reader's trace buffer,
+// the spool forwarder and the writer's 30s flush: on prod that took about
+// 2m20s, so a 2-minute grace sent reads to raw spans for a while after every
+// bucket boundary.
+const spanRollupFlushGrace = 4 * time.Minute
 
 // spanRollupCoverage caches the coverage of span_rollups, or of span_edges,
 // per QueryService. It is read

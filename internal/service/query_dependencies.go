@@ -22,7 +22,7 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 	cacheKey := fmt.Sprintf("deps:%d:%s:%d:%d", projectID, svcFilter, from.Unix(), to.Unix())
 	list, err := readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) (coveredList[DependencySummary], error) {
 		if deps, ok, err := s.dependenciesFromRollups(ctx, projectID, from, to, svcFilter); ok {
-			return coveredList[DependencySummary]{items: deps}, err
+			return coveredList[DependencySummary]{Items: deps}, err
 		}
 
 		sf := repository.SpanFilter{
@@ -42,9 +42,9 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 		agg.addCalls(spans)
 		result := agg.summaries(s.projectSampleRate(ctx, projectID))
 
-		return coveredList[DependencySummary]{items: result, coverage: spanCoverage(spans)}, nil
+		return coveredList[DependencySummary]{Items: result, Coverage: spanCoverage(spans)}, nil
 	})
-	return list.items, list.coverage, err
+	return list.Items, list.Coverage, err
 }
 
 type dependencyKey struct {
