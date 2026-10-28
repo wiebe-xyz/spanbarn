@@ -161,7 +161,14 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
-	startWriteSchedulers(workerCtx, &wg, store, repo, logger)
+	// The write schedulers stop after every other worker: workers write on
+	// their way out (the metric accumulator flushes every open bucket), and a
+	// scheduler that stopped with them would leave those writes waiting until
+	// the kubelet kills the pod.
+	schedCtx, schedCancel := context.WithCancel(context.Background())
+	defer schedCancel()
+	var schedWG sync.WaitGroup
+	startWriteSchedulers(schedCtx, &schedWG, store, repo, logger)
 
 	// Background workers read through the read-only pool and write through the
 	// schedulers: a long read on the single writer connection would hold every
@@ -256,11 +263,17 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// on every rollout. Readiness answers 503 meanwhile.
 	apiReady.Store(false)
 
+	drainStart := time.Now()
 	alertCancel()
 	retentionCancel()
 	workerCancel()
 	wg.Wait()
+	logger.Info("writer drain: workers stopped", "duration_ms", time.Since(drainStart).Milliseconds())
+	flushSpanRollupsOnStop(spanRollups, logger)
+	schedCancel()
+	schedWG.Wait()
 	store.FinalCheckpoint(logger)
+	logger.Info("writer drain: final checkpoint done", "duration_ms", time.Since(drainStart).Milliseconds())
 	shutdownHTTP(httpServer, logger, "writer shutdown error")
 
 	logger.Info("writer shutdown complete")

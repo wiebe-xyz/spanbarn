@@ -2,6 +2,7 @@ package writescheduler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"testing"
@@ -130,5 +131,51 @@ func TestSlowWriteLevel(t *testing.T) {
 	want := map[string]slog.Level{"3s": slog.LevelWarn, "12s": slog.LevelError}
 	if len(got) != len(want) || got["3s"] != want["3s"] || got["12s"] != want["12s"] {
 		t.Errorf("levels = %v, want %v (nothing under 2s)", got, want)
+	}
+}
+
+// Jobs still queued when Run's context is cancelled run before Run returns,
+// and a write submitted after that fails at once instead of waiting forever.
+func TestStoppedSchedulerDrainsThenRefuses(t *testing.T) {
+	s := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	release := make(chan struct{})
+	ran := make(chan string, 3)
+	go func() { _ = s.Submit(context.Background(), High, "blocker", func() error { <-release; return nil }) }()
+	results := make(chan error, 2)
+	for _, label := range []string{"queued-low", "queued-high"} {
+		p := Low
+		if label == "queued-high" {
+			p = High
+		}
+		go func() { results <- s.Submit(context.Background(), p, label, func() error { ran <- label; return nil }) }()
+	}
+	// Both jobs wait in the queues before Run starts.
+	for len(s.lowPri)+len(s.highPri) < 3 {
+		time.Sleep(time.Millisecond)
+	}
+	runDone := make(chan struct{})
+	go func() { s.Run(ctx); close(runDone) }()
+	cancel()
+	close(release)
+	<-runDone
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Errorf("queued job: %v", err)
+		}
+	}
+	if len(ran) != 2 {
+		t.Errorf("%d queued jobs ran, want 2", len(ran))
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- s.Submit(context.Background(), Low, "late", func() error { return nil }) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrStopped) {
+			t.Errorf("late submit = %v, want ErrStopped", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a submit to a stopped scheduler blocked")
 	}
 }
