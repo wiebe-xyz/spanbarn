@@ -253,21 +253,6 @@ func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
 	return r.execLowAffecting(FamilySpans, "DELETE FROM spans WHERE ingested_at < ?", cutoff)
 }
 
-// DeleteExpiredBoringSpans deletes sampled-boring spans whose stamped expires_at
-// has passed. Classification stamps expires_at at storage time, so cleanup is a
-// bounded seek of the partial idx_spans_expires index — no scan of the whole
-// table fetching duration_us per row (which had grown into a 30s+ write-slot
-// wedge). Interesting spans carry a NULL expires_at and are removed by the
-// aggregate-then-delete pass instead; pre-migration rows are also NULL and drain
-// that same way. Each batch also prunes the summaries of the traces it touched
-// (see deleteExpiredBoringBatch).
-func (r *Repository) DeleteExpiredBoringSpans(ctx context.Context, now time.Time) (int64, error) {
-	cutoff := now.UTC()
-	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
-		return deleteExpiredBoringBatch(ctx, db, cutoff, retentionDeleteBatch)
-	})
-}
-
 func (r *Repository) CountSpansOlderThan(cutoff time.Time) (int64, error) {
 	ctx, cancel := r.queryContext()
 	defer cancel()
