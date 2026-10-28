@@ -12,13 +12,16 @@ import (
 )
 
 // logTrimCursor marks how far one project's trim has scanned the
-// (project_id, ingested_at) index. Rows before it were either deleted or are
-// protected (pinned trace, recent error sample), so the next batch resumes after
-// it instead of walking over the protected rows again.
+// (project_id, ingested_at) index, or the error-sample delete the
+// (project_id, sampled_at) index. Rows before it were either deleted or are
+// protected (pinned trace, recent error sample, exemplar trace), so the next
+// batch resumes after it instead of walking over the protected rows again.
 type logTrimCursor struct {
-	set        bool
-	ingestedAt string // the stored text, so the comparison never depends on how the driver formats times
-	rowid      int64
+	set bool
+	// at is the stored time text of the last row scanned, so the comparison
+	// never depends on how the driver formats times.
+	at    string
+	rowid int64
 	// started is when the scan began at the start of the index.
 	started time.Time
 }
@@ -67,6 +70,17 @@ func (c *logTrimCursors) store(key string, cur logTrimCursor) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cur[key] = cur
+}
+
+// reset drops every cursor, so the next pass of each scan starts at the start
+// of its index.
+func (c *logTrimCursors) reset() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	clear(c.cur)
 }
 
 // logProtectedSQL is true for a row of table that retention keeps: its trace
@@ -144,7 +158,7 @@ func (w logTrimWindow) advance(cur *logTrimCursor, limit int) (more bool) {
 	if w.scanned == 0 {
 		return false
 	}
-	cur.set, cur.ingestedAt, cur.rowid = true, w.lastAt, w.lastID
+	cur.set, cur.at, cur.rowid = true, w.lastAt, w.lastID
 	return w.scanned == limit
 }
 
@@ -163,7 +177,7 @@ func scanLogWindow(
 	cur logTrimCursor, limit int,
 ) (logTrimWindow, error) {
 	var w logTrimWindow
-	rows, err := q.QueryContext(ctx, query, pid, cutoff, cur.ingestedAt, cur.rowid, errorLogCutoff, limit)
+	rows, err := q.QueryContext(ctx, query, pid, cutoff, cur.at, cur.rowid, errorLogCutoff, limit)
 	if err != nil {
 		return w, err
 	}
@@ -223,7 +237,8 @@ func trimLogsBatch(
 	return deleted, w.advance(cur, limit), nil
 }
 
-// SetLogTrimReads gives the log trim a read-only pool for its window reads.
+// SetLogTrimReads gives the log trim and the error-sample delete a read-only
+// pool for their window reads.
 // With it, each batch reads its window outside the write slot and holds the
 // slot only for the DELETE. Without it the read runs inside the slot on the
 // writer, where one window of cold pages held the slot for 31s and the
@@ -267,19 +282,30 @@ func (r *Repository) trimLogsWindow(
 // trimLogsFrom trims one project's rows of table, a window per low-priority
 // write, resuming from the cursor the previous pass left.
 func (r *Repository) trimLogsFrom(ctx context.Context, table string, pid int64, cutoff, errorLogCutoff time.Time) (int64, error) {
-	key := logTrimKey(table, pid)
-	cur := r.logTrim.load(key, time.Now())
+	return r.trimByWindows(ctx, r.logTrim, logTrimKey(table, pid), func(cur *logTrimCursor) (int64, bool, error) {
+		return r.trimLogsWindow(ctx, table, pid, cutoff, errorLogCutoff, cur)
+	})
+}
+
+// trimByWindows runs window from the cursor that cursors holds under key
+// until it reports that no rows before the cutoff remain, storing the cursor
+// after each window and yielding deleteBatchYield between windows. window
+// returns the rows it deleted and whether rows remain.
+func (r *Repository) trimByWindows(
+	ctx context.Context, cursors *logTrimCursors, key string, window func(cur *logTrimCursor) (int64, bool, error),
+) (int64, error) {
+	cur := cursors.load(key, time.Now())
 	var total int64
 	for {
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
-		n, more, err := r.trimLogsWindow(ctx, table, pid, cutoff, errorLogCutoff, &cur)
+		n, more, err := window(&cur)
 		total += n
 		if err != nil {
 			return total, err
 		}
-		r.logTrim.store(key, cur)
+		cursors.store(key, cur)
 		if !more {
 			return total, nil
 		}

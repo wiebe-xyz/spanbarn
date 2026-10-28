@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -222,45 +221,6 @@ func (r *Repository) QueryErrorSamples(f SpanFilter) ([]Span, error) {
 	}
 
 	return r.scanErrorSamples(q, args...)
-}
-
-// deleteErrorSamplesSQL deletes one batch of a project's error samples copied
-// before the cutoff. project_id = ?1 lets it seek idx_error_samples_project; a
-// bare `sampled_at < ?` has no index to use and scanned the whole table, row
-// payloads included, on the last batch of every pass when nothing was left to
-// delete (42s on prod's 527k rows). Samples of an exemplar trace stay behind
-// and are walked again by each batch; there are a few per operation per day.
-const deleteErrorSamplesSQL = `DELETE FROM error_samples WHERE rowid IN (
-	SELECT rowid FROM error_samples e
-	WHERE project_id = ?1 AND sampled_at < ?2
-	  AND NOT EXISTS (SELECT 1 FROM error_exemplars x
-	                  WHERE x.project_id = e.project_id AND x.trace_id = e.trace_id)
-	LIMIT ?3)`
-
-// DeleteErrorSamplesOlderThan deletes error samples copied before cutoff,
-// except those of a trace listed in error_exemplars: they stay until
-// PruneErrorExemplars drops the trace's exemplar rows.
-func (r *Repository) DeleteErrorSamplesOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
-	pids, err := r.distinctProjectIDs(ctx, "error_samples")
-	if err != nil {
-		return 0, err
-	}
-	var total int64
-	for _, pid := range pids {
-		n, err := r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
-			res, e := db.ExecContext(ctx, deleteErrorSamplesSQL, pid, cutoff, retentionDeleteBatch)
-			if e != nil {
-				return 0, e
-			}
-			m, _ := res.RowsAffected()
-			return m, nil
-		})
-		total += n
-		if err != nil {
-			return total, err
-		}
-	}
-	return total, nil
 }
 
 func (r *Repository) scanErrorSamples(query string, args ...any) ([]Span, error) {

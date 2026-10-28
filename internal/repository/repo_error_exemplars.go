@@ -51,7 +51,7 @@ func exemplarDay(s Span, now time.Time) string {
 // it.
 func (r *Repository) PruneErrorExemplars(ctx context.Context, cutoff time.Time) (int64, error) {
 	day := cutoff.UTC().Format(exemplarDayLayout)
-	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
+	n, err := r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
 		res, err := db.ExecContext(ctx,
 			`DELETE FROM error_exemplars WHERE rowid IN (
 				SELECT rowid FROM error_exemplars WHERE day < ? LIMIT ?)`,
@@ -62,4 +62,10 @@ func (r *Repository) PruneErrorExemplars(ctx context.Context, cutoff time.Time) 
 		n, _ := res.RowsAffected()
 		return n, nil
 	})
+	if n > 0 {
+		// The samples of a dropped exemplar's trace are no longer protected,
+		// and the error-sample delete's cursors have passed them.
+		r.errorSampleTrim.reset()
+	}
+	return n, err
 }
