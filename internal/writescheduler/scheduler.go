@@ -64,9 +64,12 @@ type Scheduler struct {
 	logger  *slog.Logger
 
 	// slowThreshold: a completed job slower than this is logged (WARN).
+	// reportThreshold: a completed job slower than this is logged at ERROR,
+	// which reaches BugBarn; WARN stays in the pod log.
 	// stuckThreshold: an in-flight job older than this triggers the wedge dump.
-	slowThreshold  time.Duration
-	stuckThreshold time.Duration
+	slowThreshold   time.Duration
+	reportThreshold time.Duration
+	stuckThreshold  time.Duration
 
 	mu       sync.Mutex
 	curLabel string
@@ -80,11 +83,12 @@ type Scheduler struct {
 // still processes one job at a time.
 func New() *Scheduler {
 	return &Scheduler{
-		highPri:        make(chan job, 64),
-		lowPri:         make(chan job, 512),
-		logger:         slog.Default(),
-		slowThreshold:  2 * time.Second,
-		stuckThreshold: 30 * time.Second,
+		highPri:         make(chan job, 64),
+		lowPri:          make(chan job, 512),
+		logger:          slog.Default(),
+		slowThreshold:   2 * time.Second,
+		reportThreshold: 10 * time.Second,
+		stuckThreshold:  30 * time.Second,
 	}
 }
 
@@ -185,15 +189,29 @@ func (s *Scheduler) execute(j job) {
 	}
 	span.End()
 
-	if dur >= s.slowThreshold {
-		s.logger.Warn("write scheduler: slow write", "op", label, "duration_ms", dur.Milliseconds(), "wait_ms", wait.Milliseconds())
-	}
+	s.logSlowWrite(label, dur, wait)
 	// Info, not Warn: the wait is the serial queue draining behind a slow job
 	// and the slow job itself already files a Warn.
 	if wait >= s.slowThreshold {
 		s.logger.Info("write scheduler: slow queue wait", "op", label, "wait_ms", wait.Milliseconds(), "duration_ms", dur.Milliseconds())
 	}
 	j.resultCh <- err
+}
+
+// logSlowWrite logs a job that took slowThreshold or longer. Slow writes of a
+// few seconds are routine on a busy disk and stay at WARN, out of BugBarn. A
+// write of reportThreshold or more holds every other write and the readers'
+// checkpoint for that long, so it logs at ERROR and files in BugBarn.
+func (s *Scheduler) logSlowWrite(label string, dur, wait time.Duration) {
+	if dur < s.slowThreshold {
+		return
+	}
+	level := slog.LevelWarn
+	if dur >= s.reportThreshold {
+		level = slog.LevelError
+	}
+	s.logger.Log(context.Background(), level, "write scheduler: slow write",
+		"op", label, "duration_ms", dur.Milliseconds(), "wait_ms", wait.Milliseconds())
 }
 
 // watchdog periodically checks the in-flight job. If one has been running longer

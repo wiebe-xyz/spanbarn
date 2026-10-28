@@ -108,3 +108,27 @@ func TestSlowWriteLogCarriesWaitMs(t *testing.T) {
 		t.Fatal("slow write log has no wait_ms")
 	}
 }
+
+// Routine slow writes stay at WARN; a write past reportThreshold logs at
+// ERROR, the level that reaches BugBarn.
+func TestSlowWriteLevel(t *testing.T) {
+	s := New()
+	h := &captureHandler{}
+	s.SetLogger(slog.New(h))
+	for _, d := range []time.Duration{time.Second, 3 * time.Second, 12 * time.Second} {
+		s.logSlowWrite(d.String(), d, 0)
+	}
+	got := map[string]slog.Level{}
+	for _, r := range h.recs {
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "op" {
+				got[a.Value.String()] = r.Level
+			}
+			return true
+		})
+	}
+	want := map[string]slog.Level{"3s": slog.LevelWarn, "12s": slog.LevelError}
+	if len(got) != len(want) || got["3s"] != want["3s"] || got["12s"] != want["12s"] {
+		t.Errorf("levels = %v, want %v (nothing under 2s)", got, want)
+	}
+}
