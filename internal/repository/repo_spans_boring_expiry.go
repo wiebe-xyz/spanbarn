@@ -9,9 +9,10 @@ import (
 )
 
 // The boring-span expiry reads a chunk of expired spans off the write slot and
-// then runs three kinds of write job: the span DELETE by rowid, one job that
-// drops the summaries of the chunk's traces with no span left, and the
-// structure refresh of the traces that keep spans, a few traces per job.
+// then runs three kinds of write job: the span DELETE by rowid, jobs that drop
+// the summaries of the chunk's traces with no span left, boringSummaryChunk
+// traces each, and the structure refresh of the traces that keep spans, a few
+// traces per job.
 //
 // It used one job per 1000 spans that deleted them and pruned and refreshed
 // every touched trace in the same transaction. 1000 expiring spans belong to
@@ -126,8 +127,8 @@ func (r *Repository) boringVictims(ctx context.Context, cutoff time.Time) ([]int
 }
 
 // deleteBoringChunk deletes one chunk of expired spans in one job, then drops
-// the summaries of its traces with no span left in another and refreshes the
-// traces that keep spans through RefreshTraceStructure.
+// the summaries of its traces with no span left in jobs of their own and
+// refreshes the traces that keep spans through RefreshTraceStructure.
 func (r *Repository) deleteBoringChunk(ctx context.Context, ids []int64, keys []TraceKey, cutoff time.Time) (int64, error) {
 	n, err := r.submitRows(FamilySpans, writescheduler.Low, boringExpiryLabel, func(db *sql.DB) (int64, error) {
 		return deleteRowsByID(ctx, db, deleteBoringRowsSQL, ids, cutoff)
@@ -135,15 +136,67 @@ func (r *Repository) deleteBoringChunk(ctx context.Context, ids []int64, keys []
 	if err != nil || n == 0 {
 		return n, err
 	}
-	var kept []TraceKey
-	if err := r.submit(FamilySpans, writescheduler.Low, boringSummaryLabel, func(db *sql.DB) error {
-		var e error
-		kept, e = dropSpanlessSummaries(ctx, db, keys)
-		return e
-	}); err != nil {
+	kept, err := r.dropSpanlessSummariesInParts(ctx, keys)
+	if err != nil {
 		return n, err
 	}
 	return n, r.RefreshTraceStructure(ctx, kept)
+}
+
+// boringSummaryChunk is how many traces one summary job checks. A check is
+// three index seeks, and on prod's cold disk one job over a whole chunk's 366
+// traces held the spans writer for 2,043 ms (2026-10-28 17:01), 5.6 ms a trace.
+const boringSummaryChunk = 100
+
+// boringSummaryWarmSQL reads the pages the summary delete seeks: the summary
+// row in the table (span_count is outside the key index, so the read reaches
+// the row), the trace's spans in idx_spans_trace and its error samples.
+const boringSummaryWarmSQL = `SELECT
+	(SELECT span_count FROM trace_summaries WHERE project_id = ?1 AND trace_id = ?2),
+	EXISTS (SELECT 1 FROM spans INDEXED BY idx_spans_trace WHERE project_id = ?1 AND trace_id = ?2),
+	EXISTS (SELECT 1 FROM error_samples WHERE project_id = ?1 AND trace_id = ?2)`
+
+// dropSpanlessSummariesInParts drops the spanless summaries of keys
+// boringSummaryChunk traces per job, each part warmed on the read pool first so
+// the job finds its pages cached. It returns the keys whose summary stays. A
+// stop between parts leaves the later summaries for the next cycle.
+func (r *Repository) dropSpanlessSummariesInParts(ctx context.Context, keys []TraceKey) ([]TraceKey, error) {
+	var kept []TraceKey
+	for _, part := range chunkTraceKeys(keys, boringSummaryChunk) {
+		if err := ctx.Err(); err != nil {
+			return kept, err
+		}
+		r.warmSummaryKeys(ctx, part)
+		var stay []TraceKey
+		if _, err := r.submitRows(FamilySpans, writescheduler.Low, boringSummaryLabel, func(db *sql.DB) (int64, error) {
+			var e error
+			if stay, e = dropSpanlessSummaries(ctx, db, part); e != nil {
+				return 0, e
+			}
+			return int64(len(part) - len(stay)), nil
+		}); err != nil {
+			return kept, err
+		}
+		kept = append(kept, stay...)
+	}
+	return kept, nil
+}
+
+// warmSummaryKeys runs boringSummaryWarmSQL for each key on the read pool. It
+// only fills the page cache, so on a failed read it stops and the job seeks the
+// pages itself.
+func (r *Repository) warmSummaryKeys(ctx context.Context, keys []TraceKey) {
+	if r.logTrimReads == nil {
+		return
+	}
+	var spanCount sql.NullInt64
+	var hasSpans, hasSamples bool
+	for _, k := range keys {
+		row := r.logTrimReads.QueryRowContext(ctx, boringSummaryWarmSQL, k.ProjectID, k.TraceID)
+		if row.Scan(&spanCount, &hasSpans, &hasSamples) != nil {
+			return
+		}
+	}
 }
 
 // dropSpanlessSummaries deletes the summaries of keys whose trace has no span

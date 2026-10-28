@@ -27,6 +27,17 @@ func TestBoringExpiryPlansSeekIndexes(t *testing.T) {
 	}
 }
 
+// The summary warm read seeks each of its three tables by trace and reaches
+// the summary row itself.
+func TestBoringSummaryWarmSeeksIndexes(t *testing.T) {
+	repo := setupTestDB(t)
+	plan := queryPlan(t, repo, boringSummaryWarmSQL, 1, "t")
+	if strings.Contains(strings.ReplaceAll(plan, "SCAN CONSTANT ROW", ""), "SCAN") ||
+		strings.Count(plan, "SEARCH") != 3 || strings.Contains(plan, "COVERING INDEX sqlite_autoindex_trace_summaries") {
+		t.Errorf("warm read does not seek all three tables:\n%s", plan)
+	}
+}
+
 // The delete checks each listed span again: a span whose expires_at moved past
 // the cutoff after the chunk was read stays.
 func TestDeleteBoringRowsChecksEachRowAgain(t *testing.T) {

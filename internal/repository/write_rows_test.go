@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -120,5 +121,30 @@ func TestBoringExpiryReportsRows(t *testing.T) {
 	}
 	if got := jobRows()[boringExpiryLabel]; len(got) != 1 || got[0] != 3 {
 		t.Errorf("%s job rows = %v, want [3]", boringExpiryLabel, got)
+	}
+}
+
+// The spanless summaries of one expiry chunk are dropped boringSummaryChunk
+// traces per job, and each job reports the summaries it deleted.
+func TestBoringSummariesRunInChunks(t *testing.T) {
+	jobRows := recordJobRows(t)
+	repo := setupTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := writescheduler.New()
+	repo.SetWriteScheduler(s)
+	go s.Run(ctx)
+
+	traces := 2*boringSummaryChunk + 50
+	insertBoringSpans(t, repo, 1, traces, time.Now().Add(-2*time.Hour).UTC())
+	if _, err := repo.DeleteExpiredBoringSpans(ctx, time.Now()); err != nil {
+		t.Fatalf("DeleteExpiredBoringSpans: %v", err)
+	}
+	got := jobRows()[boringSummaryLabel]
+	if !slices.Equal(got, []int64{boringSummaryChunk, boringSummaryChunk, 50}) {
+		t.Errorf("%s job rows = %v, want [%d %d 50]", boringSummaryLabel, got, boringSummaryChunk, boringSummaryChunk)
+	}
+	if n := len(summaryIDs(t, repo)); n != 0 {
+		t.Errorf("%d summaries left, want 0", n)
 	}
 }
