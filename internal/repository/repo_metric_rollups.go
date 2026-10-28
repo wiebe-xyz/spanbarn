@@ -95,8 +95,8 @@ func (r *Repository) UpsertMetricRollups(rollups []MetricRollup) error {
 	ctx := WithoutSpanTracing(context.Background())
 	for _, chunk := range metricRollupChunks(rollups) {
 		r.warmMetricRollups(ctx, chunk)
-		err := r.submit(FamilyCore, writescheduler.Low, "UpsertMetricRollups", func(db *sql.DB) error {
-			return upsertMetricRollupChunk(ctx, db, chunk)
+		_, err := r.submitRows(FamilyCore, writescheduler.Low, "UpsertMetricRollups", func(db *sql.DB) (int64, error) {
+			return int64(len(chunk)), upsertMetricRollupChunk(ctx, db, chunk)
 		})
 		if err != nil {
 			return err

@@ -35,10 +35,11 @@ func (r *Repository) UpsertCoarseRollups(ctx context.Context, rollups []MetricRo
 	}
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx = WithoutSpanTracing(ctx)
-	return r.execLow(FamilyCore, func(db *sql.DB) error {
+	_, err := r.execLowRows(FamilyCore, func(db *sql.DB) (int64, error) {
+		n := int64(len(rollups))
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
-			return err
+			return n, err
 		}
 		defer tx.Rollback()
 
@@ -59,7 +60,7 @@ func (r *Repository) UpsertCoarseRollups(ctx context.Context, rollups []MetricRo
 				obs_count = excluded.obs_count,
 				extra = excluded.extra`)
 		if err != nil {
-			return err
+			return n, err
 		}
 		defer stmt.Close()
 
@@ -76,11 +77,12 @@ func (r *Repository) UpsertCoarseRollups(ctx context.Context, rollups []MetricRo
 				m.ProjectID, m.Name, m.Type, m.Unit, m.Temporality, m.AttrFingerprint, attrs,
 				m.StepSeconds, m.Bucket, m.Count, m.Sum, m.Min, m.Max, m.Last, m.ObsCount, extra,
 			); err != nil {
-				return err
+				return n, err
 			}
 		}
-		return tx.Commit()
+		return n, tx.Commit()
 	})
+	return err
 }
 
 // QueryCoarseRollups returns buckets of one tier for a metric name, oldest

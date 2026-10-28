@@ -51,26 +51,28 @@ func (r *Repository) UpsertAggregates(aggs []Aggregate) error {
 	}
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx := WithoutSpanTracing(context.Background())
-	return r.execLow(FamilySpans, func(db *sql.DB) error {
+	_, err := r.execLowRows(FamilySpans, func(db *sql.DB) (int64, error) {
+		n := int64(len(aggs))
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
-			return err
+			return n, err
 		}
 		defer tx.Rollback()
 
 		stmt, err := tx.PrepareContext(ctx, upsertAggregateSQL)
 		if err != nil {
-			return err
+			return n, err
 		}
 		defer stmt.Close()
 
 		for _, agg := range aggs {
 			if _, err := stmt.ExecContext(ctx, upsertAggregateArgs(agg)...); err != nil {
-				return err
+				return n, err
 			}
 		}
-		return tx.Commit()
+		return n, tx.Commit()
 	})
+	return err
 }
 
 func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {

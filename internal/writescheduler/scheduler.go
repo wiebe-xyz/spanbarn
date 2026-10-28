@@ -33,11 +33,16 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
 )
 
-var tracer = otel.Tracer("spanbarn/writescheduler")
+// tracer returns the job tracer of the current global provider. It is looked
+// up per job: a tracer taken once at package init stays bound to the first
+// provider set in the process, so a test that installs a recorder later would
+// see no job spans.
+func tracer() trace.Tracer { return otel.Tracer("spanbarn/writescheduler") }
 
 // ErrStopped is returned by Submit once the scheduler's Run has returned.
 var ErrStopped = errors.New("write scheduler stopped")
@@ -50,13 +55,22 @@ const (
 	High Priority = 1
 )
 
+// NoRows is the row count of a job that does not report one.
+const NoRows int64 = -1
+
 type job struct {
-	fn       func() error
-	resultCh chan error
+	fn       func() (int64, error)
+	resultCh chan result
 	label    string
 	// enqueuedAt is taken before the job enters its channel, so the wait to
 	// start includes time spent blocked on a full channel.
 	enqueuedAt time.Time
+}
+
+// result is what a job returns: the rows it wrote, or NoRows, and its error.
+type result struct {
+	rows int64
+	err  error
 }
 
 // Scheduler serialises DB writes through a single goroutine with two priority
@@ -119,12 +133,21 @@ func (s *Scheduler) SetLogger(l *slog.Logger) {
 // the context is cancelled while waiting to enqueue or waiting for the result.
 // An in-flight job cannot be cancelled.
 func (s *Scheduler) Submit(ctx context.Context, p Priority, label string, fn func() error) error {
+	_, err := s.SubmitRows(ctx, p, label, func() (int64, error) { return NoRows, fn() })
+	return err
+}
+
+// SubmitRows is Submit for a job that reports how many rows it wrote. The
+// count goes on the job span as write.rows and on the slow-write log as rows,
+// so a slow job's time can be read per row. A job that has no count returns
+// NoRows.
+func (s *Scheduler) SubmitRows(ctx context.Context, p Priority, label string, fn func() (int64, error)) (int64, error) {
 	select {
 	case <-s.stopped:
-		return ErrStopped
+		return NoRows, ErrStopped
 	default:
 	}
-	j := job{fn: fn, resultCh: make(chan error, 1), label: label, enqueuedAt: time.Now()}
+	j := job{fn: fn, resultCh: make(chan result, 1), label: label, enqueuedAt: time.Now()}
 	ch := s.lowPri
 	if p == High {
 		ch = s.highPri
@@ -132,27 +155,27 @@ func (s *Scheduler) Submit(ctx context.Context, p Priority, label string, fn fun
 	select {
 	case ch <- j:
 	case <-ctx.Done():
-		return ctx.Err()
+		return NoRows, ctx.Err()
 	case <-s.stopped:
-		return ErrStopped
+		return NoRows, ErrStopped
 	}
 	select {
-	case err := <-j.resultCh:
-		return err
+	case res := <-j.resultCh:
+		return res.rows, res.err
 	case <-s.stopped:
 		// Run drains the queues before it closes stopped, so a job that made
 		// it in before then has its result waiting.
 		select {
-		case err := <-j.resultCh:
-			return err
+		case res := <-j.resultCh:
+			return res.rows, res.err
 		default:
-			return ErrStopped
+			return NoRows, ErrStopped
 		}
 	case <-ctx.Done():
 		// The job was enqueued but the caller gave up. The scheduler will still
 		// run it (we cannot cancel in-flight SQLite ops), but we return now so
 		// the caller is not stuck. The result is discarded.
-		return ctx.Err()
+		return NoRows, ctx.Err()
 	}
 }
 
@@ -207,7 +230,7 @@ func (s *Scheduler) execute(j job) {
 	if label == "" {
 		label = "unknown"
 	}
-	_, span := tracer.Start(context.Background(), "writescheduler.job")
+	_, span := tracer().Start(context.Background(), "writescheduler.job")
 	span.SetAttributes(attribute.String("write.op", label))
 
 	start := time.Now()
@@ -218,7 +241,7 @@ func (s *Scheduler) execute(j job) {
 	s.curSeq++
 	s.mu.Unlock()
 
-	err := j.fn()
+	rows, err := j.fn()
 	dur := time.Since(start)
 
 	s.mu.Lock()
@@ -229,26 +252,30 @@ func (s *Scheduler) execute(j job) {
 		attribute.Int64("write.duration_ms", dur.Milliseconds()),
 		attribute.Int64("write.wait_ms", wait.Milliseconds()),
 	)
+	if rows != NoRows {
+		span.SetAttributes(attribute.Int64("write.rows", rows))
+	}
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}
 	span.End()
 
-	s.logSlowWrite(label, dur, wait)
+	s.logSlowWrite(label, dur, wait, rows)
 	// Info, not Warn: the wait is the serial queue draining behind a slow job
 	// and the slow job itself already files a Warn.
 	if wait >= s.slowThreshold {
 		s.logger.Info("write scheduler: slow queue wait", "op", label, "wait_ms", wait.Milliseconds(), "duration_ms", dur.Milliseconds())
 	}
-	j.resultCh <- err
+	j.resultCh <- result{rows: rows, err: err}
 }
 
 // logSlowWrite logs a job that took slowThreshold or longer. Slow writes of a
 // few seconds are routine on a busy disk and stay at WARN, out of BugBarn. A
 // write of reportThreshold or more holds every other write and the readers'
-// checkpoint for that long, so it logs at ERROR and files in BugBarn.
-func (s *Scheduler) logSlowWrite(label string, dur, wait time.Duration) {
+// checkpoint for that long, so it logs at ERROR and files in BugBarn. rows is
+// logged when the job reported it.
+func (s *Scheduler) logSlowWrite(label string, dur, wait time.Duration, rows int64) {
 	if dur < s.slowThreshold {
 		return
 	}
@@ -256,8 +283,11 @@ func (s *Scheduler) logSlowWrite(label string, dur, wait time.Duration) {
 	if dur >= s.reportThreshold {
 		level = slog.LevelError
 	}
-	s.logger.Log(context.Background(), level, "write scheduler: slow write",
-		"op", label, "duration_ms", dur.Milliseconds(), "wait_ms", wait.Milliseconds())
+	args := []any{"op", label, "duration_ms", dur.Milliseconds(), "wait_ms", wait.Milliseconds()}
+	if rows != NoRows {
+		args = append(args, "rows", rows)
+	}
+	s.logger.Log(context.Background(), level, "write scheduler: slow write", args...)
 }
 
 // watchdog periodically checks the in-flight job. If one has been running longer

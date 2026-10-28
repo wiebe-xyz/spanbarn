@@ -133,10 +133,11 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 	if len(traceIDs) == 0 {
 		return nil
 	}
-	return r.execLow(FamilySpans, func(db *sql.DB) error {
+	_, err := r.execLowRows(FamilySpans, func(db *sql.DB) (int64, error) {
+		n := int64(len(interesting))
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
-			return err
+			return n, err
 		}
 		defer tx.Rollback()
 
@@ -145,7 +146,7 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 				(`+stagingCols+`, expires_at, durable)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 			if err != nil {
-				return err
+				return n, err
 			}
 			for _, s := range interesting {
 				var parentID *string
@@ -159,7 +160,7 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 					s.ExpiresAt, s.Durable,
 				); err != nil {
 					stmt.Close()
-					return err
+					return n, err
 				}
 			}
 			stmt.Close()
@@ -169,7 +170,7 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 		// trace list has a pre-grouped, indexed row instead of scanning spans.
 		if sums := buildTraceSummaries(interesting, time.Now().UTC()); len(sums) > 0 {
 			if err := upsertTraceSummariesTx(ctx, tx, sums); err != nil {
-				return err
+				return n, err
 			}
 		}
 
@@ -179,11 +180,15 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 		for i, id := range traceIDs {
 			args[i] = id
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM spans_staging WHERE trace_id IN (`+placeholders+`)`, args...); err != nil {
-			return err
+		res, err := tx.ExecContext(ctx, `DELETE FROM spans_staging WHERE trace_id IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return n, err
 		}
-		return tx.Commit()
+		staged, _ := res.RowsAffected()
+		n += staged
+		return n, tx.Commit()
 	})
+	return err
 }
 
 // DeleteStagingOlderThan is the hard cleanup backstop: it drops any staged row
