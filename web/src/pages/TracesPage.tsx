@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Ban } from 'lucide-react'
 import type { SavedQuery, TraceSummary, TraceGroupSummary } from '../api/types'
 import { api } from '../api/client'
+import { SourceLabel } from '../components/SourceLabel'
 import { TraceStructureBadges } from '../components/TraceStructureBadges'
 import { FilterBuilder } from '../components/filter/FilterBuilder'
 import { compareUrl } from '../filters/compareLink'
@@ -618,7 +619,9 @@ export function TracesPage(): ReactElement {
               <tr style={{ borderBottom: '1px solid #374151' }}>
                 <th style={thStyle}>Operation</th>
                 <th style={thStyle}>Service</th>
-                <th style={thStyle}>Count</th>
+                <th style={thStyle}>
+                  Count <SourceLabel source={groups[0]?.source} />
+                </th>
                 <th style={thStyle}>Errors</th>
                 <th style={thStyle}>Error Rate</th>
                 <th style={thStyle}>P50</th>

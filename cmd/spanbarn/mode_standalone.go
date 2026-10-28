@@ -170,6 +170,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 
 	// Query service reads from the read-only DB, never contesting the write connection.
 	querySvc := service.NewQueryService(queryRepo, logger, ratioLookup)
+	applySpanRollupReads(querySvc, cfg)
 
 	queryCache := newQueryCache(cfg, logger, true)
 	querySvc.SetCache(queryCache)

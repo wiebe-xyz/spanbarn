@@ -83,6 +83,22 @@ func (h *Hist) Merge(o Hist) {
 // Count returns the number of durations in h.
 func (h Hist) Count() int64 { return h.total }
 
+// Bins returns h's bins in ascending index order. The caller must not
+// modify them.
+func (h Hist) Bins() []Bin { return h.bins }
+
+// Between returns the part of h in bins lo up to but not including hi.
+func (h Hist) Between(lo, hi int) Hist {
+	var out Hist
+	for _, b := range h.bins {
+		if b.Index >= lo && b.Index < hi {
+			out.bins = append(out.bins, b)
+			out.total += b.Count
+		}
+	}
+	return out
+}
+
 // Percentile returns the p-th percentile (0 < p <= 100) by nearest rank,
 // round(p/100*n), interpolated inside the bin that holds that rank. An empty
 // histogram returns 0.

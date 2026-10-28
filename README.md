@@ -269,6 +269,7 @@ project automatically.
 | `SPANBARN_SPAN_ROLLUP_MAX_NAMES` | `300` | Span names kept per service per hour; the rest count as `~other` |
 | `SPANBARN_SPAN_ROLLUP_MAX_SERVICES` | `200` | Services kept per project per hour; the rest count as `~other` |
 | `SPANBARN_SPAN_ROLLUP_HTTP_STATUS` | `true` | Split root span rows by response code; `false` writes 0 and keeps the key |
+| `SPANBARN_SPAN_ROLLUP_READS` | `auto` | `auto` reads dashboard cards and trace groups from span rollups where they cover the range; `off` reads raw spans |
 | `SPANBARN_SPAN_ROLLUP_5M_HOURS` | `72` | Hours to keep 5-minute span rollups |
 | `SPANBARN_SPAN_ROLLUP_HOURLY_DAYS` | `30` | Days to keep hourly span rollups |
 | `SPANBARN_SPAN_ROLLUP_DAILY_DAYS` | `400` | Days to keep daily span rollups |
@@ -373,7 +374,23 @@ Disk pressure shortens the 5-minute tier, down to 6 hours. A service with more
 than `SPANBARN_SPAN_ROLLUP_MAX_NAMES` span names in an hour, or a project with
 more than `SPANBARN_SPAN_ROLLUP_MAX_SERVICES` services, counts the overflow
 under `~other`, which keeps a high-cardinality name such as a raw URL from
-growing the table without bound. Nothing reads the table yet.
+growing the table without bound.
+
+Dashboard cards over windows longer than an hour, and trace groups over an hour
+or more, read the rollups when the rollups hold the whole range
+(`SPANBARN_SPAN_ROLLUP_READS=auto`). Whole days and hours come from the coarse
+tiers and the edges from 5-minute rows; a range that starts before the oldest
+5-minute row reads raw spans for all of it, so one result never mixes the two.
+A duration band reads the rollups only when its bounds sit on heatmap bucket
+edges, which is what brushing the heatmap produces, and a status filter only
+when it is `ok`, `error` or `unset`. Grouping by HTTP status reads them only for
+root spans while `SPANBARN_SPAN_ROLLUP_HTTP_STATUS` is on. Error trace groups
+and a minimum duration always read raw spans.
+
+Rollups count every span the writer received, with sample weights applied;
+raw spans count only what was stored. Each dashboard and trace group response
+says which in `source` (`rollups` or `spans`), and the UI labels the card
+"received spans" or "stored spans".
 
 ### Disk-headroom guard
 

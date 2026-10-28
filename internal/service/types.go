@@ -248,6 +248,9 @@ type TraceGroupSummary struct {
 	// operations that errored in its traces.
 	ExampleTraceID  string           `json:"exampleTraceId,omitempty"`
 	ErrorOperations []ErrorOperation `json:"errorOperations,omitempty"`
+	// Source is SourceRollups when the counts are the root spans the writer
+	// received, SourceSpans when they come from the stored root spans.
+	Source string `json:"source"`
 }
 
 // ErrorOperation is a span operation that errored inside a trace group.

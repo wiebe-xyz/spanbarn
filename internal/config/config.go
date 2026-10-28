@@ -163,6 +163,7 @@ type Config struct {
 	SpanRollupMaxNames       int  // SPANBARN_SPAN_ROLLUP_MAX_NAMES — span names per (project, service) per hour before the rest fold into ~other (default 300)
 	SpanRollupMaxServices    int  // SPANBARN_SPAN_ROLLUP_MAX_SERVICES — services per project per hour before the rest fold into ~other (default 200)
 	SpanRollupHTTPStatus     bool // SPANBARN_SPAN_ROLLUP_HTTP_STATUS — split root span rows by response code; off writes 0 (default 1)
+	SpanRollupReads          bool // SPANBARN_SPAN_ROLLUP_READS — auto (default) reads dashboard cards and trace groups from span_rollups where they cover the range; off reads raw spans
 	SpanStagingEnabled       bool // SPANBARN_SPAN_STAGING_ENABLED — when true, the redis worker appends consumed spans to spans_staging (cheap) and a background flusher does accumulation+classification+indexed storage per complete trace off the hot path (default false)
 	TraceBufferWindowSeconds int  // SPANBARN_TRACE_BUFFER_WINDOW_SECONDS — how long a trace's spans buffer in spans_staging before the flusher treats the trace as complete (default 90)
 	StagingMaxAgeSeconds     int  // SPANBARN_STAGING_MAX_AGE_SECONDS — hard backstop: spans_staging rows older than this are dropped unconditionally so the table can never grow without bound (default 900)
@@ -279,6 +280,7 @@ func Load() Config {
 		SpanRollupMaxNames:           getenvInt("SPANBARN_SPAN_ROLLUP_MAX_NAMES", 300),
 		SpanRollupMaxServices:        getenvInt("SPANBARN_SPAN_ROLLUP_MAX_SERVICES", 200),
 		SpanRollupHTTPStatus:         getenvBool("SPANBARN_SPAN_ROLLUP_HTTP_STATUS", true),
+		SpanRollupReads:              getenv("SPANBARN_SPAN_ROLLUP_READS", "auto") != "off",
 		TraceBufferWindowSeconds:     getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
 		TraceBufferMaxSpans:          getenvInt("SPANBARN_TRACE_BUFFER_MAX_SPANS", 50000),
 		TraceBufferTTLSeconds:        getenvInt("SPANBARN_TRACE_BUFFER_TTL_SECONDS", 600),

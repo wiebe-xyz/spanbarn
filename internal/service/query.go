@@ -38,6 +38,11 @@ type QueryRepository interface {
 	QueryDashboardCounts(ctx context.Context, f repository.SpanFilter, intervalSec int64, group repository.DashboardGroup, topN int) ([]repository.DashboardCountPoint, error)
 	QueryDashboardPercentiles(ctx context.Context, f repository.SpanFilter, intervalSec int64, group repository.DashboardGroup, topN int) ([]repository.DashboardPercentilePoint, error)
 	QueryDashboardHeatmap(ctx context.Context, f repository.SpanFilter, intervalSec int64) ([]repository.DashboardHeatmapCell, error)
+	SpanRollupCoverage(ctx context.Context) (repository.SpanRollupCoverage, error)
+	QueryDashboardCountsFromRollups(ctx context.Context, q repository.DashboardRollupQuery, group repository.DashboardGroup, topN int) ([]repository.DashboardCountPoint, error)
+	QueryDashboardPercentilesFromRollups(ctx context.Context, q repository.DashboardRollupQuery, group repository.DashboardGroup, topN int) ([]repository.DashboardPercentilePoint, error)
+	QueryDashboardHeatmapFromRollups(ctx context.Context, q repository.DashboardRollupQuery) ([]repository.DashboardHeatmapCell, error)
+	QueryRootSpanGroupsFromRollups(ctx context.Context, q repository.SpanRollupScan) ([]repository.RootSpanGroup, error)
 	QueryOrphanSpanGroups(ctx context.Context, w repository.HealthWindow) ([]repository.OrphanSpanGroup, error)
 	QuerySingleSpanTraceGroups(ctx context.Context, w repository.HealthWindow) ([]repository.SingleSpanTraceGroup, error)
 	QuerySpanNameSummary(ctx context.Context, w repository.HealthWindow) ([]repository.SpanNameSummary, error)
@@ -72,6 +77,9 @@ type QueryService struct {
 	logger      *slog.Logger
 	ratioLookup SampleRatioLookup
 	accumulator RecentAggregateQuerier // may be nil on reader/standalone pods
+
+	rollupReads    SpanRollupReads
+	rollupCoverage spanRollupCoverage
 }
 
 // NewQueryService creates a new QueryService. ratioLookup is used to read the

@@ -11,6 +11,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
 	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/spanrollup"
 )
 
@@ -192,6 +193,11 @@ func newSpanRollups(w aggregation.SpanRollupWriter, cfg config.Config, logger *s
 		MaxServices: cfg.SpanRollupMaxServices,
 		HTTPStatus:  cfg.SpanRollupHTTPStatus,
 	}, logger)
+}
+
+// applySpanRollupReads lets q read span_rollups as the config says.
+func applySpanRollupReads(q *service.QueryService, cfg config.Config) {
+	q.SetSpanRollupReads(service.SpanRollupReads{Enabled: cfg.SpanRollupReads, HTTPStatus: cfg.SpanRollupHTTPStatus})
 }
 
 // newSpanRollupCompactor builds the compactor that turns 5-minute span rollups

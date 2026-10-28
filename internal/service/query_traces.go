@@ -145,7 +145,7 @@ func (s *QueryService) listTraceGroupsUncached(ctx context.Context, filter Trace
 		return s.listErrorTraceGroups(ctx, sf)
 	}
 
-	groups, err := s.repo.QueryRootSpanGroups(ctx, sf)
+	groups, source, err := s.rootSpanGroups(ctx, sf)
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +167,7 @@ func (s *QueryService) listTraceGroupsUncached(ctx context.Context, filter Trace
 			P50Us:      g.Hist.Percentile(50),
 			P95Us:      g.Hist.Percentile(95),
 			P99Us:      g.Hist.Percentile(99),
+			Source:     source,
 		})
 	}
 
@@ -174,13 +175,20 @@ func (s *QueryService) listTraceGroupsUncached(ctx context.Context, filter Trace
 	return out, nil
 }
 
-// sortTraceGroups puts errors first, then the larger groups.
+// sortTraceGroups puts errors first, then the larger groups. Ties sort by
+// operation and service, so both sources list equal groups in one order.
 func sortTraceGroups(out []TraceGroupSummary) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ErrorCount != out[j].ErrorCount {
 			return out[i].ErrorCount > out[j].ErrorCount
 		}
-		return out[i].Count > out[j].Count
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		if out[i].Operation != out[j].Operation {
+			return out[i].Operation < out[j].Operation
+		}
+		return out[i].Service < out[j].Service
 	})
 }
 
@@ -207,6 +215,7 @@ func (s *QueryService) listErrorTraceGroups(ctx context.Context, sf repository.S
 			Count: n, ErrorCount: n, ErrorRate: 1,
 			P50Us: p50, P95Us: p95, P99Us: p99,
 			ExampleTraceID: g.ExampleTraceID, ErrorOperations: ops,
+			Source: SourceSpans,
 		})
 	}
 	sortTraceGroups(out)

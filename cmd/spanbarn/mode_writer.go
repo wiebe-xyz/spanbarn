@@ -105,6 +105,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 
 	writerRatioLookup := ingest.NewCachedRatioLookup(queryRepo, time.Minute)
 	querySvc := service.NewQueryService(queryRepo, logger, writerRatioLookup)
+	applySpanRollupReads(querySvc, cfg)
 	queryCache := newQueryCache(cfg, logger, false)
 	querySvc.SetCache(queryCache)
 	defer queryCache.Close()
