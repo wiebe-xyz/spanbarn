@@ -53,8 +53,11 @@ type MetricRollupFilter struct {
 // A flush in production holds about 3,000 rows, and each row seeks a different
 // leaf of idx_metric_rollups_lookup. In one transaction on a cold page cache
 // the flush held main's write slot for 43s after a writer restart on
-// 2026-10-23 and 32s on 2026-10-24, past the watchdog's 30s (#371).
-const metricRollupChunk = 500
+// 2026-10-23 and 32s on 2026-10-24, past the watchdog's 30s (#371). Chunks of
+// 500 rows still took 2.2 to 3.8 s with the keys warmed, about 3 to 5 ms a row
+// while the spans family wrote at the same time (2026-10-28), so a chunk of 150
+// stays under a second.
+const metricRollupChunk = 150
 
 // metricRollupUpsertSQL folds one bucket into its row. Counts and sums
 // accumulate on conflict (so a late straggler for an already-written bucket

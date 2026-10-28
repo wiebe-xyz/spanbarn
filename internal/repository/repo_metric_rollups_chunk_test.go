@@ -108,3 +108,26 @@ func TestUpsertMetricRollupsWarmsOnTheReadPoolFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A chunk that fails stops the flush: the chunks before it stay written and
+// the chunks after it are not tried.
+func TestUpsertMetricRollupsStopsAtFailedChunk(t *testing.T) {
+	repo := setupTestDB(t)
+	failKey := fmt.Sprintf("fp%05d", metricRollupChunk+1) // first key of the second chunk
+	if _, err := repo.writer(FamilyCore).Exec(`CREATE TRIGGER fail_second_chunk BEFORE INSERT ON metric_rollups
+		WHEN NEW.attr_fingerprint = '` + failKey + `' BEGIN SELECT RAISE(ABORT, 'chunk failed'); END`); err != nil {
+		t.Fatal(err)
+	}
+	bucket := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	if err := repo.UpsertMetricRollups(rollupBatch(3*metricRollupChunk, bucket)); err == nil {
+		t.Fatal("UpsertMetricRollups with a failing chunk returned no error")
+	}
+	var rows int
+	var maxKey string
+	if err := repo.DB().QueryRow(`SELECT count(*), COALESCE(max(attr_fingerprint), '') FROM metric_rollups`).Scan(&rows, &maxKey); err != nil {
+		t.Fatal(err)
+	}
+	if rows != metricRollupChunk || maxKey != fmt.Sprintf("fp%05d", metricRollupChunk) {
+		t.Errorf("%d rows up to %s, want the first chunk's %d rows up to fp%05d", rows, maxKey, metricRollupChunk, metricRollupChunk)
+	}
+}
