@@ -158,21 +158,14 @@ func (f *StagingFlusher) flushOnce(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
-	// Aggregate every span (boring included) before classification, exactly like
-	// the inline path — now over complete traces.
-	if f.accumulator != nil {
-		f.accumulator.AddBatch(spans)
-	}
 	interesting := classifySpansForStorage(spans, f.cfg.SlowThresholdUs, f.cfg.BoringRetention, f.boringPolicy, f.floor, f.hourFloor)
 
-	// Atomically move interesting spans to the indexed table and delete all
-	// processed rows for these traces.
-	if err := f.repo.CommitStagingFlush(ctx, traceIDs, interesting); err != nil {
-		return 0, err
-	}
-	if promptRecs := extractPromptRecords(interesting); len(promptRecs) > 0 {
-		if err := f.repo.InsertPromptRecords(promptRecs); err != nil {
-			f.logger.Warn("staging flush: insert prompt records", "count", len(promptRecs), "error", err)
+	// Move the traces in chunks of whole traces, one job each, so no job holds
+	// the spans writer for the whole batch. Every span (boring included) still
+	// reaches the accumulator, chunk by chunk as each one commits.
+	for _, c := range stagingChunks(traceIDs, spans, interesting, stagingChunkRows) {
+		if err := f.commitChunk(ctx, c); err != nil {
+			return 0, err
 		}
 	}
 	f.logger.Debug("staging flush", "traces", len(traceIDs), "spans", len(spans), "stored", len(interesting))
