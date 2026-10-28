@@ -333,16 +333,16 @@ func TestClassifyInterestingNoThreshold(t *testing.T) {
 	}
 }
 
-// mockAccumulator records Add calls for testing.
+// mockAccumulator records AddBatch calls for testing.
 type mockAccumulator struct {
 	mu    sync.Mutex
 	added []repository.Span
 }
 
-func (m *mockAccumulator) Add(s repository.Span) {
+func (m *mockAccumulator) AddBatch(spans []repository.Span) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.added = append(m.added, s)
+	m.added = append(m.added, spans...)
 }
 
 func (m *mockAccumulator) count() int {

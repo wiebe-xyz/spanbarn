@@ -28,9 +28,15 @@ func (f *rollupFold) add(s repository.SpanRollup, rate float64) {
 	if s.Status == "error" {
 		errors = s.Count
 	}
+	f.addCounts(s.Count, errors, repository.SpanWeights{Count: s.WeightedCount, Spans: s.WeightedSpans}, s.Hist, rate)
+}
+
+// addCounts folds one row in, estimating its spans from their sample
+// weights, or from rate when some have none.
+func (f *rollupFold) addCounts(count, errors int64, w repository.SpanWeights, hist []byte, rate float64) {
 	f.errorCount += errors
-	f.effective += estimateSpans(s.Count, errors, repository.SpanWeights{Count: s.WeightedCount, Spans: s.WeightedSpans}, rate)
-	if h, err := spanhist.Decode(s.Hist); err == nil {
+	f.effective += estimateSpans(count, errors, w, rate)
+	if h, err := spanhist.Decode(hist); err == nil {
 		f.hist.Merge(h)
 	}
 }

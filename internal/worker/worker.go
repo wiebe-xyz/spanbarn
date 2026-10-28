@@ -202,9 +202,7 @@ func (w *Worker) processBatch(ctx context.Context) {
 			w.aggregateInline(ctx, spans)
 		}
 		if w.rollups != nil {
-			for i := range spans {
-				w.rollups.Add(spans[i])
-			}
+			w.rollups.AddBatch(spans)
 		}
 	}
 

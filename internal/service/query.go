@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"log/slog"
-	"net/url"
 	"sort"
 	"time"
 
@@ -45,6 +44,9 @@ type QueryRepository interface {
 	QueryRootSpanGroupsFromRollups(ctx context.Context, q repository.SpanRollupScan) ([]repository.RootSpanGroup, error)
 	ScanSpanRollups(ctx context.Context, q repository.SpanRollupScan, fn func(repository.SpanRollup) error) error
 	CountSpanRollupBuckets(ctx context.Context, step int64, from, to time.Time) (int, error)
+	SpanEdgeCoverage(ctx context.Context) (repository.SpanRollupCoverage, error)
+	ScanSpanEdges(ctx context.Context, q repository.SpanEdgeScan, fn func(repository.SpanEdge) error) error
+	CountSpanEdgeBuckets(ctx context.Context, step int64, from, to time.Time) (int, error)
 	QueryOrphanSpanGroups(ctx context.Context, w repository.HealthWindow) ([]repository.OrphanSpanGroup, error)
 	QuerySingleSpanTraceGroups(ctx context.Context, w repository.HealthWindow) ([]repository.SingleSpanTraceGroup, error)
 	QuerySpanNameSummary(ctx context.Context, w repository.HealthWindow) ([]repository.SpanNameSummary, error)
@@ -82,6 +84,7 @@ type QueryService struct {
 
 	rollupReads    SpanRollupReads
 	rollupCoverage spanRollupCoverage
+	edgeCoverage   spanRollupCoverage
 }
 
 // NewQueryService creates a new QueryService. ratioLookup is used to read the
@@ -205,24 +208,4 @@ func percentileIndex(n, pct int) int {
 		idx = n - 1
 	}
 	return idx
-}
-
-func getStringAttr(attrs map[string]any, key string) (string, bool) {
-	v, ok := attrs[key]
-	if !ok {
-		return "", false
-	}
-	s, ok := v.(string)
-	if !ok || s == "" {
-		return "", false
-	}
-	return s, true
-}
-
-func extractHost(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	return u.Hostname()
 }

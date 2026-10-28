@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/deptarget"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -58,12 +59,12 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 				continue
 			}
 
-			dbSystem, _ := getStringAttr(attrs, "db.system")
+			dbSystem, _ := deptarget.StringAttr(attrs, "db.system")
 			if dbSystem == "" {
 				continue
 			}
 
-			statement, _ := getStringAttr(attrs, "db.statement")
+			statement, _ := deptarget.StringAttr(attrs, "db.statement")
 			var pattern string
 			if statement != "" {
 				pattern = NormalizeSQL(statement)
@@ -74,11 +75,11 @@ func (s *QueryService) ListDatabaseQueries(ctx context.Context, projectID int64,
 				continue
 			}
 
-			operation, _ := getStringAttr(attrs, "db.operation")
+			operation, _ := deptarget.StringAttr(attrs, "db.operation")
 			if operation == "" {
 				operation = extractSQLOperation(pattern)
 			}
-			dbName, _ := getStringAttr(attrs, "db.name")
+			dbName, _ := deptarget.StringAttr(attrs, "db.name")
 
 			st, ok := byPattern[pattern]
 			if !ok {
@@ -199,18 +200,18 @@ func (s *QueryService) GetDatabaseQuerySpans(ctx context.Context, projectID int6
 // normalized statement (or lowercased name without a statement) equals pattern,
 // and returns the error message the span carries, if any.
 func matchDatabaseQuerySpan(sp repository.Span, pattern string) (errorMessage string, ok bool) {
-	if !isClientKind(sp.Kind) {
+	if !deptarget.IsClientKind(sp.Kind) {
 		return "", false
 	}
 	attrs := parseAttrs(sp.Attributes)
 	if attrs == nil {
 		return "", false
 	}
-	if dbSystem, _ := getStringAttr(attrs, "db.system"); dbSystem == "" {
+	if dbSystem, _ := deptarget.StringAttr(attrs, "db.system"); dbSystem == "" {
 		return "", false
 	}
 	p := strings.ToLower(sp.Name)
-	if statement, _ := getStringAttr(attrs, "db.statement"); statement != "" {
+	if statement, _ := deptarget.StringAttr(attrs, "db.statement"); statement != "" {
 		p = NormalizeSQL(statement)
 	}
 	if p != pattern {
@@ -222,7 +223,7 @@ func matchDatabaseQuerySpan(sp repository.Span, pattern string) (errorMessage st
 // firstStringAttr returns the first non-empty string attribute among keys.
 func firstStringAttr(attrs map[string]any, keys ...string) string {
 	for _, k := range keys {
-		if v, _ := getStringAttr(attrs, k); v != "" {
+		if v, _ := deptarget.StringAttr(attrs, k); v != "" {
 			return v
 		}
 	}

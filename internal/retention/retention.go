@@ -62,6 +62,7 @@ type Repository interface {
 	DeleteMetricRollupsOlderThanLimited(ctx context.Context, cutoff time.Time, max int64) (int64, bool, error)
 	DeleteCoarseRollupsOlderThanLimited(ctx context.Context, step int64, cutoff time.Time, max int64) (int64, bool, error)
 	DeleteSpanRollupsOlderThanLimited(ctx context.Context, step int64, cutoff time.Time, max int64) (int64, bool, error)
+	DeleteSpanEdgesOlderThanLimited(ctx context.Context, step int64, cutoff time.Time, max int64) (int64, bool, error)
 	SpanRollupWatermark(ctx context.Context, step int64) (time.Time, bool, error)
 	MetricRollupWatermark(ctx context.Context, step int64) (time.Time, bool, error)
 	DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error)

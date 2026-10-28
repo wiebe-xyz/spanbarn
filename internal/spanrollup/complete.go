@@ -13,6 +13,15 @@ type BucketCounter interface {
 	CountSpanRollupBuckets(ctx context.Context, step int64, from, to time.Time) (int, error)
 }
 
+// BucketCounterFunc adapts a bucket count of another tiered table, such as
+// CountSpanEdgeBuckets, to BucketCounter.
+type BucketCounterFunc func(ctx context.Context, step int64, from, to time.Time) (int, error)
+
+// CountSpanRollupBuckets calls f.
+func (f BucketCounterFunc) CountSpanRollupBuckets(ctx context.Context, step int64, from, to time.Time) (int, error) {
+	return f(ctx, step, from, to)
+}
+
 // Complete reports whether every bucket the segments read holds rows. A
 // bucket without rows is a gap: no writer rolled spans up then (an older
 // version ran, or the rollups were off), so a read across it would count

@@ -12,9 +12,21 @@ import (
 )
 
 type fakeSpanRollupWriter struct {
-	mu   sync.Mutex
-	rows []repository.SpanRollup
-	err  error
+	mu      sync.Mutex
+	rows    []repository.SpanRollup
+	edges   []repository.SpanEdge
+	err     error
+	edgeErr error
+}
+
+func (f *fakeSpanRollupWriter) AddSpanEdges(rows []repository.SpanEdge) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.edgeErr != nil {
+		return f.edgeErr
+	}
+	f.edges = append(f.edges, rows...)
+	return nil
 }
 
 func (f *fakeSpanRollupWriter) AddSpanRollups(rows []repository.SpanRollup) error {

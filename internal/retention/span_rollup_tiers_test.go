@@ -122,3 +122,37 @@ func TestPressureShortensSpanRollup5mTier(t *testing.T) {
 		t.Error("pressure must leave the coarse span rollup tiers alone")
 	}
 }
+
+// span_edges are trimmed with span_rollups, up to the same watermark.
+func TestSpanEdgeTierStopsAtWatermark(t *testing.T) {
+	w, repo := setupTestWorker(t, Config{SpanRollup5mHours: 72})
+	ctx := context.Background()
+	now := time.Now().UTC()
+	var rows []repository.SpanEdge
+	for _, age := range []time.Duration{100 * time.Hour, 80 * time.Hour, time.Hour} {
+		b := now.Add(-age).Truncate(5 * time.Minute)
+		var h spanhist.Hist
+		h.Observe(10)
+		rows = append(rows, repository.SpanEdgeMarker(300, b), repository.SpanEdge{
+			StepSeconds: 300, Bucket: b, ProjectID: 1, Source: "api", Target: "sqlite", TargetType: "database",
+			Count: 1, SumDurationUs: 10, MinUs: 10, MaxUs: 10, Hist: h.Encode(),
+		})
+	}
+	if err := repo.AddSpanEdges(rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSpanRollupWatermark(ctx, 300, now.Add(-90*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	n, more, err := w.deleteSpanRollupTiers(ctx, w.cfg, now, maxRollupRowsPerCycle)
+	if err != nil || n != 2 || more {
+		t.Fatalf("deleted %d (more=%v, err=%v), want the oldest marker and edge", n, more, err)
+	}
+	var left int
+	if err := repo.DB().QueryRow(`SELECT COUNT(*) FROM span_edges`).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 4 {
+		t.Errorf("edge rows left = %d, want 4", left)
+	}
+}

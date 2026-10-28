@@ -98,6 +98,8 @@ type DependencySummary struct {
 	P50Us      int64   `json:"p50Us"`
 	P95Us      int64   `json:"p95Us"`
 	P99Us      int64   `json:"p99Us"`
+	// Source names the store that answered (SourceRollups or SourceSpans).
+	Source string `json:"source"`
 }
 
 // ServiceMapNode holds a service in the service map.
@@ -122,6 +124,8 @@ type ServiceMapEdge struct {
 type ServiceMap struct {
 	Nodes []ServiceMapNode `json:"nodes"`
 	Edges []ServiceMapEdge `json:"edges"`
+	// Source names the store that answered (SourceRollups or SourceSpans).
+	Source string `json:"source"`
 	Coverage
 }
 

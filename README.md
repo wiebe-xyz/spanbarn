@@ -269,7 +269,8 @@ project automatically.
 | `SPANBARN_SPAN_ROLLUP_MAX_NAMES` | `300` | Span names kept per service per hour; the rest count as `~other` |
 | `SPANBARN_SPAN_ROLLUP_MAX_SERVICES` | `200` | Services kept per project per hour; the rest count as `~other` |
 | `SPANBARN_SPAN_ROLLUP_HTTP_STATUS` | `true` | Split root span rows by response code; `false` writes 0 and keeps the key |
-| `SPANBARN_SPAN_ROLLUP_READS` | `auto` | `auto` reads dashboard cards, trace groups, services and operation timeseries from span rollups where they cover the range; `off` reads raw spans and aggregates |
+| `SPANBARN_SPAN_ROLLUP_READS` | `auto` | `auto` reads dashboard cards, trace groups, services, operation timeseries, the service map and dependencies from span rollups and span edges where they cover the range; `off` reads raw spans and aggregates |
+| `SPANBARN_SPAN_EDGE_MAX_TARGETS` | `200` | Call targets kept per service per hour in span edges; the rest count as `~other` |
 | `SPANBARN_SPAN_ROLLUP_5M_HOURS` | `72` | Hours to keep 5-minute span rollups |
 | `SPANBARN_SPAN_ROLLUP_HOURLY_DAYS` | `30` | Days to keep hourly span rollups |
 | `SPANBARN_SPAN_ROLLUP_DAILY_DAYS` | `400` | Days to keep daily span rollups |
@@ -409,6 +410,30 @@ raw spans count only what was stored, and aggregates estimate received spans
 from sample rates. Each dashboard, trace group, services and timeseries
 response says which in `source` (`rollups`, `spans` or `aggregates`), and the
 UI labels the count "received spans", "stored spans" or "estimated spans".
+
+### Span edges
+
+`span_edges` counts calls between a service and what it calls, in the same
+5-minute, hourly and daily tiers as `span_rollups`, written in the same flush
+and compacted and deleted with them. A row is keyed by project, calling
+service, target and target type, and holds the same counts, weight sums and
+duration histogram. A client span that names a target in its attributes
+(`db.system`, `peer.service`, `rpc.service`, `messaging.system`, an HTTP host
+and so on) is a call to that target. A span whose parent in the same batch
+belongs to another service is a call from the parent's service, with target
+type `service`, timed by the parent span.
+
+Every 5-minute bucket the writer saw spans in gets a marker row with an empty
+target, so a bucket without edges reads as quiet and a bucket without a marker
+reads as a gap. A service calling more than `SPANBARN_SPAN_EDGE_MAX_TARGETS`
+targets in an hour counts the overflow under `~other`.
+
+The service map and the dependencies list over an hour or more read nodes from
+`span_rollups` and calls from `span_edges` when both hold the whole range, and
+say so in `source`. Shorter ranges, and ranges that start before the oldest
+edge, read raw spans. With a service filter, the edges keep the calls from that
+service into other services; the raw read loses them, because the filter drops
+the other service's spans.
 
 ### Disk-headroom guard
 

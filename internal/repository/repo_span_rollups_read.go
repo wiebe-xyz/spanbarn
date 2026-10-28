@@ -23,11 +23,17 @@ var spanRollupSteps = []int64{300, 3600, 86400}
 // SpanRollupCoverage reads the oldest bucket of every tier from the front of
 // the primary key, and the compaction watermarks.
 func (r *Repository) SpanRollupCoverage(ctx context.Context) (SpanRollupCoverage, error) {
+	return r.tierCoverage(ctx, "span_rollups")
+}
+
+// tierCoverage is the coverage of a table compacted with span_rollups: its
+// own oldest bucket per tier and the shared compaction watermarks.
+func (r *Repository) tierCoverage(ctx context.Context, table string) (SpanRollupCoverage, error) {
 	ctx, cancel := r.readContext(ctx)
 	defer cancel()
 	cov := SpanRollupCoverage{Oldest: map[int64]time.Time{}, Through: map[int64]time.Time{}}
 	for _, step := range spanRollupSteps {
-		oldest, ok, err := r.OldestSpanRollupBucket(ctx, step)
+		oldest, ok, err := r.oldestTierBucket(ctx, table, step)
 		if err != nil {
 			return cov, err
 		}
@@ -46,17 +52,22 @@ func (r *Repository) SpanRollupCoverage(ctx context.Context) (SpanRollupCoverage
 }
 
 // CountSpanRollupBuckets counts the buckets of one tier in [from, to) that
-// hold at least one row, over every project. Each step seeks the next bucket
-// in the primary key, so the cost follows the number of buckets and not the
-// rows inside them.
+// hold at least one row, over every project.
 func (r *Repository) CountSpanRollupBuckets(ctx context.Context, step int64, from, to time.Time) (int, error) {
+	return r.countTierBuckets(ctx, "span_rollups", step, from, to)
+}
+
+// countTierBuckets counts the buckets of one tier of table in [from, to)
+// that hold at least one row. Each step seeks the next bucket in the primary
+// key, so the cost follows the number of buckets and not the rows inside them.
+func (r *Repository) countTierBuckets(ctx context.Context, table string, step int64, from, to time.Time) (int, error) {
 	ctx, cancel := r.readContext(ctx)
 	defer cancel()
 	var n int
 	err := r.db.QueryRowContext(ctx, `WITH RECURSIVE b(x) AS (
-		SELECT (SELECT MIN(bucket) FROM span_rollups WHERE step_seconds = ?1 AND bucket >= ?2 AND bucket < ?3)
+		SELECT (SELECT MIN(bucket) FROM `+table+` WHERE step_seconds = ?1 AND bucket >= ?2 AND bucket < ?3)
 		UNION ALL
-		SELECT (SELECT MIN(bucket) FROM span_rollups WHERE step_seconds = ?1 AND bucket > x AND bucket < ?3)
+		SELECT (SELECT MIN(bucket) FROM `+table+` WHERE step_seconds = ?1 AND bucket > x AND bucket < ?3)
 		FROM b WHERE x IS NOT NULL)
 		SELECT COUNT(x) FROM b`, step, from.Unix(), to.Unix()).Scan(&n)
 	return n, err

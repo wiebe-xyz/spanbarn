@@ -159,6 +159,8 @@ export type DependencySummary = {
   p50Us: number
   p95Us: number
   p99Us: number
+  /** The store that answered: rollups count received spans, spans count stored ones. */
+  source?: DataSource
 }
 
 /** A single span execution of a database query pattern. */
@@ -267,6 +269,8 @@ export type ServiceMapEdge = {
 export type ServiceMap = {
   nodes: ServiceMapNode[]
   edges: ServiceMapEdge[]
+  /** The store that answered: rollups count received spans, spans count stored ones. */
+  source?: DataSource
   /** The range held more spans than the map reads; it covers only the newest. */
   truncated?: boolean
   /** Ingest time of the oldest span read, set when truncated. */
