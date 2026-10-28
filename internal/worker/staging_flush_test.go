@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -16,6 +17,8 @@ type mockStagingRepo struct {
 	gcCutoff        time.Time
 	gcDeleted       int64
 	count           int64
+	commits         int
+	failCommit      int // the 1-based commit call that fails; 0 never fails
 }
 
 func (m *mockStagingRepo) ReadyStagingTraceIDs(_ context.Context, _ time.Time, _ int) ([]string, error) {
@@ -27,6 +30,10 @@ func (m *mockStagingRepo) GetStagingSpansByTraceIDs(_ context.Context, _ []strin
 	return m.spans, nil
 }
 func (m *mockStagingRepo) CommitStagingFlush(_ context.Context, traceIDs []string, interesting []repository.Span) error {
+	m.commits++
+	if m.commits == m.failCommit {
+		return errors.New("commit failed")
+	}
 	m.committedTraces = append(m.committedTraces, traceIDs)
 	m.committed = append(m.committed, interesting)
 	return nil
