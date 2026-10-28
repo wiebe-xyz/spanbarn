@@ -88,8 +88,9 @@ type Repository struct {
 	logTrim *logTrimCursors
 	// errorSampleTrim carries the error-sample delete's cursors.
 	errorSampleTrim *logTrimCursors
-	// traceSummaryTrim carries the trace-summary delete's cursors.
-	traceSummaryTrim *logTrimCursors
+	// traceSummaryTrim and traceSummaryErrorTrim carry the cursors of the
+	// trace-summary delete's plain and error walks.
+	traceSummaryTrim, traceSummaryErrorTrim *logTrimCursors
 	// logTrimReads, when set, serves the log trim's window reads outside the
 	// write slot. See SetLogTrimReads.
 	logTrimReads *sql.DB
@@ -111,7 +112,7 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{
 		db: db, queryTimeout: DefaultQueryTimeout,
 		logTrim: newLogTrimCursors(), errorSampleTrim: newLogTrimCursors(),
-		traceSummaryTrim: newLogTrimCursors(),
+		traceSummaryTrim: newLogTrimCursors(), traceSummaryErrorTrim: newLogTrimCursors(),
 	}
 }
 

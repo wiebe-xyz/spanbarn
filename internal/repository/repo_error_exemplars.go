@@ -66,7 +66,7 @@ func (r *Repository) PruneErrorExemplars(ctx context.Context, cutoff time.Time) 
 		// The samples and summary of a dropped exemplar's trace are no longer
 		// protected, and the deletes' cursors have passed them.
 		r.errorSampleTrim.reset()
-		r.traceSummaryTrim.reset()
+		r.traceSummaryErrorTrim.reset()
 	}
 	return n, err
 }

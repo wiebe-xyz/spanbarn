@@ -15,27 +15,29 @@ import (
 // replaces scanned the whole table in rowid order on every batch.
 func TestTraceSummaryWindowPlanSeeksListIndex(t *testing.T) {
 	repo := setupTestDB(t)
-	for _, resume := range []bool{false, true} {
-		rows, err := repo.DB().Query("EXPLAIN QUERY PLAN "+traceSummaryWindowSQL(resume),
-			1, "2030-01-01", "2029-01-01", 0, retentionDeleteBatch, "2030-01-01", "2029-01-01")
-		if err != nil {
-			t.Fatal(err)
-		}
-		var plan string
-		for rows.Next() {
-			var id, parent, unused int
-			var detail string
-			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+	for _, walk := range []func(string) string{traceSummaryPlainSQL, traceSummaryErrorSQL} {
+		for _, resume := range []bool{false, true} {
+			rows, err := repo.DB().Query("EXPLAIN QUERY PLAN "+traceSummaryWindowSQL(walk, resume),
+				1, "2030-01-01", "2029-01-01", 0, retentionDeleteBatch)
+			if err != nil {
 				t.Fatal(err)
 			}
-			plan += detail + "\n"
-		}
-		if err := rows.Close(); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(plan, "SEARCH t USING INDEX idx_trace_summaries_list (project_id=? AND ") ||
-			strings.Contains(plan, "SCAN t") || strings.Contains(plan, "TEMP B-TREE") {
-			t.Errorf("resume %v: window does not walk the list index in order:\n%s", resume, plan)
+			var plan string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+					t.Fatal(err)
+				}
+				plan += detail + "\n"
+			}
+			if err := rows.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(plan, "SEARCH t USING INDEX idx_trace_summaries_list (project_id=? AND ") ||
+				strings.Contains(plan, "SCAN t") || strings.Contains(plan, "TEMP B-TREE") {
+				t.Errorf("resume %v: window does not walk the list index in order:\n%s", resume, plan)
+			}
 		}
 	}
 }
@@ -46,7 +48,7 @@ func TestTraceSummaryWindowPlanSeeksListIndex(t *testing.T) {
 func insertTraceSummaries(t *testing.T, repo *Repository, prefix string, n int, ingested time.Time, hasError bool) {
 	t.Helper()
 	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
-		_, err := db.Exec(`WITH RECURSIVE seq(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM seq WHERE i + 1 < ?1)
+		_, err := db.Exec(`WITH RECURSIVE seq(i) AS (SELECT 0 WHERE ?1 > 0 UNION ALL SELECT i + 1 FROM seq WHERE i + 1 < ?1)
 			INSERT INTO trace_summaries (project_id, trace_id, ingested_at, has_error)
 			SELECT 1, ?2 || i, ?3, ?4 FROM seq`, n, prefix, ingested, hasError)
 		return err
@@ -170,12 +172,19 @@ func TestDeleteTraceSummaryRowsChecksEachRowAgain(t *testing.T) {
 		t.Fatalf("read rows: %v", err)
 	}
 
-	n, err := deleteRowsByID(context.Background(), repo.writer(FamilySpans), deleteTraceSummaryRowsSQL, ids, 1, ic, ec)
+	ctx, db := context.Background(), repo.writer(FamilySpans)
+	n, err := deleteRowsByID(ctx, db, deleteTraceSummaryRowsSQL(traceSummaryPlainSQL), ids, 1, ic)
 	if err != nil {
-		t.Fatalf("delete rows: %v", err)
+		t.Fatalf("delete plain rows: %v", err)
 	}
 	if n != 1 {
-		t.Errorf("deleted %d rows, want 1", n)
+		t.Errorf("plain walk deleted %d rows, want 1", n)
+	}
+	if n, err = deleteRowsByID(ctx, db, deleteTraceSummaryRowsSQL(traceSummaryErrorSQL), ids, 1, ec); err != nil {
+		t.Fatalf("delete error rows: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("error walk deleted %d rows, want 0", n)
 	}
 	if got := summaryPrefixCounts(t, repo); len(got) != 4 || got["D"] != 1 || got["E"] != 1 || got["R"] != 1 {
 		t.Errorf("summaries left per prefix = %v, want D:1 E:1 R:1 X:1", got)
