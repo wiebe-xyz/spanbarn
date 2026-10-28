@@ -117,6 +117,9 @@ func (t Tier) Apply(cfg Config) Config {
 	// same reason aggregates and error samples are: they are what survives an
 	// incident, and a year of them is smaller than a day of the 5-minute tier.
 	cfg.MetricRollupRetentionDays = scale(cfg.MetricRollupRetentionDays, f, 1)
+	// The 5-minute span rollup tier shortens for the same reason; its hours
+	// are already compacted into the hourly tier.
+	cfg.SpanRollup5mHours = scale(cfg.SpanRollup5mHours, f, 6)
 	// Prompt records shorten too. They are raw payloads (full prompt and
 	// response bodies, several KB a row), and before they had a window at all
 	// they grew to the largest table in production while this ladder cut traces

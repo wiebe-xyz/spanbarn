@@ -117,6 +117,10 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	w.SetAggregator(aggregator)
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
+	if spanRollups := newSpanRollups(repo, cfg, logger); spanRollups != nil {
+		w.SetSpanRollups(spanRollups)
+		safeGo("span-rollups", &wg, func() { spanRollups.Run(workerCtx) })
+	}
 	safeGo("worker", &wg, func() { w.Run(workerCtx) })
 	// Run the app-side checkpoint on a fixed interval. Its busy_timeout(30000)
 	// lets it wait for a clear write window. Combined (spool) mode has no Redis
@@ -140,6 +144,8 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 
 	compactor := newRollupCompactor(bgRepo, cfg, logger)
 	safeGo("rollup-compactor", &wg, func() { compactor.Run(retentionCtx) })
+	spanCompactor := newSpanRollupCompactor(bgRepo, cfg, logger)
+	safeGo("span-rollup-compactor", &wg, func() { spanCompactor.Run(retentionCtx) })
 
 	ratioLookup := ingest.NewCachedRatioLookup(queryRepo, time.Minute)
 

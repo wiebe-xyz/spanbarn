@@ -26,6 +26,12 @@ type Config struct {
 	WeeklyRollupDays          int // days to keep weekly rollups (default 730)
 	MonthlyRollupDays         int // days to keep monthly rollups (default 0 = keep indefinitely)
 
+	// Span rollup tier windows, gated by the span rollup compaction watermark
+	// the same way.
+	SpanRollup5mHours    int // hours to keep 5-minute span rollups (default 72)
+	SpanRollupHourlyDays int // days to keep hourly span rollups (default 30)
+	SpanRollupDailyDays  int // days to keep daily span rollups (default 400)
+
 	// BatchYield is how long the worker voluntarily releases the write lock
 	// between deletion batches so the span-insert worker can drain the Redis
 	// queue. 0 disables yielding (old behaviour). Default 30s.
@@ -63,6 +69,9 @@ func (c Config) withDefaults() Config {
 		{&c.HourlyRollupDays, 30},
 		{&c.DailyRollupDays, 365},
 		{&c.WeeklyRollupDays, 730},
+		{&c.SpanRollup5mHours, 72},
+		{&c.SpanRollupHourlyDays, 30},
+		{&c.SpanRollupDailyDays, 400},
 	} {
 		if *d.dst <= 0 {
 			*d.dst = d.val
@@ -125,6 +134,9 @@ func (w *RetentionWorker) effectiveConfig() Config {
 		{"metric_rollup_daily_days", &cfg.DailyRollupDays},
 		{"metric_rollup_weekly_days", &cfg.WeeklyRollupDays},
 		{"metric_rollup_monthly_days", &cfg.MonthlyRollupDays},
+		{"span_rollup_5m_hours", &cfg.SpanRollup5mHours},
+		{"span_rollup_hourly_days", &cfg.SpanRollupHourlyDays},
+		{"span_rollup_daily_days", &cfg.SpanRollupDailyDays},
 	} {
 		if n := w.settingInt(o.key); n > 0 {
 			*o.dst = n

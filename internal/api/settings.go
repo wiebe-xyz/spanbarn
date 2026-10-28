@@ -169,7 +169,8 @@ func serveSWR[T any](
 // retention.max_traces.project.{id}, retention.log_hours.project.{id}.
 // Rollup tiers: metric_rollup_retention_days (the 5-minute tier) plus
 // metric_rollup_{hourly,daily,weekly,monthly}_days, and the attribute reduction
-// lists metrics.rollup_drop_attrs.{hourly,daily}.
+// lists metrics.rollup_drop_attrs.{hourly,daily}. Span rollup tiers:
+// span_rollup_5m_hours and span_rollup_{hourly,daily}_days.
 func isAllowedSettingKey(k string) bool {
 	switch k {
 	case "retention_full_hours", "retention_interesting_hours",
@@ -182,6 +183,7 @@ func isAllowedSettingKey(k string) bool {
 		"metric_rollup_retention_days", "metric_rollup_hourly_days",
 		"metric_rollup_daily_days", "metric_rollup_weekly_days",
 		"metric_rollup_monthly_days",
+		"span_rollup_5m_hours", "span_rollup_hourly_days", "span_rollup_daily_days",
 		"metrics.rollup_drop_attrs.hourly", "metrics.rollup_drop_attrs.daily":
 		return true
 	}

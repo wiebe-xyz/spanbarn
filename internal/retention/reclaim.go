@@ -219,6 +219,11 @@ func (w *RetentionWorker) evictOlderThan(ctx context.Context, cfg Config, cutoff
 	} else {
 		total += n
 	}
+	if n, _, err := w.deleteSpanRollupTiers(ctx, TierCritical.Apply(cfg), time.Now().UTC(), maxRollupRowsPerRound); err != nil {
+		return total, err
+	} else {
+		total += n
+	}
 
 	return total, nil
 }

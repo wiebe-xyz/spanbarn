@@ -61,6 +61,8 @@ type Repository interface {
 	DeleteMetricRollupsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteMetricRollupsOlderThanLimited(ctx context.Context, cutoff time.Time, max int64) (int64, bool, error)
 	DeleteCoarseRollupsOlderThanLimited(ctx context.Context, step int64, cutoff time.Time, max int64) (int64, bool, error)
+	DeleteSpanRollupsOlderThanLimited(ctx context.Context, step int64, cutoff time.Time, max int64) (int64, bool, error)
+	SpanRollupWatermark(ctx context.Context, step int64) (time.Time, bool, error)
 	MetricRollupWatermark(ctx context.Context, step int64) (time.Time, bool, error)
 	DeleteLogsOlderThan(ctx context.Context, cutoff, errorLogCutoff time.Time) (int64, error)
 	DeletePromptRecordsOlderThanLimited(ctx context.Context, cutoff time.Time, max int64) (int64, bool, error)
@@ -202,27 +204,28 @@ func newCycleCutoffs(now time.Time, cfg Config) cycleCutoffs {
 
 // cycleStats counts what one retention cycle did.
 type cycleStats struct {
-	spansAggregated      int64
-	errorsSampled        int64
-	spansDeleted         int64
-	boringDeleted        int64
-	errorSamplesDeleted  int64
-	exemplarsPruned      int64
-	aggregatesDeleted    int64
-	metricsDeleted       int64
-	rollupRowsDeleted    int64
-	rollupBacklogRemains bool
-	logsDeleted          int64
-	shardsRetired        int
-	shardsDeleted        int
-	shardRowsTrimmed     int64
-	promptsDeleted       int64
-	promptBacklogRemains bool
-	e2eUsersDeleted      int64
-	webSessionsDeleted   int64
-	projectTracesEvicted int64
-	projectLogsDeleted   int64
-	backlogRemains       bool
+	spansAggregated       int64
+	errorsSampled         int64
+	spansDeleted          int64
+	boringDeleted         int64
+	errorSamplesDeleted   int64
+	exemplarsPruned       int64
+	aggregatesDeleted     int64
+	metricsDeleted        int64
+	rollupRowsDeleted     int64
+	spanRollupRowsDeleted int64
+	rollupBacklogRemains  bool
+	logsDeleted           int64
+	shardsRetired         int
+	shardsDeleted         int
+	shardRowsTrimmed      int64
+	promptsDeleted        int64
+	promptBacklogRemains  bool
+	e2eUsersDeleted       int64
+	webSessionsDeleted    int64
+	projectTracesEvicted  int64
+	projectLogsDeleted    int64
+	backlogRemains        bool
 }
 
 func (c *cycleStats) attributes() []attribute.KeyValue {
@@ -236,6 +239,7 @@ func (c *cycleStats) attributes() []attribute.KeyValue {
 		attribute.Int64("aggregates_deleted", c.aggregatesDeleted),
 		attribute.Int64("metrics_deleted", c.metricsDeleted),
 		attribute.Int64("rollup_rows_deleted", c.rollupRowsDeleted),
+		attribute.Int64("span_rollup_rows_deleted", c.spanRollupRowsDeleted),
 		attribute.Bool("rollup_backlog_remains", c.rollupBacklogRemains),
 		attribute.Int64("logs_deleted", c.logsDeleted),
 		attribute.Int("shards_retired", c.shardsRetired),
@@ -262,6 +266,7 @@ func (c *cycleStats) logArgs() []any {
 		"aggregates_deleted", c.aggregatesDeleted,
 		"metrics_deleted", c.metricsDeleted,
 		"rollup_rows_deleted", c.rollupRowsDeleted,
+		"span_rollup_rows_deleted", c.spanRollupRowsDeleted,
 		"rollup_backlog_remains", c.rollupBacklogRemains,
 		"logs_deleted", c.logsDeleted,
 		"shards_retired", c.shardsRetired,
@@ -451,8 +456,7 @@ func (w *RetentionWorker) purgeSpanDerived(ctx context.Context, cfg Config, cut 
 	if st.metricsDeleted, err = w.repo.DeleteMetricsOlderThan(ctx, cut.metrics); err != nil {
 		return err
 	}
-	st.rollupRowsDeleted, st.rollupBacklogRemains, err = w.deleteRollupTiers(ctx, cfg, cut.now, maxRollupRowsPerCycle)
-	return err
+	return w.deleteAllRollupTiers(ctx, cfg, cut.now, maxRollupRowsPerCycle, st)
 }
 
 // purgeHousekeeping deletes aged logs, prompt records, E2E users and web

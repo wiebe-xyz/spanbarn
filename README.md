@@ -265,6 +265,13 @@ project automatically.
 | `SPANBARN_METRIC_ROLLUP_DAILY_DAYS` | `365` | Days to keep daily rollups |
 | `SPANBARN_METRIC_ROLLUP_WEEKLY_DAYS` | `730` | Days to keep weekly rollups |
 | `SPANBARN_METRIC_ROLLUP_MONTHLY_DAYS` | `0` | Days to keep monthly rollups; `0` keeps them indefinitely |
+| `SPANBARN_SPAN_ROLLUPS` | `true` | Write span rollups (see [Span rollups](#span-rollups)) |
+| `SPANBARN_SPAN_ROLLUP_MAX_NAMES` | `300` | Span names kept per service per hour; the rest count as `~other` |
+| `SPANBARN_SPAN_ROLLUP_MAX_SERVICES` | `200` | Services kept per project per hour; the rest count as `~other` |
+| `SPANBARN_SPAN_ROLLUP_HTTP_STATUS` | `true` | Split root span rows by response code; `false` writes 0 and keeps the key |
+| `SPANBARN_SPAN_ROLLUP_5M_HOURS` | `72` | Hours to keep 5-minute span rollups |
+| `SPANBARN_SPAN_ROLLUP_HOURLY_DAYS` | `30` | Days to keep hourly span rollups |
+| `SPANBARN_SPAN_ROLLUP_DAILY_DAYS` | `400` | Days to keep daily span rollups |
 | `SPANBARN_ROLLUP_COMPACT_BUCKETS_PER_PASS` | `12` | Target buckets each tier compacts per pass |
 | `SPANBARN_ROLLUP_COMPACT_ENABLED` | `1` | Set to `0` to stop compaction without a rollback. The coarse tiers stop growing and retention holds every tier, since nothing advances the watermark. |
 | `SPANBARN_SHARDS` | `0` | Writes logs, metrics and prompt records to time-shard files under `$SPANBARN_DB_PATH.d`. Leave off for now: the dashboard does not read shards yet and shard files do not expire yet (see `specs/002-temporal-sharding/design.md`). |
@@ -340,6 +347,33 @@ up to two days, hourly to a month, daily to a year, and weekly or monthly beyond
 that, falling back to the next coarser tier when the finer one has already been
 compacted away. `GET /api/v1/metrics/series` reports what it used as
 `step_seconds`, and the metrics page labels the chart with it.
+
+### Span rollups
+
+`span_rollups` counts every span that reaches the writer, before the boring-span
+sampler decides what is stored, keyed by project, service, span name, kind, whether the
+span is a root, status (`ok`, `error` or `unset`) and, for root spans only,
+the HTTP response code (0 when there is none). Each row holds the count,
+the sample-weight sums, the duration sum, min and max, and a quarter-octave
+duration histogram that merges exactly, so percentiles can be read for any range
+of buckets. Buckets go by arrival time.
+
+The writer folds spans in memory and adds them to the 5-minute rows every 30
+seconds. A restart loses at most one flush. A compactor then builds hourly rows
+from closed 5-minute buckets and daily rows from closed hours, and retention
+deletes a tier only as far as it was compacted, as for metric rollups.
+
+| tier | default window | setting |
+|---|---|---|
+| 5 minutes | 72 hours | `SPANBARN_SPAN_ROLLUP_5M_HOURS` |
+| hourly | 30 days | `SPANBARN_SPAN_ROLLUP_HOURLY_DAYS` |
+| daily | 400 days | `SPANBARN_SPAN_ROLLUP_DAILY_DAYS` |
+
+Disk pressure shortens the 5-minute tier, down to 6 hours. A service with more
+than `SPANBARN_SPAN_ROLLUP_MAX_NAMES` span names in an hour, or a project with
+more than `SPANBARN_SPAN_ROLLUP_MAX_SERVICES` services, counts the overflow
+under `~other`, which keeps a high-cardinality name such as a raw URL from
+growing the table without bound. Nothing reads the table yet.
 
 ### Disk-headroom guard
 

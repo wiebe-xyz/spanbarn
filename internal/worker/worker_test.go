@@ -199,8 +199,10 @@ func TestWorkerInlineAggregation(t *testing.T) {
 
 	repo := &mockRepo{}
 	agg := &mockAggregator{}
+	rollups := &countingAcc{}
 	w := NewWorker(sp, repo, slog.Default())
 	w.SetAggregator(agg)
+	w.SetSpanRollups(rollups)
 	w.ProcessOnce(context.Background())
 
 	if len(repo.getSpans()) != 3 {
@@ -208,6 +210,9 @@ func TestWorkerInlineAggregation(t *testing.T) {
 	}
 	if len(agg.getSpans()) != 3 {
 		t.Fatalf("expected 3 spans aggregated inline, got %d", len(agg.getSpans()))
+	}
+	if rollups.n != 3 {
+		t.Fatalf("expected 3 spans passed to span rollups, got %d", rollups.n)
 	}
 }
 

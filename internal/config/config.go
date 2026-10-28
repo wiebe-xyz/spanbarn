@@ -36,6 +36,11 @@ type RetentionConfig struct {
 	RollupDailyDays   int // SPANBARN_METRIC_ROLLUP_DAILY_DAYS (default 365)
 	RollupWeeklyDays  int // SPANBARN_METRIC_ROLLUP_WEEKLY_DAYS (default 730)
 	RollupMonthlyDays int // SPANBARN_METRIC_ROLLUP_MONTHLY_DAYS (default 0 = keep indefinitely)
+	// Span rollup tier windows (span_rollups, compacted 5m → 1h → 1d by
+	// internal/spanrollup), deleted only as far as they were compacted.
+	SpanRollup5mHours    int // SPANBARN_SPAN_ROLLUP_5M_HOURS (default 72)
+	SpanRollupHourlyDays int // SPANBARN_SPAN_ROLLUP_HOURLY_DAYS (default 30)
+	SpanRollupDailyDays  int // SPANBARN_SPAN_ROLLUP_DAILY_DAYS (default 400)
 	// CompactBucketsPerPass bounds how many target buckets each tier compacts in
 	// one pass, keeping a single write-lock hold short. The compactor paces
 	// itself: it runs every few seconds while there is backlog and falls back to
@@ -149,8 +154,15 @@ type Config struct {
 	// when the writer opens it, so space freed by retention goes back to the
 	// volume (deploy/docs/compact-main.md). Skipped when main holds more live
 	// data than CompactMainMaxLiveMB.
-	CompactMainOnStart       bool // SPANBARN_COMPACT_MAIN_ON_START (default false)
-	CompactMainMaxLiveMB     int  // SPANBARN_COMPACT_MAIN_MAX_LIVE_MB (default 1024)
+	CompactMainOnStart   bool // SPANBARN_COMPACT_MAIN_ON_START (default false)
+	CompactMainMaxLiveMB int  // SPANBARN_COMPACT_MAIN_MAX_LIVE_MB (default 1024)
+	// SpanRollups turns the span_rollups projection on: the accumulator folds
+	// every span into 5-minute rows and the span rollup compactor builds the
+	// hourly and daily tiers. Off stops both writers.
+	SpanRollups              bool // SPANBARN_SPAN_ROLLUPS (default 1)
+	SpanRollupMaxNames       int  // SPANBARN_SPAN_ROLLUP_MAX_NAMES — span names per (project, service) per hour before the rest fold into ~other (default 300)
+	SpanRollupMaxServices    int  // SPANBARN_SPAN_ROLLUP_MAX_SERVICES — services per project per hour before the rest fold into ~other (default 200)
+	SpanRollupHTTPStatus     bool // SPANBARN_SPAN_ROLLUP_HTTP_STATUS — split root span rows by response code; off writes 0 (default 1)
 	SpanStagingEnabled       bool // SPANBARN_SPAN_STAGING_ENABLED — when true, the redis worker appends consumed spans to spans_staging (cheap) and a background flusher does accumulation+classification+indexed storage per complete trace off the hot path (default false)
 	TraceBufferWindowSeconds int  // SPANBARN_TRACE_BUFFER_WINDOW_SECONDS — how long a trace's spans buffer in spans_staging before the flusher treats the trace as complete (default 90)
 	StagingMaxAgeSeconds     int  // SPANBARN_STAGING_MAX_AGE_SECONDS — hard backstop: spans_staging rows older than this are dropped unconditionally so the table can never grow without bound (default 900)
@@ -249,6 +261,9 @@ func Load() Config {
 			RollupWeeklyDays:      getenvInt("SPANBARN_METRIC_ROLLUP_WEEKLY_DAYS", 730),
 			RollupMonthlyDays:     getenvInt("SPANBARN_METRIC_ROLLUP_MONTHLY_DAYS", 0),
 			CompactBucketsPerPass: getenvInt("SPANBARN_ROLLUP_COMPACT_BUCKETS_PER_PASS", 12),
+			SpanRollup5mHours:     getenvInt("SPANBARN_SPAN_ROLLUP_5M_HOURS", 72),
+			SpanRollupHourlyDays:  getenvInt("SPANBARN_SPAN_ROLLUP_HOURLY_DAYS", 30),
+			SpanRollupDailyDays:   getenvInt("SPANBARN_SPAN_ROLLUP_DAILY_DAYS", 400),
 			// getenvBool, not getenvInt: getenvInt only accepts values > 0, so it
 			// reads "0" as unset and hands back the default. A switch whose off
 			// position is silently ignored is worse than no switch, and this one
@@ -260,6 +275,10 @@ func Load() Config {
 		CompactMainOnStart:           getenvBool("SPANBARN_COMPACT_MAIN_ON_START", false),
 		CompactMainMaxLiveMB:         getenvInt("SPANBARN_COMPACT_MAIN_MAX_LIVE_MB", 1024),
 		SpanStagingEnabled:           getenvInt("SPANBARN_SPAN_STAGING_ENABLED", 0) != 0,
+		SpanRollups:                  getenvBool("SPANBARN_SPAN_ROLLUPS", true),
+		SpanRollupMaxNames:           getenvInt("SPANBARN_SPAN_ROLLUP_MAX_NAMES", 300),
+		SpanRollupMaxServices:        getenvInt("SPANBARN_SPAN_ROLLUP_MAX_SERVICES", 200),
+		SpanRollupHTTPStatus:         getenvBool("SPANBARN_SPAN_ROLLUP_HTTP_STATUS", true),
 		TraceBufferWindowSeconds:     getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
 		TraceBufferMaxSpans:          getenvInt("SPANBARN_TRACE_BUFFER_MAX_SPANS", 50000),
 		TraceBufferTTLSeconds:        getenvInt("SPANBARN_TRACE_BUFFER_TTL_SECONDS", 600),
