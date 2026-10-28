@@ -61,11 +61,12 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	})
 	// Readiness turns true once the API is wired (step 4). Startup can take
 	// minutes (migrations, the one-time spans cut-over), and a Ready pod before
-	// then would let a rollout finish while every API route still 404s.
+	// then would let a rollout finish while every API route still 404s. It
+	// turns false again when shutdown starts.
 	var apiReady atomic.Bool
 	mux.HandleFunc("/api/v1/ready", func(w http.ResponseWriter, _ *http.Request) {
 		if !apiReady.Load() {
-			http.Error(w, "starting", http.StatusServiceUnavailable)
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -250,13 +251,17 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	if done, err := waitForShutdown(ctx, httpErrCh, logger, "shutting down writer"); done {
 		return err
 	}
-	shutdownHTTP(httpServer, logger, "writer shutdown error")
+	// The listener stays up through the drain: the kubelet probes readiness
+	// until the container exits, and a closed port reads as connection refused
+	// on every rollout. Readiness answers 503 meanwhile.
+	apiReady.Store(false)
 
 	alertCancel()
 	retentionCancel()
 	workerCancel()
 	wg.Wait()
 	store.FinalCheckpoint(logger)
+	shutdownHTTP(httpServer, logger, "writer shutdown error")
 
 	logger.Info("writer shutdown complete")
 	return nil
