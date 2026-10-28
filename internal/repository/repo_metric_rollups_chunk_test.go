@@ -21,8 +21,14 @@ func rollupBatch(n int, bucket time.Time) []MetricRollup {
 // A flush larger than one chunk is written as several chunks in key order.
 func TestMetricRollupChunksAreBoundedAndSorted(t *testing.T) {
 	bucket := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
-	chunks := metricRollupChunks(rollupBatch(2*metricRollupChunk+7, bucket))
-	if len(chunks) != 3 || len(chunks[0]) != metricRollupChunk || len(chunks[1]) != metricRollupChunk || len(chunks[2]) != 7 {
+	assertChunksBoundedAndSorted(t, metricRollupChunks(rollupBatch(2*metricRollupChunk+7, bucket)), metricRollupChunk)
+}
+
+// assertChunksBoundedAndSorted checks that a batch of 2*size+7 rows, built in
+// reverse key order, came out as chunks of size, size and 7 rows in key order.
+func assertChunksBoundedAndSorted(t *testing.T, chunks [][]MetricRollup, size int) {
+	t.Helper()
+	if len(chunks) != 3 || len(chunks[0]) != size || len(chunks[1]) != size || len(chunks[2]) != 7 {
 		t.Fatalf("chunk sizes %d/%d/%d of %d chunks", len(chunks[0]), len(chunks[1]), len(chunks[len(chunks)-1]), len(chunks))
 	}
 	prev := ""
