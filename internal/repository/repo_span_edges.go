@@ -88,12 +88,12 @@ func compareSpanEdgeKey(a, b SpanEdge) int {
 // AddSpanEdges folds a flush of span edges into their rows, chunked like
 // AddSpanRollups.
 func (r *Repository) AddSpanEdges(rows []SpanEdge) error {
-	return writeTierRows(r, context.Background(), spanEdgeAddSQL, rows, compareSpanEdgeKey, spanEdgeArgs)
+	return writeTierRows(r, context.Background(), "AddSpanEdges", spanEdgeAddSQL, rows, compareSpanEdgeKey, spanEdgeArgs)
 }
 
 // ReplaceSpanEdges writes compacted rows whole, chunked like AddSpanRollups.
 func (r *Repository) ReplaceSpanEdges(ctx context.Context, rows []SpanEdge) error {
-	return writeTierRows(r, ctx, spanEdgeReplaceSQL, rows, compareSpanEdgeKey, spanEdgeArgs)
+	return writeTierRows(r, ctx, "ReplaceSpanEdges", spanEdgeReplaceSQL, rows, compareSpanEdgeKey, spanEdgeArgs)
 }
 
 // SpanEdgeCoverage is SpanRollupCoverage for span_edges. The two tables share
