@@ -43,6 +43,8 @@ type QueryRepository interface {
 	QueryDashboardPercentilesFromRollups(ctx context.Context, q repository.DashboardRollupQuery, group repository.DashboardGroup, topN int) ([]repository.DashboardPercentilePoint, error)
 	QueryDashboardHeatmapFromRollups(ctx context.Context, q repository.DashboardRollupQuery) ([]repository.DashboardHeatmapCell, error)
 	QueryRootSpanGroupsFromRollups(ctx context.Context, q repository.SpanRollupScan) ([]repository.RootSpanGroup, error)
+	ScanSpanRollups(ctx context.Context, q repository.SpanRollupScan, fn func(repository.SpanRollup) error) error
+	CountSpanRollupBuckets(ctx context.Context, step int64, from, to time.Time) (int, error)
 	QueryOrphanSpanGroups(ctx context.Context, w repository.HealthWindow) ([]repository.OrphanSpanGroup, error)
 	QuerySingleSpanTraceGroups(ctx context.Context, w repository.HealthWindow) ([]repository.SingleSpanTraceGroup, error)
 	QuerySpanNameSummary(ctx context.Context, w repository.HealthWindow) ([]repository.SpanNameSummary, error)

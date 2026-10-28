@@ -16,6 +16,8 @@ type ServiceSummary struct {
 	P50Us      int64   `json:"p50Us"`
 	P95Us      int64   `json:"p95Us"`
 	P99Us      int64   `json:"p99Us"`
+	// Source is SourceRollups or SourceAggregates.
+	Source string `json:"source"`
 }
 
 // OperationSummary holds aggregated metrics for a single operation.
@@ -39,6 +41,8 @@ type TimeseriesBucket struct {
 	P50Us      int64     `json:"p50Us"`
 	P95Us      int64     `json:"p95Us"`
 	P99Us      int64     `json:"p99Us"`
+	// Source is SourceRollups or SourceAggregates.
+	Source string `json:"source"`
 }
 
 // TraceSummary holds a summary of a single trace for listing.

@@ -1413,10 +1413,12 @@ components:
   schemas:
     DataSource:
       type: string
-      enum: [rollups, spans]
+      enum: [rollups, spans, aggregates]
       description: >-
         The store that answered. rollups counts every span the writer received,
-        with sample weights applied; spans counts the spans it stored.
+        with sample weights applied; spans counts the spans it stored;
+        aggregates estimates received spans from per-minute aggregates scaled
+        by each operation's sample rate.
 
     QueryDefinition:
       type: object
@@ -1677,6 +1679,8 @@ components:
           type: integer
         p99Us:
           type: integer
+        source:
+          $ref: '#/components/schemas/DataSource'
 
     OperationSummary:
       type: object

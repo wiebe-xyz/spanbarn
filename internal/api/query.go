@@ -95,7 +95,11 @@ func (h *queryHandlers) handleTimeseries(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	interval := parseInterval(r.URL.Query().Get("interval"))
+	// Without an interval the service picks one for the window.
+	var interval time.Duration
+	if v := r.URL.Query().Get("interval"); v != "" {
+		interval = parseInterval(v)
+	}
 
 	ts, err := h.svc.GetTimeseries(ctx, parseInt64Param(r, "project_id", 0), svcName, opName, from, to, interval)
 	if err != nil {

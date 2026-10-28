@@ -8,6 +8,7 @@ import { getTimeRange, RANGES } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
 import { useTimeRange } from '../contexts/useTimeRange'
+import { SourceLabel } from '../components/SourceLabel'
 
 const APDEX_T_US = 500_000 // 500ms default threshold
 
@@ -235,7 +236,9 @@ export function ServicesPage(): ReactElement {
             <tr>
               <th style={{ cursor: 'pointer' }} onClick={() => handleSort('service')}>Service{sortIcon('service')}</th>
               <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('throughput')}>Throughput{sortIcon('throughput')}</th>
-              <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('spanCount')}>Requests{sortIcon('spanCount')}</th>
+              <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('spanCount')}>
+                Requests{sortIcon('spanCount')} <SourceLabel source={services[0]?.source} />
+              </th>
               <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('errorRate')}>Error Rate{sortIcon('errorRate')}</th>
               <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('apdex')}>Apdex{sortIcon('apdex')}</th>
               <th style={{ textAlign: 'right', cursor: 'pointer' }} onClick={() => handleSort('p50Us')}>P50{sortIcon('p50Us')}</th>
