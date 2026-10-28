@@ -88,6 +88,8 @@ type Repository struct {
 	logTrim *logTrimCursors
 	// errorSampleTrim carries the error-sample delete's cursors.
 	errorSampleTrim *logTrimCursors
+	// traceSummaryTrim carries the trace-summary delete's cursors.
+	traceSummaryTrim *logTrimCursors
 	// logTrimReads, when set, serves the log trim's window reads outside the
 	// write slot. See SetLogTrimReads.
 	logTrimReads *sql.DB
@@ -109,6 +111,7 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{
 		db: db, queryTimeout: DefaultQueryTimeout,
 		logTrim: newLogTrimCursors(), errorSampleTrim: newLogTrimCursors(),
+		traceSummaryTrim: newLogTrimCursors(),
 	}
 }
 
@@ -249,10 +252,15 @@ func (r *Repository) submit(f Family, p writescheduler.Priority, label string, f
 // execLowAffecting runs a single low-priority write statement on f's writer
 // and returns the number of rows it affected. It captures the
 // execLow+Exec+RowsAffected boilerplate shared by the retention
-// DeleteXOlderThan / DeleteXByY methods.
+// DeleteXOlderThan / DeleteXByY methods. Its label names the method that
+// called it and the family, as batchLabel does, so the span delete reads as
+// "DeleteSpansByMaxID:spans" in slow-write warnings instead of
+// "execLowAffecting".
 func (r *Repository) execLowAffecting(f Family, query string, args ...any) (int64, error) {
 	var n int64
-	err := r.execLow(f, func(db *sql.DB) error {
+	// 0 → writeOpLabelAt, 1 → execLowAffecting, 2 → the repo method.
+	label := writeOpLabelAt(2) + ":" + f.String()
+	err := r.submit(f, writescheduler.Low, label, func(db *sql.DB) error {
 		res, e := db.Exec(query, args...)
 		if e != nil {
 			return e

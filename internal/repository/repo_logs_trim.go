@@ -237,8 +237,8 @@ func trimLogsBatch(
 	return deleted, w.advance(cur, limit), nil
 }
 
-// SetLogTrimReads gives the log trim and the error-sample delete a read-only
-// pool for their window reads.
+// SetLogTrimReads gives the log trim, the error-sample delete and the
+// trace-summary delete a read-only pool for their window reads.
 // With it, each batch reads its window outside the write slot and holds the
 // slot only for the DELETE. Without it the read runs inside the slot on the
 // writer, where one window of cold pages held the slot for 31s and the
