@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,5 +148,52 @@ func TestBoringSummariesRunInChunks(t *testing.T) {
 	}
 	if n := len(summaryIDs(t, repo)); n != 0 {
 		t.Errorf("%d summaries left, want 0", n)
+	}
+}
+
+// The span rollup and span edge writers name their chunk jobs after the
+// caller and report each chunk's rows. The stack-derived label named the loop
+// body of the shared generic writer, so all four read as "]-range1".
+func TestTierWritesNameTheirJobs(t *testing.T) {
+	jobRows := recordJobRows(t)
+	repo := setupTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := writescheduler.New()
+	repo.SetWriteScheduler(s)
+	go s.Run(ctx)
+
+	b := time.Date(2026, 10, 28, 18, 0, 0, 0, time.UTC)
+	var rollups []SpanRollup
+	for i := range spanRollupChunk + 7 {
+		rollups = append(rollups, spanRollupRow(b, fmt.Sprintf("op-%04d", i), int64(i+1)))
+	}
+	edge := []SpanEdge{spanEdgeRow(b, 1, "api", "sqlite", 5)}
+	for _, err := range []error{
+		repo.AddSpanRollups(rollups),
+		repo.ReplaceSpanRollups(ctx, rollups[:1]),
+		repo.AddSpanEdges(edge),
+		repo.ReplaceSpanEdges(ctx, edge),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := jobRows()
+	want := map[string][]int64{
+		"AddSpanRollups":     {spanRollupChunk, 7},
+		"ReplaceSpanRollups": {1},
+		"AddSpanEdges":       {1},
+		"ReplaceSpanEdges":   {1},
+	}
+	for op, rows := range want {
+		if !slices.Equal(got[op], rows) {
+			t.Errorf("%s job rows = %v, want %v", op, got[op], rows)
+		}
+	}
+	for op := range got {
+		if strings.Contains(op, "range") {
+			t.Errorf("job labelled %q", op)
+		}
 	}
 }
