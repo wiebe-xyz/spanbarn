@@ -21,8 +21,12 @@ func (r *Repository) QuerySpanTimeseries(projectID int64, service, operation str
 	var where []string
 	var args []any
 
-	where = append(where, "service = ?", "name = ?")
-	args = append(args, service, operation)
+	where = append(where, "service = ?")
+	args = append(args, service)
+	if operation != "" {
+		where = append(where, "name = ?")
+		args = append(args, operation)
+	}
 
 	if projectID != 0 {
 		where = append(where, "project_id = ?")

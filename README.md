@@ -269,7 +269,7 @@ project automatically.
 | `SPANBARN_SPAN_ROLLUP_MAX_NAMES` | `300` | Span names kept per service per hour; the rest count as `~other` |
 | `SPANBARN_SPAN_ROLLUP_MAX_SERVICES` | `200` | Services kept per project per hour; the rest count as `~other` |
 | `SPANBARN_SPAN_ROLLUP_HTTP_STATUS` | `true` | Split root span rows by response code; `false` writes 0 and keeps the key |
-| `SPANBARN_SPAN_ROLLUP_READS` | `auto` | `auto` reads dashboard cards and trace groups from span rollups where they cover the range; `off` reads raw spans |
+| `SPANBARN_SPAN_ROLLUP_READS` | `auto` | `auto` reads dashboard cards, trace groups, services and operation timeseries from span rollups where they cover the range; `off` reads raw spans and aggregates |
 | `SPANBARN_SPAN_ROLLUP_5M_HOURS` | `72` | Hours to keep 5-minute span rollups |
 | `SPANBARN_SPAN_ROLLUP_HOURLY_DAYS` | `30` | Days to keep hourly span rollups |
 | `SPANBARN_SPAN_ROLLUP_DAILY_DAYS` | `400` | Days to keep daily span rollups |
@@ -362,7 +362,9 @@ of buckets. Buckets go by arrival time.
 The writer folds spans in memory and adds them to the 5-minute rows every 30
 seconds. A restart loses at most one flush. A compactor then builds hourly rows
 from closed 5-minute buckets and daily rows from closed hours, and retention
-deletes a tier only as far as it was compacted, as for metric rollups.
+deletes a tier only as far as it was compacted, as for metric rollups. An hour
+with a 5-minute bucket that holds no rows, or a day with such an hour, is not
+compacted, so a gap stays visible in the coarser tier.
 
 | tier | default window | setting |
 |---|---|---|
@@ -387,10 +389,26 @@ when it is `ok`, `error` or `unset`. Grouping by HTTP status reads them only for
 root spans while `SPANBARN_SPAN_ROLLUP_HTTP_STATUS` is on. Error trace groups
 and a minimum duration always read raw spans.
 
+The services list over an hour or more, and an operation's timeseries with
+chart buckets of 5 minutes or more, read the rollups too, and otherwise the
+per-minute aggregates. A timeseries request without `interval` gets the
+dashboard's bucket width for its window, and the operation `*` charts every
+operation of the service. The operations list stays on the aggregates: it
+splits each operation by resource (route, statement, tool or model), which the
+rollups do not keep.
+
+A bucket that holds no rows inside a range is a gap: no writer rolled spans up
+then, for example while an older version ran. Every read checks each bucket of
+its range across all projects, and a gap sends the whole read to raw spans or
+aggregates. Buckets that started less than two minutes ago are not checked yet,
+because the writer flushes every 30 seconds. On an install where no project
+receives a span for five minutes, that quiet bucket also reads as a gap.
+
 Rollups count every span the writer received, with sample weights applied;
-raw spans count only what was stored. Each dashboard and trace group response
-says which in `source` (`rollups` or `spans`), and the UI labels the card
-"received spans" or "stored spans".
+raw spans count only what was stored, and aggregates estimate received spans
+from sample rates. Each dashboard, trace group, services and timeseries
+response says which in `source` (`rollups`, `spans` or `aggregates`), and the
+UI labels the count "received spans", "stored spans" or "estimated spans".
 
 ### Disk-headroom guard
 

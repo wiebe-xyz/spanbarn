@@ -92,6 +92,9 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 	if serverOnly {
 		kind = "server"
 	}
+	if out, ok, err := s.servicesFromRollups(ctx, projectID, from, to, kind); ok {
+		return out, err
+	}
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID: projectID,
 		Kind:      kind,
@@ -174,6 +177,7 @@ func serviceSummaries(merged map[string]*aggStats) []ServiceSummary {
 			P50Us:      p50,
 			P95Us:      p95,
 			P99Us:      p99,
+			Source:     SourceAggregates,
 		})
 	}
 
@@ -285,7 +289,9 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 	})
 }
 
-// GetTimeseries returns bucketed timeseries data for a specific operation.
+// GetTimeseries returns bucketed timeseries data for a specific operation, or
+// for every operation of the service when operation is "*". A zero interval
+// picks the dashboard's chart bucket width for the window.
 func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcName, operation string, from, to time.Time, interval time.Duration) ([]TimeseriesBucket, error) {
 	_, span := tracer.Start(ctx, "query.get_timeseries")
 	span.SetAttributes(
@@ -295,8 +301,15 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 	defer span.End()
 
 	from, to, grain := snapRange(from, to)
+	interval = timeseriesInterval(from, to, interval)
 	cacheKey := fmt.Sprintf("ts:%d:%s:%s:%d:%d:%d", projectID, svcName, operation, from.Unix(), to.Unix(), int64(interval.Seconds()))
 	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]TimeseriesBucket, error) {
+		if out, ok, err := s.timeseriesFromRollups(ctx, projectID, svcName, operation, from, to, interval); ok {
+			return out, err
+		}
+		if operation == allOperations {
+			operation = ""
+		}
 
 		aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 			ProjectID: projectID,
@@ -367,6 +380,7 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 				P50Us:      p50,
 				P95Us:      p95,
 				P99Us:      p99,
+				Source:     SourceAggregates,
 			})
 		}
 

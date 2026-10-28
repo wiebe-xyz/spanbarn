@@ -9,6 +9,7 @@ export type ServiceSummary = {
   p50Us: number
   p95Us: number
   p99Us: number
+  source?: DataSource
 }
 
 /** Aggregated metrics for a single operation within a service. */
@@ -45,6 +46,7 @@ export type TimeseriesBucket = {
   p50Us: number
   p95Us: number
   p99Us: number
+  source?: DataSource
 }
 
 /** Summary of a single trace for listing. */

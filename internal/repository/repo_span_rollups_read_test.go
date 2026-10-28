@@ -52,7 +52,7 @@ func TestSpanRollupCoverage(t *testing.T) {
 func TestScanSpanRollupsFilters(t *testing.T) {
 	repo := setupTestDB(t)
 	child := spanRollupRow(readBase, "SELECT", 5)
-	child.IsRoot = false
+	child.IsRoot, child.Kind = false, "client"
 	otherProject := spanRollupRow(readBase, "GET /", 5)
 	otherProject.ProjectID = 2
 	failed := spanRollupRow(readBase, "GET /", 5)
@@ -83,10 +83,43 @@ func TestScanSpanRollupsFilters(t *testing.T) {
 		"name":                     {SpanRollupScan{Name: "GET /health"}, 1},
 		"status":                   {SpanRollupScan{Status: "error"}, 1},
 		"root only":                {SpanRollupScan{RootOnly: true}, 5},
+		"kind":                     {SpanRollupScan{Kind: "client"}, 1},
 		"excluded names":           {SpanRollupScan{ExcludeNames: []string{"GET /health", "SELECT"}}, 4},
 	} {
 		if got := count(tc.q); got != tc.want {
 			t.Errorf("%s: %d rows, want %d", name, got, tc.want)
+		}
+	}
+}
+
+// The bucket count sees every project and only buckets that hold rows.
+func TestCountSpanRollupBuckets(t *testing.T) {
+	repo := setupTestDB(t)
+	ctx := context.Background()
+	otherProject := spanRollupRow(readBase.Add(10*time.Minute), "GET /", 5)
+	otherProject.ProjectID = 2
+	hour := spanRollupRow(readBase, "GET /", 5)
+	hour.StepSeconds = 3600
+	addRollups(t, repo,
+		spanRollupRow(readBase, "GET /", 5), spanRollupRow(readBase, "GET /health", 5), // two rows, one bucket
+		otherProject, // 10:05 holds nothing
+		spanRollupRow(readBase.Add(time.Hour), "GET /", 5), hour)
+	for _, tc := range []struct {
+		step     int64
+		from, to time.Time
+		want     int
+	}{
+		{300, readBase, readBase.Add(time.Hour), 2},
+		{300, readBase, readBase.Add(time.Hour + time.Second), 3},
+		{300, readBase.Add(time.Minute), readBase.Add(10 * time.Minute), 0},
+		{3600, readBase, readBase.Add(24 * time.Hour), 1},
+	} {
+		got, err := repo.CountSpanRollupBuckets(ctx, tc.step, tc.from, tc.to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Errorf("step %d [%v, %v): %d buckets, want %d", tc.step, tc.from, tc.to, got, tc.want)
 		}
 	}
 }

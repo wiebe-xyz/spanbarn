@@ -2,7 +2,9 @@
 // and hours into days.
 //
 // Each coarse bucket is built from every source row of its window and written
-// whole, then the source tier's watermark moves past the window. A pass that
+// whole, then the source tier's watermark moves past the window. A window
+// with a source bucket that holds no rows is a gap, and its coarse bucket is
+// not written, so readers see the gap in the coarse tier too. A pass that
 // stops between the two writes the same rows again on the next pass, so the
 // counts stay right. Retention deletes a tier only up to its watermark.
 package spanrollup
@@ -24,6 +26,7 @@ type Repository interface {
 	OldestSpanRollupBucket(ctx context.Context, step int64) (time.Time, bool, error)
 	SpanRollupWatermark(ctx context.Context, step int64) (time.Time, bool, error)
 	SetSpanRollupWatermark(ctx context.Context, step int64, through time.Time) error
+	BucketCounter
 }
 
 // Tier is one rung of the ladder: buckets of Step seconds built from the tier
@@ -198,6 +201,13 @@ func (c *Compactor) tierStart(ctx context.Context, tier Tier) (time.Time, bool, 
 }
 
 func (c *Compactor) compactBucket(ctx context.Context, tier Tier, start, end time.Time) (int, error) {
+	if ok, err := windowComplete(ctx, c.repo, tier.Source, start, end); err != nil || !ok {
+		if err == nil {
+			c.logger.Info("span rollup compaction left a bucket out: a source bucket holds no rows",
+				"tier", tier.Label, "bucket", start)
+		}
+		return 0, err
+	}
 	src, err := c.repo.SpanRollupWindow(ctx, tier.Source, start, end)
 	if err != nil || len(src) == 0 {
 		return 0, err

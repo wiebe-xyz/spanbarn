@@ -10,9 +10,13 @@ const labels: Record<DataSource, { text: string; title: string }> = {
     text: 'stored spans',
     title: 'Counted from the spans the server stored. Spans dropped by sampling are not counted.',
   },
+  aggregates: {
+    text: 'estimated spans',
+    title: 'Counted from per-minute aggregates, scaled up by the sample rate of each operation.',
+  },
 }
 
-/** Names the store a count came from: rollups count received spans, raw spans count stored ones. */
+/** Names the store a count came from: rollups count received spans, raw spans count stored ones, aggregates estimate received ones. */
 export function SourceLabel({ source }: { source?: DataSource }): ReactElement | null {
   if (!source) return null
   const l = labels[source]

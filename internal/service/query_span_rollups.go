@@ -33,6 +33,10 @@ type SpanRollupReads struct {
 // which source answers near a tier edge.
 const spanRollupCoverageTTL = time.Minute
 
+// spanRollupFlushGrace is how long a new 5-minute bucket may hold no rows
+// before a read counts it as a gap. The writer flushes rollups every 30s.
+const spanRollupFlushGrace = 2 * time.Minute
+
 // spanRollupCoverage caches the tiers' coverage per QueryService. It is read
 // inside cached scans, so it does not go through readCached: a nested
 // readCached would wait for a compute slot its caller already holds.
@@ -49,7 +53,7 @@ func (s *QueryService) SetSpanRollupReads(r SpanRollupReads) {
 
 // spanRollupPlan returns the tier segments that cover [from, to) at chart
 // buckets of align seconds, or ok false when the rollups do not cover the
-// whole range or reads from them are off.
+// whole range, a bucket inside it holds no rows, or reads from them are off.
 func (s *QueryService) spanRollupPlan(ctx context.Context, from, to time.Time, align int64) ([]repository.SpanRollupSegment, bool) {
 	if !s.rollupReads.Enabled {
 		return nil, false
@@ -59,7 +63,16 @@ func (s *QueryService) spanRollupPlan(ctx context.Context, from, to time.Time, a
 		s.logger.Info("span rollup coverage read failed, reading raw spans", "error", err)
 		return nil, false
 	}
-	return spanrollup.Plan(from.UTC(), to.UTC(), align, cov)
+	segs, ok := spanrollup.Plan(from.UTC(), to.UTC(), align, cov)
+	if !ok {
+		return nil, false
+	}
+	complete, err := spanrollup.Complete(ctx, s.repo, segs, time.Now().Add(-spanRollupFlushGrace))
+	if err != nil {
+		s.logger.Info("span rollup gap check failed, reading raw spans", "error", err)
+		return nil, false
+	}
+	return segs, complete
 }
 
 func (s *QueryService) spanRollupCoverage(ctx context.Context) (repository.SpanRollupCoverage, error) {

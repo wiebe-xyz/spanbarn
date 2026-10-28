@@ -11,7 +11,7 @@ export type DashboardFilter = {
 }
 
 /** The store a dashboard result came from: rollups count received spans, spans count stored ones. */
-export type DataSource = 'rollups' | 'spans'
+export type DataSource = 'rollups' | 'spans' | 'aggregates'
 
 type DashboardCountPoint = {
   time: string

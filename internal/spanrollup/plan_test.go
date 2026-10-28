@@ -24,6 +24,10 @@ func TestPlan(t *testing.T) {
 		Through: map[int64]time.Time{300: d(26, 9, 0), 3600: d(26, 0, 0)},
 	}
 	only5m := repository.SpanRollupCoverage{Oldest: map[int64]time.Time{300: d(25, 0, 0)}}
+	startedAt25 := repository.SpanRollupCoverage{
+		Oldest:  map[int64]time.Time{300: d(25, 0, 0), 3600: d(25, 0, 0)},
+		Through: map[int64]time.Time{300: d(25, 4, 0)},
+	}
 
 	for _, tc := range []struct {
 		name     string
@@ -40,6 +44,8 @@ func TestPlan(t *testing.T) {
 			"300:26T06:00-26T07:00"},
 		{"days, then hours, then 5m for a total", d(24, 0, 0), d(26, 9, 30), 0, full,
 			"86400:24T00:00-26T00:00 3600:26T00:00-26T09:00 300:26T09:00-26T09:30"},
+		{"the oldest hour may be partial, so the 5m tier reads it", d(25, 0, 0), d(25, 3, 0), 3600, startedAt25,
+			"300:25T00:00-25T01:00 3600:25T01:00-25T03:00"},
 		{"older than the 5m tier and no coarse tier", d(24, 23, 0), d(25, 1, 0), 300, only5m, ""},
 		{"inside the 5m tier", d(25, 0, 5), d(25, 1, 0), 300, only5m, "300:25T00:05-25T01:00"},
 		{"chart buckets that are not 5m multiples", d(26, 6, 0), d(26, 7, 0), 60, full, ""},

@@ -22,7 +22,8 @@ var coarseFirst = []int64{rollup.StepDay, rollup.StepHour}
 //
 // ok is false when the tiers do not hold the whole range: part of it is older
 // than the oldest bucket a usable tier keeps, or align is not a multiple of
-// 5 minutes. The caller then reads its other source for the whole range,
+// 5 minutes. Plan does not see a gap inside a tier; Complete checks that
+// every bucket of the plan holds rows. The caller then reads its other source for the whole range,
 // because two sources are never stitched into one result.
 func Plan(from, to time.Time, align int64, cov repository.SpanRollupCoverage) ([]repository.SpanRollupSegment, bool) {
 	if !to.After(from) || !aligned(align, rollup.Step5m) {
@@ -58,8 +59,10 @@ func coarseSegment(cur, to time.Time, align int64, cov repository.SpanRollupCove
 		if !aligned(align, step) || !rollup.TruncateBucket(cur, step).Equal(cur) {
 			continue
 		}
+		// The oldest bucket of a coarse tier can be partial: it was built
+		// from the first source rows, which may start inside it.
 		oldest, ok := cov.Oldest[step]
-		if !ok || cur.Before(oldest) {
+		if !ok || !cur.After(oldest) {
 			continue
 		}
 		// A tier holds the buckets its source tier was compacted past.

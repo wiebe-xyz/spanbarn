@@ -104,8 +104,8 @@ func TestCompactorWaitsForLagAndLowerTier(t *testing.T) {
 	ctx := context.Background()
 	day := time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC)
 	var rows []repository.SpanRollup
-	for i := range 24 {
-		rows = append(rows, fiveMinute(day.Add(time.Duration(i)*time.Hour+55*time.Minute), "op", 10))
+	for i := range 24 * 12 {
+		rows = append(rows, fiveMinute(day.Add(time.Duration(i)*5*time.Minute), "op", 10))
 	}
 	if err := repo.AddSpanRollups(rows); err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestCompactorWaitsForLagAndLowerTier(t *testing.T) {
 		t.Fatal(err)
 	}
 	daily := window(t, repo, 86400, day, day.Add(24*time.Hour))
-	if len(daily) != 1 || daily[0].Count != 24 {
+	if len(daily) != 1 || daily[0].Count != 24*12 {
 		t.Fatalf("daily rows = %+v", daily)
 	}
 	if wm, ok, _ := repo.SpanRollupWatermark(ctx, 3600); !ok || !wm.Equal(day.Add(24*time.Hour)) {
@@ -142,7 +142,11 @@ func TestCompactBucketTwiceWritesTheSameRow(t *testing.T) {
 	repo := testRepo(t)
 	ctx := context.Background()
 	h0 := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
-	if err := repo.AddSpanRollups([]repository.SpanRollup{fiveMinute(h0, "op", 1, 2, 3)}); err != nil {
+	rows := []repository.SpanRollup{fiveMinute(h0, "op", 1, 2, 3)}
+	for i := 1; i < 12; i++ {
+		rows = append(rows, fiveMinute(h0.Add(time.Duration(i)*5*time.Minute), "op", 4))
+	}
+	if err := repo.AddSpanRollups(rows); err != nil {
 		t.Fatal(err)
 	}
 	now := h0.Add(3 * time.Hour)
@@ -153,7 +157,7 @@ func TestCompactBucketTwiceWritesTheSameRow(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := window(t, repo, 3600, h0, h0.Add(time.Hour)); len(got) != 1 || got[0].Count != 3 {
+	if got := window(t, repo, 3600, h0, h0.Add(time.Hour)); len(got) != 1 || got[0].Count != 14 {
 		t.Errorf("rows = %+v", got)
 	}
 }

@@ -45,6 +45,23 @@ func (r *Repository) SpanRollupCoverage(ctx context.Context) (SpanRollupCoverage
 	return cov, nil
 }
 
+// CountSpanRollupBuckets counts the buckets of one tier in [from, to) that
+// hold at least one row, over every project. Each step seeks the next bucket
+// in the primary key, so the cost follows the number of buckets and not the
+// rows inside them.
+func (r *Repository) CountSpanRollupBuckets(ctx context.Context, step int64, from, to time.Time) (int, error) {
+	ctx, cancel := r.readContext(ctx)
+	defer cancel()
+	var n int
+	err := r.db.QueryRowContext(ctx, `WITH RECURSIVE b(x) AS (
+		SELECT (SELECT MIN(bucket) FROM span_rollups WHERE step_seconds = ?1 AND bucket >= ?2 AND bucket < ?3)
+		UNION ALL
+		SELECT (SELECT MIN(bucket) FROM span_rollups WHERE step_seconds = ?1 AND bucket > x AND bucket < ?3)
+		FROM b WHERE x IS NOT NULL)
+		SELECT COUNT(x) FROM b`, step, from.Unix(), to.Unix()).Scan(&n)
+	return n, err
+}
+
 // SpanRollupSegment is a run of buckets of one tier: the buckets that start
 // in [From, To).
 type SpanRollupSegment struct {
@@ -58,6 +75,7 @@ type SpanRollupScan struct {
 	ProjectID    int64
 	Service      string
 	Name         string
+	Kind         string
 	Status       string
 	RootOnly     bool
 	ExcludeNames []string
@@ -79,6 +97,9 @@ func (q SpanRollupScan) where(seg SpanRollupSegment) ([]string, []any) {
 	}
 	if q.Name != "" {
 		b.add("name = ?", q.Name)
+	}
+	if q.Kind != "" {
+		b.add("kind = ?", q.Kind)
 	}
 	if q.Status != "" {
 		b.add("status = ?", q.Status)
