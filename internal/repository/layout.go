@@ -175,8 +175,12 @@ func prepareSplit(ctx context.Context, main *sql.DB, dbPath string, o StorageOpt
 	if err := enableIncrementalVacuum(ctx, spans.DB); err != nil {
 		return fmt.Errorf("spans file auto_vacuum: %w", err)
 	}
-	if err := MigrateSpans(ctx, spans.DB); err != nil {
+	applied, err := migrateSpans(ctx, spans.DB)
+	if err != nil {
 		return fmt.Errorf("run spans migrations: %w", err)
+	}
+	for _, m := range applied {
+		o.logger().Info("spans migration applied", "version", m.Source.Version, "duration_ms", m.Duration.Milliseconds())
 	}
 	if err := Migrate(main); err != nil {
 		return fmt.Errorf("run migrations: %w", err)

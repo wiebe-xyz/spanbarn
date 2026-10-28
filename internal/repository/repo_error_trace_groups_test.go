@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,5 +77,60 @@ func TestQueryErrorTraceGroupsMatchesChildErrors(t *testing.T) {
 	sweep := byOp["nightly.sweep"]
 	if len(sweep.Durations) != 1 || len(sweep.ErrorOperations) != 1 || sweep.ErrorOperations[0].Operation != "nightly.sweep" {
 		t.Errorf("nightly.sweep group = %+v, want its error read from error_samples", sweep)
+	}
+}
+
+// The error-span lookup reads the partial error-trace indexes alone, with and
+// without a project, and never fetches a span row.
+func TestErrorSpanQueryReadsOnlyTheErrorIndexes(t *testing.T) {
+	repo := setupTestDB(t)
+	for _, project := range []bool{false, true} {
+		args := []any{"t1", "t2"}
+		if project {
+			args = append(args, int64(1))
+		}
+		rows, err := repo.db.Query("EXPLAIN QUERY PLAN "+errorSpanQuery(2, project, true), append(args, args...)...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plan []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan = append(plan, detail)
+		}
+		rows.Close()
+		joined := strings.Join(plan, "\n")
+		for _, want := range []string{
+			"SEARCH spans USING COVERING INDEX idx_spans_error_trace",
+			"SEARCH error_samples USING COVERING INDEX idx_error_samples_error_trace",
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("project=%v: plan lacks %q:\n%s", project, want, joined)
+			}
+		}
+	}
+}
+
+// Before the writer's migration built the error-trace indexes, the lookup
+// still answers, through the trace_id indexes.
+func TestErrorSpanLookupWithoutTheErrorIndexes(t *testing.T) {
+	repo := setupTestDB(t)
+	w := repo.writers[FamilySpans]
+	if w == nil {
+		w = repo.db
+	}
+	if _, err := w.Exec(`DROP INDEX idx_spans_error_trace; DROP INDEX idx_error_samples_error_trace`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.InsertSpans([]Span{makeSpan(1, "t1", "s1", "api", "GET /", "error", 10)}); err != nil {
+		t.Fatal(err)
+	}
+	ops, err := repo.errorSpanOperations(context.Background(), 0, []string{"t1"})
+	if err != nil || len(ops["t1"]) != 1 || ops["t1"][0] != (spanOp{"GET /", "api"}) {
+		t.Fatalf("ops = %+v, %v", ops, err)
 	}
 }
