@@ -7,16 +7,33 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
-	"github.com/wiebe-xyz/spanbarn/internal/queue"
+	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 	"github.com/wiebe-xyz/spanbarn/internal/worker"
 )
 
+// metricsSource and logsSource are the queue's consume side.
+type metricsSource interface {
+	ConsumeMetrics(ctx context.Context) ([]model.MetricRecord, error)
+}
+
+type logsSource interface {
+	ConsumeLogs(ctx context.Context) ([]model.LogRecord, error)
+}
+
+type logsSink interface {
+	InsertLogs(ctx context.Context, recs []model.LogRecord) error
+}
+
+// A consumed batch is already off the queue, so the consumers store it with
+// a context that shutdown does not cancel: a cancelled insert drops the
+// batch. The write schedulers run until the consumers have returned.
+
 // runMetricsConsumer drains the metrics queue into the rollup accumulator and
 // the metrics table until ctx is cancelled. The accumulator sees every point;
 // repo is the raw insert, usually behind a MetricRepeatFilter.
-func runMetricsConsumer(ctx context.Context, q *queue.RedisQueue, acc *aggregation.MetricAccumulator, repo aggregation.MetricWriter, logger *slog.Logger) {
+func runMetricsConsumer(ctx context.Context, q metricsSource, acc *aggregation.MetricAccumulator, repo aggregation.MetricWriter, logger *slog.Logger) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -36,7 +53,7 @@ func runMetricsConsumer(ctx context.Context, q *queue.RedisQueue, acc *aggregati
 		for i := range recs {
 			acc.AddMetric(recs[i])
 		}
-		if err := repo.InsertMetrics(ctx, recs); err != nil {
+		if err := repo.InsertMetrics(context.WithoutCancel(ctx), recs); err != nil {
 			logger.Error("metrics insert error", "error", err)
 		}
 	}
@@ -44,7 +61,7 @@ func runMetricsConsumer(ctx context.Context, q *queue.RedisQueue, acc *aggregati
 
 // runLogsConsumer drains the logs queue into the logs table until ctx is
 // cancelled.
-func runLogsConsumer(ctx context.Context, q *queue.RedisQueue, repo *repository.Repository, logger *slog.Logger) {
+func runLogsConsumer(ctx context.Context, q logsSource, repo logsSink, logger *slog.Logger) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -61,7 +78,7 @@ func runLogsConsumer(ctx context.Context, q *queue.RedisQueue, repo *repository.
 		if len(recs) == 0 {
 			continue
 		}
-		if err := repo.InsertLogs(ctx, recs); err != nil {
+		if err := repo.InsertLogs(context.WithoutCancel(ctx), recs); err != nil {
 			logger.Error("logs insert error", "error", err)
 		}
 	}
