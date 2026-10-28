@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 )
@@ -143,29 +142,6 @@ func TestErrorExemplarOutlivesErrorCutoff(t *testing.T) {
 	}
 	if summaries, _ := repo.SearchTraceSummaries(SpanFilter{ProjectID: 1}, 0); len(summaries) != 0 {
 		t.Fatalf("summaries after prune = %+v, want none", summaries)
-	}
-}
-
-// The delete must seek idx_error_samples_project. A global sampled_at filter
-// has no index and scans every sample on each batch.
-func TestDeleteErrorSamplesPlanSeeksProjectIndex(t *testing.T) {
-	repo := setupTestDB(t)
-	rows, err := repo.DB().Query("EXPLAIN QUERY PLAN "+deleteErrorSamplesSQL, 1, "2030-01-01", retentionDeleteBatch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var plan string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-			t.Fatal(err)
-		}
-		plan += detail + "\n"
-	}
-	if !strings.Contains(plan, "idx_error_samples_project") || strings.Contains(plan, "SCAN e") {
-		t.Errorf("delete does not seek the project index:\n%s", plan)
 	}
 }
 

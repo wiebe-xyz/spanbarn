@@ -86,6 +86,8 @@ type Repository struct {
 	shardReaders *ShardReaders
 	// logTrim carries the log trim's cursors between retention passes.
 	logTrim *logTrimCursors
+	// errorSampleTrim carries the error-sample delete's cursors.
+	errorSampleTrim *logTrimCursors
 	// logTrimReads, when set, serves the log trim's window reads outside the
 	// write slot. See SetLogTrimReads.
 	logTrimReads *sql.DB
@@ -104,7 +106,10 @@ const retentionDeleteBatch = 1000
 
 // NewRepository creates a Repository backed by the given database connection.
 func NewRepository(db *sql.DB) *Repository {
-	return &Repository{db: db, queryTimeout: DefaultQueryTimeout, logTrim: newLogTrimCursors()}
+	return &Repository{
+		db: db, queryTimeout: DefaultQueryTimeout,
+		logTrim: newLogTrimCursors(), errorSampleTrim: newLogTrimCursors(),
+	}
 }
 
 // NewReadOnlyRepository creates a Repository that is flagged as read-only.
