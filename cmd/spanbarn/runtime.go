@@ -210,3 +210,15 @@ func newSpanRollupCompactor(repo spanrollup.Repository, cfg config.Config, logge
 		Disabled:       !cfg.SpanRollups,
 	}, logger)
 }
+
+// flushSpanRollupsOnStop writes the span rollups and edges still in memory
+// once the redis worker has stopped feeding them and before the schedulers
+// stop.
+func flushSpanRollupsOnStop(r *aggregation.SpanRollups, logger *slog.Logger) {
+	if r == nil {
+		return
+	}
+	if err := r.Flush(); err != nil {
+		logger.Warn("final span rollup flush failed", "error", err)
+	}
+}

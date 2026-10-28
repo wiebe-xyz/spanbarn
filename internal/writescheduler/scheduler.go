@@ -24,6 +24,7 @@ package writescheduler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"runtime"
 	"sync"
@@ -37,6 +38,9 @@ import (
 )
 
 var tracer = otel.Tracer("spanbarn/writescheduler")
+
+// ErrStopped is returned by Submit once the scheduler's Run has returned.
+var ErrStopped = errors.New("write scheduler stopped")
 
 // Priority controls which queue a write job enters.
 type Priority int
@@ -62,6 +66,9 @@ type Scheduler struct {
 	highPri chan job
 	lowPri  chan job
 	logger  *slog.Logger
+	// stopped closes when Run has returned. A job submitted after that has
+	// nobody to run it, so Submit fails with ErrStopped instead of waiting.
+	stopped chan struct{}
 
 	// slowThreshold: a completed job slower than this is logged (WARN).
 	// reportThreshold: a completed job slower than this is logged at ERROR,
@@ -85,6 +92,7 @@ func New() *Scheduler {
 	return &Scheduler{
 		highPri:         make(chan job, 64),
 		lowPri:          make(chan job, 512),
+		stopped:         make(chan struct{}),
 		logger:          slog.Default(),
 		slowThreshold:   2 * time.Second,
 		reportThreshold: 10 * time.Second,
@@ -111,6 +119,11 @@ func (s *Scheduler) SetLogger(l *slog.Logger) {
 // the context is cancelled while waiting to enqueue or waiting for the result.
 // An in-flight job cannot be cancelled.
 func (s *Scheduler) Submit(ctx context.Context, p Priority, label string, fn func() error) error {
+	select {
+	case <-s.stopped:
+		return ErrStopped
+	default:
+	}
 	j := job{fn: fn, resultCh: make(chan error, 1), label: label, enqueuedAt: time.Now()}
 	ch := s.lowPri
 	if p == High {
@@ -120,10 +133,21 @@ func (s *Scheduler) Submit(ctx context.Context, p Priority, label string, fn fun
 	case ch <- j:
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-s.stopped:
+		return ErrStopped
 	}
 	select {
 	case err := <-j.resultCh:
 		return err
+	case <-s.stopped:
+		// Run drains the queues before it closes stopped, so a job that made
+		// it in before then has its result waiting.
+		select {
+		case err := <-j.resultCh:
+			return err
+		default:
+			return ErrStopped
+		}
 	case <-ctx.Done():
 		// The job was enqueued but the caller gave up. The scheduler will still
 		// run it (we cannot cancel in-flight SQLite ops), but we return now so
@@ -133,9 +157,13 @@ func (s *Scheduler) Submit(ctx context.Context, p Priority, label string, fn fun
 }
 
 // Run is the scheduler loop. It must run in a dedicated goroutine and is the
-// only goroutine that executes DB writes. Exits when ctx is cancelled.
+// only goroutine that executes DB writes. When ctx is cancelled it runs the
+// jobs already queued, then returns; later submissions fail with ErrStopped.
+// Run must be called once.
 func (s *Scheduler) Run(ctx context.Context) {
 	observability.SafeGo("write-scheduler-watchdog", nil, func() { s.watchdog(ctx) })
+	defer close(s.stopped)
+	defer s.drain()
 	for {
 		// Always drain the high-priority channel before touching low-priority.
 		select {
@@ -150,6 +178,24 @@ func (s *Scheduler) Run(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			}
+		}
+	}
+}
+
+// drain runs the jobs left in the queues, high priority first.
+func (s *Scheduler) drain() {
+	for {
+		select {
+		case j := <-s.highPri:
+			s.execute(j)
+			continue
+		default:
+		}
+		select {
+		case j := <-s.lowPri:
+			s.execute(j)
+		default:
+			return
 		}
 	}
 }
