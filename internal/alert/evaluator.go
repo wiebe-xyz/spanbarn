@@ -65,6 +65,8 @@ type Evaluator struct {
 	logger      *slog.Logger
 	now         func() time.Time // injectable clock for testing
 	ratioLookup SampleRatioLookup
+	failures    evalFailures
+	aggInterval time.Duration // width of one aggregate bucket
 }
 
 // NewEvaluator creates an Evaluator with the given dependencies. ratioLookup
@@ -83,6 +85,15 @@ func NewEvaluator(repo AlertRepository, notifier Notifier, logger *slog.Logger, 
 		logger:      logger,
 		now:         time.Now,
 		ratioLookup: ratioLookup,
+		aggInterval: time.Minute,
+	}
+}
+
+// SetAggregateInterval sets the width of one aggregate bucket, which sizes how
+// far back each alert reads. Non-positive values are ignored.
+func (e *Evaluator) SetAggregateInterval(d time.Duration) {
+	if d > 0 {
+		e.aggInterval = d
 	}
 }
 
@@ -174,8 +185,11 @@ func (e *Evaluator) Evaluate(ctx context.Context, projectID int64) error {
 			}
 		}
 
-		if err := e.evaluateAlert(ctx, a, now); err != nil {
+		err := e.evaluateAlert(ctx, a, now)
+		if e.failures.record(a.ID, err) {
 			e.logger.Error("evaluate alert", "alertID", a.ID, "error", err)
+		} else if err != nil {
+			e.logger.Warn("evaluate alert timed out, retrying next tick", "alertID", a.ID, "error", err)
 		}
 		evaluated++
 	}
@@ -254,6 +268,28 @@ const (
 	aggregateRowCap   = 50000
 )
 
+// Lookback sizing: a rule reads its current bucket plus ComparisonWindow
+// history buckets, so it needs ComparisonWindow+1 buckets of the aggregate
+// interval, not a day. The floor leaves room for gaps; aggregateLookback stays
+// the ceiling.
+const minLookback = time.Hour
+
+// lookbackFor returns how far back an alert with the given comparison window
+// reads aggregate rows when one bucket spans interval.
+func lookbackFor(comparisonWindow int, interval time.Duration) time.Duration {
+	if comparisonWindow < 0 {
+		comparisonWindow = 0
+	}
+	d := time.Duration(comparisonWindow+1) * interval
+	if d < minLookback {
+		return minLookback
+	}
+	if d > aggregateLookback {
+		return aggregateLookback
+	}
+	return d
+}
+
 // serviceBuckets returns the alert's aggregates summed per bucket, newest first.
 // A bucket holds one row per (operation, resource, kind), so an alert without
 // an operation, or an operation seen under several kinds, has many rows per
@@ -265,7 +301,7 @@ func (e *Evaluator) serviceBuckets(a repository.Alert, now time.Time) ([]reposit
 		ProjectID: a.ProjectID,
 		Service:   a.Service,
 		Operation: a.Operation,
-		From:      now.Add(-aggregateLookback),
+		From:      now.Add(-lookbackFor(a.ComparisonWindow, e.aggInterval)),
 		To:        now,
 		Limit:     aggregateRowCap,
 	})
