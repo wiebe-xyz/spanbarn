@@ -40,7 +40,7 @@ func (m *mockStagingRepo) InsertPromptRecords(_ []repository.PromptRecord) error
 
 type countingAcc struct{ n int }
 
-func (c *countingAcc) Add(_ repository.Span) { c.n++ }
+func (c *countingAcc) AddBatch(spans []repository.Span) { c.n += len(spans) }
 
 func TestStagingFlusherFlushOnce(t *testing.T) {
 	repo := &mockStagingRepo{

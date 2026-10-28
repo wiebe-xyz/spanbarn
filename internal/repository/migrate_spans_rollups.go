@@ -22,7 +22,7 @@ import (
 //
 // Both tables start empty: nothing is backfilled from spans.
 func spansSpanRollupsUp(ctx context.Context, tx *sql.Tx) error {
-	for _, stmt := range []string{
+	return execSpansDDL(ctx, tx, "span rollups",
 		`CREATE TABLE IF NOT EXISTS span_rollups (
 			step_seconds    INTEGER NOT NULL,
 			bucket          INTEGER NOT NULL,
@@ -45,10 +45,14 @@ func spansSpanRollupsUp(ctx context.Context, tx *sql.Tx) error {
 		`CREATE TABLE IF NOT EXISTS span_rollup_compaction (
 			step_seconds      INTEGER PRIMARY KEY,
 			compacted_through INTEGER NOT NULL
-		)`,
-	} {
+		)`)
+}
+
+// execSpansDDL runs the statements of one spans-track migration in order.
+func execSpansDDL(ctx context.Context, tx *sql.Tx, what string, stmts ...string) error {
+	for _, stmt := range stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("span rollups: %w", err)
+			return fmt.Errorf("%s: %w", what, err)
 		}
 	}
 	return nil

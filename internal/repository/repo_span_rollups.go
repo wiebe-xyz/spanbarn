@@ -79,36 +79,31 @@ func spanRollupArgs(s SpanRollup) []any {
 // chunk that fails stops the batch; the chunks before it stay written.
 func (r *Repository) AddSpanRollups(rows []SpanRollup) error {
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
-	ctx := WithoutSpanTracing(context.Background())
-	for _, chunk := range spanRollupChunks(rows) {
-		if err := r.execLow(FamilySpans, func(db *sql.DB) error {
-			return writeSpanRollupChunk(ctx, db, spanRollupAddSQL, chunk)
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
+	return writeTierRows(r, context.Background(), spanRollupAddSQL, rows, compareSpanRollupKey, spanRollupArgs)
 }
 
 // ReplaceSpanRollups writes compacted rows whole, chunked like AddSpanRollups.
 func (r *Repository) ReplaceSpanRollups(ctx context.Context, rows []SpanRollup) error {
+	return writeTierRows(r, ctx, spanRollupReplaceSQL, rows, compareSpanRollupKey, spanRollupArgs)
+}
+
+// writeTierRows writes rows of a tiered table with query, sorted by key so
+// each chunk writes neighbouring leaves, one transaction and one write slot
+// per chunk of spanRollupChunk rows. A chunk that fails stops the batch; the
+// chunks before it stay written. Writing telemetry must not emit telemetry,
+// see WithoutSpanTracing.
+func writeTierRows[T any](r *Repository, ctx context.Context, query string, rows []T, compare func(a, b T) int, args func(T) []any) error {
 	ctx = WithoutSpanTracing(ctx)
-	for _, chunk := range spanRollupChunks(rows) {
+	sorted := slices.Clone(rows)
+	slices.SortFunc(sorted, compare)
+	for chunk := range slices.Chunk(sorted, spanRollupChunk) {
 		if err := r.execLow(FamilySpans, func(db *sql.DB) error {
-			return writeSpanRollupChunk(ctx, db, spanRollupReplaceSQL, chunk)
+			return writeTierChunk(ctx, db, query, chunk, args)
 		}); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-// spanRollupChunks sorts a copy of rows by primary key, so each chunk writes
-// neighbouring leaves, and splits it into chunks.
-func spanRollupChunks(rows []SpanRollup) [][]SpanRollup {
-	sorted := slices.Clone(rows)
-	slices.SortFunc(sorted, compareSpanRollupKey)
-	return slices.Collect(slices.Chunk(sorted, spanRollupChunk))
 }
 
 func compareSpanRollupKey(a, b SpanRollup) int {
@@ -136,7 +131,7 @@ func compareBool(a, b bool) int {
 	}
 }
 
-func writeSpanRollupChunk(ctx context.Context, db *sql.DB, query string, chunk []SpanRollup) error {
+func writeTierChunk[T any](ctx context.Context, db *sql.DB, query string, chunk []T, args func(T) []any) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -147,8 +142,8 @@ func writeSpanRollupChunk(ctx context.Context, db *sql.DB, query string, chunk [
 		return err
 	}
 	defer stmt.Close()
-	for _, s := range chunk {
-		if _, err := stmt.ExecContext(ctx, spanRollupArgs(s)...); err != nil {
+	for _, row := range chunk {
+		if _, err := stmt.ExecContext(ctx, args(row)...); err != nil {
 			return err
 		}
 	}
@@ -177,9 +172,15 @@ func (r *Repository) SpanRollupWindow(ctx context.Context, step int64, from, to 
 // OldestSpanRollupBucket returns the earliest bucket of one tier, read from
 // the front of the primary key.
 func (r *Repository) OldestSpanRollupBucket(ctx context.Context, step int64) (time.Time, bool, error) {
+	return r.oldestTierBucket(ctx, "span_rollups", step)
+}
+
+// oldestTierBucket returns the earliest bucket of one tier of a table keyed
+// by (step_seconds, bucket, ...).
+func (r *Repository) oldestTierBucket(ctx context.Context, table string, step int64) (time.Time, bool, error) {
 	var bucket int64
 	err := r.db.QueryRowContext(ctx,
-		`SELECT bucket FROM span_rollups WHERE step_seconds = ? ORDER BY bucket LIMIT 1`, step).Scan(&bucket)
+		`SELECT bucket FROM `+table+` WHERE step_seconds = ? ORDER BY bucket LIMIT 1`, step).Scan(&bucket)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, false, nil
 	}
@@ -218,13 +219,18 @@ func (r *Repository) SetSpanRollupWatermark(ctx context.Context, step int64, thr
 }
 
 // DeleteSpanRollupsOlderThanLimited removes at most max rows of one tier with
-// buckets before cutoff, oldest first, reporting whether more remain. Each
-// batch walks the front of the primary key.
+// buckets before cutoff, oldest first, reporting whether more remain.
 func (r *Repository) DeleteSpanRollupsOlderThanLimited(ctx context.Context, step int64, cutoff time.Time, max int64) (int64, bool, error) {
-	const q = `DELETE FROM span_rollups
-		WHERE (step_seconds, bucket, project_id, service, name, kind, is_root, status) IN (
-			SELECT step_seconds, bucket, project_id, service, name, kind, is_root, status
-			FROM span_rollups WHERE step_seconds = ? AND bucket < ? LIMIT ?)`
+	return r.deleteTierRowsOlderThan(ctx, "span_rollups",
+		"step_seconds, bucket, project_id, service, name, kind, is_root, status, http_status", step, cutoff, max)
+}
+
+// deleteTierRowsOlderThan removes at most max rows of one tier of table with
+// buckets before cutoff, oldest first, reporting whether more remain. key
+// lists the primary key columns; each batch walks the front of that key.
+func (r *Repository) deleteTierRowsOlderThan(ctx context.Context, table, key string, step int64, cutoff time.Time, max int64) (int64, bool, error) {
+	q := `DELETE FROM ` + table + ` WHERE (` + key + `) IN (
+		SELECT ` + key + ` FROM ` + table + ` WHERE step_seconds = ? AND bucket < ? LIMIT ?)`
 	return r.batchedDeleteLimited(ctx, FamilySpans, max, func(db *sql.DB, limit int64) (int64, error) {
 		res, err := db.ExecContext(ctx, q, step, cutoff.Unix(), limit)
 		if err != nil {

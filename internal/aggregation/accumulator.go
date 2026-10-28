@@ -29,7 +29,8 @@ type Accumulator struct {
 	flushInterval time.Duration
 	repo          AggregateWriter
 	logger        *slog.Logger
-	// rollups, when set, receives every span Add sees (span_rollups).
+	// rollups, when set, receives every span Add and AddBatch see
+	// (span_rollups, and span_edges for batches).
 	rollups *SpanRollups
 }
 
@@ -68,11 +69,26 @@ func NewAccumulator(repo AggregateWriter, interval, flushInterval time.Duration,
 // SetSpanRollups makes Add pass every span on to r as well.
 func (a *Accumulator) SetSpanRollups(r *SpanRollups) { a.rollups = r }
 
+// AddBatch records every span of a batch, and passes the batch on to the
+// span rollups, which also read the calls between its spans.
+func (a *Accumulator) AddBatch(spans []repository.Span) {
+	if a.rollups != nil {
+		a.rollups.AddBatch(spans)
+	}
+	for i := range spans {
+		a.addSlot(spans[i])
+	}
+}
+
 // Add records a single span into its in-memory slot. Thread-safe; O(1) amortised.
 func (a *Accumulator) Add(s repository.Span) {
 	if a.rollups != nil {
 		a.rollups.Add(s)
 	}
+	a.addSlot(s)
+}
+
+func (a *Accumulator) addSlot(s repository.Span) {
 	bucket := TruncateToBucket(time.UnixMicro(s.StartTimeUs), a.interval)
 	k := accKey{
 		projectID: s.ProjectID,

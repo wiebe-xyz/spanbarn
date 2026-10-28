@@ -14,10 +14,10 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 )
 
-// SpanAccumulator receives every span for in-memory aggregation.
+// SpanAccumulator receives every batch of spans for in-memory aggregation.
 // Satisfied by *aggregation.Accumulator.
 type SpanAccumulator interface {
-	Add(s repository.Span)
+	AddBatch(spans []repository.Span)
 }
 
 // WorkerConfig holds tunable parameters for RedisWorker.
@@ -205,9 +205,7 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 	// Feed every span to the accumulator for in-memory aggregation, including
 	// boring spans that will not reach SQLite.
 	if w.accumulator != nil {
-		for i := range spans {
-			w.accumulator.Add(spans[i])
-		}
+		w.accumulator.AddBatch(spans)
 	}
 
 	// Classify: interesting spans (error, slow, or verbose-project) are written to

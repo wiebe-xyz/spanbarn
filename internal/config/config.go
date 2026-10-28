@@ -162,6 +162,7 @@ type Config struct {
 	SpanRollups              bool // SPANBARN_SPAN_ROLLUPS (default 1)
 	SpanRollupMaxNames       int  // SPANBARN_SPAN_ROLLUP_MAX_NAMES — span names per (project, service) per hour before the rest fold into ~other (default 300)
 	SpanRollupMaxServices    int  // SPANBARN_SPAN_ROLLUP_MAX_SERVICES — services per project per hour before the rest fold into ~other (default 200)
+	SpanEdgeMaxTargets       int  // SPANBARN_SPAN_EDGE_MAX_TARGETS — call targets per (project, source service) per hour in span_edges before the rest fold into ~other (default 200)
 	SpanRollupHTTPStatus     bool // SPANBARN_SPAN_ROLLUP_HTTP_STATUS — split root span rows by response code; off writes 0 (default 1)
 	SpanRollupReads          bool // SPANBARN_SPAN_ROLLUP_READS — auto (default) reads dashboard cards and trace groups from span_rollups where they cover the range; off reads raw spans
 	SpanStagingEnabled       bool // SPANBARN_SPAN_STAGING_ENABLED — when true, the redis worker appends consumed spans to spans_staging (cheap) and a background flusher does accumulation+classification+indexed storage per complete trace off the hot path (default false)
@@ -279,6 +280,7 @@ func Load() Config {
 		SpanRollups:                  getenvBool("SPANBARN_SPAN_ROLLUPS", true),
 		SpanRollupMaxNames:           getenvInt("SPANBARN_SPAN_ROLLUP_MAX_NAMES", 300),
 		SpanRollupMaxServices:        getenvInt("SPANBARN_SPAN_ROLLUP_MAX_SERVICES", 200),
+		SpanEdgeMaxTargets:           getenvInt("SPANBARN_SPAN_EDGE_MAX_TARGETS", 200),
 		SpanRollupHTTPStatus:         getenvBool("SPANBARN_SPAN_ROLLUP_HTTP_STATUS", true),
 		SpanRollupReads:              getenv("SPANBARN_SPAN_ROLLUP_READS", "auto") != "off",
 		TraceBufferWindowSeconds:     getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),

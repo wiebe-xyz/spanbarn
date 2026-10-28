@@ -1,5 +1,5 @@
-// Package spanrollup compacts span_rollups from 5-minute buckets into hours
-// and hours into days.
+// Package spanrollup compacts span_rollups, and span_edges with it, from
+// 5-minute buckets into hours and hours into days.
 //
 // Each coarse bucket is built from every source row of its window and written
 // whole, then the source tier's watermark moves past the window. A window
@@ -16,7 +16,6 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/rollup"
-	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
 // Repository is the data access the compactor needs.
@@ -27,6 +26,9 @@ type Repository interface {
 	SpanRollupWatermark(ctx context.Context, step int64) (time.Time, bool, error)
 	SetSpanRollupWatermark(ctx context.Context, step int64, through time.Time) error
 	BucketCounter
+	SpanEdgeWindow(ctx context.Context, step int64, from, to time.Time) ([]repository.SpanEdge, error)
+	ReplaceSpanEdges(ctx context.Context, rows []repository.SpanEdge) error
+	CountSpanEdgeBuckets(ctx context.Context, step int64, from, to time.Time) (int, error)
 }
 
 // Tier is one rung of the ladder: buckets of Step seconds built from the tier
@@ -200,7 +202,19 @@ func (c *Compactor) tierStart(ctx context.Context, tier Tier) (time.Time, bool, 
 	return rollup.TruncateBucket(oldest, tier.Step), true, nil
 }
 
+// compactBucket builds one coarse bucket of span_rollups and of span_edges.
+// Each table checks its own source window for gaps: span_edges started later
+// than span_rollups, so an hour can be whole in one and not in the other.
 func (c *Compactor) compactBucket(ctx context.Context, tier Tier, start, end time.Time) (int, error) {
+	n, err := c.compactRollupBucket(ctx, tier, start, end)
+	if err != nil {
+		return n, err
+	}
+	m, err := c.compactEdgeBucket(ctx, tier, start, end)
+	return n + m, err
+}
+
+func (c *Compactor) compactRollupBucket(ctx context.Context, tier Tier, start, end time.Time) (int, error) {
 	if ok, err := windowComplete(ctx, c.repo, tier.Source, start, end); err != nil || !ok {
 		if err == nil {
 			c.logger.Info("span rollup compaction left a bucket out: a source bucket holds no rows",
@@ -219,49 +233,21 @@ func (c *Compactor) compactBucket(ctx context.Context, tier Tier, start, end tim
 	return len(merged), nil
 }
 
-type rowKey struct {
-	projectID           int64
-	service, name, kind string
-	root                bool
-	status              string
-	httpStatus          int64
-}
-
-// Merge folds rows into one row per key at the given step and bucket.
-// Counts and sums add, min and max take the extreme and histograms merge. A
-// histogram that does not decode is left out of the merge.
-func Merge(rows []repository.SpanRollup, step int64, bucket time.Time) []repository.SpanRollup {
-	type acc struct {
-		row  repository.SpanRollup
-		hist spanhist.Hist
-	}
-	byKey := map[rowKey]*acc{}
-	var order []rowKey
-	for _, r := range rows {
-		k := rowKey{r.ProjectID, r.Service, r.Name, r.Kind, r.IsRoot, r.Status, r.HTTPStatus}
-		a := byKey[k]
-		if a == nil {
-			a = &acc{row: r}
-			a.row.StepSeconds, a.row.Bucket = step, bucket
-			a.row.Count, a.row.WeightedCount, a.row.WeightedSpans, a.row.SumDurationUs = 0, 0, 0, 0
-			byKey[k] = a
-			order = append(order, k)
+func (c *Compactor) compactEdgeBucket(ctx context.Context, tier Tier, start, end time.Time) (int, error) {
+	if ok, err := windowComplete(ctx, BucketCounterFunc(c.repo.CountSpanEdgeBuckets), tier.Source, start, end); err != nil || !ok {
+		if err == nil {
+			c.logger.Info("span edge compaction left a bucket out: a source bucket holds no rows",
+				"tier", tier.Label, "bucket", start)
 		}
-		a.row.Count += r.Count
-		a.row.WeightedCount += r.WeightedCount
-		a.row.WeightedSpans += r.WeightedSpans
-		a.row.SumDurationUs += r.SumDurationUs
-		a.row.MinUs = min(a.row.MinUs, r.MinUs)
-		a.row.MaxUs = max(a.row.MaxUs, r.MaxUs)
-		if h, err := spanhist.Decode(r.Hist); err == nil {
-			a.hist.Merge(h)
-		}
+		return 0, err
 	}
-	out := make([]repository.SpanRollup, 0, len(order))
-	for _, k := range order {
-		a := byKey[k]
-		a.row.Hist = a.hist.Encode()
-		out = append(out, a.row)
+	src, err := c.repo.SpanEdgeWindow(ctx, tier.Source, start, end)
+	if err != nil || len(src) == 0 {
+		return 0, err
 	}
-	return out
+	merged := MergeEdges(src, tier.Step, start)
+	if err := c.repo.ReplaceSpanEdges(ctx, merged); err != nil {
+		return 0, err
+	}
+	return len(merged), nil
 }

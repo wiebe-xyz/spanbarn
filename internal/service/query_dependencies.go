@@ -2,17 +2,18 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/deptarget"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
-// ListDependencies extracts dependency information from client-kind spans.
-// It reads the range's newest spanReadLimit spans; Coverage says when that
-// was less than the whole range.
+// ListDependencies lists the targets the project's services call. A range of
+// an hour or more reads span_edges where they hold it. Otherwise it reads the
+// range's newest spanReadLimit spans; Coverage says when that was less than
+// the whole range.
 func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, from, to time.Time, svcFilter string) ([]DependencySummary, Coverage, error) {
 	_, span := tracer.Start(ctx, "query.list_dependencies")
 	defer span.End()
@@ -20,6 +21,9 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 	from, to, grain := snapRange(from, to)
 	cacheKey := fmt.Sprintf("deps:%d:%s:%d:%d", projectID, svcFilter, from.Unix(), to.Unix())
 	list, err := readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) (coveredList[DependencySummary], error) {
+		if deps, ok, err := s.dependenciesFromRollups(ctx, projectID, from, to, svcFilter); ok {
+			return coveredList[DependencySummary]{items: deps}, err
+		}
 
 		sf := repository.SpanFilter{
 			ProjectID: projectID,
@@ -35,8 +39,7 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 		}
 
 		agg := newDependencyAggregator()
-		agg.addClientSpans(spans)
-		agg.addCrossServiceCalls(spans)
+		agg.addCalls(spans)
 		result := agg.summaries(s.projectSampleRate(ctx, projectID))
 
 		return coveredList[DependencySummary]{items: result, coverage: spanCoverage(spans)}, nil
@@ -80,37 +83,11 @@ func (a *dependencyAggregator) add(target, targetType string, sp repository.Span
 	st.durations = append(st.durations, sp.DurationUs)
 }
 
-// addClientSpans counts the client spans that name a dependency target.
-func (a *dependencyAggregator) addClientSpans(spans []repository.Span) {
-	for _, sp := range spans {
-		if !isClientKind(sp.Kind) {
-			continue
-		}
-		if target, targetType := extractDependencyTarget(sp.Attributes); target != "" {
-			a.add(target, targetType, sp)
-		}
-	}
-}
-
-// addCrossServiceCalls counts a service dependency for every span whose parent
-// belongs to another service.
-func (a *dependencyAggregator) addCrossServiceCalls(spans []repository.Span) {
-	spanByID := make(map[string]*repository.Span, len(spans))
-	for i := range spans {
-		spanByID[spans[i].SpanID] = &spans[i]
-	}
-	for _, sp := range spans {
-		if sp.ParentSpanID == "" {
-			continue
-		}
-		parent, ok := spanByID[sp.ParentSpanID]
-		if !ok {
-			continue
-		}
-		if parent.Service != "" && sp.Service != "" && parent.Service != sp.Service {
-			a.add(sp.Service, "service", *parent)
-		}
-	}
+// addCalls counts every call the spans show towards its target.
+func (a *dependencyAggregator) addCalls(spans []repository.Span) {
+	deptarget.Calls(spanView(spans), func(c deptarget.Call) {
+		a.add(c.Target, c.TargetType, spans[c.Span])
+	})
 }
 
 // summaries turns the statistics into summaries, estimating each call count
@@ -134,17 +111,13 @@ func (a *dependencyAggregator) summaries(sampleRate float64) []DependencySummary
 			P50Us:      p50,
 			P95Us:      p95,
 			P99Us:      p99,
+			Source:     SourceSpans,
 		})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].CallCount > result[j].CallCount
 	})
 	return result
-}
-
-// isClientKind reports whether a span kind is the client kind in either casing.
-func isClientKind(kind string) bool {
-	return kind == "client" || kind == "CLIENT"
 }
 
 // GetDependencyTraces returns recent traces that contain client spans targeting a specific dependency.
@@ -184,10 +157,10 @@ func dependencyTraceIDs(spans []repository.Span, target, targetType string, limi
 	seen := make(map[string]bool)
 	var traceIDs []string
 	for _, sp := range spans {
-		if seen[sp.TraceID] || !isClientKind(sp.Kind) {
+		if seen[sp.TraceID] || !deptarget.IsClientKind(sp.Kind) {
 			continue
 		}
-		t, tt := extractDependencyTarget(sp.Attributes)
+		t, tt := deptarget.Extract(sp.Attributes)
 		if t != target || tt != targetType {
 			continue
 		}
@@ -226,51 +199,13 @@ func summarizeTraceSpans(traceID string, traceSpans []repository.Span) TraceSumm
 	}
 }
 
-// dependencyTargetRule maps a span attribute to a dependency target type. A
-// hostOnly rule reads the host out of a URL and is skipped when there is none.
-type dependencyTargetRule struct {
-	key        string
-	targetType string
-	hostOnly   bool
-}
+// spanView lets deptarget walk stored spans.
+type spanView []repository.Span
 
-// dependencyTargetRules lists the attributes that name a dependency, most
-// specific first.
-var dependencyTargetRules = []dependencyTargetRule{
-	{"db.system", "database", false},
-	{"db.name", "database", false},
-	{"peer.service", "service", false},
-	{"rpc.service", "rpc", false},
-	{"messaging.system", "messaging", false},
-	{"aws.service", "aws", false},
-	{"http.url", "http", true},
-	{"url.full", "http", true},
-	{"http.host", "http", false},
-	{"server.address", "network", false},
-	{"net.peer.name", "network", false},
-}
+func (v spanView) Len() int { return len(v) }
 
-func extractDependencyTarget(attrJSON string) (target, targetType string) {
-	if attrJSON == "" || attrJSON == "{}" {
-		return "", ""
-	}
-
-	var attrs map[string]any
-	if err := json.Unmarshal([]byte(attrJSON), &attrs); err != nil {
-		return "", ""
-	}
-
-	for _, rule := range dependencyTargetRules {
-		v, ok := getStringAttr(attrs, rule.key)
-		if !ok {
-			continue
-		}
-		if !rule.hostOnly {
-			return v, rule.targetType
-		}
-		if host := extractHost(v); host != "" {
-			return host, rule.targetType
-		}
-	}
-	return "", ""
+func (v spanView) At(i int) deptarget.Span {
+	sp := &v[i]
+	return deptarget.Span{TraceID: sp.TraceID, SpanID: sp.SpanID, ParentSpanID: sp.ParentSpanID,
+		Service: sp.Service, Kind: sp.Kind, Attributes: sp.Attributes}
 }

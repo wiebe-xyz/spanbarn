@@ -10,6 +10,7 @@ import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '..
 import { DependencyDetailPanel } from './DependencyDetailPage'
 import { useTimeRange } from '../contexts/useTimeRange'
 import { CoverageNote } from '../components/CoverageNote'
+import { SourceLabel } from '../components/SourceLabel'
 
 type SortField = 'target' | 'targetType' | 'callCount' | 'errorCount' | 'errorRate' | 'p50Us' | 'p95Us' | 'p99Us'
 type SortDir = 'asc' | 'desc'
@@ -141,7 +142,7 @@ export function DependenciesPage(): ReactElement {
                 Type{sortIndicator('targetType')}
               </th>
               <th style={headerStyle()} onClick={() => handleSort('callCount')}>
-                Calls{sortIndicator('callCount')}
+                Calls{sortIndicator('callCount')} <SourceLabel source={dependencies[0]?.source} />
               </th>
               <th style={headerStyle()} onClick={() => handleSort('errorCount')}>
                 Errors{sortIndicator('errorCount')}

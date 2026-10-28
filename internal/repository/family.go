@@ -27,7 +27,7 @@ const (
 // familyTables lists the tables of every family except core. A table not
 // listed here belongs to FamilyCore.
 var familyTables = [numFamilies][]string{
-	FamilySpans:   {"spans", "trace_summaries", "spans_staging", "aggregates", "error_samples", "error_exemplars", "span_rollups", "span_rollup_compaction"},
+	FamilySpans:   {"spans", "trace_summaries", "spans_staging", "aggregates", "error_samples", "error_exemplars", "span_rollups", "span_rollup_compaction", "span_edges"},
 	FamilyLogs:    {"logs"},
 	FamilyMetrics: {"metrics"},
 	FamilyPrompts: {"prompt_records"},

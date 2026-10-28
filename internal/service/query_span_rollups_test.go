@@ -40,7 +40,7 @@ func rollupFixture() []repository.Span {
 }
 
 // seedRollupFixture stores spans as raw spans with their arrival times and
-// as span rollups through the writer's accumulator.
+// as span rollups and span edges through the writer's accumulator.
 func seedRollupFixture(t *testing.T, repo *repository.Repository, spans []repository.Span) {
 	t.Helper()
 	if err := repo.InsertSpans(spans); err != nil {
@@ -52,9 +52,7 @@ func seedRollupFixture(t *testing.T, repo *repository.Repository, spans []reposi
 		}
 	}
 	r := aggregation.NewSpanRollups(repo, aggregation.SpanRollupConfig{HTTPStatus: true}, nil)
-	for _, s := range spans {
-		r.Add(s)
-	}
+	r.AddBatch(spans)
 	if err := r.Flush(); err != nil {
 		t.Fatal(err)
 	}

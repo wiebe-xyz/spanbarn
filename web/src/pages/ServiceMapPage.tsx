@@ -7,6 +7,7 @@ import { getTimeRange } from '../utils/timeRange'
 import { useTimeRange } from '../contexts/useTimeRange'
 import { formatCount, formatErrorRate, errorRateColor } from '../utils/format'
 import { CoverageNote } from '../components/CoverageNote'
+import { SourceLabel } from '../components/SourceLabel'
 
 type SimNode = ServiceMapNode & { x: number; y: number; vx: number; vy: number }
 
@@ -320,7 +321,7 @@ export function ServiceMapPage(): ReactElement {
                   <th style={{ textAlign: 'left' }}>Direction</th>
                   <th style={{ textAlign: 'left' }}>Service</th>
                   <th style={{ textAlign: 'left' }}>Type</th>
-                  <th style={{ textAlign: 'right' }}>Calls</th>
+                  <th style={{ textAlign: 'right' }}>Calls <SourceLabel source={data?.source} /></th>
                   <th style={{ textAlign: 'right' }}>Error Rate</th>
                 </tr>
               </thead>

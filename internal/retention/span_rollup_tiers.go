@@ -39,30 +39,25 @@ func (w *RetentionWorker) deleteAllRollupTiers(ctx context.Context, cfg Config, 
 	return err
 }
 
-// deleteSpanRollupTiers drops each span rollup tier past its window, but
-// never past the point the compactor has rolled it into the tier above, and
-// never more than budget rows in total. The daily tier is the top of the
-// ladder, so its window alone decides. It reports whether it left a backlog.
+// deleteSpanRollupTiers drops each span rollup tier, and the span_edges tier
+// of the same step, past its window, but never past the point the compactor
+// has rolled it into the tier above, and never more than budget rows in
+// total. The daily tier is the top of the ladder, so its window alone
+// decides. It reports whether it left a backlog.
 func (w *RetentionWorker) deleteSpanRollupTiers(ctx context.Context, cfg Config, now time.Time, budget int64) (int64, bool, error) {
 	var total int64
 	for _, tier := range spanRollupTierWindows(cfg) {
 		if total >= budget {
 			return total, true, nil
 		}
-		cutoff := now.Add(-tier.window)
-		if tier.step != rollup.StepDay {
-			through, ok, err := w.repo.SpanRollupWatermark(ctx, tier.step)
-			if err != nil {
-				return total, true, err
-			}
-			if !ok {
-				continue // not compacted yet: nothing of it may go
-			}
-			if through.Before(cutoff) {
-				cutoff = through
-			}
+		cutoff, ok, err := w.spanTierCutoff(ctx, tier.step, now.Add(-tier.window))
+		if err != nil {
+			return total, true, err
 		}
-		n, more, err := w.repo.DeleteSpanRollupsOlderThanLimited(ctx, tier.step, cutoff, budget-total)
+		if !ok {
+			continue // not compacted yet: nothing of it may go
+		}
+		n, more, err := w.deleteSpanTier(ctx, tier.step, cutoff, budget-total)
 		total += n
 		if err != nil {
 			return total, true, err
@@ -76,4 +71,31 @@ func (w *RetentionWorker) deleteSpanRollupTiers(ctx context.Context, cfg Config,
 		}
 	}
 	return total, false, nil
+}
+
+// spanTierCutoff caps a tier's window cutoff at its compaction watermark. ok
+// is false for a tier below the top that was never compacted.
+func (w *RetentionWorker) spanTierCutoff(ctx context.Context, step int64, cutoff time.Time) (time.Time, bool, error) {
+	if step == rollup.StepDay {
+		return cutoff, true, nil
+	}
+	through, ok, err := w.repo.SpanRollupWatermark(ctx, step)
+	if err != nil || !ok {
+		return cutoff, false, err
+	}
+	if through.Before(cutoff) {
+		cutoff = through
+	}
+	return cutoff, true, nil
+}
+
+// deleteSpanTier deletes the span_rollups rows of one tier before cutoff,
+// then the span_edges rows, within budget.
+func (w *RetentionWorker) deleteSpanTier(ctx context.Context, step int64, cutoff time.Time, budget int64) (int64, bool, error) {
+	n, more, err := w.repo.DeleteSpanRollupsOlderThanLimited(ctx, step, cutoff, budget)
+	if err != nil || more || n >= budget {
+		return n, more || n >= budget, err
+	}
+	m, more, err := w.repo.DeleteSpanEdgesOlderThanLimited(ctx, step, cutoff, budget-n)
+	return n + m, more, err
 }

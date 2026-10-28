@@ -109,6 +109,7 @@ linters:
             - "**/internal/selfmetrics/**"
             - "**/internal/observability/**"
             - "**/internal/spanhist/**"
+            - "**/internal/deptarget/**"
             - "!$test"
           deny:
             - pkg: github.com/wiebe-xyz/spanbarn

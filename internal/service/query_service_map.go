@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/deptarget"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -16,6 +17,9 @@ func (s *QueryService) GetServiceMap(ctx context.Context, projectID int64, from,
 	from, to, grain := snapRange(from, to)
 	cacheKey := fmt.Sprintf("svcmap:%d:%d:%d", projectID, from.Unix(), to.Unix())
 	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) (*ServiceMap, error) {
+		if m, ok, err := s.serviceMapFromRollups(ctx, projectID, from, to); ok {
+			return m, err
+		}
 
 		sf := repository.SpanFilter{
 			ProjectID: projectID,
@@ -31,7 +35,6 @@ func (s *QueryService) GetServiceMap(ctx context.Context, projectID int64, from,
 
 		b := newServiceMapBuilder()
 		b.addSpans(spans)
-		b.addCrossServiceCalls(spans)
 		result := b.build()
 		result.Coverage = spanCoverage(spans)
 
@@ -93,42 +96,21 @@ func (b *serviceMapBuilder) addEdge(source, target, targetType string, sp reposi
 	e.record(sp)
 }
 
-// addSpans counts every span against its service and turns client spans into
-// edges towards the dependency they call.
+// addSpans counts every span against its service and adds an edge for every
+// call the spans show. A dependency that is not a service still gets a node.
 func (b *serviceMapBuilder) addSpans(spans []repository.Span) {
 	for _, sp := range spans {
 		if sp.Service != "" {
 			b.node(sp.Service).record(sp)
 		}
-		if !isClientKind(sp.Kind) {
-			continue
-		}
-		target, targetType := extractDependencyTarget(sp.Attributes)
-		if target == "" || sp.Service == "" {
-			continue
-		}
-		b.addEdge(sp.Service, target, targetType, sp)
-		b.node(target) // make sure the dependency exists as a node
 	}
-}
-
-// addCrossServiceCalls adds an edge for every span whose parent belongs to
-// another service.
-func (b *serviceMapBuilder) addCrossServiceCalls(spans []repository.Span) {
-	spanByID := make(map[string]*repository.Span, len(spans))
-	for i := range spans {
-		spanByID[spans[i].SpanID] = &spans[i]
-	}
-	for _, sp := range spans {
-		if sp.ParentSpanID == "" {
-			continue
+	deptarget.Calls(spanView(spans), func(c deptarget.Call) {
+		if c.Source == "" {
+			return
 		}
-		parent, ok := spanByID[sp.ParentSpanID]
-		if !ok || parent.Service == "" || sp.Service == "" || parent.Service == sp.Service {
-			continue
-		}
-		b.addEdge(parent.Service, sp.Service, "service", *parent)
-	}
+		b.addEdge(c.Source, c.Target, c.TargetType, spans[c.Span])
+		b.node(c.Target)
+	})
 }
 
 // build returns the map with nodes and edges ordered by volume.
@@ -143,10 +125,6 @@ func (b *serviceMapBuilder) build() *ServiceMap {
 			ErrorRate:  st.errorRate(),
 		})
 	}
-	sort.Slice(result.Nodes, func(i, j int) bool {
-		return result.Nodes[i].SpanCount > result.Nodes[j].SpanCount
-	})
-
 	for k, st := range b.edges {
 		result.Edges = append(result.Edges, ServiceMapEdge{
 			Source:     k.source,
@@ -157,8 +135,17 @@ func (b *serviceMapBuilder) build() *ServiceMap {
 			ErrorRate:  st.errorRate(),
 		})
 	}
-	sort.Slice(result.Edges, func(i, j int) bool {
-		return result.Edges[i].CallCount > result.Edges[j].CallCount
-	})
+	sortServiceMap(result)
+	result.Source = SourceSpans
 	return result
+}
+
+// sortServiceMap orders nodes and edges by volume.
+func sortServiceMap(m *ServiceMap) {
+	sort.Slice(m.Nodes, func(i, j int) bool {
+		return m.Nodes[i].SpanCount > m.Nodes[j].SpanCount
+	})
+	sort.Slice(m.Edges, func(i, j int) bool {
+		return m.Edges[i].CallCount > m.Edges[j].CallCount
+	})
 }

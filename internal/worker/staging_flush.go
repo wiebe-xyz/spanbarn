@@ -161,9 +161,7 @@ func (f *StagingFlusher) flushOnce(ctx context.Context) (int, error) {
 	// Aggregate every span (boring included) before classification, exactly like
 	// the inline path — now over complete traces.
 	if f.accumulator != nil {
-		for i := range spans {
-			f.accumulator.Add(spans[i])
-		}
+		f.accumulator.AddBatch(spans)
 	}
 	interesting := classifySpansForStorage(spans, f.cfg.SlowThresholdUs, f.cfg.BoringRetention, f.boringPolicy, f.floor, f.hourFloor)
 

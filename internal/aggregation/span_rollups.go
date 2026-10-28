@@ -2,6 +2,7 @@ package aggregation
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -21,10 +22,11 @@ const OtherName = "~other"
 // write path that stays broken would otherwise grow the slots without end.
 const spanRollupRequeueAge = time.Hour
 
-// SpanRollupWriter persists span rollup rows. Satisfied by
+// SpanRollupWriter persists span rollup and span edge rows. Satisfied by
 // *repository.Repository.
 type SpanRollupWriter interface {
 	AddSpanRollups(rows []repository.SpanRollup) error
+	AddSpanEdges(rows []repository.SpanEdge) error
 }
 
 // SpanRollupConfig caps the rows one hour of one project can create.
@@ -35,6 +37,10 @@ type SpanRollupConfig struct {
 	// MaxServices is the number of distinct services per project per hour.
 	// Later services, and their names, fold into OtherName. Default 200.
 	MaxServices int
+	// MaxEdgeTargets is the number of distinct call targets per (project,
+	// source service) per hour in span_edges. Later targets fold into
+	// OtherName. Default 200.
+	MaxEdgeTargets int
 	// FlushInterval is how often Run writes the open buckets. Default 30s.
 	FlushInterval time.Duration
 	// HTTPStatus splits root rows by the span's response code. Off writes 0
@@ -49,6 +55,9 @@ func (c SpanRollupConfig) withDefaults() SpanRollupConfig {
 	if c.MaxServices <= 0 {
 		c.MaxServices = 200
 	}
+	if c.MaxEdgeTargets <= 0 {
+		c.MaxEdgeTargets = 200
+	}
 	if c.FlushInterval <= 0 {
 		c.FlushInterval = 30 * time.Second
 	}
@@ -61,7 +70,8 @@ func (c SpanRollupConfig) withDefaults() SpanRollupConfig {
 // HTTP status of a root span).
 // A bucket is keyed by arrival time. Each flush adds what arrived since the
 // last one into the stored rows, so the open bucket is written on every flush
-// and a restart loses one flush interval at most.
+// and a restart loses one flush interval at most. AddBatch also folds the
+// batch's calls into span_edges, flushed with the rollups.
 type SpanRollups struct {
 	mu     sync.Mutex
 	slots  map[spanRollupKey]*spanRollupSlot
@@ -70,6 +80,7 @@ type SpanRollups struct {
 	cfg    SpanRollupConfig
 	logger *slog.Logger
 	now    func() time.Time
+	edges  *spanEdges
 }
 
 type spanRollupKey struct {
@@ -83,21 +94,45 @@ type spanRollupKey struct {
 	http      int64
 }
 
-type spanRollupSlot struct {
-	count   int64
-	weights spanWeights
-	sum     int64
-	min     int64
-	max     int64
-	hist    spanhist.Hist
+// durationStats is what a span rollup or span edge slot holds: the spans,
+// their sample weights and their durations.
+type durationStats struct {
+	count         int64
+	weights       spanWeights
+	sum, min, max int64
+	hist          spanhist.Hist
 }
+
+func (d *durationStats) observe(s repository.Span) {
+	if d.count == 0 {
+		d.min, d.max = s.DurationUs, s.DurationUs
+	}
+	d.count++
+	d.weights.add(s)
+	d.sum += s.DurationUs
+	d.min = min(d.min, s.DurationUs)
+	d.max = max(d.max, s.DurationUs)
+	d.hist.Observe(s.DurationUs)
+}
+
+func (d *durationStats) merge(o durationStats) {
+	d.count += o.count
+	d.weights.count += o.weights.count
+	d.weights.spans += o.weights.spans
+	d.sum += o.sum
+	d.min = min(d.min, o.min)
+	d.max = max(d.max, o.max)
+	d.hist.Merge(o.hist)
+}
+
+type spanRollupSlot struct{ durationStats }
 
 // NewSpanRollups creates a SpanRollups that writes through w.
 func NewSpanRollups(w SpanRollupWriter, cfg SpanRollupConfig, logger *slog.Logger) *SpanRollups {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &SpanRollups{
+	r := &SpanRollups{
 		slots:  map[spanRollupKey]*spanRollupSlot{},
 		caps:   newRollupCaps(),
 		writer: w,
@@ -105,15 +140,23 @@ func NewSpanRollups(w SpanRollupWriter, cfg SpanRollupConfig, logger *slog.Logge
 		logger: logger,
 		now:    time.Now,
 	}
+	r.edges = newSpanEdges(w, r.cfg, logger, func() time.Time { return r.now() })
+	return r
 }
 
-// Add folds one span into its slot. Safe for concurrent use.
-func (r *SpanRollups) Add(s repository.Span) {
-	at := s.IngestedAt
-	if at.IsZero() {
-		at = r.now()
+// AddBatch folds every span of a batch into its slot, and the calls the batch
+// shows into span_edges. Safe for concurrent use.
+func (r *SpanRollups) AddBatch(spans []repository.Span) {
+	for i := range spans {
+		r.Add(spans[i])
 	}
-	bucket := at.Unix() - at.Unix()%SpanRollupStep
+	r.edges.add(spans)
+}
+
+// Add folds one span into its slot. It records no calls: those need the
+// span's batch (AddBatch). Safe for concurrent use.
+func (r *SpanRollups) Add(s repository.Span) {
+	bucket := arrivalBucket(s, r.now)
 	var code int64
 	if s.ParentSpanID == "" && r.cfg.HTTPStatus {
 		code = httpStatusOf(s.Attributes) // outside the lock: it scans the attributes
@@ -137,15 +180,10 @@ func (r *SpanRollups) Add(s repository.Span) {
 	}
 	sl := r.slots[k]
 	if sl == nil {
-		sl = &spanRollupSlot{min: s.DurationUs, max: s.DurationUs}
+		sl = &spanRollupSlot{}
 		r.slots[k] = sl
 	}
-	sl.count++
-	sl.weights.add(s)
-	sl.sum += s.DurationUs
-	sl.min = min(sl.min, s.DurationUs)
-	sl.max = max(sl.max, s.DurationUs)
-	sl.hist.Observe(s.DurationUs)
+	sl.observe(s)
 }
 
 // rollupStatus maps a span status onto ok, error or unset.
@@ -160,10 +198,16 @@ func rollupStatus(status string) string {
 	}
 }
 
-// Flush writes every slot and starts new ones. When the write fails the
-// slots go back, merged with whatever arrived meanwhile, unless their bucket
-// is older than spanRollupRequeueAge.
+// Flush writes the span rollups and then the span edges. Each that fails
+// keeps its slots for the next flush.
 func (r *SpanRollups) Flush() error {
+	return errors.Join(r.flushRollups(), r.edges.flush())
+}
+
+// flushRollups writes every slot and starts new ones. When the write fails
+// the slots go back, merged with whatever arrived meanwhile, unless their
+// bucket is older than spanRollupRequeueAge.
+func (r *SpanRollups) flushRollups() error {
 	r.mu.Lock()
 	slots := r.slots
 	r.slots = map[spanRollupKey]*spanRollupSlot{}
@@ -211,22 +255,22 @@ func (r *SpanRollups) requeue(slots map[spanRollupKey]*spanRollupSlot) {
 	oldest := r.now().Add(-spanRollupRequeueAge).Unix()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for k, sl := range slots {
-		if k.bucket < oldest {
+	requeueSlots(r.slots, slots, func(k spanRollupKey) bool { return k.bucket >= oldest },
+		func(cur, sl *spanRollupSlot) { cur.merge(sl.durationStats) })
+}
+
+// requeueSlots puts the slots of a failed flush back into dst, merged with
+// any that arrived meanwhile, except those keep refuses.
+func requeueSlots[K comparable, V any](dst, src map[K]*V, keep func(K) bool, merge func(cur, sl *V)) {
+	for k, sl := range src {
+		if !keep(k) {
 			continue
 		}
-		cur := r.slots[k]
-		if cur == nil {
-			r.slots[k] = sl
-			continue
+		if cur := dst[k]; cur != nil {
+			merge(cur, sl)
+		} else {
+			dst[k] = sl
 		}
-		cur.count += sl.count
-		cur.weights.count += sl.weights.count
-		cur.weights.spans += sl.weights.spans
-		cur.sum += sl.sum
-		cur.min = min(cur.min, sl.min)
-		cur.max = max(cur.max, sl.max)
-		cur.hist.Merge(sl.hist)
 	}
 }
 
