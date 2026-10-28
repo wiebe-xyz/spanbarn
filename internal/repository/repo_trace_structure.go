@@ -173,52 +173,6 @@ func pruneTraceSummariesTx(ctx context.Context, tx *sql.Tx, keys []TraceKey) err
 	return refreshTraceStructureTx(ctx, tx, keys)
 }
 
-// deleteExpiredBoringBatch deletes up to limit spans whose expires_at is before
-// cutoff and prunes the summaries of the traces they belonged to, in one
-// transaction. A trace can mix expiring spans with spans kept longer (its
-// spans arrived in batches that were classified apart), so its summary stays
-// when spans remain and goes with its last span otherwise.
-func deleteExpiredBoringBatch(ctx context.Context, db *sql.DB, cutoff time.Time, limit int) (int64, error) {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx,
-		`DELETE FROM spans WHERE rowid IN (
-			SELECT rowid FROM spans
-			WHERE expires_at IS NOT NULL AND expires_at < ?
-			LIMIT ?)
-		RETURNING project_id, trace_id`,
-		cutoff, limit)
-	if err != nil {
-		return 0, err
-	}
-	var n int64
-	seen := make(map[TraceKey]bool)
-	var keys []TraceKey
-	for rows.Next() {
-		var k TraceKey
-		if err := rows.Scan(&k.ProjectID, &k.TraceID); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		n++
-		if !seen[k] {
-			seen[k] = true
-			keys = append(keys, k)
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	if err := pruneTraceSummariesTx(ctx, tx, keys); err != nil {
-		return 0, err
-	}
-	return n, tx.Commit()
-}
-
 // BackfillTraceStructure fills has_root and orphan_count for summaries written
 // before migration 035, at most max summaries per call. It reports whether rows
 // remain, so the caller knows more cycles are needed. Each batch takes the

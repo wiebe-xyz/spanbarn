@@ -103,3 +103,22 @@ func TestSlowWriteOpsReportRows(t *testing.T) {
 		}
 	}
 }
+
+// The boring-span expiry's delete job reports the spans it deleted.
+func TestBoringExpiryReportsRows(t *testing.T) {
+	jobRows := recordJobRows(t)
+	repo := setupTestDB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := writescheduler.New()
+	repo.SetWriteScheduler(s)
+	go s.Run(ctx)
+
+	insertBoringSpans(t, repo, 1, 3, time.Now().Add(-2*time.Hour).UTC())
+	if _, err := repo.DeleteExpiredBoringSpans(ctx, time.Now()); err != nil {
+		t.Fatalf("DeleteExpiredBoringSpans: %v", err)
+	}
+	if got := jobRows()[boringExpiryLabel]; len(got) != 1 || got[0] != 3 {
+		t.Errorf("%s job rows = %v, want [3]", boringExpiryLabel, got)
+	}
+}
