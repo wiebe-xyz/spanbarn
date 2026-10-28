@@ -3,33 +3,92 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
-// evictCascadeTables lists the trace_id-keyed tables a victim trace is removed
-// from. spans/error_samples/prompt_records/logs each have a trace_id index;
-// trace_summaries is keyed by (project_id, trace_id).
+// evictCascadeTables lists the trace_id-keyed tables of the span family a
+// victim trace is removed from, in delete order. spans and error_samples have a
+// trace_id index; trace_summaries is keyed by (project_id, trace_id). Their
+// deletes check the victim's summary again, so the summary goes last: a stop
+// in between leaves the summary, and the next pass picks the trace again.
 //
-// The span-family tables go in the transaction that picks the victims. The
-// others live in their own files in a split layout, and a transaction cannot
-// commit two files atomically, so they are deleted after it, one write each.
-// If the process dies in between, those rows outlive their trace until their
-// own retention removes them; the trace itself is already gone from every list.
+// evictCascadeOtherTables live in their own files in a split layout, and are
+// deleted after the summaries, one write each, for the traces whose summary
+// went. If the process dies in between, those rows outlive their trace until
+// their own retention removes them; the trace itself is already gone from
+// every list.
 var (
 	evictCascadeTables      = []string{"spans", "error_samples", "trace_summaries"}
 	evictCascadeOtherTables = []string{"prompt_records", "logs"}
 )
+
+// evictChunk is how many rows one write job of the eviction deletes. A trace
+// of project 81 on prod averages 65 spans and reaches 13,439, so one batch of
+// victims spans tens of thousands of rows.
+const evictChunk = 1000
+
+// evictableSQL is true when the summary alias of project ?2 is one the
+// eviction takes: no error, ingested before ?3, not pinned.
+func evictableSQL(alias string) string {
+	return alias + `.project_id = ?2 AND ` + alias + `.has_error = 0 AND ` + alias + `.ingested_at < ?3
+		  AND NOT EXISTS (SELECT 1 FROM pinned_traces p
+		                  WHERE p.project_id = ` + alias + `.project_id
+		                    AND p.trace_id = ` + alias + `.trace_id)`
+}
+
+// evictTraceIndex names the trace_id index of the tables keyed by trace_id
+// alone.
+var evictTraceIndex = map[string]string{
+	"spans":         "idx_spans_trace",
+	"error_samples": "idx_error_samples_trace",
+}
+
+// evictRowsSQL deletes up to ?4 rows of table that belong to the traces of
+// project ?2 listed in the JSON array ?1 and whose summary the eviction still
+// takes. The check runs again inside the write, because the victims were read
+// outside it: a trace can have gained an error or a pin since. The summaries
+// delete returns the trace ids it removed.
+//
+// The CROSS JOIN keeps the id list as the outer loop, and spans and
+// error_samples are sought through their trace_id index. Left to the planner,
+// they were walked by project_id, all of the project's rows, and filtered
+// against the list.
+func evictRowsSQL(table string) string {
+	if table == "trace_summaries" {
+		return `DELETE FROM trace_summaries WHERE rowid IN (
+			SELECT t.rowid FROM json_each(?1) j
+			CROSS JOIN trace_summaries t ON t.project_id = ?2 AND t.trace_id = j.value
+			WHERE ` + evictableSQL("t") + `
+			LIMIT ?4)
+			RETURNING trace_id`
+	}
+	return `DELETE FROM ` + table + ` WHERE rowid IN (
+		SELECT x.rowid FROM json_each(?1) j
+		CROSS JOIN ` + table + ` x INDEXED BY ` + evictTraceIndex[table] + ` ON x.trace_id = j.value
+		WHERE x.project_id = ?2
+		  AND EXISTS (SELECT 1 FROM trace_summaries t
+		              WHERE t.trace_id = x.trace_id AND ` + evictableSQL("t") + `)
+		LIMIT ?4)
+		RETURNING trace_id`
+}
 
 // EvictProjectTracesOlderThan enforces a per-project retention cap by deleting a
 // project's NON-ERROR, non-pinned traces whose ingested_at is before cutoff,
 // cascading across every trace_id-keyed table. Error traces are never evicted
 // (they remain the health signal), pinned traces are protected, and metrics are
 // untouched (aggregates are rolled up at ingest, independent of raw-trace
-// storage). Batched like the other retention deletes so the single write
-// connection is released — and the WAL checkpoint/readers un-starved — between
-// batches.
+// storage). It returns the number of traces it evicted.
+//
+// Each batch of up to retentionDeleteBatch victims is read outside the write
+// slot (on the read pool when there is one), and each table's rows are
+// deleted evictChunk at a time, one write job per chunk. One job used to read
+// the victims and delete them from every span-family table, and on prod it
+// held the write slot 11.5s (2026-10-28).
 func (r *Repository) EvictProjectTracesOlderThan(ctx context.Context, projectID int64, cutoff time.Time) (int64, error) {
 	c := cutoff.UTC()
 	var total int64
@@ -37,19 +96,19 @@ func (r *Repository) EvictProjectTracesOlderThan(ctx context.Context, projectID 
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
-		var ids []any
-		if err := r.execLow(FamilySpans, func(db *sql.DB) error {
-			var e error
-			ids, e = r.evictTraceBatch(ctx, db, projectID, c)
-			return e
-		}); err != nil {
+		victims, err := r.evictVictims(ctx, projectID, c)
+		if err != nil || len(victims) == 0 {
 			return total, err
 		}
-		if err := r.deleteOtherTraceRows(ctx, ids); err != nil {
+		evicted, err := r.evictTraces(ctx, projectID, c, victims)
+		if err != nil {
 			return total, err
 		}
-		total += int64(len(ids))
-		if len(ids) < retentionDeleteBatch {
+		if err := r.deleteOtherTraceRows(ctx, evicted); err != nil {
+			return total, err
+		}
+		total += int64(len(evicted))
+		if len(victims) < retentionDeleteBatch {
 			return total, nil
 		}
 		if r.deleteBatchYield > 0 {
@@ -60,6 +119,73 @@ func (r *Repository) EvictProjectTracesOlderThan(ctx context.Context, projectID 
 			}
 		}
 	}
+}
+
+// evictVictimsSQL reads up to ?1 trace ids of project ?2 the eviction takes,
+// oldest first.
+var evictVictimsSQL = `
+	SELECT t.trace_id FROM trace_summaries t
+	WHERE ` + evictableSQL("t") + `
+	ORDER BY t.ingested_at
+	LIMIT ?1`
+
+// evictVictims reads up to retentionDeleteBatch trace ids of projectID the
+// eviction takes, oldest first.
+func (r *Repository) evictVictims(ctx context.Context, projectID int64, cutoff time.Time) ([]any, error) {
+	var q rowQuerier = r.db
+	if r.logTrimReads != nil {
+		q = r.logTrimReads
+	}
+	return queryStrings(ctx, q, evictVictimsSQL, retentionDeleteBatch, projectID, cutoff)
+}
+
+// evictTraces deletes the victims' rows from evictCascadeTables, a chunk per
+// write job, and returns the trace ids whose summary it deleted.
+func (r *Repository) evictTraces(ctx context.Context, projectID int64, cutoff time.Time, victims []any) ([]any, error) {
+	payload, err := json.Marshal(victims)
+	if err != nil {
+		return nil, err
+	}
+	var evicted []any
+	for _, table := range evictCascadeTables {
+		query, label := evictRowsSQL(table), "EvictProjectTracesOlderThan:"+table
+		for {
+			var ids []any
+			err := r.submit(FamilySpans, writescheduler.Low, label, func(db *sql.DB) error {
+				var e error
+				ids, e = queryStrings(ctx, db, query, string(payload), projectID, cutoff, evictChunk)
+				return e
+			})
+			if err != nil {
+				return evicted, err
+			}
+			if table == "trace_summaries" {
+				evicted = append(evicted, ids...)
+			}
+			if len(ids) < evictChunk {
+				break
+			}
+		}
+	}
+	return evicted, nil
+}
+
+// queryStrings runs query and returns its single text column.
+func queryStrings(ctx context.Context, db rowQuerier, query string, args ...any) ([]any, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []any
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // deleteOtherTraceRows removes ids from the tables outside the span family.
@@ -86,56 +212,6 @@ func (r *Repository) deleteOtherTraceRows(ctx context.Context, ids []any) error 
 func placeholderList(n int) string {
 	p := strings.Repeat("?,", n)
 	return p[:len(p)-1]
-}
-
-// evictTraceBatch selects up to retentionDeleteBatch victim trace_ids and deletes
-// them across evictCascadeTables in one transaction. Returns the evicted trace
-// ids (none means nothing was eligible).
-func (r *Repository) evictTraceBatch(ctx context.Context, db *sql.DB, projectID int64, cutoff time.Time) ([]any, error) {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	rows, err := tx.QueryContext(ctx, `
-		SELECT trace_id FROM trace_summaries
-		WHERE project_id = ? AND has_error = 0 AND ingested_at < ?
-		  AND NOT EXISTS (SELECT 1 FROM pinned_traces p
-		                  WHERE p.project_id = trace_summaries.project_id
-		                    AND p.trace_id  = trace_summaries.trace_id)
-		ORDER BY ingested_at
-		LIMIT ?`, projectID, cutoff, retentionDeleteBatch)
-	if err != nil {
-		return nil, err
-	}
-	var ids []any
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(ids) == 0 {
-		return nil, nil
-	}
-
-	q := " WHERE trace_id IN (" + placeholderList(len(ids)) + ")"
-	for _, table := range evictCascadeTables {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+q, ids...); err != nil {
-			return nil, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return ids, nil
 }
 
 // ProjectNonErrorTraceCountCutoff returns the ingested_at boundary that keeps the
