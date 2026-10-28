@@ -72,13 +72,15 @@ func TestHandleSetupKeepsBrandedHost(t *testing.T) {
 		"| Setup URL  | https://sb.acme.nl/api/v1/setup/acme |",
 		"export OTEL_EXPORTER_OTLP_ENDPOINT=https://sb.acme.nl/\n",
 		"curl -s -X POST '" + defaultPublicURL + "/api/v1/projects/",
+		"Settings page (" + defaultPublicURL + "/settings)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("setup guide is missing %q", want)
 		}
 	}
 	for _, line := range strings.Split(body, "\n") {
-		if strings.Contains(line, "spanbarn.wiebe.xyz") && !strings.Contains(line, "/api/v1/projects/") {
+		dashboard := strings.Contains(line, "/api/v1/projects/") || strings.Contains(line, defaultPublicURL+"/settings")
+		if strings.Contains(line, "spanbarn.wiebe.xyz") && !dashboard {
 			t.Errorf("branded guide leaks the canonical host outside dashboard links: %q", line)
 		}
 	}
