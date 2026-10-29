@@ -72,8 +72,13 @@ func newCarryTally(maxBufferedSpans int) *carryTally {
 // drop counts a clean trace the buffer is discarding. The trace is held as
 // the operation's fallback carrier when it fits the span budget; otherwise
 // the trace held before it stays.
+//
+// A trace whose root span this pod never saw is not counted: during a rollout
+// the root is often on the other pod, which counts the trace, and counting
+// the part here as well would count it twice. Such parts kept by the ratio
+// carry the ratio as their weight instead (rootlessWeight).
 func (c *carryTally) drop(tr *bufferedTrace, now time.Time) {
-	if len(tr.spans) == 0 {
+	if len(tr.spans) == 0 || !tr.hasRoot() {
 		return
 	}
 	c.mu.Lock()

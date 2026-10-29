@@ -20,8 +20,9 @@ spec:
         spanbarn.io/serves-reads: "true"
     spec:
       # The grace period counts from the preStop sleep: 10s sleep, then SIGTERM,
-      # then up to 10s for HTTP shutdown and the spool flush.
-      terminationGracePeriodSeconds: 60
+      # up to 10s for HTTP shutdown, up to 35s for the trace buffer to drain in
+      # order (root grace 30s plus slack), then the spool flush.
+      terminationGracePeriodSeconds: 90
       imagePullSecrets:
         - name: ghcr-secret
       containers:

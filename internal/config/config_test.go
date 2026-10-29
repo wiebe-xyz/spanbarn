@@ -119,6 +119,9 @@ func TestTraceBufferLimitsDefault(t *testing.T) {
 	if cfg.TraceBufferTTLSeconds != 600 {
 		t.Errorf("TraceBufferTTLSeconds = %d, want 600", cfg.TraceBufferTTLSeconds)
 	}
+	if cfg.TraceBufferRootGraceSeconds != 30 {
+		t.Errorf("TraceBufferRootGraceSeconds = %d, want 30", cfg.TraceBufferRootGraceSeconds)
+	}
 }
 
 // TestTraceBufferLimitsEnvOverride pins that the trace buffer's ceiling is
