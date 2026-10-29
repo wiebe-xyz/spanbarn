@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/XSAM/otelsql"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -29,11 +30,12 @@ type DB struct {
 	ckptErr  error
 }
 
+// sqliteSpanName names a span after the statement's first keyword. It splits
+// on any whitespace: a query starting "SELECT\n" became "sqlite.select\n\t(select".
 func sqliteSpanName(_ context.Context, _ otelsql.Method, query string) string {
-	if query != "" {
-		if i := strings.IndexByte(query, ' '); i > 0 {
-			return "sqlite." + strings.ToLower(strings.TrimSpace(query[:i]))
-		}
+	q := strings.TrimSpace(query)
+	if i := strings.IndexFunc(q, unicode.IsSpace); i > 0 {
+		return "sqlite." + strings.ToLower(q[:i])
 	}
 	return "sqlite.exec"
 }
@@ -65,7 +67,11 @@ var otelOpts = []otelsql.Option{
 	otelsql.WithAttributes(semconv.DBSystemSqlite),
 	otelsql.WithSpanNameFormatter(sqliteSpanName),
 	otelsql.WithSpanOptions(otelsql.SpanOptions{
-		SpanFilter: func(ctx context.Context, _ otelsql.Method, _ string, _ []driver.NamedValue) bool {
+		SpanFilter: func(ctx context.Context, method otelsql.Method, query string, _ []driver.NamedValue) bool {
+			if c := statementCountsFrom(ctx); c != nil {
+				c.count(ctx, method, query)
+				return false
+			}
 			return !spanTracingSuppressed(ctx)
 		},
 	}),
