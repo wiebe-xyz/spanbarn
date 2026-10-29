@@ -132,13 +132,21 @@ func (m *ShardManager) onShard(f Family, start time.Time, label string, fn func(
 
 // onQueue runs fn on f's write queue, or inline without one.
 func (m *ShardManager) onQueue(f Family, label string, fn func() error) error {
+	return m.onQueueRows(f, label, func() (int64, error) { return writescheduler.NoRows, fn() })
+}
+
+// onQueueRows is onQueue for a write that reports how many rows it wrote, or
+// writescheduler.NoRows.
+func (m *ShardManager) onQueueRows(f Family, label string, fn func() (int64, error)) error {
 	m.mu.Lock()
 	s := m.schedulers[f]
 	m.mu.Unlock()
 	if s == nil {
-		return fn()
+		_, err := fn()
+		return err
 	}
-	return s.Submit(context.Background(), writescheduler.Low, label, fn)
+	_, err := s.SubmitRows(context.Background(), writescheduler.Low, label, fn)
+	return err
 }
 
 // fileBytes returns the size of a shard's file and its WAL.

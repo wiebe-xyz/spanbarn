@@ -133,12 +133,12 @@ func (m *ShardManager) SetScheduler(f Family, s *writescheduler.Scheduler) {
 // submit runs fn on f's queue against the shard that holds rows ingested at
 // the time fn runs. The shard is picked inside the queued write, so a write
 // queued before midnight and run after it lands in the new day.
-func (m *ShardManager) submit(f Family, label string, fn func(db *sql.DB) error) error {
-	return m.onQueue(f, label, func() error {
+func (m *ShardManager) submit(f Family, label string, fn func(db *sql.DB) (int64, error)) error {
+	return m.onQueueRows(f, label, func() (int64, error) {
 		spec := m.specs[f]
 		h, err := m.shard(context.Background(), spec, spec.start(m.now()))
 		if err != nil {
-			return err
+			return 0, err
 		}
 		return fn(h.DB)
 	})
