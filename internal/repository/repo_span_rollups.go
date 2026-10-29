@@ -81,26 +81,26 @@ func spanRollupArgs(s SpanRollup) []any {
 // chunk that fails stops the batch; the chunks before it stay written.
 func (r *Repository) AddSpanRollups(rows []SpanRollup) error {
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
-	return writeTierRows(r, context.Background(), "AddSpanRollups", spanRollupAddSQL, rows, compareSpanRollupKey, spanRollupArgs)
+	return writeTierRows(r, context.Background(), "AddSpanRollups", spanRollupAddSQL, rows, spanRollupChunk, compareSpanRollupKey, spanRollupArgs)
 }
 
 // ReplaceSpanRollups writes compacted rows whole, chunked like AddSpanRollups.
 func (r *Repository) ReplaceSpanRollups(ctx context.Context, rows []SpanRollup) error {
-	return writeTierRows(r, ctx, "ReplaceSpanRollups", spanRollupReplaceSQL, rows, compareSpanRollupKey, spanRollupArgs)
+	return writeTierRows(r, ctx, "ReplaceSpanRollups", spanRollupReplaceSQL, rows, spanRollupChunk, compareSpanRollupKey, spanRollupArgs)
 }
 
 // writeTierRows writes rows of a tiered table with query, sorted by key so
 // each chunk writes neighbouring leaves, one transaction and one write slot
-// per chunk of spanRollupChunk rows. A chunk that fails stops the batch; the
+// per chunk of chunkRows rows. A chunk that fails stops the batch; the
 // chunks before it stay written. Each chunk's job is named label and reports
 // its rows. The label is passed in because the stack-derived one names the
 // loop body of this generic function, which reads as "]-range1" (2026-10-28).
 // Writing telemetry must not emit telemetry, see WithoutSpanTracing.
-func writeTierRows[T any](r *Repository, ctx context.Context, label, query string, rows []T, compare func(a, b T) int, args func(T) []any) error {
+func writeTierRows[T any](r *Repository, ctx context.Context, label, query string, rows []T, chunkRows int, compare func(a, b T) int, args func(T) []any) error {
 	ctx = WithoutSpanTracing(ctx)
 	sorted := slices.Clone(rows)
 	slices.SortFunc(sorted, compare)
-	for chunk := range slices.Chunk(sorted, spanRollupChunk) {
+	for chunk := range slices.Chunk(sorted, chunkRows) {
 		if _, err := r.submitRows(FamilySpans, writescheduler.Low, label, func(db *sql.DB) (int64, error) {
 			if err := writeTierChunk(ctx, db, query, chunk, args); err != nil {
 				return 0, err

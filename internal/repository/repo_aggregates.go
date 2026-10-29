@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"fmt"
@@ -45,34 +46,33 @@ func (r *Repository) UpsertAggregate(agg Aggregate) error {
 	})
 }
 
+// aggregateChunk caps the rows one aggregate upsert writes in one write slot.
+// Each row seeks idx_agg_lookup and rewrites its idx_agg_stats entry, about
+// 4.5 to 5.9 ms a row on production's cold disk, so flushes of 612 to 1,213
+// rows held the spans writer for 4.5 to 9.4 s on 2026-10-29. A chunk of 150
+// stays under a second.
+const aggregateChunk = 150
+
+// UpsertAggregates adds a batch of aggregate rows into their buckets, in
+// idx_agg_lookup key order, one transaction and one write slot per chunk of
+// aggregateChunk rows. A chunk that fails stops the batch and the chunks
+// before it stay written. Retention persists a batch before it deletes the
+// spans, so after such a failure its next cycle aggregates the same spans
+// again and adds the written chunks a second time.
 func (r *Repository) UpsertAggregates(aggs []Aggregate) error {
-	if len(aggs) == 0 {
-		return nil
-	}
-	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
-	ctx := WithoutSpanTracing(context.Background())
-	_, err := r.execLowRows(FamilySpans, func(db *sql.DB) (int64, error) {
-		n := int64(len(aggs))
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return n, err
-		}
-		defer tx.Rollback()
+	return writeTierRows(r, context.Background(), "UpsertAggregates", upsertAggregateSQL, aggs, aggregateChunk, compareAggregateKey, upsertAggregateArgs)
+}
 
-		stmt, err := tx.PrepareContext(ctx, upsertAggregateSQL)
-		if err != nil {
-			return n, err
-		}
-		defer stmt.Close()
-
-		for _, agg := range aggs {
-			if _, err := stmt.ExecContext(ctx, upsertAggregateArgs(agg)...); err != nil {
-				return n, err
-			}
-		}
-		return n, tx.Commit()
-	})
-	return err
+// compareAggregateKey orders aggregates by idx_agg_lookup.
+func compareAggregateKey(a, b Aggregate) int {
+	return cmp.Or(
+		cmp.Compare(a.ProjectID, b.ProjectID),
+		strings.Compare(a.Service, b.Service),
+		strings.Compare(a.Operation, b.Operation),
+		strings.Compare(a.Resource, b.Resource),
+		strings.Compare(a.Kind, b.Kind),
+		a.Bucket.Compare(b.Bucket),
+	)
 }
 
 func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
