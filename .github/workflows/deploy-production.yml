@@ -74,13 +74,26 @@ jobs:
           if [ -z "${VERSION}" ]; then
             # Automatic run: the tag Binary Release put on the tested commit.
             HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            # Binary Release tags only the head of main. A commit main moved
+            # past before its CI finished gets no tag of its own: the newer
+            # commit's tag contains it, and the run for that tag deploys it.
+            # Those cases end this job with no sha, which skips the deploy.
             for i in $(seq 1 40); do
               git fetch --tags --force -q
               VERSION=$(git tag --points-at "${HEAD_SHA}" -l 'v*' --sort=-version:refname | head -1)
               [ -n "${VERSION}" ] && break
+              NEWER=$(git tag --contains "${HEAD_SHA}" -l 'v*' --sort=-version:refname | head -1)
+              if [ -n "${NEWER}" ]; then
+                echo "::notice::${HEAD_SHA} has no tag of its own; ${NEWER} contains it and its run deploys it."
+                exit 0
+              fi
               echo "No release tag on ${HEAD_SHA} yet (${i}/40)"
               sleep 15
             done
+            if [ -z "${VERSION}" ] && [ "$(git rev-parse origin/main)" != "${HEAD_SHA}" ]; then
+              echo "::notice::${HEAD_SHA} is behind main and has no tag; the run for the newer commit deploys it."
+              exit 0
+            fi
             [ -n "${VERSION}" ] || { echo "ERROR: no release tag appeared for ${HEAD_SHA}"; exit 1; }
           fi
           SHA=$(git rev-list -n1 "${VERSION}" 2>/dev/null) || \
@@ -102,6 +115,8 @@ jobs:
 
   deploy:
     needs: preflight
+    # Preflight leaves sha empty when a newer release covers this commit.
+    if: needs.preflight.outputs.sha != ''
     runs-on: [self-hosted, build]
     # Apply plus smoke can take about 30 minutes; a rollback after a late
     # failure needs the same again.
