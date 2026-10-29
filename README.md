@@ -284,7 +284,8 @@ project automatically.
 | `SPANBARN_DB_BALLAST_MB` | `256` | Reserved disk space released so a full volume can delete its way out; `0` disables |
 | `SPANBARN_TRACE_BUFFER_MIN_TRACES_PER_HOUR` | `1` | Traces per project and root operation per hour the trace buffer keeps whatever the sample ratio says, so a daily job is stored. `0` disables. Traces whose root span exceeds `SPANBARN_SLOW_THRESHOLD_MS` are always kept. |
 | `SPANBARN_TRACE_BUFFER_MAX_SPANS` | `50000` | Spans the tail-sampling trace buffer holds across all in-flight traces. Above it the buffer sheds traces sampling would discard anyway; if `trace_buffer_spans_lost_total` is climbing, this is too small for your span rate. `0` uncaps it (unbounded memory — dev only). |
-| `SPANBARN_TRACE_BUFFER_TTL_SECONDS` | `600` | How long a trace is buffered before its sampling decision. Longer catches later error spans; shorter holds fewer spans at the same ingest rate. |
+| `SPANBARN_TRACE_BUFFER_TTL_SECONDS` | `600` | How long a trace whose root span never arrives is buffered before its sampling decision. It is also how long a decision is remembered for spans that arrive after it. |
+| `SPANBARN_TRACE_BUFFER_ROOT_GRACE_SECONDS` | `30` | How long after its root span arrives a trace is decided. Spans that arrive later follow the decision. `0` makes every trace wait the TTL. |
 | `SPANBARN_SLOW_THRESHOLD_MS` | `500` | Slow span threshold (ms) |
 | `SPANBARN_QUERY_TIMEOUT_SECONDS` | `30` | Query timeout for dashboard queries |
 | `SPANBARN_AGGREGATION_INTERVAL` | `1m` | Aggregation bucket size |

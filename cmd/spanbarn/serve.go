@@ -100,11 +100,17 @@ func drainTraceBuffer(wg *sync.WaitGroup, buf *ingest.TraceBuffer, handler *inge
 	return drained
 }
 
+// traceDrainSlack is how long past the root grace closeTraceBuffer lets the
+// buffer drain in order before it decides the rest at once.
+const traceDrainSlack = 5 * time.Second
+
 // closeTraceBuffer decides every trace still in the buffer and waits until the
-// kept ones are in the ingest handler. Call it after the servers stop taking
-// spans and before handler.Stop, which writes the handler's queue to the spool.
+// kept ones are in the ingest handler. The traces go in the order they come
+// due, over at most the root grace, so a rollout shows no burst (#451). Call
+// it after the servers stop taking spans and before handler.Stop, which writes
+// the handler's queue to the spool.
 func closeTraceBuffer(buf *ingest.TraceBuffer, drained <-chan struct{}, logger *slog.Logger) {
-	res := buf.Close(time.Now())
+	res := buf.Drain(time.Now().Add(buf.RootGrace() + traceDrainSlack))
 	<-drained
 	logger.Info("trace buffer flushed on shutdown",
 		"traces", res.Traces, "spans", res.Spans, "kept_spans", res.Kept)

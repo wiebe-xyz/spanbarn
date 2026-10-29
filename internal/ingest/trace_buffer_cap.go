@@ -25,7 +25,9 @@ func (tb *TraceBuffer) ensureRoom(keep *bufferedTrace) bool {
 
 // evictOne frees one buffered trace, preferring traces sampling would discard
 // anyway, and reports whether it found one. Error traces are never evicted.
-// Caller holds the lock.
+// The trace's decision is recorded, so its later spans follow it instead of
+// starting a new trace whose drop would be counted again. Caller holds the
+// lock.
 func (tb *TraceBuffer) evictOne(keep *bufferedTrace) bool {
 	if tr := tb.nextVictim(&tb.sacrificeQ, &tb.sacrificeHead, true, keep); tr != nil {
 		tb.remove(tr)
@@ -33,6 +35,7 @@ func (tb *TraceBuffer) evictOne(keep *bufferedTrace) bool {
 			tb.evictedSacrif += int64(len(tr.spans))
 			tb.evictedSTotal += int64(len(tr.spans))
 			tb.carry.drop(tr, tb.now())
+			tb.decided.put(tr.id, 0, false, tb.now())
 		}
 		return true
 	}
@@ -41,6 +44,7 @@ func (tb *TraceBuffer) evictOne(keep *bufferedTrace) bool {
 		tb.evictedKTotal += int64(len(tr.spans))
 		tb.remove(tr)
 		tb.carry.drop(tr, tb.now())
+		tb.decided.put(tr.id, 0, false, tb.now())
 		return true
 	}
 	return false
@@ -59,6 +63,7 @@ func (tb *TraceBuffer) rescueAtCap(tr *bufferedTrace) bool {
 		return false
 	}
 	stampWeight(tr, w)
+	tb.decided.put(tr.id, w, false, tb.now())
 	tb.rescuedAtCap = append(tb.rescuedAtCap, tr)
 	tb.evictedRescue += int64(len(tr.spans))
 	tb.evictedRTotal += int64(len(tr.spans))

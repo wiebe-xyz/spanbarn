@@ -34,6 +34,9 @@ func weightBuffer(rules RescueRules) *TraceBuffer {
 
 func weightTrace(id string, root model.SpanRecord, extra ...model.SpanRecord) *bufferedTrace {
 	tr := &bufferedTrace{id: id, rootOp: root.Name, projectID: root.ProjectID, spans: append([]model.SpanRecord{root}, extra...)}
+	if root.ParentSpanID == "" {
+		tr.rootSeen = time.Unix(1, 0)
+	}
 	for _, s := range tr.spans {
 		if s.Status == "error" {
 			tr.hasError = true

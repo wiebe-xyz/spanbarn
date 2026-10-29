@@ -204,6 +204,10 @@ type Config struct {
 	// making its sampling decision. Longer catches later error spans; shorter
 	// holds fewer spans for the same ingest rate.
 	TraceBufferTTLSeconds int // SPANBARN_TRACE_BUFFER_TTL_SECONDS (default 600)
+	// TraceBufferRootGraceSeconds is how long after its root span arrives a
+	// trace is decided. Only traces whose root never arrives wait the TTL.
+	// 0 makes every trace wait the TTL.
+	TraceBufferRootGraceSeconds int // SPANBARN_TRACE_BUFFER_ROOT_GRACE_SECONDS (default 30)
 	// E2EEnabled explicitly opens the /api/v1/e2e/session endpoint (Playwright
 	// login bypass). Default false; production additionally hard-blocks it
 	// regardless of this flag. SPANBARN_E2E_ENABLED.
@@ -286,6 +290,7 @@ func Load() Config {
 		TraceBufferWindowSeconds:     getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
 		TraceBufferMaxSpans:          getenvInt("SPANBARN_TRACE_BUFFER_MAX_SPANS", 50000),
 		TraceBufferTTLSeconds:        getenvInt("SPANBARN_TRACE_BUFFER_TTL_SECONDS", 600),
+		TraceBufferRootGraceSeconds:  getenvIntAllowZero("SPANBARN_TRACE_BUFFER_ROOT_GRACE_SECONDS", 30),
 		StagingMaxAgeSeconds:         getenvInt("SPANBARN_STAGING_MAX_AGE_SECONDS", 900),
 		TraceBufferMinPerHour:        getenvIntAllowZero("SPANBARN_TRACE_BUFFER_MIN_TRACES_PER_HOUR", 1),
 		SlowThresholdMS:              getenvInt("SPANBARN_SLOW_THRESHOLD_MS", 500),

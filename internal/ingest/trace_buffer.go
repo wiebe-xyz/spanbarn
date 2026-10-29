@@ -2,8 +2,6 @@ package ingest
 
 import (
 	"context"
-	"encoding/binary"
-	"encoding/hex"
 	"log/slog"
 	"sync"
 	"time"
@@ -14,15 +12,18 @@ import (
 )
 
 const (
-	// DefaultTraceBufferTTL is how long a trace is buffered before a sampling
-	// decision is made. Long enough to collect all spans; short enough that
-	// errors are visible within a reasonable window.
+	// DefaultTraceBufferTTL is how long a trace whose root span never arrives
+	// is buffered before a sampling decision is made, and how long a decision
+	// is held for spans that arrive after it. A trace with a root is decided
+	// DefaultRootGrace after the root arrived.
 	DefaultTraceBufferTTL = 10 * time.Minute
 
 	// DefaultSampleRatio keeps 1 in every N traces. 1000 means 0.1%.
 	DefaultSampleRatio = 1000
 
-	gcInterval = 30 * time.Second
+	// gcInterval is how often the buffer decides the traces that came due. It
+	// bounds how late after rootGrace a trace is released.
+	gcInterval = 5 * time.Second
 
 	// outDeliverTimeout is how long Flush will wait for the drain goroutine to
 	// accept a kept trace before giving up on it. Bounded so the gc loop cannot
@@ -31,9 +32,10 @@ const (
 	outDeliverTimeout = 2 * time.Second
 
 	// DefaultMaxBufferedSpans bounds how many spans are held across all in-flight
-	// traces. Every span waits out the full TTL before a sampling decision is
-	// made, so the buffer holds TTL-worth of *unsampled* traffic — including
-	// self-instrument spans, whose volume scales with writer load. An unbounded
+	// traces. Every span waits for its trace's decision, so the buffer holds
+	// the root grace's worth of *unsampled* traffic, and the TTL's worth for
+	// traces without a root — including self-instrument spans, whose volume
+	// scales with writer load. An unbounded
 	// map therefore grows fastest exactly when the pod is already struggling, so
 	// it is capped: the reader runs under a 448MiB GOMEMLIMIT and this map is
 	// live data the GC cannot reclaim.
@@ -55,8 +57,10 @@ type SampleRatioLookup interface {
 	Ratio(ctx context.Context, projectID int64, operation string) int
 }
 
-// TraceBuffer holds complete traces in memory for up to TTL, then applies
-// ratio-based sampling at flush time. Error traces always pass through intact.
+// TraceBuffer holds traces in memory until DefaultRootGrace after their root
+// span arrived, or for the TTL when no root comes, then applies ratio-based
+// sampling at flush time. Error traces always pass through intact. Spans that
+// arrive after the decision follow it (see trace_buffer_decided.go).
 //
 // The sampling decision for a trace is deterministic: it uses the first 8
 // bytes of the trace ID as a uint64, then checks value % ratio == 0. The
@@ -119,7 +123,16 @@ type TraceBuffer struct {
 	evictedRescue int64
 	evictedRTotal int64
 
-	// now is the clock for decisions made at eviction. Tests replace it.
+	// rootGrace is how long after its root span arrived a trace is decided.
+	// See trace_buffer_decide.go.
+	rootGrace time.Duration
+
+	// decided holds the decisions of the last TTL, which late spans follow.
+	// See trace_buffer_decided.go.
+	decided *decidedTraces
+
+	// now is the clock for arrival times and for decisions made at eviction.
+	// Tests replace it.
 	now func() time.Time
 
 	// Accepted spans are sent to this channel for the caller to drain. Close
@@ -141,8 +154,12 @@ type bufferedTrace struct {
 	rootOp      string // operation name of the root span (no parentSpanID)
 	projectID   int64
 	firstSeen   time.Time
-	sacrificial bool // the ratio sample skips it; evict this one first
+	rootSeen    time.Time // when the root span arrived; zero until then
+	sacrificial bool      // the ratio sample skips it; evict this one first
 }
+
+// hasRoot reports whether the trace's root span arrived.
+func (tr *bufferedTrace) hasRoot() bool { return !tr.rootSeen.IsZero() }
 
 // BufferStats is a point-in-time view of the buffer, for metrics and health
 // reporting. The drop counters are cumulative since process start.
@@ -174,6 +191,15 @@ type BufferStats struct {
 	// UncarriedDrops is dropped traces that waited out carryWait with no
 	// carrier held for them, so no stored weight counts them.
 	UncarriedDrops int64
+	// DecidedTraces is the decisions held for late spans to follow.
+	DecidedTraces int
+	// DecidedEvicted is decisions the cap dropped before the TTL. A late span
+	// of such a trace is decided again on its own.
+	DecidedEvicted int64
+	// LateSpansKept and LateSpansDropped are spans that arrived after their
+	// trace was decided and followed the decision.
+	LateSpansKept    int64
+	LateSpansDropped int64
 }
 
 // NewTraceBuffer creates a buffer with the given TTL and ratio lookup, capped at
@@ -204,18 +230,20 @@ func NewTraceBufferWithRules(ttl time.Duration, maxSpans int, rules RescueRules,
 	}
 	ch := make(chan []model.SpanRecord, 256)
 	tb := &TraceBuffer{
-		traces:   make(map[string]*bufferedTrace),
-		ttl:      ttl,
-		lookup:   lookup,
-		logger:   logger,
-		maxSpans: maxSpans,
-		rescue:   rules.normalised(),
-		carry:    newCarryTally(maxSpans),
-		out:      ch,
-		Out:      ch,
-		stop:     make(chan struct{}),
-		gcDone:   make(chan struct{}),
-		now:      time.Now,
+		traces:    make(map[string]*bufferedTrace),
+		ttl:       ttl,
+		lookup:    lookup,
+		logger:    logger,
+		maxSpans:  maxSpans,
+		rootGrace: DefaultRootGrace,
+		decided:   newDecidedTraces(ttl, DefaultMaxDecidedTraces),
+		rescue:    rules.normalised(),
+		carry:     newCarryTally(maxSpans),
+		out:       ch,
+		Out:       ch,
+		stop:      make(chan struct{}),
+		gcDone:    make(chan struct{}),
+		now:       time.Now,
 	}
 	if tb.rescue.MinTracesPerHour > 0 {
 		tb.floor = sampling.NewBucketFloor(time.Hour)
@@ -237,6 +265,9 @@ func (tb *TraceBuffer) Add(rec model.SpanRecord) {
 
 	isErr := isErrorStatus(rec.Status)
 	tr := tb.traces[rec.TraceID]
+	if tr == nil && tb.decided.follow(rec) {
+		return
+	}
 	protected := isErr || (tr != nil && tr.hasError)
 
 	// Error traces bypass the cap: they are the traces the buffer promises to
@@ -264,10 +295,14 @@ func (tb *TraceBuffer) Add(rec model.SpanRecord) {
 
 	// The root span has no parent; use its name as the representative operation
 	// for the ratio lookup. If we see it, latch it — and re-decide, since the
-	// eviction hint was made without knowing the operation.
-	if rec.ParentSpanID == "" && tr.rootOp == "" {
-		tr.rootOp = rec.Name
-		tb.relabel(tr)
+	// eviction hint was made without knowing the operation. Its arrival also
+	// starts the grace period after which the trace is decided.
+	if rec.ParentSpanID == "" && !tr.hasRoot() {
+		tr.rootSeen = tb.now()
+		if tr.rootOp == "" {
+			tr.rootOp = rec.Name
+			tb.relabel(tr)
+		}
 	}
 }
 
@@ -297,7 +332,7 @@ func (tb *TraceBuffer) newTrace(rec model.SpanRecord) *bufferedTrace {
 		id:          rec.TraceID,
 		rootOp:      op,
 		projectID:   rec.ProjectID,
-		firstSeen:   time.Now(),
+		firstSeen:   tb.now(),
 		sacrificial: !tb.sampledIn(rec.ProjectID, op, rec.TraceID),
 	}
 	tb.traces[rec.TraceID] = tr
@@ -325,31 +360,39 @@ func (tb *TraceBuffer) Stats() BufferStats {
 		EvictedKeptSpans:        tb.evictedKTotal,
 		RescuedAtCapSpans:       tb.evictedRTotal,
 		UndeliveredSpans:        tb.undeliverTotal,
+		DecidedTraces:           len(tb.decided.m),
+		DecidedEvicted:          tb.decided.evicted,
+		LateSpansKept:           tb.decided.lateKept,
+		LateSpansDropped:        tb.decided.lateDropped,
 	}
 }
 
-// Flush evaluates and emits all traces whose TTL has expired.
+// Flush evaluates and emits all traces that came due: rootGrace after their
+// root span, or the TTL after their first span when no root came.
 // Called by the background gc loop; also callable manually in tests.
 func (tb *TraceBuffer) Flush(now time.Time) {
 	tb.flush(now, false)
 }
 
-// flush decides the traces whose TTL has expired, or every buffered trace when
-// all is set, and returns how many spans it sent to Out.
+// flush decides the traces that came due, or every buffered trace when all is
+// set, and returns how many spans it sent to Out.
 func (tb *TraceBuffer) flush(now time.Time, all bool) (sent int) {
 	tb.mu.Lock()
 	toDecide := make([]*bufferedTrace, 0, 16)
 	for _, tr := range tb.traces {
-		if all || now.Sub(tr.firstSeen) >= tb.ttl {
+		if all || tb.due(tr, now) {
 			toDecide = append(toDecide, tr)
 		}
 	}
-	// Move expired traces out of the map before releasing the lock, releasing
-	// their span budget back to the cap as they go.
+	// Move due traces out of the map before releasing the lock, releasing
+	// their span budget back to the cap as they go. A span that arrives while
+	// the trace is decided waits for the decision (see settle).
 	for _, tr := range toDecide {
 		tb.remove(tr)
+		tb.decided.put(tr.id, 0, true, now)
 	}
 	tb.pruneEvictionQueues()
+	tb.decided.expire(now)
 	kept := tb.rescuedAtCap
 	tb.rescuedAtCap = nil
 	loss := tb.takeLossWindow()
@@ -358,26 +401,40 @@ func (tb *TraceBuffer) flush(now time.Time, all bool) (sent int) {
 
 	tb.reportLoss(loss)
 
-	for _, tr := range toDecide {
-		if w := tb.keepWeight(tr, now); w > 0 {
-			stampWeight(tr, w)
+	weights := make([]int, len(toDecide))
+	for i, tr := range toDecide {
+		if weights[i] = tb.keepWeight(tr, now); weights[i] > 0 {
+			stampWeight(tr, weights[i])
 			kept = append(kept, tr)
 		} else {
 			tb.carry.drop(tr, now)
 		}
 	}
 	kept = append(kept, tb.carry.expired(now, all)...)
+	late := tb.settle(toDecide, weights, now)
+	return tb.deliverAll(kept, late)
+}
 
-	var undelivered int64
+// deliverAll sends the kept traces and late spans to Out and returns how many
+// spans it sent.
+func (tb *TraceBuffer) deliverAll(kept []*bufferedTrace, late []model.SpanRecord) (sent int) {
+	batches := make([][]model.SpanRecord, 0, len(kept)+1)
 	for _, tr := range kept {
+		batches = append(batches, tr.spans)
+	}
+	if len(late) > 0 {
+		batches = append(batches, late)
+	}
+	var undelivered int64
+	for _, spans := range batches {
 		// A trace that survived sampling has already been paid for; dropping it
 		// here silently would discard error traces too — the one guarantee the
 		// buffer makes. Give the drain a bounded chance to catch up, then count
 		// and report what we lose instead of losing it invisibly.
-		if tb.deliver(tr.spans) {
-			sent += len(tr.spans)
+		if tb.deliver(spans) {
+			sent += len(spans)
 		} else {
-			undelivered += int64(len(tr.spans))
+			undelivered += int64(len(spans))
 		}
 	}
 	if undelivered > 0 {
@@ -407,80 +464,6 @@ func (tb *TraceBuffer) deliver(spans []model.SpanRecord) bool {
 	case <-timer.C:
 		return false
 	}
-}
-
-// keepWeight decides whether the trace goes to storage and returns the sample
-// weight of its spans: how many traces it stands for. 0 drops the trace; the
-// caller then counts the drop (carry.drop). now is the flush time, used to
-// place the trace in an hourly rarity bucket.
-//
-// The error and slow-root rules keep every trace of their kind, so such a
-// trace stands for itself. A clean trace kept as a sample, by the ratio or by
-// the hourly floor, stands for itself and for the clean traces of its
-// operation dropped since the previous such trace, so every trace is counted
-// once whatever the ratio (#333).
-func (tb *TraceBuffer) keepWeight(tr *bufferedTrace, now time.Time) int {
-	if tr.hasError {
-		return 1
-	}
-	if len(tr.spans) == 0 {
-		return 0
-	}
-	op := traceOp(tr)
-	if tb.slowRoot(tr) {
-		return 1
-	}
-	ratio := tb.ratio(tr.projectID, op)
-	sampled := ratioSampled(tr.id, ratio)
-	if !tb.rescued(tr.projectID, op, now, sampled) {
-		return 0
-	}
-	return int(1 + tb.carry.take(tr.projectID, op))
-}
-
-// ratio returns the 1-in-N sample ratio for a root operation.
-func (tb *TraceBuffer) ratio(projectID int64, op string) int {
-	if tb.lookup == nil {
-		return DefaultSampleRatio
-	}
-	return tb.lookup.Ratio(context.Background(), projectID, op)
-}
-
-// sampledIn reports whether ratio sampling keeps this trace. Deterministic in
-// the trace ID, so the same trace decides the same way on every pod and at
-// every call site.
-func (tb *TraceBuffer) sampledIn(projectID int64, op, traceID string) bool {
-	return ratioSampled(traceID, tb.ratio(projectID, op))
-}
-
-func ratioSampled(traceID string, ratio int) bool {
-	if ratio <= 1 {
-		return true
-	}
-	return traceIDSampledByRatio(traceID, ratio)
-}
-
-// traceIDSampledByRatio returns true for 1/ratio of trace IDs deterministically.
-// Uses the same algorithm as the Go self-sampler and JS frontend sampler.
-func traceIDSampledByRatio(traceID string, ratio int) bool {
-	if len(traceID) < 16 {
-		return true
-	}
-	b, err := hex.DecodeString(traceID[:16])
-	if err != nil || len(b) < 8 {
-		return true
-	}
-	upper := binary.BigEndian.Uint64(b)
-	return int(upper%uint64(ratio)) == 0
-}
-
-func isErrorStatus(s string) bool {
-	// OTel status codes: "error", "ERROR", "Error", or numeric code 2
-	switch s {
-	case "error", "ERROR", "Error", "2":
-		return true
-	}
-	return false
 }
 
 func (tb *TraceBuffer) gcLoop() {

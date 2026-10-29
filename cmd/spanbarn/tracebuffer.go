@@ -23,7 +23,9 @@ func newTraceBuffer(cfg config.Config, lookup ingest.SampleRatioLookup, logger *
 		SlowThresholdUs:  int64(cfg.SlowThresholdMS) * 1000,
 		MinTracesPerHour: cfg.TraceBufferMinPerHour,
 	}
-	return ingest.NewTraceBufferWithRules(ttl, cfg.TraceBufferMaxSpans, rules, lookup, logger)
+	tb := ingest.NewTraceBufferWithRules(ttl, cfg.TraceBufferMaxSpans, rules, lookup, logger)
+	tb.SetRootGrace(time.Duration(cfg.TraceBufferRootGraceSeconds) * time.Second)
+	return tb
 }
 
 // registerTraceBufferGauges publishes trace-buffer occupancy and loss as
@@ -45,5 +47,17 @@ func registerTraceBufferGauges(rec *selfmetrics.Recorder, tb *ingest.TraceBuffer
 	rec.RegisterGauge("spanbarn.trace_buffer.spans_lost", nil, func() float64 {
 		st := tb.Stats()
 		return float64(st.RefusedSpans + st.EvictedKeptSpans + st.UndeliveredSpans)
+	})
+	// Decisions late spans follow. An eviction means the cap dropped a
+	// decision before the TTL, and a late span of that trace was decided again
+	// on its own.
+	rec.RegisterGauge("spanbarn.trace_buffer.decided", nil, func() float64 {
+		return float64(tb.Stats().DecidedTraces)
+	})
+	rec.RegisterGauge("spanbarn.trace_buffer.decided_evicted", nil, func() float64 {
+		return float64(tb.Stats().DecidedEvicted)
+	})
+	rec.RegisterGauge("spanbarn.trace_buffer.late_spans", nil, func() float64 {
+		return float64(tb.Stats().LateSpansKept)
 	})
 }

@@ -66,7 +66,12 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 	var wg sync.WaitGroup
 	fwd := forward.NewRedisForwarder(eventSpool, writeQueue, logger)
-	safeGo("redis-forwarder", &wg, func() { fwd.Run(readerCtx) })
+	// Not readerCtx: the forwarder keeps publishing while the trace buffer
+	// drains in order after SIGTERM, so the drained spans reach the writer as
+	// they come due instead of in one batch at the end (#451).
+	fwdCtx, fwdStop := context.WithCancel(context.Background())
+	defer fwdStop()
+	safeGo("redis-forwarder", &wg, func() { fwd.Run(fwdCtx) })
 	safeGo("metrics-ingest", &wg, func() { readerMetricsHandler.Run(readerCtx) })
 	safeGo("logs-ingest", &wg, func() { readerLogsHandler.Run(readerCtx) })
 
@@ -159,6 +164,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 	closeTraceBuffer(traceBuffer, traceDrained, logger)
 	ingestHandler.Stop()
+	fwdStop()
 	wg.Wait()
 	forwardSpoolOnShutdown(fwd, logger)
 	logger.Info("reader shutdown complete")
