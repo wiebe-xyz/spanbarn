@@ -3,16 +3,19 @@ package repository
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
 // keepFixture writes, into the 4 October logs shard, more pinned rows of
-// project 1 than two windows hold, more error-sampled rows of project 2 than
-// one window holds, and plain rows of both, all with one ingest time.
+// project 1 than two windows of retentionDeleteBatch hold, more error-sampled
+// rows of project 2 than one such window holds, and plain rows of both, all
+// with one ingest time.
 func keepFixture(t *testing.T) (string, *Storage, *Repository, *time.Time) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
@@ -80,7 +83,8 @@ func TestKeepLogsCopiesEveryProtectedRowAcrossWindows(t *testing.T) {
 }
 
 // One write slot copies at most one window: the 2500 pinned rows of project 1
-// take three windows, the first two full.
+// take ten full windows, and the 300 plain rows after them two more that
+// copy nothing.
 func TestKeepLogsWindowIsBoundedByRowsScanned(t *testing.T) {
 	path, _, repo, _ := keepFixture(t)
 	ctx := context.Background()
@@ -96,19 +100,44 @@ func TestKeepLogsWindowIsBoundedByRowsScanned(t *testing.T) {
 		}
 		windows = append(windows, n)
 		more = m
-		if len(windows) > 10 {
+		if len(windows) > 20 {
 			t.Fatalf("no end after %d windows: %v", len(windows), windows)
 		}
 	}
 	// Project 1 has 2800 rows: 2500 pinned, then 300 plain, in rowid order.
-	want := []int64{retentionDeleteBatch, retentionDeleteBatch, 500}
-	if len(windows) != len(want) {
+	var want []int64
+	for range 2500 / keepLogsWindowRows {
+		want = append(want, keepLogsWindowRows)
+	}
+	want = append(want, 0, 0)
+	if !slices.Equal(windows, want) {
 		t.Fatalf("windows copied %v, want %v", windows, want)
 	}
-	for i := range want {
-		if windows[i] != want[i] {
-			t.Fatalf("windows copied %v, want %v", windows, want)
+}
+
+// Each keepLogs job reports the rows it copied as write.rows.
+func TestKeepLogsJobsReportRowsCopied(t *testing.T) {
+	jobRows := recordJobRows(t)
+	path, _, repo, _ := keepFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := writescheduler.New()
+	repo.SetWriteScheduler(s)
+	go s.Run(ctx)
+	shard := filepath.Join(ShardsDir(path), "logs-20261004.db")
+
+	var cur logTrimCursor
+	var copied []int64
+	for more := true; more; {
+		n, m, err := repo.keepLogsWindow(ctx, shard, 1, mustTime(t, "2026-10-05T00:00:00Z"), errorLogsSince, &cur)
+		if err != nil {
+			t.Fatal(err)
 		}
+		copied = append(copied, n)
+		more = m
+	}
+	if got := jobRows()["keepLogs"]; !slices.Equal(got, copied) {
+		t.Errorf("keepLogs job rows = %v, want %v", got, copied)
 	}
 }
 

@@ -22,13 +22,18 @@ func keepLogsSelectSQL(resume bool) string {
 const keepLogsInsertSQL = `INSERT OR IGNORE INTO main.kept_logs
 	SELECT * FROM expiring.logs WHERE rowid IN (SELECT value FROM json_each(?1))`
 
+// keepLogsWindowRows caps the rows one keepLogs write slot scans, and so the
+// rows it copies. Windows of retentionDeleteBatch (1000) rows took 0.5 to 4 s
+// each when a day shard expired at midnight on 2026-10-29, and one took 13.5 s.
+const keepLogsWindowRows = 250
+
 // keepLogs copies the logs of error-sampled and pinned traces ingested before
 // before from a logs shard into kept_logs. It runs on main's queue, where
 // pinned_traces lives and error_samples is attached (or in main, in the
 // single-file layout). kept_logs keeps the source ids, so a repeated copy
 // inserts nothing.
 //
-// It copies one window of retentionDeleteBatch scanned rows per write slot,
+// It copies one window of keepLogsWindowRows scanned rows per write slot,
 // per project along the shard's (project_id, ingested_at) index, the way the
 // log trim deletes. As one statement it held main's write slot for 37s on
 // 2026-10-24, when the disk ladder cut the log window from 12h to 6h and the
@@ -36,10 +41,10 @@ const keepLogsInsertSQL = `INSERT OR IGNORE INTO main.kept_logs
 func (r *Repository) keepLogs(ctx context.Context, row shardRow, before, errorLogCutoff time.Time) error {
 	path := filepath.Join(r.shards.dir, row.file)
 	var pids []int64
-	err := r.onExpiringShard(ctx, path, func(conn *sql.Conn) error {
+	_, err := r.onExpiringShard(ctx, path, func(conn *sql.Conn) (int64, error) {
 		var err error
 		pids, err = projectIDs(ctx, conn, "expiring.logs")
-		return err
+		return writescheduler.NoRows, err
 	})
 	if err != nil {
 		return fmt.Errorf("keep logs of %s: %w", row.file, err)
@@ -80,41 +85,41 @@ func (r *Repository) keepLogsWindow(
 	ctx context.Context, path string, pid int64, before, errorLogCutoff time.Time, cur *logTrimCursor,
 ) (int64, bool, error) {
 	var w logTrimWindow
-	var copied int64
-	err := r.onExpiringShard(ctx, path, func(conn *sql.Conn) error {
+	copied, err := r.onExpiringShard(ctx, path, func(conn *sql.Conn) (int64, error) {
 		var err error
-		w, err = scanLogWindow(ctx, conn, keepLogsSelectSQL(cur.set), pid, before.UTC(), errorLogCutoff.UTC(), *cur, retentionDeleteBatch)
+		w, err = scanLogWindow(ctx, conn, keepLogsSelectSQL(cur.set), pid, before.UTC(), errorLogCutoff.UTC(), *cur, keepLogsWindowRows)
 		if err != nil || len(w.protected) == 0 {
-			return err
+			return 0, err
 		}
 		ids, err := json.Marshal(w.protected)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		res, err := conn.ExecContext(ctx, keepLogsInsertSQL, string(ids))
 		if err != nil {
-			return err
+			return 0, err
 		}
-		copied, _ = res.RowsAffected()
-		return nil
+		n, _ := res.RowsAffected()
+		return n, nil
 	})
 	if err != nil {
 		return copied, false, err
 	}
-	return copied, w.advance(cur, retentionDeleteBatch), nil
+	return copied, w.advance(cur, keepLogsWindowRows), nil
 }
 
 // onExpiringShard runs fn in one low-priority write slot on main, on a
-// connection with the logs shard at path attached read-only as expiring.
-func (r *Repository) onExpiringShard(ctx context.Context, path string, fn func(conn *sql.Conn) error) error {
-	return r.submit(FamilyCore, writescheduler.Low, "keepLogs", func(db *sql.DB) error {
+// connection with the logs shard at path attached read-only as expiring. The
+// job reports the rows fn returns as write.rows.
+func (r *Repository) onExpiringShard(ctx context.Context, path string, fn func(conn *sql.Conn) (int64, error)) (int64, error) {
+	return r.submitRows(FamilyCore, writescheduler.Low, "keepLogs", func(db *sql.DB) (int64, error) {
 		conn, err := db.Conn(ctx)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		defer conn.Close()
 		if _, err := conn.ExecContext(ctx, `ATTACH DATABASE ? AS expiring`, "file:"+path+"?mode=ro"); err != nil {
-			return fmt.Errorf("attach %s: %w", filepath.Base(path), err)
+			return 0, fmt.Errorf("attach %s: %w", filepath.Base(path), err)
 		}
 		defer func() { _, _ = conn.ExecContext(context.Background(), `DETACH DATABASE expiring`) }()
 		return fn(conn)
