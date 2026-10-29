@@ -17,11 +17,11 @@ func setupTestDB(t *testing.T) *Repository {
 	if splitTestLayout() {
 		return setupSplitTestRepo(t)
 	}
-	return setupCombinedTestDB(t)
+	return setupCombinedTemplateDB(t)
 }
 
-// setupCombinedTestDB is setupTestDB's single-file layout, for tests about the
-// file itself (migrations) that hold in either layout.
+// setupCombinedTestDB runs the migrations on a new single in-memory file, for
+// tests about the migrations themselves that hold in either layout.
 func setupCombinedTestDB(t *testing.T) *Repository {
 	t.Helper()
 	db, err := NewDB(":memory:")
