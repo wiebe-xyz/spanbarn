@@ -115,9 +115,9 @@ jobs:
       - name: Transfer manifests
         run: |
           set -euo pipefail
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "rm -rf /tmp/spanbarn-deploy && mkdir -p /tmp/spanbarn-deploy"
-          scp -o StrictHostKeyChecking=no -r deploy \
+          scp -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -r deploy \
             "${K3S_USER}@${K3S_HOST}:/tmp/spanbarn-deploy/deploy"
 
       - name: Record the running release
@@ -127,7 +127,7 @@ jobs:
           # Every Deployment's revision and every CronJob image, so a failed
           # deploy can put each one back where it was.
           STATE="/tmp/spanbarn-release-state-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "sh /tmp/spanbarn-deploy/deploy/scripts/release-state.sh record ${NAMESPACE} ${STATE}"
           echo "state=${STATE}" >> "$GITHUB_OUTPUT"
           # The release prod serves now, to smoke after a rollback. Prod being
@@ -142,7 +142,7 @@ jobs:
       - name: Ensure namespace exists
         run: |
           set -euo pipefail
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "kubectl apply -f /tmp/spanbarn-deploy/deploy/k8s/production/namespace.yaml"
 
       - name: Decrypt and apply secrets
@@ -151,13 +151,13 @@ jobs:
         run: |
           set -euo pipefail
           sops -d deploy/k8s/production/secret.yaml | \
-            ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+            ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "kubectl apply -f -"
 
       - name: Create GHCR pull secret
         run: |
           set -euo pipefail
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" "
             kubectl create secret docker-registry ghcr-secret \
               --docker-server=ghcr.io \
               --docker-username='webwiebe' \
@@ -178,10 +178,10 @@ jobs:
           # The pods report the release tag as their version (GET /api/v1/version).
           VERSION="${{ needs.preflight.outputs.version }}"
           sed -i.bak "s/__VERSION__/${VERSION}/g" deploy/k8s/production/kustomization.yaml
-          scp -o StrictHostKeyChecking=no \
+          scp -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
             deploy/k8s/production/kustomization.yaml \
             "${K3S_USER}@${K3S_HOST}:/tmp/spanbarn-deploy/deploy/k8s/production/kustomization.yaml"
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" "
             set -euo pipefail
             kubectl -n ${NAMESPACE} delete ingress.networking.k8s.io/spanbarn --ignore-not-found
             kubectl apply -k /tmp/spanbarn-deploy/deploy/k8s/production
@@ -210,7 +210,7 @@ jobs:
           # Undo each Deployment to its recorded revision and reset each CronJob
           # image. restore exits non-zero when any workload cannot be put back,
           # so a rollback that did not finish fails this step.
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "sh /tmp/spanbarn-deploy/deploy/scripts/release-state.sh restore ${NAMESPACE} ${STATE}"
           if [ -n "${PREV_VERSION}" ] && [ -n "${PREV_COMMIT}" ]; then
             bash scripts/smoke.sh https://spanbarn.wiebe.xyz "${PREV_VERSION}" "${PREV_COMMIT}"
