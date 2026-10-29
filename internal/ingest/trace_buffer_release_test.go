@@ -1,6 +1,8 @@
 package ingest
 
 import (
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -259,5 +261,27 @@ func TestDrainPastDeadlineDecidesAtOnce(t *testing.T) {
 	}()
 	if res := tb.Drain(time.Now().Add(-time.Second)); res.Kept != 1 || <-done != 1 {
 		t.Fatalf("drain past its deadline kept %d spans, want 1", res.Kept)
+	}
+}
+
+// Due traces are decided, and sent, in the order they arrived, so the trace
+// that carries a dropped one is the next kept trace and never a matter of map
+// order.
+func TestDueTracesAreDecidedInArrivalOrder(t *testing.T) {
+	tb, clock := releaseBuffer(t, 1)
+	defer tb.Close(clock.now())
+	var want []string
+	for i := 0; i < 50; i++ {
+		id := fmt.Sprintf("t%02d", i)
+		want = append(want, id)
+		tb.Add(rootOf(id))
+	}
+	tb.Flush(clock.after(DefaultRootGrace))
+	var got []string
+	for _, s := range takeOut(tb) {
+		got = append(got, s.TraceID)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("sent %v, want arrival order %v", got, want)
 	}
 }

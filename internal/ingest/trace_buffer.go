@@ -77,6 +77,7 @@ type SampleRatioLookup interface {
 type TraceBuffer struct {
 	mu     sync.Mutex
 	traces map[string]*bufferedTrace
+	seq    uint64 // arrivals so far; numbers bufferedTrace.seq
 	ttl    time.Duration
 	lookup SampleRatioLookup
 	logger *slog.Logger
@@ -156,6 +157,7 @@ type bufferedTrace struct {
 	firstSeen   time.Time
 	rootSeen    time.Time // when the root span arrived; zero until then
 	sacrificial bool      // the ratio sample skips it; evict this one first
+	seq         uint64    // arrival order among traces
 }
 
 // hasRoot reports whether the trace's root span arrived.
@@ -328,8 +330,10 @@ func (tb *TraceBuffer) newTrace(rec model.SpanRecord) *bufferedTrace {
 	if rec.ParentSpanID == "" {
 		op = rec.Name
 	}
+	tb.seq++
 	tr := &bufferedTrace{
 		id:          rec.TraceID,
+		seq:         tb.seq,
 		rootOp:      op,
 		projectID:   rec.ProjectID,
 		firstSeen:   tb.now(),
@@ -384,6 +388,7 @@ func (tb *TraceBuffer) flush(now time.Time, all bool) (sent int) {
 			toDecide = append(toDecide, tr)
 		}
 	}
+	sortByArrival(toDecide)
 	// Move due traces out of the map before releasing the lock, releasing
 	// their span budget back to the cap as they go. A span that arrives while
 	// the trace is decided waits for the decision (see settle).
