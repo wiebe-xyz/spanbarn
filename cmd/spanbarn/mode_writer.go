@@ -46,10 +46,6 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 
 	logger.Info("starting in writer mode", "redis_queue", cfg.RedisQueueURL)
 
-	if cfg.SessionSecret == "" {
-		slog.Warn("SPANBARN_SESSION_SECRET is not set; per-project setup keys will not be stable across restarts")
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

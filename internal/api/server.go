@@ -27,7 +27,6 @@ type ServerConfig struct {
 	LoginRate          int    // per-minute rate limit for login; 0 = default (10)
 	IngestRate         int    // per-minute rate limit for ingest; 0 = default (600)
 	APIRate            int    // per-minute rate limit for API queries; 0 = default (120)
-	SessionSecret      string
 	PublicURL          string
 	FunnelBarnEndpoint string
 	FunnelBarnAPIKey   string
@@ -52,7 +51,6 @@ type Server struct {
 	buildTime      string
 	environment    string
 	metricsToken   string
-	sessionSecret  string
 	publicURL      string
 	funnelBarn     funnelBarnConfig
 	rateLimiter    *RateLimiter
@@ -197,7 +195,6 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		buildTime:      cfg.BuildTime,
 		environment:    cfg.Environment,
 		metricsToken:   cfg.MetricsToken,
-		sessionSecret:  cfg.SessionSecret,
 		publicURL:      cfg.PublicURL,
 		funnelBarn: funnelBarnConfig{
 			Endpoint: cfg.FunnelBarnEndpoint,

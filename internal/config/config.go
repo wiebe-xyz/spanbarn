@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"net/url"
 	"os"
 	"strconv"
@@ -135,7 +134,6 @@ type Config struct {
 	AdminUsername       string
 	AdminPassword       string
 	AdminPasswordBcrypt string
-	SessionSecret       string
 	SessionTTLSeconds   int
 	MaxBodyBytes        int64
 	MaxSpoolBytes       int64
@@ -239,7 +237,6 @@ func Load() Config {
 		AdminUsername:       os.Getenv("SPANBARN_ADMIN_USERNAME"),
 		AdminPassword:       os.Getenv("SPANBARN_ADMIN_PASSWORD"),
 		AdminPasswordBcrypt: os.Getenv("SPANBARN_ADMIN_PASSWORD_BCRYPT"),
-		SessionSecret:       os.Getenv("SPANBARN_SESSION_SECRET"),
 		SessionTTLSeconds:   getenvInt("SPANBARN_SESSION_TTL_SECONDS", 43200),
 		MaxBodyBytes:        getenvInt64("SPANBARN_MAX_BODY_BYTES", DefaultMaxBodyBytes),
 		MaxSpoolBytes:       getenvInt64("SPANBARN_MAX_SPOOL_BYTES", 0),
@@ -398,17 +395,6 @@ func (c Config) IsDevEnvironment() bool {
 	default:
 		return false
 	}
-}
-
-// Validate checks configuration invariants required to run an API server safely.
-// It is called for the long-running server modes, not the CLI subcommands.
-func (c Config) Validate() error {
-	if c.SessionSecret == "" && !c.IsDevEnvironment() {
-		return fmt.Errorf("SPANBARN_SESSION_SECRET must be set in the %q environment: "+
-			"it derives the per-project setup keys, so a missing secret makes them "+
-			"forgeable", c.Environment)
-	}
-	return nil
 }
 
 func getenv(key, fallback string) string {

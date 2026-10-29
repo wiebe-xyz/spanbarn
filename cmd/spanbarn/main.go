@@ -52,10 +52,6 @@ func run() error {
 		return err
 	}
 
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-
 	// Trust proxy forwarding headers for client-IP determination only when
 	// configured (default: on outside dev), so rate limiting keys on the real
 	// client behind Caddy/Nginx instead of the shared proxy IP.

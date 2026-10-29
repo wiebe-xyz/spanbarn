@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -26,19 +29,15 @@ func TestHandleSetupRejectsOtherMethods(t *testing.T) {
 	}
 }
 
-func TestSetupKeyDeterministicAndSecretDependent(t *testing.T) {
-	a1, _ := setupKey("secret-A", "proj")
-	a2, _ := setupKey("secret-A", "proj")
-	b1, _ := setupKey("secret-B", "proj")
-	if a1 != a2 {
-		t.Errorf("setupKey not deterministic: %q vs %q", a1, a2)
-	}
-	if a1 == b1 {
-		t.Error("setupKey must change when the secret changes")
-	}
-	if len(a1) != 40 {
-		t.Errorf("setup key plaintext length = %d, want 40", len(a1))
-	}
+// slugDerivedKey is the key the setup flow handed out before it minted random
+// keys: an HMAC of the slug under the server session secret. Projects set up
+// then may still hold one, and minted keys must never match it.
+func slugDerivedKey(secret, slug string) (plaintext, keySHA256 string) {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("setup:" + slug))
+	plaintext = hex.EncodeToString(mac.Sum(nil))[:40]
+	sum := sha256.Sum256([]byte(plaintext))
+	return plaintext, hex.EncodeToString(sum[:])
 }
 
 func setupCall(t *testing.T, s *Server, method, slug string) int {
@@ -77,7 +76,7 @@ func setupKeys(t *testing.T, repo *repository.Repository) int {
 // render the guide and write nothing.
 func TestHandleSetupGetReadsAndPostCreates(t *testing.T) {
 	repo := newTestRepo(t)
-	s := &Server{logger: slog.Default(), repo: repo, sessionSecret: "test-secret"}
+	s := &Server{logger: slog.Default(), repo: repo}
 
 	if code := setupCall(t, s, http.MethodGet, "acme"); code != http.StatusNotFound {
 		t.Fatalf("GET unknown slug = %d, want 404", code)
@@ -111,7 +110,7 @@ func TestHandleSetupGetReadsAndPostCreates(t *testing.T) {
 // slug-derived key under the session secret.
 func TestSetupMintsARandomKeyShownOnce(t *testing.T) {
 	repo := newTestRepo(t)
-	s := &Server{logger: slog.Default(), repo: repo, sessionSecret: "test-secret"}
+	s := &Server{logger: slog.Default(), repo: repo}
 
 	seen := map[string]bool{}
 	for _, slug := range []string{"acme", "globex"} {
@@ -120,7 +119,7 @@ func TestSetupMintsARandomKeyShownOnce(t *testing.T) {
 			t.Fatalf("POST %s = %d with key length %d, want 201 and 64", slug, code, len(key))
 		}
 		for _, other := range []string{"acme", "globex"} {
-			if derived, _ := setupKey(s.sessionSecret, other); strings.Contains(key, derived) {
+			if derived, _ := slugDerivedKey("test-secret", other); strings.Contains(key, derived) {
 				t.Errorf("%s: key contains the derived key of %s", slug, other)
 			}
 		}
@@ -143,29 +142,32 @@ func TestSetupMintsARandomKeyShownOnce(t *testing.T) {
 	}
 }
 
-// A project that still holds its slug-derived setup key keeps getting it in
-// the guide until that key is revoked.
-func TestSetupShowsADerivedKeyUntilRevoked(t *testing.T) {
+// A project set up before random keys still holds its slug-derived key. The
+// guide never shows it, and the key keeps authenticating ingest until it is
+// revoked.
+func TestSetupNeverShowsAnExistingKey(t *testing.T) {
 	repo := newTestRepo(t)
-	s := &Server{logger: slog.Default(), repo: repo, sessionSecret: "test-secret"}
+	s := &Server{logger: slog.Default(), repo: repo}
 	p, err := repo.EnsureProjectPending("legacy", "legacy")
 	if err != nil {
 		t.Fatal(err)
 	}
-	derived, sha := setupKey(s.sessionSecret, "legacy")
+	derived, sha := slugDerivedKey("test-secret", "legacy")
 	if err := repo.EnsureSetupAPIKey(p.ID, sha); err != nil {
 		t.Fatal(err)
 	}
 
-	if code, key := setupGuideCall(t, s, http.MethodGet, "legacy"); code != http.StatusOK || key != derived {
-		t.Fatalf("GET legacy = %d, derived key shown: %v", code, key == derived)
+	for _, m := range []string{http.MethodGet, http.MethodPost} {
+		if code, key := setupGuideCall(t, s, m, "legacy"); code != http.StatusOK || key != keyPlaceholder {
+			t.Errorf("%s legacy = %d, derived key shown: %v", m, code, key == derived)
+		}
 	}
-	keys, _ := repo.ListAPIKeys(p.ID)
-	if err := repo.RevokeAPIKey(keys[0].ID); err != nil {
-		t.Fatal(err)
+	rec, err := repo.GetAPIKeyByHash(auth.HashKey(derived))
+	if err != nil || rec.ProjectID != p.ID {
+		t.Errorf("derived key no longer authenticates: %+v, %v", rec, err)
 	}
-	if _, key := setupGuideCall(t, s, http.MethodGet, "legacy"); key != keyPlaceholder {
-		t.Errorf("after revoke the guide shows a key: %v", key == derived)
+	if n := setupKeys(t, repo); n != 1 {
+		t.Errorf("%d keys after the guide calls, want 1", n)
 	}
 }
 
@@ -208,7 +210,7 @@ func TestMigrationRevokesTheProbeSetupKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []repository.Project{probe, other} {
-		_, sha := setupKey("test-secret", p.Slug)
+		_, sha := slugDerivedKey("test-secret", p.Slug)
 		if err := repo.EnsureSetupAPIKey(p.ID, sha); err != nil {
 			t.Fatal(err)
 		}
