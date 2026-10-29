@@ -1,9 +1,11 @@
 package ingest
 
 import (
+	"cmp"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"slices"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
@@ -40,6 +42,14 @@ func (tb *TraceBuffer) due(tr *bufferedTrace, now time.Time) bool {
 		return true
 	}
 	return now.Sub(tr.firstSeen) >= tb.ttl
+}
+
+// sortByArrival orders traces as they arrived. A dropped clean trace is carried
+// by the next kept trace of its operation, so traces are decided in arrival
+// order: ranging over the trace map would make the carrier a matter of map
+// order.
+func sortByArrival(trs []*bufferedTrace) {
+	slices.SortFunc(trs, func(a, b *bufferedTrace) int { return cmp.Compare(a.seq, b.seq) })
 }
 
 // settle records the decisions made outside the lock and applies them to the
