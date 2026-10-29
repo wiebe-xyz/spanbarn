@@ -251,15 +251,15 @@ jobs:
       - name: Transfer manifests
         run: |
           set -euo pipefail
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "rm -rf /tmp/spanbarn-deploy && mkdir -p /tmp/spanbarn-deploy"
-          scp -o StrictHostKeyChecking=no -r deploy \
+          scp -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -r deploy \
             "${K3S_USER}@${K3S_HOST}:/tmp/spanbarn-deploy/deploy"
 
       - name: Ensure namespace exists
         run: |
           set -euo pipefail
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "kubectl apply -f /tmp/spanbarn-deploy/deploy/k8s/testing/namespace.yaml"
 
       - name: Decrypt and apply secret
@@ -268,13 +268,13 @@ jobs:
         run: |
           set -euo pipefail
           sops -d deploy/k8s/testing/secret.yaml | \
-            ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+            ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "kubectl apply -f -"
 
       - name: Create GHCR pull secret
         run: |
           set -euo pipefail
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" "
             kubectl create secret docker-registry ghcr-secret \
               --docker-server=ghcr.io \
               --docker-username='webwiebe' \
@@ -293,10 +293,10 @@ jobs:
           # The pods report this as their version (GET /api/v1/version).
           VERSION="main-${GITHUB_SHA:0:7}"
           sed -i.bak "s/__VERSION__/${VERSION}/g" deploy/k8s/testing/kustomization.yaml
-          scp -o StrictHostKeyChecking=no \
+          scp -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
             deploy/k8s/testing/kustomization.yaml \
             "${K3S_USER}@${K3S_HOST}:/tmp/spanbarn-deploy/deploy/k8s/testing/kustomization.yaml"
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" "
             set -euo pipefail
             kubectl -n ${NAMESPACE} delete ingress.networking.k8s.io/spanbarn --ignore-not-found
             kubectl apply -k /tmp/spanbarn-deploy/deploy/k8s/testing
@@ -344,15 +344,15 @@ jobs:
           set -euo pipefail
           # The pods report this as their version (GET /api/v1/version).
           sed -i.bak "s/__VERSION__/main-${GITHUB_SHA:0:7}/g" deploy/k8s/staging/kustomization.yaml
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "rm -rf /tmp/spanbarn-deploy-staging && mkdir -p /tmp/spanbarn-deploy-staging"
-          scp -o StrictHostKeyChecking=no -r deploy \
+          scp -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -r deploy \
             "${K3S_USER}@${K3S_HOST}:/tmp/spanbarn-deploy-staging/deploy"
 
       - name: Ensure namespace exists
         run: |
           set -euo pipefail
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "kubectl apply -f /tmp/spanbarn-deploy-staging/deploy/k8s/staging/namespace.yaml"
 
       - name: Decrypt and apply secret
@@ -361,13 +361,13 @@ jobs:
         run: |
           set -euo pipefail
           sops -d deploy/k8s/staging/secret.yaml | \
-            ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" \
+            ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "kubectl apply -f -"
 
       - name: Create GHCR pull secret
         run: |
           set -euo pipefail
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" "
             kubectl create secret docker-registry ghcr-secret \
               --docker-server=ghcr.io \
               --docker-username='webwiebe' \
@@ -380,7 +380,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="main-${GITHUB_SHA:0:7}"
-          ssh -o StrictHostKeyChecking=no "${K3S_USER}@${K3S_HOST}" "
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" "
             set -euo pipefail
             kubectl apply -k /tmp/spanbarn-deploy-staging/deploy/k8s/staging
             kubectl -n spanbarn-staging set image deployment/spanbarn \
