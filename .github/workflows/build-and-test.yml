@@ -6,9 +6,15 @@ on:
       - main
   workflow_dispatch:
 
+# A newer push waits for the running deploy instead of cancelling it. With
+# cancel-in-progress, each merge cancelled the testing and staging rollout of
+# the merge before it, and with it the production deploy that runs when this
+# workflow succeeds, so a busy hour of merges reached production late or not
+# at all (65cb243 on 2026-10-29). GitHub keeps one pending run per group and
+# replaces it with the newest, which contains every commit before it.
 concurrency:
   group: deploy-testing
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
