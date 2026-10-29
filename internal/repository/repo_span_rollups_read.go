@@ -73,6 +73,21 @@ func (r *Repository) countTierBuckets(ctx context.Context, table string, step in
 	return n, err
 }
 
+// SpansIngestedBetween reports whether any span was ingested in [from, to).
+// The span rollup gap check asks it about a 5-minute bucket that holds no
+// rollup rows: when no span arrived in it either, the bucket is quiet and no
+// gap. The bounds compare as text on the 19-character timestamp prefix, which
+// every stored ingested_at format starts with.
+func (r *Repository) SpansIngestedBetween(ctx context.Context, from, to time.Time) (bool, error) {
+	ctx, cancel := r.readContext(ctx)
+	defer cancel()
+	const layout = "2006-01-02 15:04:05"
+	var found bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM spans WHERE ingested_at >= ? AND ingested_at < ?)`,
+		from.UTC().Format(layout), to.UTC().Format(layout)).Scan(&found)
+	return found, err
+}
+
 // SpanRollupSegment is a run of buckets of one tier: the buckets that start
 // in [From, To).
 type SpanRollupSegment struct {
