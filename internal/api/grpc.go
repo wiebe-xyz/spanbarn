@@ -140,7 +140,8 @@ func grpcAuthInterceptor(s *Server) grpc.UnaryServerInterceptor {
 
 		key := extractGRPCKey(md)
 		refuse := func(msg string) error {
-			s.rejectedAuth.reject(key, strings.Join(md.Get("user-agent"), " "), info.FullMethod)
+			first := func(name string) string { return strings.Join(md.Get(name), " ") }
+			s.rejectedAuth.reject(key, newRejectedRequest(first("user-agent"), info.FullMethod, first("origin"), first("referer")))
 			return status.Error(codes.Unauthenticated, msg)
 		}
 		if key == "" {

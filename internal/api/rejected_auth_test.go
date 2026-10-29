@@ -75,6 +75,8 @@ func TestRejectedIngestAuthNeverLogsTheKey(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/v1/traces", strings.NewReader("{}"))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "OTel-OTLP-Exporter-Go/1.38.0")
+		req.Header.Set("Origin", "https://app.example.test")
+		req.Header.Set("Referer", "https://app.example.test/projects/7?token=page-secret-123#tab")
 		if header != "" {
 			req.Header.Set(header, value)
 		}
@@ -96,6 +98,9 @@ func TestRejectedIngestAuthNeverLogsTheKey(t *testing.T) {
 	}
 
 	assertNoRawKeys(t, buf.String())
+	if strings.Contains(buf.String(), "page-secret-123") || strings.Contains(buf.String(), "/projects/7") {
+		t.Fatalf("log output carries the Referer's path or query:\n%s", buf.String())
+	}
 	lines := rejectedLines(t, &buf)
 	want := []string{keyFingerprint(staleIngestKey), keyFingerprint(otherBadKey), "none"}
 	if len(lines) != len(want) {
@@ -103,7 +108,8 @@ func TestRejectedIngestAuthNeverLogsTheKey(t *testing.T) {
 	}
 	for i, m := range lines {
 		if m["key_sha256_prefix"] != want[i] || m["path"] != "/v1/traces" ||
-			m["user_agent"] != "OTel-OTLP-Exporter-Go/1.38.0" || m["level"] != "INFO" {
+			m["user_agent"] != "OTel-OTLP-Exporter-Go/1.38.0" || m["level"] != "INFO" ||
+			m["origin"] != "https://app.example.test" || m["referer"] != "https://app.example.test" {
 			t.Errorf("line %d = %v", i, m)
 		}
 	}
@@ -121,14 +127,14 @@ func TestRejectedAuthLogIsRateLimitedPerKey(t *testing.T) {
 	at := func(d time.Duration) { l.now = func() time.Time { return t0.Add(d) } }
 
 	at(0)
-	l.reject(staleIngestKey, "ua", "/v1/traces")
+	l.reject(staleIngestKey, newRejectedRequest("ua", "/v1/traces", "", ""))
 	at(10 * time.Second)
-	l.reject(staleIngestKey, "ua", "/v1/traces")
+	l.reject(staleIngestKey, newRejectedRequest("ua", "/v1/traces", "", ""))
 	at(30 * time.Second)
-	l.reject(staleIngestKey, "ua", "/v1/traces")
-	l.reject(otherBadKey, "ua", "/v1/traces")
+	l.reject(staleIngestKey, newRejectedRequest("ua", "/v1/traces", "", ""))
+	l.reject(otherBadKey, newRejectedRequest("ua", "/v1/traces", "", ""))
 	at(61 * time.Second)
-	l.reject(staleIngestKey, "ua", "/v1/traces")
+	l.reject(staleIngestKey, newRejectedRequest("ua", "/v1/traces", "", ""))
 
 	lines := rejectedLines(t, &buf)
 	got := make([]string, 0, len(lines))
@@ -172,5 +178,20 @@ func TestGRPCRejectedAuthIsLogged(t *testing.T) {
 	if len(lines) != 1 || lines[0]["key_sha256_prefix"] != keyFingerprint(staleIngestKey) ||
 		lines[0]["path"] != info.FullMethod || lines[0]["user_agent"] != "grpc-go/1.70.0" {
 		t.Fatalf("lines = %v", lines)
+	}
+}
+
+// TestSchemeAndHostDropsPathAndQuery pins the Referer reduction.
+func TestSchemeAndHostDropsPathAndQuery(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://app.example.test/a/b?token=x#f": "https://app.example.test",
+		"http://localhost:5173/":                 "http://localhost:5173",
+		"":                                       "",
+		"/relative/path":                         "",
+		"not a url %zz":                          "",
+	} {
+		if got := schemeAndHost(in); got != want {
+			t.Errorf("schemeAndHost(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

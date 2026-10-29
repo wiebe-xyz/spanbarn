@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -24,7 +25,8 @@ const ctxAuthPassed contextKey = "authPassed"
 
 // rejectedAuthLog logs ingest requests whose API key was refused, so a sender
 // with a stale key can be found from the logs. It logs the first 8 hex digits
-// of the key's sha256, never the key, at INFO: a refused key is the caller's
+// of the key's sha256, never the key, with the user-agent, path, Origin and
+// the Referer's scheme and host, at INFO: a refused key is the caller's
 // problem and must not file a BugBarn issue.
 type rejectedAuthLog struct {
 	logger *slog.Logger
@@ -53,9 +55,40 @@ func keyFingerprint(key string) string {
 	return hex.EncodeToString(sum[:4])
 }
 
+// rejectedRequest is what a refusal line says about the caller besides its
+// key. Origin and Referer name the page when the sender is a browser.
+type rejectedRequest struct {
+	userAgent string
+	path      string
+	origin    string
+	referer   string
+}
+
+// rejectedHeaderMax bounds each caller-supplied header in the log line.
+const rejectedHeaderMax = 256
+
+func newRejectedRequest(userAgent, path, origin, referer string) rejectedRequest {
+	return rejectedRequest{
+		userAgent: truncate(userAgent, rejectedHeaderMax),
+		path:      path,
+		origin:    truncate(origin, rejectedHeaderMax),
+		referer:   truncate(schemeAndHost(referer), rejectedHeaderMax),
+	}
+}
+
+// schemeAndHost reduces a Referer to scheme://host, so a page's path and
+// query string, which can carry tokens, never reach the log.
+func schemeAndHost(ref string) string {
+	u, err := url.Parse(ref)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
 // reject records one refused request and logs it unless the same fingerprint
 // was logged within rejectedAuthInterval. A nil log does nothing.
-func (l *rejectedAuthLog) reject(key, userAgent, path string) {
+func (l *rejectedAuthLog) reject(key string, req rejectedRequest) {
 	if l == nil {
 		return
 	}
@@ -79,8 +112,10 @@ func (l *rejectedAuthLog) reject(key, userAgent, path string) {
 	l.mu.Unlock()
 	l.logger.Info("ingest auth rejected",
 		"key_sha256_prefix", fp,
-		"user_agent", userAgent,
-		"path", path,
+		"user_agent", req.userAgent,
+		"path", req.path,
+		"origin", req.origin,
+		"referer", req.referer,
 		"suppressed", suppressed,
 	)
 }
@@ -103,7 +138,7 @@ func (l *rejectedAuthLog) wrap(auth func(http.Handler) http.Handler) func(http.H
 			passed := false
 			guarded.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxAuthPassed, &passed)))
 			if !passed {
-				l.reject(requestKey(r), r.UserAgent(), r.URL.Path)
+				l.reject(requestKey(r), newRejectedRequest(r.UserAgent(), r.URL.Path, r.Header.Get("Origin"), r.Referer()))
 			}
 		})
 	}
