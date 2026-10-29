@@ -23,33 +23,36 @@ type TraceKey struct {
 // set but matches no span_id in the same trace. The cost depends on the size of
 // one trace, not the table.
 //
-// Every spans reference is pinned with INDEXED BY. Without it the planner (no
-// ANALYZE stats) picked idx_spans_http_status (project_id=?), which walks every
-// span of the project once per trace and made a 500-span batch cost seconds.
-// The pin fails loudly if the index is ever dropped. The parent lookup of the
-// orphan count seeks idx_spans_span_id: idx_spans_trace holds only trace_id, so
-// finding a parent through it walked every span of the trace once per span. A
-// 16k-span cron trace then took minutes per flush and wedged the writer.
-// span_count is recomputed from the same rows, which keeps it equal to what the
-// trace detail shows after spans have been evicted.
+// The statement reads the trace's rows once, through idx_spans_trace, into a
+// MATERIALIZED CTE, and computes span_count, has_root and orphan_count from it.
+// The orphan check looks parents up in that CTE through an automatic index.
+// The earlier form ran three subqueries over the spans table, each fetching
+// every row of the trace (idx_spans_trace holds only trace_id), and sought
+// idx_spans_span_id once per span for the parent: a 2996-span trace cost about
+// 3000 random seeks and held the spans writer for 11 s on a cold disk
+// (SPA-85, 2026-10-29).
+//
+// The INDEXED BY pin stays: without ANALYZE stats the planner picked
+// idx_spans_http_status (project_id=?), which walks every span of the project
+// once per trace. The pin fails loudly if the index is ever dropped. span_count
+// is recomputed from the same rows, which keeps it equal to what the trace
+// detail shows after spans have been evicted.
 //
 // The WHERE EXISTS guard leaves a summary alone when none of its spans remain
 // (an error trace whose spans were evicted keeps listing until the error
 // cutoff). settleTraceStructureSQL then records what the summary itself knows.
 const (
-	refreshTraceStructureSQL = `UPDATE trace_summaries SET
-		span_count = (SELECT COUNT(*) FROM spans INDEXED BY idx_spans_trace WHERE project_id = ?1 AND trace_id = ?2),
-		has_root = EXISTS (SELECT 1 FROM spans INDEXED BY idx_spans_trace
-			WHERE project_id = ?1 AND trace_id = ?2
-			  AND (parent_span_id IS NULL OR parent_span_id = '')),
-		orphan_count = (SELECT COUNT(*) FROM spans s INDEXED BY idx_spans_trace
-			WHERE s.project_id = ?1 AND s.trace_id = ?2
-			  AND s.parent_span_id IS NOT NULL AND s.parent_span_id != ''
-			  AND NOT EXISTS (SELECT 1 FROM spans p INDEXED BY idx_spans_span_id
-			                  WHERE p.span_id = s.parent_span_id
-			                    AND p.project_id = ?1 AND p.trace_id = ?2))
+	refreshTraceStructureSQL = `WITH t AS MATERIALIZED (
+			SELECT span_id, parent_span_id FROM spans INDEXED BY idx_spans_trace
+			WHERE project_id = ?1 AND trace_id = ?2)
+		UPDATE trace_summaries SET
+		span_count = (SELECT COUNT(*) FROM t),
+		has_root = EXISTS (SELECT 1 FROM t WHERE parent_span_id IS NULL OR parent_span_id = ''),
+		orphan_count = (SELECT COUNT(*) FROM t s
+			WHERE s.parent_span_id IS NOT NULL AND s.parent_span_id != ''
+			  AND NOT EXISTS (SELECT 1 FROM t p WHERE p.span_id = s.parent_span_id))
 		WHERE project_id = ?1 AND trace_id = ?2
-		  AND EXISTS (SELECT 1 FROM spans INDEXED BY idx_spans_trace WHERE project_id = ?1 AND trace_id = ?2)`
+		  AND EXISTS (SELECT 1 FROM t)`
 
 	// clearStaleRootSQL drops root fields once the root span is gone, so a
 	// rootless trace never lists a name taken from somewhere else.

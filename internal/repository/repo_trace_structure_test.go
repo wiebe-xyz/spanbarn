@@ -213,35 +213,31 @@ func TestTraceHealthQueries(t *testing.T) {
 	}
 }
 
-// The refresh must seek idx_spans_trace on every spans reference except the
-// parent lookup, which seeks idx_spans_span_id. Left to the planner it chose
-// idx_spans_http_status (project_id=?), a walk of the whole project per trace,
-// which made ingest quadratic in the span count. A parent lookup through
-// idx_spans_trace walks the whole trace per span, quadratic in the trace size.
+// The refresh reads the spans table once, through idx_spans_trace, and finds
+// parents in the materialized rows through an automatic index. Left to the
+// planner the spans read chose idx_spans_http_status (project_id=?), a walk of
+// the whole project per trace. Seeking idx_spans_span_id per span instead cost
+// one random read per span: 11 s for a 2996-span trace on a cold disk.
 func TestRefreshTraceStructurePlanSeeksTraceIndex(t *testing.T) {
 	repo := setupTestDB(t)
-	for _, q := range []string{refreshTraceStructureSQL, clearStaleRootSQL, settleTraceStructureSQL} {
-		rows, err := repo.DB().Query("EXPLAIN QUERY PLAN "+q, 1, "x")
-		if err != nil {
-			t.Fatal(err)
+	plan := queryPlan(t, repo, refreshTraceStructureSQL, 1, "x")
+	if n := strings.Count(plan, "SEARCH spans USING INDEX idx_spans_trace (trace_id=?)"); n != 1 {
+		t.Errorf("want one idx_spans_trace read of spans, got %d:\n%s", n, plan)
+	}
+	for _, want := range []string{"MATERIALIZE t", "SEARCH p USING AUTOMATIC COVERING INDEX (span_id=?)"} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("plan lacks %q:\n%s", want, plan)
 		}
-		for rows.Next() {
-			var id, parent, unused int
-			var detail string
-			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-				rows.Close()
-				t.Fatal(err)
-			}
-			want := "idx_spans_trace"
-			if strings.HasPrefix(detail, "SEARCH p ") {
-				want = "idx_spans_span_id"
-			}
-			if strings.Contains(detail, "SEARCH") && strings.Contains(detail, "spans") &&
-				!strings.Contains(detail, want) {
-				t.Errorf("spans not read through %s: %s", want, detail)
-			}
+	}
+	for _, bad := range []string{"idx_spans_span_id", "SCAN spans", "SCAN p"} {
+		if strings.Contains(plan, bad) {
+			t.Errorf("plan has %q:\n%s", bad, plan)
 		}
-		rows.Close()
+	}
+	for _, q := range []string{clearStaleRootSQL, settleTraceStructureSQL} {
+		if p := queryPlan(t, repo, q, 1, "x"); strings.Contains(p, "spans") && !strings.Contains(p, "trace_summaries") {
+			t.Errorf("unexpected spans read:\n%s", p)
+		}
 	}
 }
 
