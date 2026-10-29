@@ -19,7 +19,7 @@ func TestStatementCountsReplaceSpans(t *testing.T) {
 			t.Fatalf("count spans: %v", err)
 		}
 	}
-	if _, err := repo.db.ExecContext(ctx, "DELETE FROM spans WHERE id < 0"); err != nil {
+	if _, err := repo.writer(FamilySpans).ExecContext(ctx, "DELETE FROM spans WHERE id < 0"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 
