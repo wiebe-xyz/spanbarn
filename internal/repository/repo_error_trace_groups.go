@@ -63,13 +63,10 @@ func (r *Repository) QueryErrorTraceGroups(ctx context.Context, f SpanFilter) ([
 
 // errorTraces reads the window's error trace summaries, newest first.
 func (r *Repository) errorTraces(ctx context.Context, f SpanFilter) ([]errorTraceRow, error) {
-	where, args, err := f.traceSummaryWhere(0)
+	q, args, err := errorTracesQuery(f)
 	if err != nil {
 		return nil, err
 	}
-	q := fmt.Sprintf(`SELECT trace_id, root_name, root_service, root_duration_us
-		FROM trace_summaries WHERE %s
-		ORDER BY ingested_at DESC LIMIT %d`, strings.Join(where, " AND "), errorTraceGroupsMax)
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -84,6 +81,20 @@ func (r *Repository) errorTraces(ctx context.Context, f SpanFilter) ([]errorTrac
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// errorTracesQuery selects the error trace summaries of f, newest first. f.Status
+// is "error", so the WHERE holds has_error = 1 and the planner can use the
+// partial error-summary indexes (see spansErrorSummaryIndexesUp).
+func errorTracesQuery(f SpanFilter) (string, []any, error) {
+	where, args, err := f.traceSummaryWhere(0)
+	if err != nil {
+		return "", nil, err
+	}
+	q := fmt.Sprintf(`SELECT trace_id, root_name, root_service, root_duration_us
+		FROM trace_summaries WHERE %s
+		ORDER BY ingested_at DESC LIMIT %d`, strings.Join(where, " AND "), errorTraceGroupsMax)
+	return q, args, nil
 }
 
 type spanOp struct{ name, service string }
