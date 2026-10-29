@@ -34,7 +34,7 @@ func TestEvictPlansSeekIndexes(t *testing.T) {
 	repo := setupTestDB(t)
 	args := []any{`["a"]`, 1, "2030-01-01", evictChunk}
 	seeks := map[string]string{
-		"spans":           "SEARCH x USING INDEX idx_spans_trace (trace_id=?)",
+		"spans":           "SEARCH x USING " + traceIndexSeek,
 		"error_samples":   "SEARCH x USING INDEX idx_error_samples_trace (trace_id=?)",
 		"trace_summaries": "SEARCH t USING INDEX sqlite_autoindex_trace_summaries_1 (project_id=? AND trace_id=?)",
 	}

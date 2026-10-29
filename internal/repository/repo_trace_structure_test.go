@@ -221,8 +221,8 @@ func TestTraceHealthQueries(t *testing.T) {
 func TestRefreshTraceStructurePlanSeeksTraceIndex(t *testing.T) {
 	repo := setupTestDB(t)
 	plan := queryPlan(t, repo, refreshTraceStructureSQL, 1, "x")
-	if n := strings.Count(plan, "SEARCH spans USING INDEX idx_spans_trace (trace_id=?)"); n != 1 {
-		t.Errorf("want one idx_spans_trace read of spans, got %d:\n%s", n, plan)
+	if n := strings.Count(plan, "SEARCH spans USING "+traceIndexSeek); n != 1 {
+		t.Errorf("want one covering idx_spans_trace read of spans, got %d:\n%s", n, plan)
 	}
 	for _, want := range []string{"MATERIALIZE t", "SEARCH p USING AUTOMATIC COVERING INDEX (span_id=?)"} {
 		if !strings.Contains(plan, want) {

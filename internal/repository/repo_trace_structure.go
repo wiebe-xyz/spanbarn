@@ -23,14 +23,15 @@ type TraceKey struct {
 // set but matches no span_id in the same trace. The cost depends on the size of
 // one trace, not the table.
 //
-// The statement reads the trace's rows once, through idx_spans_trace, into a
+// The statement reads the trace's entries once from idx_spans_trace, which
+// covers project_id, span_id and parent_span_id (spans migration 8), into a
 // MATERIALIZED CTE, and computes span_count, has_root and orphan_count from it.
 // The orphan check looks parents up in that CTE through an automatic index.
 // The earlier form ran three subqueries over the spans table, each fetching
-// every row of the trace (idx_spans_trace holds only trace_id), and sought
-// idx_spans_span_id once per span for the parent: a 2996-span trace cost about
-// 3000 random seeks and held the spans writer for 11 s on a cold disk
-// (SPA-85, 2026-10-29).
+// every row of the trace, and sought idx_spans_span_id once per span for the
+// parent: a 2996-span trace cost about 3000 random seeks and held the spans
+// writer for 11 s on a cold disk (SPA-85, 2026-10-29). A trace's index
+// entries sit together, so the read no longer costs a seek per span.
 //
 // The INDEXED BY pin stays: without ANALYZE stats the planner picked
 // idx_spans_http_status (project_id=?), which walks every span of the project
@@ -107,9 +108,9 @@ const deleteSpanlessSummarySQL = `DELETE FROM trace_summaries
 // columns of the rest.
 //
 // The keys run in chunks of refreshKeysPerSlot, one write slot per chunk with
-// deleteBatchYield between them. A refresh costs a seek per span of the trace,
-// so a drain that hands in a few large traces held the spans writer for 33 s in
-// one slot (SPA-74, 2026-10-24) and tripped the watchdog. Each chunk is its own
+// deleteBatchYield between them. A refresh used to cost a seek per span of the
+// trace, so a drain that handed in a few large traces held the spans writer
+// for 33 s in one slot (SPA-74, 2026-10-24) and tripped the watchdog. Each chunk is its own
 // transaction: a trace is pruned or refreshed independently of the others, so a
 // failure after some chunks leaves the earlier ones done and the caller's next
 // cycle repeats the rest.

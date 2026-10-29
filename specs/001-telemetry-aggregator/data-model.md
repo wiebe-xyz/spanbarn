@@ -69,7 +69,7 @@ Span N──1 Span (via parent_span_id, self-referencing)
 **Indexes:**
 - `idx_spans_http_status` ON (project_id, ingested_at, http_status)
 - `idx_spans_project_ingested` ON (project_id, ingested_at)
-- `idx_spans_trace` ON (trace_id)
+- `idx_spans_trace` ON (trace_id, project_id, span_id, parent_span_id) (spans migration 8; before it, trace_id only)
 - `idx_spans_service_name` ON (project_id, service, name, start_time_us)
 - `idx_spans_status` ON (project_id, status, ingested_at)
 
@@ -90,7 +90,7 @@ Span N──1 Span (via parent_span_id, self-referencing)
 | has_root | INTEGER | Migration 035. 1 when a span with no parent exists, 0 when none does, NULL until computed. |
 | orphan_count | INTEGER | Migration 035. Spans whose `parent_span_id` matches no `span_id` in the same trace. NULL until computed. |
 
-**Structure columns.** `has_root`, `orphan_count` and `span_count` are recomputed from `spans` (two seeks of `idx_spans_trace` per trace) inside the transaction that writes spans, so a late parent or a late root corrects the row. Retention does the same for error traces that lose part of their spans (`DeleteSpansByMaxIDRefreshing`); non-error summaries are deleted together with their spans. When no root exists the root fields are cleared.
+**Structure columns.** `has_root`, `orphan_count` and `span_count` are recomputed from `spans` (one covering read of the trace's entries in `idx_spans_trace`) inside the transaction that writes spans, so a late parent or a late root corrects the row. Retention does the same for error traces that lose part of their spans (`DeleteSpansByMaxIDRefreshing`); non-error summaries are deleted together with their spans. When no root exists the root fields are cleared.
 
 **Backfill for rows from before migration 035.** The migration only adds nullable columns and runs no statement over `spans`, because a bulk backfill on a multi-GB single-writer database would hold the write connection (the failure that led migration 032 to skip its backfill). Existing rows read NULL. The retention worker calls `BackfillTraceStructure` every cycle: batches of 200 summaries, one low-priority write transaction per batch, at most 20,000 per cycle, reading NULL rows through the partial index `idx_trace_summaries_unchecked`. A summary whose spans are already gone settles from its own `root_name`. NULL rows match neither `has_root = 0` nor `orphan_count > 0`, so filters never report a guess.
 
