@@ -277,6 +277,12 @@ jobs:
             ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "kubectl apply -f -"
 
+      - name: Drop retired secret keys
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
+            "sh /tmp/spanbarn-deploy/deploy/scripts/drop-secret-keys.sh ${NAMESPACE} spanbarn-secrets /tmp/spanbarn-deploy/deploy/k8s/retired-secret-keys.txt"
+
       - name: Create GHCR pull secret
         run: |
           set -euo pipefail
@@ -369,6 +375,12 @@ jobs:
           sops -d deploy/k8s/staging/secret.yaml | \
             ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
             "kubectl apply -f -"
+
+      - name: Drop retired secret keys
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "${K3S_USER}@${K3S_HOST}" \
+            "sh /tmp/spanbarn-deploy-staging/deploy/scripts/drop-secret-keys.sh spanbarn-staging spanbarn-secrets /tmp/spanbarn-deploy-staging/deploy/k8s/retired-secret-keys.txt"
 
       - name: Create GHCR pull secret
         run: |
