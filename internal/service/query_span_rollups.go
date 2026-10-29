@@ -60,19 +60,20 @@ func (s *QueryService) SetSpanRollupReads(r SpanRollupReads) {
 // buckets of align seconds, or ok false when the rollups do not cover the
 // whole range, a bucket inside it holds no rows, or reads from them are off.
 func (s *QueryService) spanRollupPlan(ctx context.Context, from, to time.Time, align int64) ([]repository.SpanRollupSegment, bool) {
-	return s.tierPlan(ctx, from, to, align, &s.rollupCoverage, s.repo.SpanRollupCoverage, s.repo)
+	return s.tierPlan(ctx, from, to, align, &s.rollupCoverage, s.repo.SpanRollupCoverage, s.repo, s.repo)
 }
 
 // spanEdgePlan is spanRollupPlan for span_edges.
 func (s *QueryService) spanEdgePlan(ctx context.Context, from, to time.Time, align int64) ([]repository.SpanRollupSegment, bool) {
 	return s.tierPlan(ctx, from, to, align, &s.edgeCoverage, s.repo.SpanEdgeCoverage,
-		spanrollup.BucketCounterFunc(s.repo.CountSpanEdgeBuckets))
+		spanrollup.BucketCounterFunc(s.repo.CountSpanEdgeBuckets), spanrollup.Arrivals(s.repo, s.repo))
 }
 
 // tierPlan plans a read of a table compacted like span_rollups, from its
 // cached coverage, and checks the planned buckets for gaps.
 func (s *QueryService) tierPlan(ctx context.Context, from, to time.Time, align int64, c *spanRollupCoverage,
-	read func(context.Context) (repository.SpanRollupCoverage, error), counter spanrollup.BucketCounter) ([]repository.SpanRollupSegment, bool) {
+	read func(context.Context) (repository.SpanRollupCoverage, error), counter spanrollup.BucketCounter,
+	arrivals spanrollup.SpanArrivals) ([]repository.SpanRollupSegment, bool) {
 	if !s.rollupReads.Enabled {
 		return nil, false
 	}
@@ -85,7 +86,7 @@ func (s *QueryService) tierPlan(ctx context.Context, from, to time.Time, align i
 	if !ok {
 		return nil, false
 	}
-	complete, err := spanrollup.Complete(ctx, counter, segs, time.Now().Add(-spanRollupFlushGrace))
+	complete, err := spanrollup.Complete(ctx, counter, arrivals, segs, time.Now().Add(-spanRollupFlushGrace))
 	if err != nil {
 		s.logger.Info("span rollup gap check failed, reading raw spans", "error", err)
 		return nil, false

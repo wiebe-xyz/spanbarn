@@ -44,6 +44,7 @@ type QueryRepository interface {
 	QueryRootSpanGroupsFromRollups(ctx context.Context, q repository.SpanRollupScan) ([]repository.RootSpanGroup, error)
 	ScanSpanRollups(ctx context.Context, q repository.SpanRollupScan, fn func(repository.SpanRollup) error) error
 	CountSpanRollupBuckets(ctx context.Context, step int64, from, to time.Time) (int, error)
+	SpansIngestedBetween(ctx context.Context, from, to time.Time) (bool, error)
 	SpanEdgeCoverage(ctx context.Context) (repository.SpanRollupCoverage, error)
 	ScanSpanEdges(ctx context.Context, q repository.SpanEdgeScan, fn func(repository.SpanEdge) error) error
 	CountSpanEdgeBuckets(ctx context.Context, step int64, from, to time.Time) (int, error)

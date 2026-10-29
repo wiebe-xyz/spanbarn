@@ -2,6 +2,7 @@ package spanrollup
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"testing"
 	"time"
@@ -12,6 +13,12 @@ import (
 
 func testRepo(t *testing.T) *repository.Repository {
 	t.Helper()
+	repo, _ := testRepoDB(t)
+	return repo
+}
+
+func testRepoDB(t *testing.T) (*repository.Repository, *sql.DB) {
+	t.Helper()
 	db, err := repository.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
@@ -20,7 +27,7 @@ func testRepo(t *testing.T) *repository.Repository {
 	if err := repository.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	return repository.NewRepository(db.DB)
+	return repository.NewRepository(db.DB), db.DB
 }
 
 func newTestCompactor(repo Repository, now *time.Time) *Compactor {

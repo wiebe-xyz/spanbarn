@@ -3,8 +3,10 @@
 //
 // Each coarse bucket is built from every source row of its window and written
 // whole, then the source tier's watermark moves past the window. A window
-// with a source bucket that holds no rows is a gap, and its coarse bucket is
-// not written, so readers see the gap in the coarse tier too. A pass that
+// with a source bucket that holds no rows while spans arrived in it is a gap
+// (see Complete), and its coarse bucket is not written, so readers see the
+// gap in the coarse tier too. A repair pass builds such a bucket later, once
+// its window counts as complete. A pass that
 // stops between the two writes the same rows again on the next pass, so the
 // counts stay right. Retention deletes a tier only up to its watermark.
 package spanrollup
@@ -26,6 +28,8 @@ type Repository interface {
 	SpanRollupWatermark(ctx context.Context, step int64) (time.Time, bool, error)
 	SetSpanRollupWatermark(ctx context.Context, step int64, through time.Time) error
 	BucketCounter
+	SpanArrivals
+	OldestSpanEdgeBucket(ctx context.Context, step int64) (time.Time, bool, error)
 	SpanEdgeWindow(ctx context.Context, step int64, from, to time.Time) ([]repository.SpanEdge, error)
 	ReplaceSpanEdges(ctx context.Context, rows []repository.SpanEdge) error
 	CountSpanEdgeBuckets(ctx context.Context, step int64, from, to time.Time) (int, error)
@@ -90,6 +94,8 @@ type Compactor struct {
 	logger *slog.Logger
 	now    func() time.Time
 	busy   bool
+	// repaired is when the last repair pass ran.
+	repaired time.Time
 }
 
 // New creates a Compactor.
@@ -141,7 +147,7 @@ func (c *Compactor) RunOnce(ctx context.Context) error {
 			c.busy = true
 		}
 	}
-	return nil
+	return c.repairIfDue(ctx)
 }
 
 func (c *Compactor) compactTier(ctx context.Context, tier Tier) (int, int, error) {
@@ -215,7 +221,7 @@ func (c *Compactor) compactBucket(ctx context.Context, tier Tier, start, end tim
 }
 
 func (c *Compactor) compactRollupBucket(ctx context.Context, tier Tier, start, end time.Time) (int, error) {
-	if ok, err := windowComplete(ctx, c.repo, tier.Source, start, end); err != nil || !ok {
+	if ok, err := windowComplete(ctx, c.repo, c.repo, tier.Source, start, end); err != nil || !ok {
 		if err == nil {
 			c.logger.Info("span rollup compaction left a bucket out: a source bucket holds no rows",
 				"tier", tier.Label, "bucket", start)
@@ -234,7 +240,7 @@ func (c *Compactor) compactRollupBucket(ctx context.Context, tier Tier, start, e
 }
 
 func (c *Compactor) compactEdgeBucket(ctx context.Context, tier Tier, start, end time.Time) (int, error) {
-	if ok, err := windowComplete(ctx, BucketCounterFunc(c.repo.CountSpanEdgeBuckets), tier.Source, start, end); err != nil || !ok {
+	if ok, err := windowComplete(ctx, BucketCounterFunc(c.repo.CountSpanEdgeBuckets), Arrivals(c.repo, c.repo), tier.Source, start, end); err != nil || !ok {
 		if err == nil {
 			c.logger.Info("span edge compaction left a bucket out: a source bucket holds no rows",
 				"tier", tier.Label, "bucket", start)

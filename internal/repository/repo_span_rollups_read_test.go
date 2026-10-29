@@ -254,3 +254,28 @@ func TestQueryRootSpanGroupsFromRollups(t *testing.T) {
 		t.Errorf("group = %+v", g)
 	}
 }
+
+// SpansIngestedBetween is half-open on whole seconds and sees every project.
+func TestSpansIngestedBetween(t *testing.T) {
+	repo := setupTestDB(t)
+	ctx := context.Background()
+	dashSpan(t, repo, "a", "", "GET /", "api", "{}", 10, readBase.Add(5*time.Minute))
+	dashSpan(t, repo, "b", "", "GET /", "api", "{}", 10, readBase.Add(15*time.Minute-time.Second))
+	for _, tc := range []struct {
+		from, to time.Time
+		want     bool
+	}{
+		{readBase, readBase.Add(5 * time.Minute), false},
+		{readBase.Add(5 * time.Minute), readBase.Add(10 * time.Minute), true},
+		{readBase.Add(10 * time.Minute), readBase.Add(15 * time.Minute), true},
+		{readBase.Add(15 * time.Minute), readBase.Add(time.Hour), false},
+	} {
+		got, err := repo.SpansIngestedBetween(ctx, tc.from, tc.to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Errorf("[%v, %v) = %v, want %v", tc.from, tc.to, got, tc.want)
+		}
+	}
+}

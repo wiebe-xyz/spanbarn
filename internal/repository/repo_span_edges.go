@@ -102,6 +102,11 @@ func (r *Repository) SpanEdgeCoverage(ctx context.Context) (SpanRollupCoverage, 
 	return r.tierCoverage(ctx, "span_edges")
 }
 
+// OldestSpanEdgeBucket returns the earliest bucket of one span_edges tier.
+func (r *Repository) OldestSpanEdgeBucket(ctx context.Context, step int64) (time.Time, bool, error) {
+	return r.oldestTierBucket(ctx, "span_edges", step)
+}
+
 // CountSpanEdgeBuckets counts the buckets of one tier in [from, to) that hold
 // at least one row, markers included.
 func (r *Repository) CountSpanEdgeBuckets(ctx context.Context, step int64, from, to time.Time) (int, error) {
