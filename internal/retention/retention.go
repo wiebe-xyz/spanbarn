@@ -299,6 +299,7 @@ func (c *cycleStats) logArgs() []any {
 func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "retention.cycle")
 	defer span.End()
+	ctx, calls := repository.WithStatementCounts(ctx)
 
 	cfg := w.applyDiskPressure(ctx, w.effectiveConfig())
 	cut := newCycleCutoffs(time.Now().UTC(), cfg)
@@ -309,17 +310,12 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 		return err
 	}
 
-	if err := w.drainOldSpans(ctx, span, cfg, cut.interesting, &st); err != nil {
-		return err
-	}
-	if err := w.purgeSpanDerived(ctx, cfg, cut, &st); err != nil {
-		return err
-	}
-	if err := w.purgeHousekeeping(ctx, cut, &st); err != nil {
+	if err := w.runPhases(ctx, span, cfg, cut, &st); err != nil {
 		return err
 	}
 
 	span.SetAttributes(st.attributes()...)
+	span.SetAttributes(calls.Attributes()...)
 	w.logger.Info("retention cycle complete", st.logArgs()...)
 	w.recordCycle(&st)
 	return nil
