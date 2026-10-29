@@ -25,6 +25,7 @@ type StagingReader interface {
 // scheduler / single writer connection).
 type StagingRepository interface {
 	CommitStagingFlush(ctx context.Context, traceIDs []string, interesting []repository.Span) error
+	CommitStagingTracePart(ctx context.Context, key repository.TraceKey, stagedIDs []int64, interesting []repository.Span, refresh bool) error
 	DeleteStagingOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	InsertPromptRecords(records []repository.PromptRecord) error
 }

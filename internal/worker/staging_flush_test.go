@@ -19,6 +19,13 @@ type mockStagingRepo struct {
 	count           int64
 	commits         int
 	failCommit      int // the 1-based commit call that fails; 0 never fails
+	parts           []partCommit
+}
+
+// partCommit records one CommitStagingTracePart call.
+type partCommit struct {
+	staged, interesting int
+	refresh             bool
 }
 
 func (m *mockStagingRepo) ReadyStagingTraceIDs(_ context.Context, _ time.Time, _ int) ([]string, error) {
@@ -36,6 +43,16 @@ func (m *mockStagingRepo) CommitStagingFlush(_ context.Context, traceIDs []strin
 	}
 	m.committedTraces = append(m.committedTraces, traceIDs)
 	m.committed = append(m.committed, interesting)
+	return nil
+}
+func (m *mockStagingRepo) CommitStagingTracePart(_ context.Context, key repository.TraceKey, stagedIDs []int64, interesting []repository.Span, refresh bool) error {
+	m.commits++
+	if m.commits == m.failCommit {
+		return errors.New("commit failed")
+	}
+	m.committedTraces = append(m.committedTraces, []string{key.TraceID})
+	m.committed = append(m.committed, interesting)
+	m.parts = append(m.parts, partCommit{len(stagedIDs), len(interesting), refresh})
 	return nil
 }
 func (m *mockStagingRepo) DeleteStagingOlderThan(_ context.Context, cutoff time.Time) (int64, error) {

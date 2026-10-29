@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -141,31 +142,9 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 		}
 		defer tx.Rollback()
 
-		if len(interesting) > 0 {
-			stmt, err := tx.PrepareContext(ctx, `INSERT INTO spans
-				(`+stagingCols+`, expires_at, durable)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-			if err != nil {
-				return n, err
-			}
-			for _, s := range interesting {
-				var parentID *string
-				if s.ParentSpanID != "" {
-					parentID = &s.ParentSpanID
-				}
-				if _, err := stmt.ExecContext(ctx,
-					s.ProjectID, s.TraceID, s.SpanID, parentID,
-					s.Name, s.Service, s.Resource, s.Kind, s.Status,
-					s.StartTimeUs, s.DurationUs, s.Attributes, s.Events, s.IngestedAt, sampleWeightArg(s.SampleWeight),
-					s.ExpiresAt, s.Durable,
-				); err != nil {
-					stmt.Close()
-					return n, err
-				}
-			}
-			stmt.Close()
+		if err := insertStagedSpansTx(ctx, tx, interesting); err != nil {
+			return n, err
 		}
-
 		// Roll up the persisted spans into trace_summaries in the same tx so the
 		// trace list has a pre-grouped, indexed row instead of scanning spans.
 		if sums := buildTraceSummaries(interesting, time.Now().UTC()); len(sums) > 0 {
@@ -189,6 +168,82 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 		return n, tx.Commit()
 	})
 	return err
+}
+
+// CommitStagingTracePart moves one part of a trace too large for one job: the
+// part's interesting spans go into the indexed spans table and its staged rows,
+// named by staging id, leave spans_staging, in one transaction. The trace
+// summary adds the part's counts. refresh recomputes the trace's structure from
+// its stored spans; the trace's last part sets it, so the structure is read
+// once, over every part.
+func (r *Repository) CommitStagingTracePart(ctx context.Context, key TraceKey, stagedIDs []int64, interesting []Span, refresh bool) error {
+	if len(stagedIDs) == 0 {
+		return nil
+	}
+	ids, err := json.Marshal(stagedIDs)
+	if err != nil {
+		return err
+	}
+	_, err = r.execLowRows(FamilySpans, func(db *sql.DB) (int64, error) {
+		n := int64(len(interesting))
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return n, err
+		}
+		defer tx.Rollback()
+
+		if err := insertStagedSpansTx(ctx, tx, interesting); err != nil {
+			return n, err
+		}
+		if err := upsertTraceSummaryRowsTx(ctx, tx, buildTraceSummaries(interesting, time.Now().UTC())); err != nil {
+			return n, err
+		}
+		if refresh {
+			if err := refreshTraceStructureTx(ctx, tx, []TraceKey{key}); err != nil {
+				return n, err
+			}
+		}
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM spans_staging WHERE id IN (SELECT value FROM json_each(?)) AND trace_id = ?`,
+			string(ids), key.TraceID)
+		if err != nil {
+			return n, err
+		}
+		staged, _ := res.RowsAffected()
+		n += staged
+		return n, tx.Commit()
+	})
+	return err
+}
+
+// insertStagedSpansTx inserts staged spans into the indexed spans table,
+// keeping their ingested_at.
+func insertStagedSpansTx(ctx context.Context, tx *sql.Tx, spans []Span) error {
+	if len(spans) == 0 {
+		return nil
+	}
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO spans
+		(`+stagingCols+`, expires_at, durable)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, s := range spans {
+		var parentID *string
+		if s.ParentSpanID != "" {
+			parentID = &s.ParentSpanID
+		}
+		if _, err := stmt.ExecContext(ctx,
+			s.ProjectID, s.TraceID, s.SpanID, parentID,
+			s.Name, s.Service, s.Resource, s.Kind, s.Status,
+			s.StartTimeUs, s.DurationUs, s.Attributes, s.Events, s.IngestedAt, sampleWeightArg(s.SampleWeight),
+			s.ExpiresAt, s.Durable,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // DeleteStagingOlderThan is the hard cleanup backstop: it drops any staged row

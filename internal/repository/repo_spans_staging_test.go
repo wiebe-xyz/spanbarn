@@ -114,3 +114,57 @@ func TestStagingGCBackstop(t *testing.T) {
 		t.Fatalf("expected staging empty after GC, got %d", n)
 	}
 }
+
+// A trace over the chunk cap moves in parts. Each part deletes only the staged
+// rows it names and stores its own interesting spans; the last part refreshes
+// the trace's structure, so the summary counts every stored span and finds the
+// root that arrived in the first part.
+func TestCommitStagingTracePartMovesNamedRowsOnly(t *testing.T) {
+	repo := setupTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	spans := []Span{
+		tsSpan("T", "root", "", "GET /big", "web", "ok", 1000, 900),
+		tsSpan("T", "c1", "root", "db.query", "db", "ok", 1100, 50),
+		tsSpan("T", "c2", "root", "db.query", "db", "error", 1200, 60),
+		tsSpan("T", "c3", "root", "db.query", "db", "ok", 1300, 70),
+	}
+	for i := range spans {
+		spans[i].IngestedAt = now
+	}
+	if err := repo.InsertSpansStaging(ctx, spans); err != nil {
+		t.Fatalf("InsertSpansStaging: %v", err)
+	}
+	staged, err := repo.GetStagingSpansByTraceIDs(ctx, []string{"T"})
+	if err != nil || len(staged) != 4 {
+		t.Fatalf("GetStagingSpansByTraceIDs: %d spans, %v", len(staged), err)
+	}
+	key := TraceKey{ProjectID: 1, TraceID: "T"}
+
+	first := staged[:2]
+	if err := repo.CommitStagingTracePart(ctx, key, []int64{first[0].ID, first[1].ID}, first, false); err != nil {
+		t.Fatalf("first part: %v", err)
+	}
+	if n, _ := repo.CountStagingRows(ctx); n != 2 {
+		t.Fatalf("first part left %d staged rows, want 2", n)
+	}
+	if got, _ := repo.GetTraceByID("T"); len(got) != 2 {
+		t.Fatalf("first part stored %d spans, want 2", len(got))
+	}
+
+	last := staged[2:]
+	if err := repo.CommitStagingTracePart(ctx, key, []int64{last[0].ID, last[1].ID}, last, true); err != nil {
+		t.Fatalf("last part: %v", err)
+	}
+	if n, _ := repo.CountStagingRows(ctx); n != 0 {
+		t.Fatalf("last part left %d staged rows, want 0", n)
+	}
+	rows, err := repo.SearchTraceSummaries(SpanFilter{ProjectID: 1}, 0)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(rows) != 1 || rows[0].SpanCount != 4 || !rows[0].HasError || rows[0].RootName != "GET /big" {
+		t.Fatalf("summary after both parts: %+v", rows)
+	}
+}
