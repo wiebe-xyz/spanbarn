@@ -26,13 +26,22 @@ func (r *Repository) execLowRows(f Family, fn func(db *sql.DB) (int64, error)) (
 	return r.submitRows(f, writescheduler.Low, writeOpLabel(), fn)
 }
 
-// execIngest submits fn as a telemetry insert of f: on the current shard of f
-// when f is sharded, otherwise as execLow on f's writer.
-func (r *Repository) execIngest(f Family, fn func(db *sql.DB) error) error {
-	if r.shards.Sharded(f) {
-		return r.shards.submit(f, writeOpLabel(), fn)
+// execIngest submits fn as a telemetry insert of rows rows of f: on the
+// current shard of f when f is sharded, otherwise as execLow on f's writer.
+// The job reports rows as write.rows once fn succeeds, so a slow insert can
+// be read per row.
+func (r *Repository) execIngest(f Family, rows int64, fn func(db *sql.DB) error) error {
+	rowsFn := func(db *sql.DB) (int64, error) {
+		if err := fn(db); err != nil {
+			return 0, err
+		}
+		return rows, nil
 	}
-	return r.submit(f, writescheduler.Low, writeOpLabel(), fn)
+	if r.shards.Sharded(f) {
+		return r.shards.submit(f, writeOpLabel(), rowsFn)
+	}
+	_, err := r.submitRows(f, writescheduler.Low, writeOpLabel(), rowsFn)
+	return err
 }
 
 func (r *Repository) submit(f Family, p writescheduler.Priority, label string, fn func(db *sql.DB) error) error {
