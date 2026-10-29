@@ -42,10 +42,6 @@ func registerAuthRoutes(mux *http.ServeMux, cfg config.Config, userAuth *auth.Us
 // read-only DB connection so the writer goroutines are never starved by
 // dashboard queries.
 func runStandalone(cfg config.Config, logger *slog.Logger) error {
-	if cfg.SessionSecret == "" {
-		slog.Warn("SPANBARN_SESSION_SECRET is not set; per-project setup keys will not be stable across restarts")
-	}
-
 	// Write DB — MaxOpenConns(1), used exclusively by worker/retention/aggregation/alerts.
 	store, repo, err := openWriteRepo(cfg, logger)
 	if err != nil {

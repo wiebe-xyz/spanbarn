@@ -1,10 +1,7 @@
 package api
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"time"
@@ -12,27 +9,12 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 )
 
-// setupKey derives the setup ingest key that the setup flow handed out before
-// it minted random keys: an HMAC of the slug under the server session secret.
-// It stays only to recognise a project that still holds such a key; once no
-// project does, it goes.
-func setupKey(secret, slug string) (plaintext, keySHA256 string) {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte("setup:" + slug))
-	raw := mac.Sum(nil)
-	plaintext = hex.EncodeToString(raw)[:40]
-	sum := sha256.Sum256([]byte(plaintext))
-	keySHA256 = hex.EncodeToString(sum[:])
-	return
-}
-
 // setupKeyKind says which ingest key, if any, a setup guide carries.
 type setupKeyKind int
 
 const (
-	setupKeyNone    setupKeyKind = iota // existing project: its key was shown at creation
-	setupKeyMinted                      // new project: a random key, shown this once
-	setupKeyDerived                     // a project that still holds its slug-derived key
+	setupKeyNone   setupKeyKind = iota // existing project: its key was shown at creation
+	setupKeyMinted                     // new project: a random key, shown this once
 )
 
 // mintSetupKey registers a random ingest key as the project's setup key and
@@ -43,17 +25,6 @@ func (s *Server) mintSetupKey(projectID int64) (string, error) {
 		return "", err
 	}
 	return key, s.projectService().EnsureSetupAPIKey(projectID, hash)
-}
-
-// derivedSetupKey returns the slug-derived key of a project that still holds
-// it, so its guide keeps working until the key is rotated and revoked.
-func (s *Server) derivedSetupKey(projectID int64, slug string) (string, setupKeyKind, error) {
-	plaintext, hash := setupKey(s.sessionSecret, slug)
-	held, err := s.projectService().HoldsSetupKey(projectID, hash)
-	if err != nil || !held {
-		return "", setupKeyNone, err
-	}
-	return plaintext, setupKeyDerived, nil
 }
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
@@ -88,8 +59,6 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 			key, err = s.mintSetupKey(project.ID)
 		}
 		status, kind = http.StatusCreated, setupKeyMinted
-	case err == nil:
-		key, kind, err = s.derivedSetupKey(project.ID, slug)
 	}
 	if err != nil {
 		s.logger.Error("setup: ensure project/key", "slug", slug, "error", err)

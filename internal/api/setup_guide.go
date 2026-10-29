@@ -73,8 +73,6 @@ func (g setupGuide) writeKeyNote(b *strings.Builder) {
 	switch g.keyKind {
 	case setupKeyMinted:
 		fmt.Fprintf(b, "> The API key above is scoped to **ingest** only (trace data). SpanBarn stores only its hash, so this is the only time it is shown. Save it now. A lost key is revoked and replaced on the Settings page (%s/settings).\n\n---\n\n", g.publicURL)
-	case setupKeyDerived:
-		fmt.Fprintf(b, "> The API key above is this project's setup key, derived from the project slug. Mint a new ingest key on the Settings page (%s/settings), move the app to it, then revoke the setup key.\n\n---\n\n", g.publicURL)
 	default:
 		fmt.Fprintf(b, "> This project's ingest key was shown once, when the project was created. If you do not have it, mint a new ingest key on the Settings page (%s/settings) and use it in place of `%s` below.\n\n---\n\n", g.publicURL, keyPlaceholder)
 	}

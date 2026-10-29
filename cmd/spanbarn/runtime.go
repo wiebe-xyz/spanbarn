@@ -32,7 +32,6 @@ func serverConfigFrom(cfg config.Config) api.ServerConfig {
 		LoginRate:          cfg.LoginRatePerMinute,
 		IngestRate:         cfg.IngestRatePerMinute,
 		APIRate:            cfg.APIRatePerMinute,
-		SessionSecret:      cfg.SessionSecret,
 		PublicURL:          cfg.PublicURL,
 		FunnelBarnEndpoint: cfg.FunnelBarn.Endpoint,
 		FunnelBarnAPIKey:   cfg.FunnelBarn.APIKey,

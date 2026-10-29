@@ -55,7 +55,7 @@ func TestIngestBaseURL(t *testing.T) {
 // links stay on the canonical host.
 func TestHandleSetupKeepsBrandedHost(t *testing.T) {
 	repo := newTestRepo(t)
-	s := &Server{logger: slog.Default(), repo: repo, sessionSecret: "test-secret"}
+	s := &Server{logger: slog.Default(), repo: repo}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/acme", nil)
 	req.Host = "sb.acme.nl"
@@ -88,7 +88,7 @@ func TestHandleSetupKeepsBrandedHost(t *testing.T) {
 
 func TestHandleSetupCanonicalHost(t *testing.T) {
 	repo := newTestRepo(t)
-	s := &Server{logger: slog.Default(), repo: repo, sessionSecret: "test-secret", publicURL: "https://spanbarn.test.wiebe.xyz"}
+	s := &Server{logger: slog.Default(), repo: repo, publicURL: "https://spanbarn.test.wiebe.xyz"}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/acme", nil)
 	req.Host = "spanbarn.test.wiebe.xyz"
