@@ -1,5 +1,7 @@
 package ingest
 
+import "time"
+
 // Capacity management for TraceBuffer: which traces are sacrificed when the
 // span cap is reached, and how that loss is accounted for and reported.
 //
@@ -129,6 +131,7 @@ type lossWindow struct {
 	maxSpans      int
 	buffered      int
 	traces        int
+	atCapFor      time.Duration // set when a sustained-cap warning is due
 }
 
 // takeLossWindow reads and resets the windowed loss counters. Caller holds the
@@ -150,6 +153,7 @@ func (tb *TraceBuffer) takeLossWindow() lossWindow {
 // throw away is the cap working as designed and is reported at info; losing
 // traces that would have been stored, or refusing spans outright, is not.
 func (tb *TraceBuffer) reportLoss(w lossWindow) {
+	tb.reportSustainedCap(w)
 	if (w.evictedSacrif > 0 || w.rescued > 0) && w.evictedKept == 0 && w.refused == 0 {
 		tb.logger.Info("trace buffer at capacity, shed unsampled traces",
 			"evicted_spans", w.evictedSacrif,

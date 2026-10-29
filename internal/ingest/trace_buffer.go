@@ -86,6 +86,7 @@ type TraceBuffer struct {
 	// 0 disables the cap. spanCount may overshoot slightly: spans on traces
 	// known to contain an error are always accepted (see Add).
 	maxSpans  int
+	pressure  capPressure // how long spanCount has been at maxSpans
 	spanCount int
 
 	// rescue keeps low-volume and slow root operations that ratio sampling
@@ -402,6 +403,7 @@ func (tb *TraceBuffer) flush(now time.Time, all bool) (sent int) {
 	tb.rescuedAtCap = nil
 	loss := tb.takeLossWindow()
 	loss.buffered, loss.traces = tb.spanCount, len(tb.traces)
+	loss.atCapFor = tb.pressure.observe(loss, now)
 	tb.mu.Unlock()
 
 	tb.reportLoss(loss)

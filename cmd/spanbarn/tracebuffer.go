@@ -42,6 +42,21 @@ func registerTraceBufferGauges(rec *selfmetrics.Recorder, tb *ingest.TraceBuffer
 	rec.RegisterGauge("spanbarn.trace_buffer.traces", nil, func() float64 {
 		return float64(tb.Stats().BufferedTraces)
 	})
+	// Fill is buffered spans over the cap, 0 without a cap. Near 1 for long
+	// means the cap sheds unsampled traces all the time.
+	rec.RegisterGauge("spanbarn.trace_buffer.fill", nil, func() float64 {
+		st := tb.Stats()
+		if st.MaxSpans <= 0 {
+			return 0
+		}
+		return float64(st.BufferedSpans) / float64(st.MaxSpans)
+	})
+	// Spans the cap shed or decided early since start: unsampled traces it
+	// evicted and traces it rescued before they came due.
+	rec.RegisterGauge("spanbarn.trace_buffer.shed_spans", nil, func() float64 {
+		st := tb.Stats()
+		return float64(st.EvictedSacrificialSpans + st.RescuedAtCapSpans)
+	})
 	// Only counts loss that costs stored telemetry; shedding traces sampling
 	// was going to discard is the cap working, not an incident.
 	rec.RegisterGauge("spanbarn.trace_buffer.spans_lost", nil, func() float64 {
