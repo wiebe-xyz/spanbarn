@@ -574,8 +574,9 @@ SDK/OTLP → POST /v1/traces or /api/v1/spans
 - `sum_duration_us` (for mean calculation)
 
 ### Error samples table (medium-term)
-- Same as spans but only error/slow spans
+- Same as spans but only error, slow and durable spans
 - Kept for `SPANBARN_RETENTION_ERROR_DAYS`
+- A span that is only slow is copied for at most 10 traces per (project, service, operation) per ingest hour (setting `retention_slow_sample_traces`). Operations that are slow by nature, such as a blocking queue receive or an LLM request, otherwise fill the table, and the logs of every sampled trace are kept for `error_log_retention_days`
 - The first error trace of each (project, service, operation, UTC day) is listed in `error_exemplars` and kept for `SPANBARN_RETENTION_ERROR_EXEMPLAR_DAYS` (setting `retention_error_exemplar_days`), so a rare error keeps a readable trace after the rest of its samples are gone
 
 ## Development

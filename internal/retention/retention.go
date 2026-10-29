@@ -98,6 +98,9 @@ type RetentionWorker struct {
 
 	// stats backs Stats(), which the storage self-metrics read.
 	stats statsState
+
+	// slow caps how many slow-only traces each operation copies per hour.
+	slow slowSampler
 }
 
 // NewRetentionWorker creates a new retention worker.
@@ -207,6 +210,7 @@ func newCycleCutoffs(now time.Time, cfg Config) cycleCutoffs {
 type cycleStats struct {
 	spansAggregated       int64
 	errorsSampled         int64
+	slowSamplesSkipped    int64
 	spansDeleted          int64
 	boringDeleted         int64
 	errorSamplesDeleted   int64
@@ -233,6 +237,7 @@ func (c *cycleStats) attributes() []attribute.KeyValue {
 	return []attribute.KeyValue{
 		attribute.Int64("spans_aggregated", c.spansAggregated),
 		attribute.Int64("errors_sampled", c.errorsSampled),
+		attribute.Int64("slow_samples_skipped", c.slowSamplesSkipped),
 		attribute.Int64("spans_deleted", c.spansDeleted),
 		attribute.Int64("boring_deleted", c.boringDeleted),
 		attribute.Int64("error_samples_deleted", c.errorSamplesDeleted),
@@ -260,6 +265,7 @@ func (c *cycleStats) logArgs() []any {
 	return []any{
 		"spans_aggregated", c.spansAggregated,
 		"errors_sampled", c.errorsSampled,
+		"slow_samples_skipped", c.slowSamplesSkipped,
 		"spans_deleted", c.spansDeleted,
 		"boring_deleted", c.boringDeleted,
 		"error_samples_deleted", c.errorSamplesDeleted,
@@ -372,17 +378,14 @@ func (w *RetentionWorker) drainOldSpans(ctx context.Context, span trace.Span, cf
 }
 
 // aggregateAndDelete copies the error, slow and durable spans of one batch to
-// error_samples, aggregates the batch and deletes it. A durable span is one
+// error_samples (slow ones up to the cap in slow_samples.go), aggregates the
+// batch and deletes it. A durable span is one
 // the ingest floor kept as an operation's clean example; copying it keeps that
 // trace readable until the error cutoff, matching its trace summary. A span
 // that is both error/slow and durable is copied once.
 func (w *RetentionWorker) aggregateAndDelete(ctx context.Context, cfg Config, batch []repository.Span, st *cycleStats) error {
-	var samples []repository.Span
-	for _, s := range batch {
-		if s.Status == "error" || s.DurationUs > cfg.SlowThresholdUS || s.Durable {
-			samples = append(samples, s)
-		}
-	}
+	samples, skipped := w.samplesOf(cfg, batch)
+	st.slowSamplesSkipped += skipped
 	if len(samples) > 0 {
 		if err := w.repo.InsertErrorSamples(samples); err != nil {
 			return err

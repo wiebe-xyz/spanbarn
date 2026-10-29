@@ -170,12 +170,13 @@ func serveSWR[T any](
 // Rollup tiers: metric_rollup_retention_days (the 5-minute tier) plus
 // metric_rollup_{hourly,daily,weekly,monthly}_days, and the attribute reduction
 // lists metrics.rollup_drop_attrs.{hourly,daily}. Span rollup tiers:
-// span_rollup_5m_hours and span_rollup_{hourly,daily}_days.
+// span_rollup_5m_hours and span_rollup_{hourly,daily}_days. Slow samples:
+// retention_slow_sample_traces.
 func isAllowedSettingKey(k string) bool {
 	switch k {
 	case "retention_full_hours", "retention_interesting_hours",
 		"retention_aggregated_days", "retention_error_days",
-		"retention_error_exemplar_days",
+		"retention_error_exemplar_days", "retention_slow_sample_traces",
 		"boring_retention_minutes", "boring.sample_ratio",
 		"boring.min_traces_per_minute", "boring.min_traces_per_hour",
 		"metrics_retention_days", "log_retention_hours", "error_log_retention_days",

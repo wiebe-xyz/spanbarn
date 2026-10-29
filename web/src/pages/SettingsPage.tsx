@@ -95,6 +95,7 @@ const RETENTION_FIELDS: RetentionField[] = [
   { key: 'retention_aggregated_days', label: 'Aggregate retention (days)', placeholder: '365' },
   { key: 'retention_error_days', label: 'Error sample retention (days)', placeholder: '30' },
   { key: 'retention_error_exemplar_days', label: 'One error trace per operation per day (days)', placeholder: '30' },
+  { key: 'retention_slow_sample_traces', label: 'Slow traces kept per operation per hour', placeholder: '10' },
   { key: 'metrics_retention_days', label: 'Raw metrics retention (days)', placeholder: '7' },
   { key: 'log_retention_hours', label: 'Log retention (hours)', placeholder: '24' },
   { key: 'error_log_retention_days', label: 'Error log retention (days)', placeholder: '30' },
