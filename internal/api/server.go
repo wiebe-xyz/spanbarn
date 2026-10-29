@@ -70,6 +70,7 @@ type Server struct {
 	spoolDir       string
 	cache          *cache.Cache
 	logger         *slog.Logger
+	rejectedAuth   *rejectedAuthLog
 	oidc           *auth.OIDCClient
 	selfMetrics    *selfmetrics.Recorder
 	e2eEnabled     bool
@@ -211,6 +212,7 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		e2eEnabled:  cfg.E2EEnabled,
 		logger:      logger,
 	}
+	s.rejectedAuth = newRejectedAuthLog(logger)
 
 	for _, opt := range opts {
 		opt(s)

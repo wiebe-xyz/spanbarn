@@ -132,27 +132,31 @@ func (l *grpcLogsServer) Export(ctx context.Context, req *collectorlogspb.Export
 // grpcAuthInterceptor returns a gRPC unary server interceptor that mirrors the
 // two HTTP auth modes: per-project DB keys when s.authorizer is set, static key otherwise.
 func grpcAuthInterceptor(s *Server) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		md, ok := metadata.FromIncomingContext(ctx)
 		if !ok {
 			return nil, status.Error(codes.Unauthenticated, "missing metadata")
 		}
 
 		key := extractGRPCKey(md)
+		refuse := func(msg string) error {
+			s.rejectedAuth.reject(key, strings.Join(md.Get("user-agent"), " "), info.FullMethod)
+			return status.Error(codes.Unauthenticated, msg)
+		}
 		if key == "" {
-			return nil, status.Error(codes.Unauthenticated, "missing api key")
+			return nil, refuse("missing api key")
 		}
 
 		if s.authorizer != nil {
 			projectID, scope, err := s.authorizer.Authorize(key)
 			if err != nil {
-				return nil, status.Error(codes.Unauthenticated, "invalid api key")
+				return nil, refuse("invalid api key")
 			}
 			ctx = SetProjectID(ctx, projectID)
 			ctx = SetScope(ctx, scope)
 		} else {
 			if key != s.apiKey {
-				return nil, status.Error(codes.Unauthenticated, "invalid api key")
+				return nil, refuse("invalid api key")
 			}
 			ctx = SetProjectID(ctx, 0)
 			ctx = SetScope(ctx, "ingest")

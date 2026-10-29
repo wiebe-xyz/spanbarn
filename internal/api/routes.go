@@ -38,14 +38,14 @@ func (s *Server) registerRoutes() {
 }
 
 // ingestAuthMiddleware returns the auth wrappers for the span ingest endpoints
-// and for the OTLP endpoints.
+// and for the OTLP endpoints. Both log each refused key (rejectedAuthLog).
 func (s *Server) ingestAuthMiddleware() (ingestAuth, otlpAuth func(http.Handler) http.Handler) {
 	if s.authorizer != nil {
-		ingestAuth = func(next http.Handler) http.Handler { return authorizerOrBearerAuth(s.authorizer, next) }
+		ingestAuth = s.rejectedAuth.wrap(func(next http.Handler) http.Handler { return authorizerOrBearerAuth(s.authorizer, next) })
 		return ingestAuth, ingestAuth
 	}
-	ingestAuth = func(next http.Handler) http.Handler { return apiKeyAuth(s.apiKey, next) }
-	otlpAuth = func(next http.Handler) http.Handler { return apiKeyOrBearerAuth(s.apiKey, next) }
+	ingestAuth = s.rejectedAuth.wrap(func(next http.Handler) http.Handler { return apiKeyAuth(s.apiKey, next) })
+	otlpAuth = s.rejectedAuth.wrap(func(next http.Handler) http.Handler { return apiKeyOrBearerAuth(s.apiKey, next) })
 	return ingestAuth, otlpAuth
 }
 
