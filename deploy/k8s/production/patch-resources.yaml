@@ -13,6 +13,15 @@ spec:
     spec:
       containers:
         - name: spanbarn
+          # Go sets GOMAXPROCS from the 2-core limit. A write job that reads a
+          # cold SQLite page through mmap blocks its thread in a page fault
+          # while it keeps one of the two Ps, so during a disk stall every other
+          # goroutine (queue consumers, timers, the API) shared the other one:
+          # 18 runnable goroutines in the 2026-10-29 00:03 wedge dump. Four Ps
+          # leave room for them; the CPU limit still caps what the pod uses.
+          env:
+            - name: GOMAXPROCS
+              value: "4"
           # The writer ran at its 2Gi limit (memory.events max in the hundreds,
           # ~470 GiB of file refaults over 37h): anon memory (Go heap up to
           # GOMEMLIMIT 1GiB plus the 256 MiB SQLite page cache and the
