@@ -14,6 +14,7 @@ type Config struct {
 	ErrorLogRetentionDays     int           // days to keep logs for error-sampled traces (default 30)
 	PromptRetentionDays       int           // days to keep LLM prompt records (default 30). They carry full prompt and response bodies, so per row they are the largest thing stored.
 	SlowThresholdUS           int64         // microseconds above which a span is "slow"
+	SlowSampleTraces          int           // traces per (project, service, operation) and hour copied to error_samples for being slow alone (default 10)
 	Interval                  time.Duration // how often to run (default 5m)
 
 	// Rollup tier windows. Each tier is deleted only up to the point the
@@ -72,6 +73,7 @@ func (c Config) withDefaults() Config {
 		{&c.SpanRollup5mHours, 72},
 		{&c.SpanRollupHourlyDays, 30},
 		{&c.SpanRollupDailyDays, 400},
+		{&c.SlowSampleTraces, 10},
 	} {
 		if *d.dst <= 0 {
 			*d.dst = d.val
@@ -137,6 +139,7 @@ func (w *RetentionWorker) effectiveConfig() Config {
 		{"span_rollup_5m_hours", &cfg.SpanRollup5mHours},
 		{"span_rollup_hourly_days", &cfg.SpanRollupHourlyDays},
 		{"span_rollup_daily_days", &cfg.SpanRollupDailyDays},
+		{"retention_slow_sample_traces", &cfg.SlowSampleTraces},
 	} {
 		if n := w.settingInt(o.key); n > 0 {
 			*o.dst = n
