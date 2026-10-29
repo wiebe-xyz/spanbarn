@@ -122,6 +122,21 @@ func upsertTraceSummariesTx(ctx context.Context, tx *sql.Tx, sums []traceSummary
 	if len(sums) == 0 {
 		return nil
 	}
+	if err := upsertTraceSummaryRowsTx(ctx, tx, sums); err != nil {
+		return err
+	}
+	// Recompute span_count, has_root and orphan_count from the spans table. The
+	// per-batch accumulation above cannot know whether a parent arrived in an
+	// earlier or later batch; reading the trace's own spans can.
+	return refreshTraceStructureTx(ctx, tx, summaryKeysForSpans(sums))
+}
+
+// upsertTraceSummaryRowsTx adds the summaries' counts to trace_summaries
+// without recomputing the traces' structure.
+func upsertTraceSummaryRowsTx(ctx context.Context, tx *sql.Tx, sums []traceSummaryAgg) error {
+	if len(sums) == 0 {
+		return nil
+	}
 	stmt, err := tx.PrepareContext(ctx, `INSERT INTO trace_summaries
 		(project_id, trace_id, root_name, root_service, root_duration_us, start_time_us, span_count, has_error, ingested_at, expires_at, durable)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -149,10 +164,7 @@ func upsertTraceSummariesTx(ctx context.Context, tx *sql.Tx, sums []traceSummary
 			return err
 		}
 	}
-	// Recompute span_count, has_root and orphan_count from the spans table. The
-	// per-batch accumulation above cannot know whether a parent arrived in an
-	// earlier or later batch; reading the trace's own spans can.
-	return refreshTraceStructureTx(ctx, tx, summaryKeysForSpans(sums))
+	return nil
 }
 
 // DeleteExpiredTraceSummaries drops summaries whose stamped expires_at has passed
