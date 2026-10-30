@@ -1,6 +1,10 @@
 package aggregation
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository"
+)
 
 // Compute returns the given percentile (0-100) of the values slice.
 // It uses exact sorted computation: sort the slice and pick the index.
@@ -29,6 +33,27 @@ func Compute(values []int64, percentile float64) int64 {
 		idx = n - 1
 	}
 	return sorted[idx]
+}
+
+// ComputeWeighted returns the given percentile (0-100) of values when value i
+// stands for weights[i] observations. The trace buffer keeps every slow and
+// error trace and samples the rest, so the retained durations lean slow; the
+// weights restore the population they were drawn from. Returns 0 for an empty
+// slice.
+func ComputeWeighted(values, weights []int64, percentile float64) int64 {
+	return repository.WeightedPercentile(values, weights, percentile)
+}
+
+// percentilesOf returns p50, p95 and p99 of durations. When every span carries a
+// sample weight the percentiles are weighted by it; a weight of 0 means unknown
+// and the whole set reads unweighted, as the weighted counts do.
+func percentilesOf(durations, weights []int64) (p50, p95, p99 int64) {
+	if len(weights) == len(durations) && repository.FullyWeighted(weights) {
+		return ComputeWeighted(durations, weights, 50),
+			ComputeWeighted(durations, weights, 95),
+			ComputeWeighted(durations, weights, 99)
+	}
+	return P50(durations), P95(durations), P99(durations)
 }
 
 // P50 returns the 50th percentile (median).

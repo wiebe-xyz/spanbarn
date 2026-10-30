@@ -128,7 +128,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	repo.SetDeleteBatchYield(time.Duration(cfg.Retention.DeleteBatchYieldMS) * time.Millisecond)
 	// Retention reads through the read-only pool, so its reads do not hold the
 	// single writer connection (#360).
-	retentionWorker := retention.NewRetentionWorker(retentionReads(repo, roDB), aggregator, retentionCfg, logger)
+	retentionWorker := retention.NewRetentionWorker(retentionReads(repo, roDB), retentionCfg, logger)
 	retentionCtx, retentionCancel := context.WithCancel(ctx)
 	defer retentionCancel()
 	safeGo("retention", &wg, func() { retentionWorker.Run(retentionCtx) })

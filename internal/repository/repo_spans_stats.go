@@ -58,9 +58,10 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 	defer rows.Close()
 
 	type svcBucket struct {
-		durations  []int64
-		errorCount int64
-		weights    SpanWeights
+		durations     []int64
+		sampleWeights []int64 // parallel to durations; 0 is unknown
+		errorCount    int64
+		weights       SpanWeights
 	}
 	byService := make(map[string]*svcBucket)
 	for rows.Next() {
@@ -76,6 +77,7 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 			byService[service] = b
 		}
 		b.durations = append(b.durations, durationUs)
+		b.sampleWeights = append(b.sampleWeights, int64(weight))
 		b.weights.Add(weight)
 		if status == "error" || status == "ERROR" || status == "Error" {
 			b.errorCount++
@@ -87,14 +89,15 @@ func (r *Repository) QueryServiceStatsFromSpans(projectID int64, from, to time.T
 
 	result := make([]ServiceStats, 0, len(byService))
 	for svc, b := range byService {
+		p50, p95, p99 := spanPercentiles(b.durations, b.sampleWeights)
 		result = append(result, ServiceStats{
 			Service:    svc,
 			Count:      int64(len(b.durations)),
 			ErrorCount: b.errorCount,
 			Weights:    b.weights,
-			P50Us:      percentileFromSorted(b.durations, 50),
-			P95Us:      percentileFromSorted(b.durations, 95),
-			P99Us:      percentileFromSorted(b.durations, 99),
+			P50Us:      p50,
+			P95Us:      p95,
+			P99Us:      p99,
 		})
 	}
 	return result, nil
@@ -150,9 +153,10 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 
 	type opKey struct{ operation, resource, kind string }
 	type opBucket struct {
-		durations  []int64
-		errorCount int64
-		weights    SpanWeights
+		durations     []int64
+		sampleWeights []int64 // parallel to durations; 0 is unknown
+		errorCount    int64
+		weights       SpanWeights
 	}
 	byOp := make(map[opKey]*opBucket)
 	for rows.Next() {
@@ -169,6 +173,7 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 			byOp[k] = b
 		}
 		b.durations = append(b.durations, durationUs)
+		b.sampleWeights = append(b.sampleWeights, int64(weight))
 		b.weights.Add(weight)
 		if status == "error" || status == "ERROR" || status == "Error" {
 			b.errorCount++
@@ -180,6 +185,7 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 
 	result := make([]OperationStats, 0, len(byOp))
 	for k, b := range byOp {
+		p50, p95, p99 := spanPercentiles(b.durations, b.sampleWeights)
 		result = append(result, OperationStats{
 			Operation:  k.operation,
 			Resource:   k.resource,
@@ -187,12 +193,24 @@ func (r *Repository) QueryOperationStatsFromSpans(projectID int64, service strin
 			Count:      int64(len(b.durations)),
 			ErrorCount: b.errorCount,
 			Weights:    b.weights,
-			P50Us:      percentileFromSorted(b.durations, 50),
-			P95Us:      percentileFromSorted(b.durations, 95),
-			P99Us:      percentileFromSorted(b.durations, 99),
+			P50Us:      p50,
+			P95Us:      p95,
+			P99Us:      p99,
 		})
 	}
 	return result, nil
+}
+
+// spanPercentiles returns p50, p95 and p99 of sorted durations, weighted by the
+// spans' sample weights when every span has one. The buffer keeps all slow and
+// error traces, so unweighted percentiles over what it kept read slow.
+func spanPercentiles(sorted, sampleWeights []int64) (p50, p95, p99 int64) {
+	if len(sampleWeights) == len(sorted) && FullyWeighted(sampleWeights) {
+		return WeightedPercentile(sorted, sampleWeights, 50),
+			WeightedPercentile(sorted, sampleWeights, 95),
+			WeightedPercentile(sorted, sampleWeights, 99)
+	}
+	return percentileFromSorted(sorted, 50), percentileFromSorted(sorted, 95), percentileFromSorted(sorted, 99)
 }
 
 // QueryRootSpanGroups aggregates root spans (spans with no parent) by operation

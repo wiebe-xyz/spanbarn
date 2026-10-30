@@ -7,9 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
-
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -18,10 +15,6 @@ import (
 // periodically writes accumulated slots to SQLite and resets them.
 // QueryRecent lets the query service read current slots as synthetic aggregate
 // rows, replacing the raw-span fallback in query_services.go.
-//
-// Accumulator also implements the AggregateSpans + Persist contract expected by
-// the retention worker, so it can replace *Aggregator at the call site in
-// main.go without changing retention internals.
 type Accumulator struct {
 	mu            sync.Mutex
 	slots         map[accKey]*accSlot
@@ -47,7 +40,9 @@ type accSlot struct {
 	count      int64
 	errorCount int64
 	durations  []int64
-	weights    spanWeights
+	// sampleWeights runs parallel to durations; 0 marks an unknown weight.
+	sampleWeights []int64
+	weights       spanWeights
 }
 
 // NewAccumulator creates an Accumulator.
@@ -110,6 +105,7 @@ func (a *Accumulator) addSlot(s repository.Span) {
 		sl.errorCount++
 	}
 	sl.durations = append(sl.durations, s.DurationUs)
+	sl.sampleWeights = append(sl.sampleWeights, int64(s.SampleWeight))
 	a.mu.Unlock()
 }
 
@@ -140,8 +136,7 @@ func (a *Accumulator) QueryRecent(f repository.AggregateFilter) []repository.Agg
 		if !f.To.IsZero() && k.bucket.After(f.To) {
 			continue
 		}
-		durations := make([]int64, len(sl.durations))
-		copy(durations, sl.durations)
+		p50, p95, p99 := percentilesOf(sl.durations, sl.sampleWeights)
 		result = append(result, repository.Aggregate{
 			ProjectID:     k.projectID,
 			Service:       k.service,
@@ -151,9 +146,9 @@ func (a *Accumulator) QueryRecent(f repository.AggregateFilter) []repository.Agg
 			Bucket:        k.bucket,
 			Count:         sl.count,
 			ErrorCount:    sl.errorCount,
-			P50Us:         P50(durations),
-			P95Us:         P95(durations),
-			P99Us:         P99(durations),
+			P50Us:         p50,
+			P95Us:         p95,
+			P99Us:         p99,
 			WeightedCount: sl.weights.count,
 			WeightedSpans: sl.weights.spans,
 		})
@@ -183,6 +178,7 @@ func (a *Accumulator) Flush(ctx context.Context) error {
 				maxUs = d
 			}
 		}
+		p50, p95, p99 := percentilesOf(sl.durations, sl.sampleWeights)
 		aggs = append(aggs, repository.Aggregate{
 			ProjectID:     k.projectID,
 			Service:       k.service,
@@ -192,9 +188,9 @@ func (a *Accumulator) Flush(ctx context.Context) error {
 			Bucket:        k.bucket,
 			Count:         sl.count,
 			ErrorCount:    sl.errorCount,
-			P50Us:         P50(sl.durations),
-			P95Us:         P95(sl.durations),
-			P99Us:         P99(sl.durations),
+			P50Us:         p50,
+			P95Us:         p95,
+			P99Us:         p99,
 			MaxUs:         maxUs,
 			SumDurationUs: sumUs,
 			WeightedCount: sl.weights.count,
@@ -223,85 +219,4 @@ func (a *Accumulator) Run(ctx context.Context) {
 			}
 		}
 	}
-}
-
-// AggregateSpans satisfies the retention.Aggregator interface. It computes
-// aggregates from an arbitrary span batch without touching the in-memory slots —
-// the retention worker uses this when aggregating spans it is about to delete.
-func (a *Accumulator) AggregateSpans(ctx context.Context, spans []repository.Span) ([]repository.Aggregate, error) {
-	if len(spans) == 0 {
-		return nil, nil
-	}
-
-	_, otelSpan := tracer.Start(ctx, "accumulator.aggregate_spans")
-	otelSpan.SetAttributes(attribute.Int("input_span_count", len(spans)))
-	defer otelSpan.End()
-
-	type batchKey struct {
-		projectID int64
-		service   string
-		operation string
-		resource  string
-		kind      string
-		bucket    time.Time
-	}
-	groups := make(map[batchKey][]repository.Span)
-	for _, s := range spans {
-		bucket := TruncateToBucket(time.UnixMicro(s.StartTimeUs), a.interval)
-		k := batchKey{s.ProjectID, s.Service, s.Name, s.Resource, s.Kind, bucket}
-		groups[k] = append(groups[k], s)
-	}
-
-	otelSpan.SetAttributes(attribute.Int("bucket_count", len(groups)))
-
-	out := make([]repository.Aggregate, 0, len(groups))
-	for k, batch := range groups {
-		durations := make([]int64, len(batch))
-		var errorCount, sumDuration, maxDuration int64
-		var weights spanWeights
-		for i, s := range batch {
-			weights.add(s)
-			durations[i] = s.DurationUs
-			sumDuration += s.DurationUs
-			if s.DurationUs > maxDuration {
-				maxDuration = s.DurationUs
-			}
-			if s.Status == "error" {
-				errorCount++
-			}
-		}
-		out = append(out, repository.Aggregate{
-			ProjectID:     k.projectID,
-			Service:       k.service,
-			Operation:     k.operation,
-			Resource:      k.resource,
-			Kind:          k.kind,
-			Bucket:        k.bucket,
-			Count:         int64(len(batch)),
-			ErrorCount:    errorCount,
-			P50Us:         P50(durations),
-			P95Us:         P95(durations),
-			P99Us:         P99(durations),
-			MaxUs:         maxDuration,
-			SumDurationUs: sumDuration,
-			WeightedCount: weights.count,
-			WeightedSpans: weights.spans,
-		})
-	}
-	return out, nil
-}
-
-// Persist satisfies the retention.Aggregator interface.
-func (a *Accumulator) Persist(ctx context.Context, aggregates []repository.Aggregate) error {
-	_, otelSpan := tracer.Start(ctx, "accumulator.persist")
-	otelSpan.SetAttributes(attribute.Int("aggregate_count", len(aggregates)))
-	defer otelSpan.End()
-
-	if err := a.repo.UpsertAggregates(aggregates); err != nil {
-		otelSpan.RecordError(err)
-		otelSpan.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("persist %d aggregates: %w", len(aggregates), err)
-	}
-	a.logger.Info("persisted aggregates", "count", len(aggregates))
-	return nil
 }

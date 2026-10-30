@@ -77,6 +77,7 @@ func (a *Aggregator) AggregateSpans(ctx context.Context, spans []repository.Span
 	out := make([]repository.Aggregate, 0, len(groups))
 	for k, bucket := range groups {
 		durations := make([]int64, len(bucket))
+		sampleWeights := make([]int64, len(bucket))
 		var errorCount int64
 		var sumDuration int64
 		var maxDuration int64
@@ -85,6 +86,7 @@ func (a *Aggregator) AggregateSpans(ctx context.Context, spans []repository.Span
 		for i, s := range bucket {
 			weights.add(s)
 			durations[i] = s.DurationUs
+			sampleWeights[i] = int64(s.SampleWeight)
 			sumDuration += s.DurationUs
 			if s.DurationUs > maxDuration {
 				maxDuration = s.DurationUs
@@ -93,6 +95,7 @@ func (a *Aggregator) AggregateSpans(ctx context.Context, spans []repository.Span
 				errorCount++
 			}
 		}
+		p50, p95, p99 := percentilesOf(durations, sampleWeights)
 
 		out = append(out, repository.Aggregate{
 			ProjectID:     k.ProjectID,
@@ -103,9 +106,9 @@ func (a *Aggregator) AggregateSpans(ctx context.Context, spans []repository.Span
 			Bucket:        k.Bucket,
 			Count:         int64(len(bucket)),
 			ErrorCount:    errorCount,
-			P50Us:         P50(durations),
-			P95Us:         P95(durations),
-			P99Us:         P99(durations),
+			P50Us:         p50,
+			P95Us:         p95,
+			P99Us:         p99,
 			MaxUs:         maxDuration,
 			SumDurationUs: sumDuration,
 			WeightedCount: weights.count,

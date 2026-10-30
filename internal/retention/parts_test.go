@@ -9,32 +9,25 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
-// partsAggregator records the span count of each AggregateSpans call and can
-// stop the pass before a given Persist call.
-type partsAggregator struct {
-	Aggregator
-	parts    []int
-	persists int
-	stopAt   int
-	stop     context.CancelFunc
+// partsRepo records the span count of each delete and can stop the pass after a
+// given delete.
+type partsRepo struct {
+	Repository
+	parts  []int64
+	stopAt int
+	stop   context.CancelFunc
 }
 
-func (a *partsAggregator) AggregateSpans(ctx context.Context, spans []repository.Span) ([]repository.Aggregate, error) {
-	a.parts = append(a.parts, len(spans))
-	return a.Aggregator.AggregateSpans(ctx, spans)
-}
-
-func (a *partsAggregator) Persist(ctx context.Context, aggs []repository.Aggregate) error {
-	a.persists++
-	if a.persists == a.stopAt {
-		a.stop()
-		return ctx.Err()
+func (r *partsRepo) DeleteSpansByMaxIDRefreshing(ctx context.Context, maxID int64) (int64, error) {
+	n, err := r.Repository.DeleteSpansByMaxIDRefreshing(ctx, maxID)
+	r.parts = append(r.parts, n)
+	if len(r.parts) == r.stopAt {
+		r.stop()
 	}
-	return a.Aggregator.Persist(ctx, aggs)
+	return n, err
 }
 
-// insertPartSpans inserts count old spans of project 1, each in its own
-// aggregate key, so every span is one aggregate row.
+// insertPartSpans inserts count old spans of project 1.
 func insertPartSpans(t *testing.T, repo *repository.Repository, count int) {
 	t.Helper()
 	old := time.Now().UTC().Add(-2 * time.Hour)
@@ -54,15 +47,6 @@ func insertPartSpans(t *testing.T, repo *repository.Repository, count int) {
 	}
 }
 
-func aggregatedCount(t *testing.T, repo *repository.Repository) int64 {
-	t.Helper()
-	var n int64
-	if err := repo.DB().QueryRow("SELECT COALESCE(SUM(count), 0) FROM aggregates").Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	return n
-}
-
 func spanCount(t *testing.T, repo *repository.Repository) int64 {
 	t.Helper()
 	var n int64
@@ -79,11 +63,11 @@ var partsConfig = Config{
 	SlowThresholdUS:           1_000_000,
 }
 
-// A batch is aggregated and deleted in parts of retentionPart spans.
+// A batch is deleted in parts of retentionPart spans.
 func TestRetentionBatchRunsInParts(t *testing.T) {
 	worker, repo := setupTestWorker(t, partsConfig)
-	rec := &partsAggregator{Aggregator: worker.aggregator}
-	worker.aggregator = rec
+	rec := &partsRepo{Repository: worker.repo}
+	worker.repo = rec
 	insertPartSpans(t, repo, 2500)
 
 	if err := worker.RunOnce(context.Background()); err != nil {
@@ -92,37 +76,34 @@ func TestRetentionBatchRunsInParts(t *testing.T) {
 	if fmt.Sprint(rec.parts) != "[1000 1000 500]" {
 		t.Errorf("parts = %v, want [1000 1000 500]", rec.parts)
 	}
-	if got := aggregatedCount(t, repo); got != 2500 {
-		t.Errorf("aggregated %d spans, want 2500", got)
-	}
 	if got := spanCount(t, repo); got != 0 {
 		t.Errorf("%d spans left, want 0", got)
 	}
 }
 
-// A pass stopped before the second part's aggregates are written keeps the
-// unaggregated spans, and the next pass counts every span exactly once.
-func TestRetentionStoppedBetweenPartsCountsOnce(t *testing.T) {
+// A pass stopped between parts keeps the later parts' spans, and the next pass
+// deletes them.
+func TestRetentionStoppedBetweenPartsKeepsTheRest(t *testing.T) {
 	worker, repo := setupTestWorker(t, partsConfig)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	rec := &partsAggregator{Aggregator: worker.aggregator, stopAt: 2, stop: cancel}
-	worker.aggregator = rec
+	rec := &partsRepo{Repository: worker.repo, stopAt: 1, stop: cancel}
+	worker.repo = rec
 	insertPartSpans(t, repo, 2500)
 
 	if err := worker.RunOnce(ctx); err == nil {
 		t.Fatal("RunOnce after a stop returned no error")
 	}
-	if got, left := aggregatedCount(t, repo), spanCount(t, repo); got != 1000 || left != 1500 {
-		t.Fatalf("after the stop: aggregated %d, %d spans left; want 1000 and 1500", got, left)
+	if left := spanCount(t, repo); left != 1500 {
+		t.Fatalf("after the stop: %d spans left, want 1500", left)
 	}
 
 	rec.stopAt = 0
 	if err := worker.RunOnce(context.Background()); err != nil {
 		t.Fatalf("second RunOnce: %v", err)
 	}
-	if got, left := aggregatedCount(t, repo), spanCount(t, repo); got != 2500 || left != 0 {
-		t.Errorf("after the rerun: aggregated %d, %d spans left; want 2500 and 0", got, left)
+	if left := spanCount(t, repo); left != 0 {
+		t.Errorf("after the rerun: %d spans left, want 0", left)
 	}
 }
 
