@@ -31,7 +31,7 @@ func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
 			 cost_usd, input_cost_usd, output_cost_usd, duration_us,
 			 status, finish_reason,
 			 prompt_template, prompt_hash, outcome, quality_score,
-			 feature_flag_key, feature_flag_variant, start_time_us)
+			 feature_flag_key, feature_flag_variant, start_time_us, sample_weight)
 			VALUES (?, ?, ?, ?, ?, ?,
 			        ?, ?, ?, ?,
 			        ?, ?,
@@ -40,7 +40,7 @@ func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
 			        ?, ?, ?, ?,
 			        ?, ?,
 			        ?, ?, ?, ?,
-			        ?, ?, ?)`)
+			        ?, ?, ?, ?)`)
 		if err != nil {
 			return err
 		}
@@ -60,7 +60,7 @@ func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
 				rec.CostUSD, rec.InputCostUSD, rec.OutputCostUSD, rec.DurationUs,
 				rec.Status, rec.FinishReason,
 				rec.PromptTemplate, rec.PromptHash, rec.Outcome, rec.QualityScore,
-				rec.FeatureFlagKey, rec.FeatureFlagVariant, rec.StartTimeUs,
+				rec.FeatureFlagKey, rec.FeatureFlagVariant, rec.StartTimeUs, sampleWeightArg(rec.SampleWeight),
 			); err != nil {
 				return err
 			}

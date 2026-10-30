@@ -199,7 +199,9 @@ export type PromptSummary = {
   genAiSystem: string
   model: string
   service: string
+  /** Calls the stored records stand for. Above storedCount it is an estimate: sampling dropped calls. */
   callCount: number
+  storedCount: number
   errorCount: number
   errorRate: number
   p50Us: number

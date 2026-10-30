@@ -152,20 +152,25 @@ func (l projectRatioLookup) Ratio(_ context.Context, projectID int64, _ string) 
 // The all-projects view must scale each project's ok calls by that project's
 // own ratio. Project 0 has no ratio, so scaling by it multiplied every
 // project's calls by the default 1000 (#402).
-func TestListPromptsScalesEachProjectByItsOwnRatio(t *testing.T) {
+func TestListPromptsCountsBySampleWeight(t *testing.T) {
 	repo := setupTestRepo(t)
-	svc := NewQueryService(repo, nil, projectRatioLookup{1: 1, 2: 10})
+	// The ratios must not matter: project 2 is 1-in-1000 and project 3 is 1-in-2.
+	svc := NewQueryService(repo, nil, projectRatioLookup{1: 1, 2: 1000, 3: 2})
 
-	rec := func(project int64, id, status string, durationUs int64) repository.PromptRecord {
+	rec := func(project int64, id, status string, durationUs int64, weight int) repository.PromptRecord {
 		return repository.PromptRecord{
 			ProjectID: project, TraceID: "t" + id, SpanID: "s" + id, Service: "api",
 			Name: "summarize", Model: "gpt-4", InputTokens: 10, CostUSD: 0.01,
-			DurationUs: durationUs, Status: status, StartTimeUs: 1000,
+			DurationUs: durationUs, Status: status, StartTimeUs: 1000, SampleWeight: weight,
 		}
 	}
 	if err := repo.InsertPromptRecords([]repository.PromptRecord{
-		rec(1, "1", "ok", 1000), rec(1, "2", "ok", 2000), rec(1, "3", "error", 3000),
-		rec(2, "4", "ok", 400000),
+		rec(1, "1", "ok", 1000, 0), // written before weights existed: counts once
+		rec(1, "2", "ok", 2000, 1),
+		rec(1, "3", "error", 3000, 1),
+		rec(2, "4", "ok", 400000, 10),
+		rec(3, "5", "ok", 1000, 1),
+		rec(3, "6", "ok", 1000, 1),
 	}); err != nil {
 		t.Fatalf("InsertPromptRecords: %v", err)
 	}
@@ -177,19 +182,23 @@ func TestListPromptsScalesEachProjectByItsOwnRatio(t *testing.T) {
 		t.Fatalf("ListPrompts: %v", err)
 	}
 	if len(all) != 1 {
-		t.Fatalf("want the two projects' groups merged into one summary, got %+v", all)
+		t.Fatalf("want the projects' groups merged into one summary, got %+v", all)
 	}
 	got := all[0]
-	// Project 1: 2 ok + 1 error at 1-in-1. Project 2: 1 ok at 1-in-10.
-	if got.CallCount != 13 || got.ErrorCount != 1 || got.InputTokens != 40 {
-		t.Fatalf("calls=%d errors=%d input=%d, want 13, 1, 40", got.CallCount, got.ErrorCount, got.InputTokens)
+	if got.CallCount != 15 || got.StoredCount != 6 || got.ErrorCount != 1 || got.InputTokens != 60 {
+		t.Fatalf("calls=%d stored=%d errors=%d input=%d, want 15, 6, 1, 60", got.CallCount, got.StoredCount, got.ErrorCount, got.InputTokens)
 	}
 	if got.P99Us < 300000 {
 		t.Errorf("p99 = %d, want the merged histogram to include project 2's 400ms call", got.P99Us)
 	}
 
-	one, err := svc.ListPrompts(context.Background(), 2, from, to, "", "")
-	if err != nil || len(one) != 1 || one[0].CallCount != 10 {
-		t.Fatalf("project 2 alone: want 10 calls, got %+v, %v", one, err)
+	kept, err := svc.ListPrompts(context.Background(), 3, from, to, "", "")
+	if err != nil || len(kept) != 1 || kept[0].CallCount != 2 || kept[0].StoredCount != 2 {
+		t.Fatalf("1-in-2 project with every trace kept: want 2 calls from 2 records, got %+v, %v", kept, err)
+	}
+
+	sampled, err := svc.ListPrompts(context.Background(), 2, from, to, "", "")
+	if err != nil || len(sampled) != 1 || sampled[0].CallCount != 10 || sampled[0].StoredCount != 1 {
+		t.Fatalf("ratio-sampled trace: want 10 calls from 1 record, got %+v, %v", sampled, err)
 	}
 }

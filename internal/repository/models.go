@@ -183,7 +183,10 @@ type AggregateFilter struct {
 }
 
 type PromptRecord struct {
-	ID                    int64     `json:"id"`
+	ID int64 `json:"id"`
+	// SampleWeight is written with the record and summed by QueryPromptGroups.
+	// Record reads leave it zero.
+	SampleWeight          int       `json:"-"`
 	ProjectID             int64     `json:"projectId"`
 	TraceID               string    `json:"traceId"`
 	SpanID                string    `json:"spanId"`

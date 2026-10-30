@@ -11,21 +11,23 @@ import (
 
 // PromptGroup is the prompts in a range for one project, operation name,
 // model and service: call and error counts, token and cost sums, and a
-// duration histogram for percentiles. Groups stay per project because each
-// project has its own sample ratio.
+// duration histogram for percentiles. Count is the records stored and
+// WeightedCount the calls they stand for: each record counts for its sample
+// weight, and a record without a weight counts once.
 type PromptGroup struct {
-	ProjectID    int64
-	Name         string
-	Model        string
-	Service      string
-	GenAISystem  string
-	Count        int64
-	ErrorCount   int64
-	TotalTimeUs  int64
-	InputTokens  int64
-	OutputTokens int64
-	CostUSD      float64
-	Hist         spanhist.Hist
+	ProjectID     int64
+	Name          string
+	Model         string
+	Service       string
+	GenAISystem   string
+	Count         int64
+	WeightedCount int64
+	ErrorCount    int64
+	TotalTimeUs   int64
+	InputTokens   int64
+	OutputTokens  int64
+	CostUSD       float64
+	Hist          spanhist.Hist
 }
 
 // QueryPromptGroups folds the prompts that match f (Limit and Offset are
@@ -40,6 +42,7 @@ func (r *Repository) QueryPromptGroups(ctx context.Context, f PromptFilter) ([]P
 	query := func(table string) string {
 		q := fmt.Sprintf(`
 			SELECT project_id, name, model, service, MAX(gen_ai_system), %s AS bin, COUNT(*),
+			       SUM(COALESCE(sample_weight, 1)),
 			       SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),
 			       MIN(duration_us), MAX(duration_us), SUM(duration_us),
 			       SUM(input_tokens), SUM(output_tokens), SUM(cost_usd)
@@ -88,7 +91,7 @@ func (g *promptGrouper) read(ctx context.Context, db *sql.DB, query string, args
 		var row PromptGroup
 		var b spanhist.Bin
 		if err := rows.Scan(&row.ProjectID, &row.Name, &row.Model, &row.Service, &row.GenAISystem, &b.Index, &b.Count,
-			&row.ErrorCount, &b.Min, &b.Max, &row.TotalTimeUs,
+			&row.WeightedCount, &row.ErrorCount, &b.Min, &b.Max, &row.TotalTimeUs,
 			&row.InputTokens, &row.OutputTokens, &row.CostUSD); err != nil {
 			return err
 		}
@@ -107,6 +110,7 @@ func (g *promptGrouper) add(row PromptGroup, b spanhist.Bin) {
 	}
 	cur.GenAISystem = max(cur.GenAISystem, row.GenAISystem)
 	cur.Count += b.Count
+	cur.WeightedCount += row.WeightedCount
 	cur.ErrorCount += row.ErrorCount
 	cur.TotalTimeUs += row.TotalTimeUs
 	cur.InputTokens += row.InputTokens

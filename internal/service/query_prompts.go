@@ -29,7 +29,7 @@ func (s *QueryService) ListPrompts(ctx context.Context, projectID int64, from, t
 			return nil, err
 		}
 
-		result := s.summarizePrompts(ctx, groups)
+		result := summarizePrompts(groups)
 		sort.Slice(result, func(i, j int) bool {
 			return result[i].TotalCostUSD > result[j].TotalCostUSD
 		})
@@ -58,21 +58,15 @@ func (s *QueryService) GetPromptDetail(ctx context.Context, projectID int64, fro
 type promptSummaryKey struct{ name, model, service string }
 
 // summarizePrompts folds per-project prompt groups into one summary per name,
-// model and service. Each project's ok calls are scaled by that project's own
-// sample ratio before the merge. The all-projects view asks for project 0,
-// which has no ratio of its own, so scaling by it would apply the default
-// 1-in-1000 to every project (#402).
-func (s *QueryService) summarizePrompts(ctx context.Context, groups []repository.PromptGroup) []PromptSummary {
-	rates := map[int64]float64{}
+// model and service. CallCount sums the stored sample weights, so a trace kept
+// by the error or slow rule counts once and only a ratio-sampled trace counts
+// for more. Scaling every ok call by the project's ratio read 2 calls per record
+// on a 1-in-2 project whose traces were all kept (#471).
+func summarizePrompts(groups []repository.PromptGroup) []PromptSummary {
 	index := map[promptSummaryKey]int{}
 	result := make([]PromptSummary, 0, len(groups))
 	var hists []spanhist.Hist
 	for _, g := range groups {
-		sr, ok := rates[g.ProjectID]
-		if !ok {
-			sr = s.projectSampleRate(ctx, g.ProjectID)
-			rates[g.ProjectID] = sr
-		}
 		k := promptSummaryKey{g.Name, g.Model, g.Service}
 		i, ok := index[k]
 		if !ok {
@@ -83,7 +77,8 @@ func (s *QueryService) summarizePrompts(ctx context.Context, groups []repository
 		}
 		p := &result[i]
 		p.GenAISystem = max(p.GenAISystem, g.GenAISystem)
-		p.CallCount += inflateCount(g.Count, g.ErrorCount, sr)
+		p.CallCount += g.WeightedCount
+		p.StoredCount += g.Count
 		p.ErrorCount += g.ErrorCount
 		p.TotalTimeUs += g.TotalTimeUs
 		p.InputTokens += g.InputTokens

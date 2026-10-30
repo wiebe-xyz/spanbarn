@@ -9,6 +9,9 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
+// extractPromptRecords builds one prompt record per span that sets gen_ai.system,
+// so a span that wraps another one for the same call leaves the attribute out or
+// empty to keep that call from counting twice.
 func extractPromptRecords(spans []repository.Span) []repository.PromptRecord {
 	var records []repository.PromptRecord
 	for _, sp := range spans {
@@ -35,6 +38,7 @@ func promptRecordFromSpan(sp repository.Span, attrs map[string]any, system strin
 		Service:      sp.Service,
 		Name:         sp.Name,
 		GenAISystem:  system,
+		SampleWeight: sp.SampleWeight,
 		Model:        firstStrAttr(attrs, "gen_ai.response.model", "gen_ai.request.model"),
 		DurationUs:   sp.DurationUs,
 		Status:       sp.Status,
