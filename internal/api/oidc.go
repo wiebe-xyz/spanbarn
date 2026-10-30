@@ -138,6 +138,12 @@ func oidcUsername(claims auth.OIDCClaims) string {
 	return "oidc-user"
 }
 
+// oidcAccessDenied is the refusal for a valid token without access. A token
+// carries the organization its session is switched to, and an account can
+// belong to several, so the way in is often to switch organization.
+const oidcAccessDenied = "access denied: this account has no access role in the organization it is signed in to. " +
+	"Switch to your home organization in IamBarn and sign in again"
+
 // handleOIDCCallback handles the redirect back from iambarn. On success it
 // persists a server-side session row carrying the IamBarn token set (access,
 // refresh, id_token), the IdP session id (sid) and a claims snapshot, then
@@ -164,8 +170,8 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	claims := exchanged.Claims
 	if !s.oidc.Allowed(claims) {
 		s.logger.Warn("oidc: access denied",
-			"sub", claims.Subject, "groups", claims.Groups, "roles", claims.Roles)
-		writeError(w, http.StatusForbidden, "access denied: user is not a member of the required group", "")
+			"sub", claims.Subject, "organization_id", claims.OrganizationID, "roles", claims.Roles)
+		writeError(w, http.StatusForbidden, oidcAccessDenied, "")
 		return
 	}
 	token, expires, err := s.sessions.Create(oidcUsername(claims), "oidc", &OIDCSessionData{

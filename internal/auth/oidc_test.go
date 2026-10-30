@@ -4,11 +4,11 @@ import "testing"
 
 func TestOIDCClientAllowed(t *testing.T) {
 	cli := NewOIDCClient(OIDCConfig{
-		Issuer:        "https://iam.example.com",
-		ClientID:      "spanbarn",
-		ClientSecret:  "sek",
-		RedirectURL:   "https://spanbarn.example.com/api/v1/oidc/callback",
-		RequiredGroup: "spanbarn-users",
+		Issuer:                 "https://iam.example.com",
+		ClientID:               "spanbarn",
+		ClientSecret:           "sek",
+		RedirectURL:            "https://spanbarn.example.com/api/v1/oidc/callback",
+		RequiredOrganizationID: "org_home",
 	})
 
 	cases := []struct {
@@ -16,13 +16,14 @@ func TestOIDCClientAllowed(t *testing.T) {
 		claims OIDCClaims
 		want   bool
 	}{
-		{"in required group", OIDCClaims{Groups: []string{"spanbarn-users"}}, true},
-		{"owner bypass", OIDCClaims{Roles: []string{"owner"}}, true},
-		{"organization_admin bypass", OIDCClaims{Roles: []string{"organization_admin"}}, true},
-		{"operator bypass", OIDCClaims{Roles: []string{"operator"}}, true},
-		{"other group only", OIDCClaims{Groups: []string{"engineering"}}, false},
+		{"owner", OIDCClaims{OrganizationID: "org_home", Roles: []string{"owner"}}, true},
+		{"organization_admin", OIDCClaims{OrganizationID: "org_home", Roles: []string{"organization_admin"}}, true},
+		{"operator", OIDCClaims{OrganizationID: "org_home", Roles: []string{"operator"}}, true},
+		{"owner of another organization", OIDCClaims{OrganizationID: "org_other", Roles: []string{"owner"}}, false},
+		{"owner with no organization", OIDCClaims{Roles: []string{"owner"}}, false},
+		{"group member", OIDCClaims{OrganizationID: "org_home", Groups: []string{"spanbarn-users"}}, false},
 		{"no claims", OIDCClaims{}, false},
-		{"unrelated role", OIDCClaims{Roles: []string{"member"}}, false},
+		{"unrelated role", OIDCClaims{OrganizationID: "org_home", Roles: []string{"member"}}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,9 +73,16 @@ func TestOIDCClaimsPreferredName(t *testing.T) {
 	}
 }
 
-func TestNewOIDCClientDefaultGroup(t *testing.T) {
+// An instance with no organization configured refuses every token, whichever
+// organization and role it names.
+func TestOIDCClientAllowedRefusesWhenOrganizationUnset(t *testing.T) {
 	cli := NewOIDCClient(OIDCConfig{Issuer: "i", ClientID: "c", ClientSecret: "s", RedirectURL: "r"})
-	if got := cli.Config().RequiredGroup; got != "spanbarn-users" {
-		t.Errorf("default RequiredGroup = %q, want %q", got, "spanbarn-users")
+	for _, claims := range []OIDCClaims{
+		{OrganizationID: "org_home", Roles: []string{"owner"}},
+		{Roles: []string{"owner"}},
+	} {
+		if cli.Allowed(claims) {
+			t.Errorf("Allowed(%+v) = true with no organization configured", claims)
+		}
 	}
 }
