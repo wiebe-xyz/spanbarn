@@ -24,6 +24,7 @@ var commandTable = map[string]func(args []string) error{
 	"logs":        cmdLogs,
 	"metrics":     cmdMetrics,
 	"prompts":     cmdPrompts,
+	"span-ledger": cmdSpanLedger,
 	"deps":        cmdDeps,
 	"database":    cmdDatabase,
 	"service-map": cmdServiceMap,
@@ -91,6 +92,7 @@ Telemetry (JSON by default; add --output table for a table):
   operations    Operations of one service; --per OP adds spans per span of OP
   metrics       OTLP metrics: 'metrics names' | 'metrics series --name N'
   prompts       LLM/prompt samples: 'prompts' | 'prompts detail --name N'
+  span-ledger   Spans per project and 5-minute bucket: accepted, each exit, lost before storage
   deps          Service dependency graph
   database      Aggregated database query patterns
   service-map   Full service topology

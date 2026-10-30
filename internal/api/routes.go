@@ -220,6 +220,7 @@ func (s *Server) registerTraceQueryRoutes(env *routeEnv) {
 	s.mux.Handle("/api/v1/database", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDatabaseQueries)))))
 	s.mux.Handle("/api/v1/database/detail", apiRL(readAuth(http.HandlerFunc(qh.handleDatabaseQueryDetail))))
 	s.mux.Handle("/api/v1/prompts", apiRL(readAuth(cache60(http.HandlerFunc(qh.handlePrompts)))))
+	s.mux.Handle("/api/v1/span-ledger", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleSpanLedger)))))
 	s.mux.Handle("/api/v1/prompts/detail", apiRL(readAuth(http.HandlerFunc(qh.handlePromptDetail))))
 	s.mux.Handle("/api/v1/service-map", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleServiceMap)))))
 	s.mux.Handle("/api/v1/dashboard/counts", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDashboardCounts)))))

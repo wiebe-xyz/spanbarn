@@ -12,6 +12,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
+	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 )
 
 // SpanAccumulator receives every batch of spans for in-memory aggregation.
@@ -52,6 +53,7 @@ type RedisWorker struct {
 	// classification and indexed storage to the StagingFlusher. This keeps the
 	// Redis drain fast (cheap unindexed appends) so the queue never backs up.
 	stageOnly bool
+	ledger    *spanledger.Tally
 }
 
 // SetStagingMode switches the worker to append consumed spans to spans_staging
@@ -179,6 +181,7 @@ func (w *RedisWorker) requeueAfterDiskFull(ctx context.Context, records []model.
 		w.metrics.mu.Lock()
 		w.metrics.ErrorCount += int64(count)
 		w.metrics.mu.Unlock()
+		w.ledger.AddSpans(spanledger.Failed, records, 1)
 	}
 
 	select {
@@ -219,6 +222,7 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 
 	if len(interesting) == 0 {
 		w.countProcessed(len(spans))
+		w.settleLedger(spans, nil)
 		return
 	}
 
@@ -245,6 +249,7 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 		w.metrics.mu.Lock()
 		w.metrics.ErrorCount += int64(len(interesting))
 		w.metrics.mu.Unlock()
+		w.settleLedger(spans, interesting)
 		return
 	}
 
@@ -253,6 +258,7 @@ func (w *RedisWorker) processBatch(ctx context.Context, records []model.SpanReco
 	// spans_processed_total comparable with staging mode, which counts every
 	// span it stages.
 	w.countProcessed(len(spans))
+	w.settleLedger(spans, nil)
 
 	if promptRecs := extractPromptRecords(interesting); len(promptRecs) > 0 {
 		if err := w.repo.InsertPromptRecords(ctx, promptRecs); err != nil {
@@ -291,9 +297,11 @@ func (w *RedisWorker) stageSpans(ctx context.Context, spans []repository.Span) {
 		w.metrics.mu.Lock()
 		w.metrics.ErrorCount += int64(len(spans))
 		w.metrics.mu.Unlock()
+		w.settleLedger(spans, spans)
 		return
 	}
 	w.countProcessed(len(spans))
+	w.settleLedger(spans, nil)
 }
 
 func (w *RedisWorker) countProcessed(n int) {

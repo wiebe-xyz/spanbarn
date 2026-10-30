@@ -215,7 +215,7 @@ func TestMigrationRevokesTheProbeSetupKey(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := repo.DB().ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id = 45`); err != nil {
+	if _, err := repo.DB().ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id >= 45`); err != nil {
 		t.Fatal(err)
 	}
 	if err := repository.MigrateSingleFile(ctx, repo.DB()); err != nil {

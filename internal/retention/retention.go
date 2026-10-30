@@ -50,6 +50,7 @@ type Repository interface {
 	DeleteAggregatesOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteExpiredE2EUsers(now time.Time) (int64, error)
 	DeleteExpiredWebSessions(now time.Time) (int64, error)
+	DeleteExpiredSpanLedger(now time.Time) (int64, error)
 	DeleteMetricsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteMetricRollupsOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
 	DeleteMetricRollupsOlderThanLimited(ctx context.Context, cutoff time.Time, max int64) (int64, bool, error)
@@ -218,6 +219,7 @@ type cycleStats struct {
 	promptBacklogRemains  bool
 	e2eUsersDeleted       int64
 	webSessionsDeleted    int64
+	spanLedgerDeleted     int64
 	projectTracesEvicted  int64
 	projectLogsDeleted    int64
 	backlogRemains        bool
@@ -244,6 +246,7 @@ func (c *cycleStats) attributes() []attribute.KeyValue {
 		attribute.Bool("prompt_backlog_remains", c.promptBacklogRemains),
 		attribute.Int64("e2e_users_deleted", c.e2eUsersDeleted),
 		attribute.Int64("web_sessions_deleted", c.webSessionsDeleted),
+		attribute.Int64("span_ledger_deleted", c.spanLedgerDeleted),
 		attribute.Int64("project_traces_evicted", c.projectTracesEvicted),
 		attribute.Int64("project_logs_deleted", c.projectLogsDeleted),
 		attribute.Bool("backlog_remains", c.backlogRemains),
@@ -271,6 +274,7 @@ func (c *cycleStats) logArgs() []any {
 		"prompt_backlog_remains", c.promptBacklogRemains,
 		"e2e_users_deleted", c.e2eUsersDeleted,
 		"web_sessions_deleted", c.webSessionsDeleted,
+		"span_ledger_deleted", c.spanLedgerDeleted,
 		"project_traces_evicted", c.projectTracesEvicted,
 		"project_logs_deleted", c.projectLogsDeleted,
 		"backlog_remains", c.backlogRemains,
@@ -456,6 +460,9 @@ func (w *RetentionWorker) purgeHousekeeping(ctx context.Context, cut cycleCutoff
 	// Web sessions past their absolute cap are already unusable (the session
 	// middleware enforces absolute_expires_at); this prunes the rows.
 	if st.webSessionsDeleted, err = w.repo.DeleteExpiredWebSessions(cut.now); err != nil {
+		return err
+	}
+	if st.spanLedgerDeleted, err = w.repo.DeleteExpiredSpanLedger(cut.now); err != nil {
 		return err
 	}
 

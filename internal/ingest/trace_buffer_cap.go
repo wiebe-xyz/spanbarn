@@ -1,6 +1,10 @@
 package ingest
 
-import "time"
+import (
+	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
+)
 
 // Capacity management for TraceBuffer: which traces are sacrificed when the
 // span cap is reached, and how that loss is accounted for and reported.
@@ -36,6 +40,7 @@ func (tb *TraceBuffer) evictOne(keep *bufferedTrace) bool {
 		if !tb.rescueAtCap(tr) {
 			tb.evictedSacrif += int64(len(tr.spans))
 			tb.evictedSTotal += int64(len(tr.spans))
+			tb.ledgerDropped(tr, spanledger.ShedUnsampled)
 			tb.carry.drop(tr, tb.now())
 			tb.decided.put(tr.id, 0, false, tb.now())
 		}
@@ -45,6 +50,7 @@ func (tb *TraceBuffer) evictOne(keep *bufferedTrace) bool {
 		tb.evictedKept += int64(len(tr.spans))
 		tb.evictedKTotal += int64(len(tr.spans))
 		tb.remove(tr)
+		tb.ledgerDropped(tr, spanledger.LostInBuffer)
 		tb.carry.drop(tr, tb.now())
 		tb.decided.put(tr.id, 0, false, tb.now())
 		return true

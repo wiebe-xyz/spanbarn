@@ -21,6 +21,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
 
@@ -119,6 +120,9 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		ratioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
 	}
 	traceBuffer := newTraceBuffer(cfg, ratioLookup, logger)
+	ledger := spanledger.New()
+	traceBuffer.SetLedger(ledger)
+	finishLedger := startSpanLedgerReports(ledger, writeQueue.PublishSpanLedger, logger)
 	traceDrained := drainTraceBuffer(&wg, traceBuffer, ingestHandler)
 
 	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer), api.WithMetricsHandler(readerMetricsHandler), api.WithLogsHandler(readerLogsHandler)}
@@ -167,6 +171,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	fwdStop()
 	wg.Wait()
 	forwardSpoolOnShutdown(fwd, logger)
+	finishLedger()
 	logger.Info("reader shutdown complete")
 	return nil
 }
