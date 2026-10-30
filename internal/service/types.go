@@ -162,11 +162,15 @@ type DatabaseQuerySummary struct {
 
 // PromptSummary holds aggregated metrics for a single prompt operation.
 type PromptSummary struct {
-	Name         string  `json:"name"`
-	GenAISystem  string  `json:"genAiSystem"`
-	Model        string  `json:"model"`
-	Service      string  `json:"service"`
+	Name        string `json:"name"`
+	GenAISystem string `json:"genAiSystem"`
+	Model       string `json:"model"`
+	Service     string `json:"service"`
+	// CallCount is the calls the stored records stand for and StoredCount the
+	// records themselves. They differ when sampling dropped calls in the range,
+	// so a CallCount above StoredCount is an estimate.
 	CallCount    int64   `json:"callCount"`
+	StoredCount  int64   `json:"storedCount"`
 	ErrorCount   int64   `json:"errorCount"`
 	ErrorRate    float64 `json:"errorRate"`
 	P50Us        int64   `json:"p50Us"`

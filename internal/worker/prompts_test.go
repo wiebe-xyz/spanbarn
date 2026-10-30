@@ -7,6 +7,16 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
+func TestExtractPromptRecordsCarriesSampleWeight(t *testing.T) {
+	recs := extractPromptRecords([]repository.Span{
+		{Name: "wrapper", SampleWeight: 4, Attributes: `{"gen_ai.system":""}`, Events: "[]"},
+		{Name: "chat", SampleWeight: 4, Attributes: `{"gen_ai.system":"openai"}`, Events: "[]"},
+	})
+	if len(recs) != 1 || recs[0].Name != "chat" || recs[0].SampleWeight != 4 {
+		t.Fatalf("records %+v, want one for chat with weight 4 and none for the empty gen_ai.system", recs)
+	}
+}
+
 func TestExtractPromptRecordsFields(t *testing.T) {
 	spans := []repository.Span{
 		{Name: "not genai", Attributes: `{"foo":"bar"}`},

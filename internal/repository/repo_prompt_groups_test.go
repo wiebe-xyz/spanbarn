@@ -65,6 +65,28 @@ func TestQueryPromptGroupsFoldsEveryPrompt(t *testing.T) {
 	}
 }
 
+func TestQueryPromptGroupsSumsSampleWeights(t *testing.T) {
+	repo := setupTestDB(t)
+	p, _ := repo.CreateProject("proj", "Proj")
+
+	sampled := promptRec(p.ID, "a", "chat", "gpt-4", 1000, "ok", 0.01)
+	sampled.SampleWeight = 7
+	kept := promptRec(p.ID, "b", "chat", "gpt-4", 1000, "ok", 0.01)
+	kept.SampleWeight = 1
+	unknown := promptRec(p.ID, "c", "chat", "gpt-4", 500000, "ok", 0.01)
+	if err := repo.InsertPromptRecords([]PromptRecord{sampled, kept, unknown}); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err := repo.QueryPromptGroups(context.Background(), PromptFilter{ProjectID: p.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 || groups[0].Count != 3 || groups[0].WeightedCount != 9 {
+		t.Fatalf("groups %+v, want one group of 3 records standing for 9 calls", groups)
+	}
+}
+
 func TestQueryPromptRecordsFiltersByNameBeforeTheLimit(t *testing.T) {
 	repo := setupTestDB(t)
 	p, _ := repo.CreateProject("proj", "Proj")
