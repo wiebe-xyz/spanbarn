@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -162,7 +161,7 @@ func setupDiskWorker(t *testing.T, cfg Config) (*RetentionWorker, *repository.Re
 	logger := slog.Default()
 	cfg.BatchYield = time.Millisecond
 	cfg.DBPath = path
-	return NewRetentionWorker(repo, aggregation.NewAggregator(repo, time.Minute, logger), cfg, logger), repo
+	return NewRetentionWorker(repo, cfg, logger), repo
 }
 
 func TestApplyDiskPressure(t *testing.T) {

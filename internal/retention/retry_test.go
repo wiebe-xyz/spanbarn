@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -26,7 +25,7 @@ func failingWorker(t *testing.T) (*RetentionWorker, *bytes.Buffer) {
 	repo := repository.NewRepository(db.DB)
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	worker := NewRetentionWorker(repo, aggregation.NewAggregator(repo, time.Minute, logger), Config{BatchYield: time.Millisecond}, logger)
+	worker := NewRetentionWorker(repo, Config{BatchYield: time.Millisecond}, logger)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}

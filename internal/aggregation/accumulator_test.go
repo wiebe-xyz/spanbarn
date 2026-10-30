@@ -128,33 +128,3 @@ func TestAccumulatorQueryRecent(t *testing.T) {
 		t.Fatalf("QueryRecent (projectID=99) = %d rows, want 0", len(none))
 	}
 }
-
-func TestAccumulatorAggregateSpansMatchesAggregator(t *testing.T) {
-	w := &mockAccWriter{}
-	acc := NewAccumulator(w, time.Minute, time.Hour, nil)
-	agg := NewAggregator(w, time.Minute, nil)
-
-	spans := []repository.Span{
-		{ProjectID: 1, Service: "svc", Name: "op", Kind: "server", StartTimeUs: time.Now().UnixMicro(), DurationUs: 100},
-		{ProjectID: 1, Service: "svc", Name: "op", Kind: "server", StartTimeUs: time.Now().UnixMicro(), DurationUs: 200, Status: "error"},
-	}
-
-	accAggs, err := acc.AggregateSpans(context.Background(), spans)
-	if err != nil {
-		t.Fatalf("acc.AggregateSpans: %v", err)
-	}
-	aggAggs, err := agg.AggregateSpans(context.Background(), spans)
-	if err != nil {
-		t.Fatalf("agg.AggregateSpans: %v", err)
-	}
-
-	if len(accAggs) != len(aggAggs) {
-		t.Fatalf("len(accAggs)=%d, len(aggAggs)=%d", len(accAggs), len(aggAggs))
-	}
-	if accAggs[0].Count != aggAggs[0].Count {
-		t.Errorf("Count mismatch: acc=%d agg=%d", accAggs[0].Count, aggAggs[0].Count)
-	}
-	if accAggs[0].ErrorCount != aggAggs[0].ErrorCount {
-		t.Errorf("ErrorCount mismatch: acc=%d agg=%d", accAggs[0].ErrorCount, aggAggs[0].ErrorCount)
-	}
-}

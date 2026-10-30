@@ -45,12 +45,6 @@ func TestAggregationSumsWeights(t *testing.T) {
 
 	w := &mockAccWriter{}
 	acc := NewAccumulator(w, time.Minute, time.Hour, nil)
-	aggs, err = acc.AggregateSpans(ctx, spans)
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkWeights(t, "Accumulator.AggregateSpans", aggs)
-
 	for _, s := range spans {
 		acc.Add(s)
 	}

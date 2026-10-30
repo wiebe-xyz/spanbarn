@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -29,9 +28,8 @@ func setupTestWorker(t *testing.T, cfg Config) (*RetentionWorker, *repository.Re
 
 	repo := repository.NewRepository(db.DB)
 	logger := slog.Default()
-	agg := aggregation.NewAggregator(repo, time.Minute, logger)
 	cfg.BatchYield = time.Millisecond // no meaningful yield in tests
-	worker := NewRetentionWorker(repo, agg, cfg, logger)
+	worker := NewRetentionWorker(repo, cfg, logger)
 
 	return worker, repo
 }
@@ -76,7 +74,10 @@ func insertTestSpans(t *testing.T, repo *repository.Repository, count int, statu
 	}
 }
 
-func TestRunOnceAggregatesOldSpans(t *testing.T) {
+// A span is counted when it is ingested, so deleting it leaves its aggregate
+// row as it was. Counting it again here read an hourly floor trace of weight 240
+// as 480 once it aged out (#367).
+func TestRunOnceDoesNotCountDeletedSpansAgain(t *testing.T) {
 	cfg := Config{
 		InterestingRetentionHours: 1,
 		ErrorRetentionDays:        30,
@@ -90,22 +91,28 @@ func TestRunOnceAggregatesOldSpans(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
-	// Insert 10 old spans (2 hours ago).
+	// Insert 10 old spans (2 hours ago), with the row ingest wrote for them.
 	oldTime := time.Now().UTC().Add(-2 * time.Hour)
 	insertTestSpans(t, repo, 10, "ok", 500, oldTime)
+	counted := repository.Aggregate{
+		ProjectID: 1, Service: "test-svc", Operation: "test-op", Resource: "/api/test", Kind: "server",
+		Bucket: oldTime.Truncate(time.Minute), Count: 10, WeightedCount: 2400, WeightedSpans: 10,
+	}
+	if err := repo.UpsertAggregate(counted); err != nil {
+		t.Fatalf("UpsertAggregate: %v", err)
+	}
 
 	// Run retention.
 	if err := worker.RunOnce(context.Background()); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
 
-	// Verify aggregates were created.
 	aggs, err := repo.QueryAggregates(repository.AggregateFilter{ProjectID: 1, Limit: 100})
 	if err != nil {
 		t.Fatalf("QueryAggregates: %v", err)
 	}
-	if len(aggs) == 0 {
-		t.Fatal("expected aggregates to be created, got none")
+	if len(aggs) != 1 || aggs[0].Count != 10 || aggs[0].WeightedCount != 2400 {
+		t.Fatalf("aggregates = %+v, want the one row ingest wrote, unchanged", aggs)
 	}
 
 	// Verify old spans were deleted.
@@ -395,24 +402,6 @@ func TestRunOnceMultipleBatches(t *testing.T) {
 	}
 	if len(spans) != 0 {
 		t.Fatalf("expected 0 spans after multi-batch retention, got %d", len(spans))
-	}
-
-	// Aggregates should exist.
-	aggs, err := repo.QueryAggregates(repository.AggregateFilter{ProjectID: 1, Limit: 100})
-	if err != nil {
-		t.Fatalf("QueryAggregates: %v", err)
-	}
-	if len(aggs) == 0 {
-		t.Fatal("expected aggregates after processing 5500 spans")
-	}
-
-	// Verify total count matches.
-	var totalCount int64
-	for _, a := range aggs {
-		totalCount += a.Count
-	}
-	if totalCount != int64(total) {
-		t.Fatalf("expected aggregate count %d, got %d", total, totalCount)
 	}
 }
 

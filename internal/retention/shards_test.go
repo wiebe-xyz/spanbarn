@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -38,7 +37,7 @@ func newShardedWorker(t *testing.T, cfg Config, shards []int64) (*RetentionWorke
 	repo := &shardedRepo{Repository: real, shards: shards}
 	logger := slog.Default()
 	cfg.BatchYield = time.Millisecond
-	return NewRetentionWorker(repo, aggregation.NewAggregator(real, time.Minute, logger), cfg, logger), repo
+	return NewRetentionWorker(repo, cfg, logger), repo
 }
 
 func TestReclaimRetiresOldestShardsBeforeEvictingSpans(t *testing.T) {

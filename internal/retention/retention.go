@@ -15,13 +15,6 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
-// Aggregator groups raw spans into aggregates and persists them.
-// Satisfied by both *aggregation.Aggregator and *aggregation.Accumulator.
-type Aggregator interface {
-	AggregateSpans(ctx context.Context, spans []repository.Span) ([]repository.Aggregate, error)
-	Persist(ctx context.Context, aggregates []repository.Aggregate) error
-}
-
 var tracer = otel.Tracer("spanbarn/retention")
 
 const (
@@ -73,14 +66,13 @@ type Repository interface {
 	ProjectNonErrorTraceCountCutoff(ctx context.Context, projectID int64, keepN int) (time.Time, bool, error)
 }
 
-// RetentionWorker manages span lifecycle: aggregate old spans, copy error,
-// slow and durable spans to error_samples, and delete data past its retention
-// window.
+// RetentionWorker manages span lifecycle: copy error, slow and durable spans to
+// error_samples, and delete data past its retention window. It never writes
+// aggregates: a span was counted when it was ingested (#367).
 type RetentionWorker struct {
-	repo       Repository
-	aggregator Aggregator
-	cfg        Config
-	logger     *slog.Logger
+	repo   Repository
+	cfg    Config
+	logger *slog.Logger
 
 	// warnObsoleteFullHours keeps the retention_full_hours deprecation notice to
 	// one line per process instead of one per cycle.
@@ -104,12 +96,11 @@ type RetentionWorker struct {
 }
 
 // NewRetentionWorker creates a new retention worker.
-func NewRetentionWorker(repo Repository, aggregator Aggregator, cfg Config, logger *slog.Logger) *RetentionWorker {
+func NewRetentionWorker(repo Repository, cfg Config, logger *slog.Logger) *RetentionWorker {
 	return &RetentionWorker{
-		repo:       repo,
-		aggregator: aggregator,
-		cfg:        cfg.withDefaults(),
-		logger:     logger,
+		repo:   repo,
+		cfg:    cfg.withDefaults(),
+		logger: logger,
 	}
 }
 
@@ -208,7 +199,6 @@ func newCycleCutoffs(now time.Time, cfg Config) cycleCutoffs {
 
 // cycleStats counts what one retention cycle did.
 type cycleStats struct {
-	spansAggregated       int64
 	errorsSampled         int64
 	slowSamplesSkipped    int64
 	spansDeleted          int64
@@ -235,7 +225,6 @@ type cycleStats struct {
 
 func (c *cycleStats) attributes() []attribute.KeyValue {
 	return []attribute.KeyValue{
-		attribute.Int64("spans_aggregated", c.spansAggregated),
 		attribute.Int64("errors_sampled", c.errorsSampled),
 		attribute.Int64("slow_samples_skipped", c.slowSamplesSkipped),
 		attribute.Int64("spans_deleted", c.spansDeleted),
@@ -263,7 +252,6 @@ func (c *cycleStats) attributes() []attribute.KeyValue {
 
 func (c *cycleStats) logArgs() []any {
 	return []any{
-		"spans_aggregated", c.spansAggregated,
 		"errors_sampled", c.errorsSampled,
 		"slow_samples_skipped", c.slowSamplesSkipped,
 		"spans_deleted", c.spansDeleted,
@@ -290,7 +278,7 @@ func (c *cycleStats) logArgs() []any {
 }
 
 // RunOnce executes a single retention cycle:
-//  1. Fetch spans older than full_retention_hours in batches, sample errors, aggregate, delete
+//  1. Fetch spans older than full_retention_hours in batches, sample errors, delete
 //  2. Delete old error_samples and aggregates
 //
 // Each cycle is capped at maxSpansPerCycle deletions to keep write-lock hold
@@ -336,7 +324,7 @@ func (w *RetentionWorker) warnOnLargeBacklog(cutoff time.Time) {
 	}
 }
 
-// drainOldSpans aggregate-then-deletes all old spans (error/slow included),
+// drainOldSpans samples and deletes all old spans (error/slow included),
 // capped at maxSpansPerCycle total to bound write-lock hold time. The write
 // mutex is held only for the duration of one batch, then released for
 // cfg.BatchYield so the span-insert worker can drain the Redis queue.
@@ -356,7 +344,7 @@ func (w *RetentionWorker) drainOldSpans(ctx context.Context, span trace.Span, cf
 
 		var batchErr error
 		w.lockBatch(ctx, cfg.BatchYield, func() {
-			batchErr = w.aggregateAndDeleteInParts(ctx, cfg, batch, st)
+			batchErr = w.sampleAndDeleteInParts(ctx, cfg, batch, st)
 		})
 		if batchErr != nil {
 			span.RecordError(batchErr)
@@ -373,13 +361,12 @@ func (w *RetentionWorker) drainOldSpans(ctx context.Context, span trace.Span, cf
 	}
 }
 
-// aggregateAndDelete copies the error, slow and durable spans of one batch to
-// error_samples (slow ones up to the cap in slow_samples.go), aggregates the
-// batch and deletes it. A durable span is one
-// the ingest floor kept as an operation's clean example; copying it keeps that
-// trace readable until the error cutoff, matching its trace summary. A span
-// that is both error/slow and durable is copied once.
-func (w *RetentionWorker) aggregateAndDelete(ctx context.Context, cfg Config, batch []repository.Span, st *cycleStats) error {
+// sampleAndDelete copies the error, slow and durable spans of one batch to
+// error_samples (slow ones up to the cap in slow_samples.go) and deletes the
+// batch. A durable span is one the ingest floor kept as an operation's clean
+// example; copying it keeps that trace readable until the error cutoff, matching
+// its trace summary. A span that is both error/slow and durable is copied once.
+func (w *RetentionWorker) sampleAndDelete(ctx context.Context, cfg Config, batch []repository.Span, st *cycleStats) error {
 	samples, skipped := w.samplesOf(cfg, batch)
 	st.slowSamplesSkipped += skipped
 	if len(samples) > 0 {
@@ -388,15 +375,6 @@ func (w *RetentionWorker) aggregateAndDelete(ctx context.Context, cfg Config, ba
 		}
 		st.errorsSampled += int64(len(samples))
 	}
-
-	aggs, err := w.aggregator.AggregateSpans(ctx, batch)
-	if err != nil {
-		return err
-	}
-	if err := w.aggregator.Persist(ctx, aggs); err != nil {
-		return err
-	}
-	st.spansAggregated += int64(len(batch))
 
 	maxID := batch[0].ID
 	for _, s := range batch[1:] {
