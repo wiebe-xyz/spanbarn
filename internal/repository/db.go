@@ -288,7 +288,9 @@ func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, 
 // the copy, and its fsync, off the writer, so the TRUNCATE has only the frames
 // written during the backfill left to copy.
 func (d *DB) periodicCheckpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) int {
-	return d.checkpointWith(ctx, retryInterval, log, func() { d.backfill(ctx, log) })
+	frames, times := d.checkpointWith(ctx, retryInterval, log, func() { d.backfill(ctx, log) })
+	times.log(log, d.path, frames)
+	return frames
 }
 
 // backfill runs one PASSIVE checkpoint on the handle's checkpoint connection
@@ -357,33 +359,37 @@ func (d *DB) FinalCheckpoint(log *slog.Logger) int {
 // It retries on busy=1 (reader snapshot blocking backfill) so the WAL is
 // actually reset once the reader releases.
 func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) int {
-	return d.checkpointWith(ctx, retryInterval, log, func() {})
+	frames, _ := d.checkpointWith(ctx, retryInterval, log, func() {})
+	return frames
 }
 
-// checkpointWith is checkpoint with before run ahead of every attempt.
-func (d *DB) checkpointWith(ctx context.Context, retryInterval time.Duration, log *slog.Logger, before func()) int {
+// checkpointWith is checkpoint with before run ahead of every attempt. It also
+// returns where the attempts spent their time.
+func (d *DB) checkpointWith(ctx context.Context, retryInterval time.Duration, log *slog.Logger, before func()) (int, checkpointTimes) {
+	var times checkpointTimes
 	for {
+		times.attempts++
+		start := time.Now()
 		before()
-		busy, walFrames, checkpointed, err := d.checkpointOnce(ctx)
+		times.backfill += time.Since(start)
+		busy, walFrames, checkpointed, err := d.checkpointOnce(ctx, &times)
 		if err != nil {
 			if ctx.Err() == nil {
 				log.Warn("wal checkpoint error", "error", err)
 			}
-			return -1
+			return -1, times
 		}
 		if busy == 0 {
-			// Reclaim up to 5000 freed pages (~20 MiB) per tick. No-op when
-			// auto_vacuum != INCREMENTAL (i.e. before migration 018 has run).
-			_, _ = d.ExecContext(ctx, "PRAGMA main.incremental_vacuum(5000)")
-			return walFrames
+			d.vacuumFreed(ctx, &times)
+			return walFrames, times
 		}
 		log.Debug("wal checkpoint blocked by reader, retrying", "wal_frames", walFrames, "checkpointed", checkpointed)
 		if retryInterval == 0 {
-			return walFrames
+			return walFrames, times
 		}
 		select {
 		case <-ctx.Done():
-			return walFrames
+			return walFrames, times
 		case <-time.After(retryInterval):
 		}
 	}
@@ -392,8 +398,10 @@ func (d *DB) checkpointWith(ctx context.Context, retryInterval time.Duration, lo
 // checkpointOnce runs one TRUNCATE checkpoint with busy_timeout off on the
 // connection it uses, and restores busy_timeout before the connection goes
 // back to the pool.
-func (d *DB) checkpointOnce(ctx context.Context) (busy, walFrames, checkpointed int, err error) {
+func (d *DB) checkpointOnce(ctx context.Context, times *checkpointTimes) (busy, walFrames, checkpointed int, err error) {
+	start := time.Now()
 	conn, err := d.Conn(ctx)
+	times.connWait += time.Since(start)
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -411,6 +419,8 @@ func (d *DB) checkpointOnce(ctx context.Context) (busy, walFrames, checkpointed 
 			}
 		}
 	}()
+	start = time.Now()
 	err = conn.QueryRowContext(ctx, "PRAGMA main.wal_checkpoint(TRUNCATE)").Scan(&busy, &walFrames, &checkpointed)
+	times.truncate += time.Since(start)
 	return busy, walFrames, checkpointed, err
 }

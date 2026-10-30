@@ -208,14 +208,57 @@ func shardRetention(cfg config.Config) repository.ShardRetention {
 	}
 }
 
+// checkpointInterval is the time between two WAL checkpoints of one file.
+const checkpointInterval = 30 * time.Second
+
 // startCheckpoints runs a WAL checkpoint loop for every file of store. The
 // shard manager checkpoints its own files, next to creating them.
+//
+// The loops tick at evenly spaced offsets. All files share one disk, and with
+// every loop on the same tick their fsyncs queue behind each other: 61% of the
+// production writer's slow writes over 30 hours on 2026-10-29 and 10-30 started
+// in the same 3s of the 30s period, whatever their op or row count (#431, #370).
 func startCheckpoints(ctx context.Context, wg *sync.WaitGroup, store *repository.Storage, logger *slog.Logger) {
-	for _, h := range store.Handles() {
-		safeGo("wal-checkpoint", wg, func() { h.RunPeriodicCheckpoint(ctx, 30*time.Second, logger) })
+	handles := store.Handles()
+	loops := len(handles)
+	if store.Shards != nil {
+		loops++
+	}
+	for i, h := range handles {
+		safeGo("wal-checkpoint", wg, func() {
+			if waitOffset(ctx, checkpointOffset(i, loops)) {
+				h.RunPeriodicCheckpoint(ctx, checkpointInterval, logger)
+			}
+		})
 	}
 	if store.Shards != nil {
-		safeGo("shard-manager", wg, func() { store.Shards.Run(ctx, 30*time.Second) })
+		safeGo("shard-manager", wg, func() {
+			if waitOffset(ctx, checkpointOffset(loops-1, loops)) {
+				store.Shards.Run(ctx, checkpointInterval)
+			}
+		})
+	}
+}
+
+// checkpointOffset is how long loop i of loops waits before its first interval
+// starts.
+func checkpointOffset(i, loops int) time.Duration {
+	return checkpointInterval * time.Duration(i) / time.Duration(loops)
+}
+
+// waitOffset waits for offset and reports whether the loop should run: false
+// when ctx ended first.
+func waitOffset(ctx context.Context, offset time.Duration) bool {
+	if offset <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(offset)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 
