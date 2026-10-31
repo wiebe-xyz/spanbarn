@@ -4,9 +4,14 @@ SHELL := /bin/sh
 SPEC_DIR := specs/001-telemetry-aggregator
 LOCAL_DIRS := .cache var
 FIND_PRUNE := \( -path './.git' -o -path './.cache' -o -path './.claude' -o -path '*/node_modules' -o -path '*/dist' -o -path '*/build' -o -path '*/.venv' \) -prune -o
+# The Go caches stay off the machine's default, where another repo's
+# go clean -modcache can break a build. A repo's worktrees share one copy: it is
+# about 2.5 GiB per tree otherwise, and go locks both caches for concurrent use.
+GIT_COMMON_DIR := $(shell git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+GO_CACHE_ROOT := $(if $(GIT_COMMON_DIR),$(dir $(GIT_COMMON_DIR)).cache,$(CURDIR)/.cache)
 export XDG_CACHE_HOME := $(CURDIR)/.cache
-export GOCACHE := $(CURDIR)/.cache/go-build
-export GOMODCACHE := $(CURDIR)/.cache/go-mod
+export GOCACHE := $(GO_CACHE_ROOT)/go-build
+export GOMODCACHE := $(GO_CACHE_ROOT)/go-mod
 
 .PHONY: help setup test lint build dev docker-build spec-check quality-gate quality-gate-update quality-gate-test secret-scan
 
