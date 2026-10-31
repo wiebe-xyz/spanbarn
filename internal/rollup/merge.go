@@ -27,14 +27,14 @@ type seriesKey struct {
 type Carry struct {
 	// SourceTail is the newest source row before the window, keyed by SourceTailKey.
 	SourceTail map[string]repository.MetricRollup
-	// TargetLast is the `last` value of the previous target bucket, per reduced
-	// attribute fingerprint.
+	// TargetLast is the `last` value of the previous target bucket, keyed by
+	// repository.CoarseSeriesKey over the metric name and reduced fingerprint.
 	TargetLast map[string]float64
 }
 
 // SourceTailKey addresses a source row within Carry.SourceTail.
 func SourceTailKey(m repository.MetricRollup) string {
-	return m.Name + "\x00" + m.AttrFingerprint
+	return repository.CoarseSeriesKey(m.Name, m.AttrFingerprint)
 }
 
 // Merge folds the source rows of one target bucket into rows of the coarser
@@ -66,18 +66,19 @@ func Merge(
 	var order []string
 	for _, c := range contributionsBySeries(src, carry) {
 		attrs, fp := policy.Reduce(c.row.Attributes, tier.Step)
-		acc := accs[fp]
+		key := repository.CoarseSeriesKey(c.row.Name, fp)
+		acc := accs[key]
 		if acc == nil {
 			acc = newTargetAcc(c.row, projectID, attrs, fp, tier.Step, bucket)
-			accs[fp] = acc
-			order = append(order, fp)
+			accs[key] = acc
+			order = append(order, key)
 		}
 		acc.add(c)
 	}
 
 	out := make([]repository.MetricRollup, 0, len(order))
-	for _, fp := range order {
-		out = append(out, accs[fp].finish(carry.TargetLast[fp]))
+	for _, key := range order {
+		out = append(out, accs[key].finish(carry.TargetLast[key]))
 	}
 	return out
 }

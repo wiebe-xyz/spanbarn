@@ -96,15 +96,21 @@ func (r *Repository) rollupWindowForProject(ctx context.Context, step, projectID
 	return scanMetricRollups(rows)
 }
 
-// CoarseLastByFingerprint returns the `last` value of one tier's bucket, keyed
-// by attribute fingerprint. Compaction continues a counter's running total from
-// these, so the tier stays monotonic across bucket boundaries.
-func (r *Repository) CoarseLastByFingerprint(ctx context.Context, projectID, step int64, bucket time.Time) (map[string]float64, error) {
+// CoarseSeriesKey addresses one series of a project within a tier: two metrics
+// can share a label set, so the fingerprint alone does not identify a series.
+func CoarseSeriesKey(name, fingerprint string) string {
+	return name + "\x00" + fingerprint
+}
+
+// CoarseLastBySeries returns the `last` value of one tier's bucket, keyed by
+// CoarseSeriesKey. Compaction continues a counter's running total from these,
+// so the tier stays monotonic across bucket boundaries.
+func (r *Repository) CoarseLastBySeries(ctx context.Context, projectID, step int64, bucket time.Time) (map[string]float64, error) {
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT attr_fingerprint, last FROM metric_rollups_coarse
+		`SELECT name, attr_fingerprint, last FROM metric_rollups_coarse
 		 WHERE project_id = ? AND step_seconds = ? AND bucket = ?`,
 		projectID, step, bucket)
 	if err != nil {
@@ -114,12 +120,12 @@ func (r *Repository) CoarseLastByFingerprint(ctx context.Context, projectID, ste
 
 	out := map[string]float64{}
 	for rows.Next() {
-		var fp string
+		var name, fp string
 		var last float64
-		if err := rows.Scan(&fp, &last); err != nil {
+		if err := rows.Scan(&name, &fp, &last); err != nil {
 			return nil, err
 		}
-		out[fp] = last
+		out[CoarseSeriesKey(name, fp)] = last
 	}
 	return out, rows.Err()
 }

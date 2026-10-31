@@ -206,30 +206,33 @@ func TestDeleteCoarseRollupsOlderThanLimited(t *testing.T) {
 	}
 }
 
-// TestCoarseLastByFingerprint feeds the running total that keeps a compacted
+// TestCoarseLastBySeries feeds the running total that keeps a compacted
 // counter monotonic from one tier bucket to the next.
-func TestCoarseLastByFingerprint(t *testing.T) {
+func TestCoarseLastBySeries(t *testing.T) {
 	repo := setupTestDB(t)
 	ctx := context.Background()
 	hour := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
 
-	rows := []MetricRollup{coarseRow(3600, hour, 10), coarseRow(3600, hour, 20)}
+	rows := []MetricRollup{coarseRow(3600, hour, 10), coarseRow(3600, hour, 20), coarseRow(3600, hour, 30)}
 	rows[1].AttrFingerprint = "fp2"
+	rows[2].Name = "other"
 	if err := repo.UpsertCoarseRollups(ctx, rows); err != nil {
 		t.Fatalf("UpsertCoarseRollups: %v", err)
 	}
 
-	got, err := repo.CoarseLastByFingerprint(ctx, 1, 3600, hour)
+	got, err := repo.CoarseLastBySeries(ctx, 1, 3600, hour)
 	if err != nil {
-		t.Fatalf("CoarseLastByFingerprint: %v", err)
+		t.Fatalf("CoarseLastBySeries: %v", err)
 	}
-	if len(got) != 2 || got["fp"] != 10 || got["fp2"] != 20 {
-		t.Errorf("got %v, want fp=10 and fp2=20", got)
+	name := rows[0].Name
+	if len(got) != 3 || got[CoarseSeriesKey(name, "fp")] != 10 || got[CoarseSeriesKey(name, "fp2")] != 20 ||
+		got[CoarseSeriesKey("other", "fp")] != 30 {
+		t.Errorf("got %v, want one value per name and fingerprint", got)
 	}
 
-	empty, err := repo.CoarseLastByFingerprint(ctx, 1, 3600, hour.Add(-time.Hour))
+	empty, err := repo.CoarseLastBySeries(ctx, 1, 3600, hour.Add(-time.Hour))
 	if err != nil {
-		t.Fatalf("CoarseLastByFingerprint (empty bucket): %v", err)
+		t.Fatalf("CoarseLastBySeries (empty bucket): %v", err)
 	}
 	if len(empty) != 0 {
 		t.Errorf("got %v for a bucket with no rows, want nothing", empty)

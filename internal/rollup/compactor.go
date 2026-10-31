@@ -12,7 +12,7 @@ import (
 type Repository interface {
 	RollupWindow(ctx context.Context, step int64, from, to time.Time, limit int) ([]repository.MetricRollup, error)
 	UpsertCoarseRollups(ctx context.Context, rollups []repository.MetricRollup) error
-	CoarseLastByFingerprint(ctx context.Context, projectID, step int64, bucket time.Time) (map[string]float64, error)
+	CoarseLastBySeries(ctx context.Context, projectID, step int64, bucket time.Time) (map[string]float64, error)
 	OldestRollupBucket(ctx context.Context, step int64) (time.Time, bool, error)
 	MetricRollupWatermark(ctx context.Context, step int64) (time.Time, bool, error)
 	SetMetricRollupWatermark(ctx context.Context, step int64, through time.Time) error
@@ -219,7 +219,7 @@ func (c *Compactor) compactBucket(ctx context.Context, tier Tier, bucket time.Ti
 	tails, byProject := splitWindow(rows, bucket)
 	var written int
 	for _, pid := range byProject.order {
-		targetLast, err := c.repo.CoarseLastByFingerprint(ctx, pid, tier.Step, PrevBucket(bucket, tier.Step))
+		targetLast, err := c.repo.CoarseLastBySeries(ctx, pid, tier.Step, PrevBucket(bucket, tier.Step))
 		if err != nil {
 			return written, err
 		}

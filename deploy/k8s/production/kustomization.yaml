@@ -33,6 +33,10 @@ patches:
           value: "__VERSION__"
   - path: patch-resources.yaml
   - path: patch-resources-ingest.yaml
+  - path: configmap-retention-patch.yaml
+    target:
+      kind: ConfigMap
+      name: spanbarn-config
 
 # Image tags are injected by the deploy workflow (sed-replaces __SHA__).
 # This avoids the ":latest" tag being applied — that tag isn't published.
