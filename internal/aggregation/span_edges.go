@@ -132,7 +132,7 @@ func (e *spanEdges) flush() error {
 	}
 	start := e.now()
 	if err := e.writer.AddSpanEdges(rows); err != nil {
-		e.requeue(slots, buckets)
+		e.requeue(unwrittenSlots(slots, err, spanEdgeRowKey), buckets, err)
 		return err
 	}
 	e.logger.Info("persisted span edges", "rows", len(rows), "duration_ms", e.now().Sub(start).Milliseconds())
@@ -158,18 +158,31 @@ func (sl *spanEdgeSlot) row(k spanEdgeKey) repository.SpanEdge {
 	}
 }
 
-func (e *spanEdges) requeue(slots map[spanEdgeKey]*spanEdgeSlot, buckets map[int64]struct{}) {
+func spanEdgeRowKey(row repository.SpanEdge) spanEdgeKey {
+	return spanEdgeKey{
+		bucket:     row.Bucket.Unix(),
+		projectID:  row.ProjectID,
+		source:     row.Source,
+		target:     row.Target,
+		targetType: row.TargetType,
+	}
+}
+
+func (e *spanEdges) requeue(slots map[spanEdgeKey]*spanEdgeSlot, buckets map[int64]struct{}, cause error) {
 	oldest := e.now().Add(-spanRollupRequeueAge).Unix()
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	for b := range buckets {
 		if b >= oldest {
 			e.buckets[b] = struct{}{}
 		}
 	}
-	requeueSlots(e.slots, slots, func(k spanEdgeKey) bool { return k.bucket >= oldest },
+	lost := requeueSlots(e.slots, slots, func(k spanEdgeKey) bool { return k.bucket >= oldest },
 		func(cur, sl *spanEdgeSlot) {
 			cur.merge(sl.durationStats)
 			cur.errors += sl.errors
 		})
+	e.mu.Unlock()
+	if lost > 0 {
+		e.logger.Error("span edges dropped after failed writes", "rows_lost", lost, "error", cause)
+	}
 }

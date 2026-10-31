@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -89,6 +90,20 @@ func (r *Repository) ReplaceSpanRollups(ctx context.Context, rows []SpanRollup) 
 	return writeTierRows(r, ctx, "ReplaceSpanRollups", spanRollupReplaceSQL, rows, spanRollupChunk, compareSpanRollupKey, spanRollupArgs)
 }
 
+// UnwrittenRowsError reports a tier write that stopped at a failed chunk. Rows
+// are the rows not written. The chunks before them stay written and the add
+// upserts add on conflict, so only Rows may be written again.
+type UnwrittenRowsError[T any] struct {
+	Rows []T
+	Err  error
+}
+
+func (e *UnwrittenRowsError[T]) Error() string {
+	return fmt.Sprintf("%d rows not written: %v", len(e.Rows), e.Err)
+}
+
+func (e *UnwrittenRowsError[T]) Unwrap() error { return e.Err }
+
 // writeTierRows writes rows of a tiered table with query, sorted by key so
 // each chunk writes neighbouring leaves, one transaction and one write slot
 // per chunk of chunkRows rows. A chunk that fails stops the batch; the
@@ -100,6 +115,7 @@ func writeTierRows[T any](r *Repository, ctx context.Context, label, query strin
 	ctx = WithoutSpanTracing(ctx)
 	sorted := slices.Clone(rows)
 	slices.SortFunc(sorted, compare)
+	written := 0
 	for chunk := range slices.Chunk(sorted, chunkRows) {
 		if _, err := r.submitRows(FamilySpans, writescheduler.Low, label, func(db *sql.DB) (int64, error) {
 			if err := writeTierChunk(ctx, db, query, chunk, args); err != nil {
@@ -107,8 +123,9 @@ func writeTierRows[T any](r *Repository, ctx context.Context, label, query strin
 			}
 			return int64(len(chunk)), nil
 		}); err != nil {
-			return err
+			return &UnwrittenRowsError[T]{Rows: sorted[written:], Err: err}
 		}
+		written += len(chunk)
 	}
 	return nil
 }
