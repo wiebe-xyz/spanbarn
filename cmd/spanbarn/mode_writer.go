@@ -276,6 +276,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	workerCancel()
 	wg.Wait()
 	logger.Info("writer drain: workers stopped", "duration_ms", time.Since(drainStart).Milliseconds())
+	accumulator.FlushOnStop(context.Background())
 	flushSpanRollupsOnStop(spanRollups, logger)
 	finishLedger()
 	schedCancel()

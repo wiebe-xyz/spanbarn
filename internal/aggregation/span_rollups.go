@@ -223,7 +223,7 @@ func (r *SpanRollups) flushRollups() error {
 	}
 	start := r.now()
 	if err := r.writer.AddSpanRollups(rows); err != nil {
-		r.requeue(slots)
+		r.requeue(unwrittenSlots(slots, err, spanRollupRowKey), err)
 		return err
 	}
 	r.logger.Info("persisted span rollups", "rows", len(rows), "duration_ms", r.now().Sub(start).Milliseconds())
@@ -251,19 +251,56 @@ func (sl *spanRollupSlot) row(k spanRollupKey) repository.SpanRollup {
 	}
 }
 
-func (r *SpanRollups) requeue(slots map[spanRollupKey]*spanRollupSlot) {
+func spanRollupRowKey(row repository.SpanRollup) spanRollupKey {
+	return spanRollupKey{
+		bucket:    row.Bucket.Unix(),
+		projectID: row.ProjectID,
+		service:   row.Service,
+		name:      row.Name,
+		kind:      row.Kind,
+		root:      row.IsRoot,
+		status:    row.Status,
+		http:      row.HTTPStatus,
+	}
+}
+
+func (r *SpanRollups) requeue(slots map[spanRollupKey]*spanRollupSlot, cause error) {
 	oldest := r.now().Add(-spanRollupRequeueAge).Unix()
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	requeueSlots(r.slots, slots, func(k spanRollupKey) bool { return k.bucket >= oldest },
+	lost := requeueSlots(r.slots, slots, func(k spanRollupKey) bool { return k.bucket >= oldest },
 		func(cur, sl *spanRollupSlot) { cur.merge(sl.durationStats) })
+	r.mu.Unlock()
+	if lost > 0 {
+		r.logger.Error("span rollups dropped after failed writes", "rows_lost", lost, "error", cause)
+	}
+}
+
+// unwrittenSlots narrows the slots of a failed write to the ones its rows did
+// not reach. The upserts add on conflict, so a chunk that landed must not go
+// again. An error that does not name its rows means none were written.
+func unwrittenSlots[K comparable, V, T any](slots map[K]*V, err error, keyOf func(T) K) map[K]*V {
+	var partial *repository.UnwrittenRowsError[T]
+	if !errors.As(err, &partial) {
+		return slots
+	}
+	unwritten := make(map[K]*V, len(partial.Rows))
+	for _, row := range partial.Rows {
+		k := keyOf(row)
+		if sl := slots[k]; sl != nil {
+			unwritten[k] = sl
+		}
+	}
+	return unwritten
 }
 
 // requeueSlots puts the slots of a failed flush back into dst, merged with
-// any that arrived meanwhile, except those keep refuses.
-func requeueSlots[K comparable, V any](dst, src map[K]*V, keep func(K) bool, merge func(cur, sl *V)) {
+// any that arrived meanwhile, except those keep refuses, and returns how many
+// it refused.
+func requeueSlots[K comparable, V any](dst, src map[K]*V, keep func(K) bool, merge func(cur, sl *V)) int {
+	refused := 0
 	for k, sl := range src {
 		if !keep(k) {
+			refused++
 			continue
 		}
 		if cur := dst[k]; cur != nil {
@@ -272,6 +309,7 @@ func requeueSlots[K comparable, V any](dst, src map[K]*V, keep func(K) bool, mer
 			dst[k] = sl
 		}
 	}
+	return refused
 }
 
 // Run flushes on a ticker until ctx is cancelled.

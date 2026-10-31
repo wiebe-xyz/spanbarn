@@ -22,6 +22,7 @@ type Accumulator struct {
 	flushInterval time.Duration
 	repo          AggregateWriter
 	logger        *slog.Logger
+	now           func() time.Time
 	// rollups, when set, receives every span Add and AddBatch see
 	// (span_rollups, and span_edges for batches).
 	rollups *SpanRollups
@@ -58,6 +59,7 @@ func NewAccumulator(repo AggregateWriter, interval, flushInterval time.Duration,
 		flushInterval: flushInterval,
 		repo:          repo,
 		logger:        logger,
+		now:           time.Now,
 	}
 }
 
@@ -158,7 +160,8 @@ func (a *Accumulator) QueryRecent(f repository.AggregateFilter) []repository.Agg
 
 // Flush drains all accumulated slots, computes final aggregates, and upserts
 // them into SQLite. Slots are swapped out atomically so Add calls during Flush
-// land in the next cycle without blocking.
+// land in the next cycle without blocking. The slots a failed write left
+// unwritten go back for the next flush.
 func (a *Accumulator) Flush(ctx context.Context) error {
 	a.mu.Lock()
 	slots := a.slots
@@ -199,10 +202,57 @@ func (a *Accumulator) Flush(ctx context.Context) error {
 	}
 
 	if err := a.repo.UpsertAggregates(aggs); err != nil {
+		a.requeue(slots, err)
 		return fmt.Errorf("accumulator flush: %w", err)
 	}
 	a.logger.Info("persisted aggregates", "count", len(aggs))
 	return nil
+}
+
+// requeue puts the slots a failed write left unwritten back, merged with
+// whatever arrived meanwhile, and logs at ERROR the ones older than
+// spanRollupRequeueAge, which it drops.
+func (a *Accumulator) requeue(slots map[accKey]*accSlot, cause error) {
+	slots = unwrittenSlots(slots, cause, aggregateKey)
+	oldest := a.now().Add(-spanRollupRequeueAge)
+	a.mu.Lock()
+	lost := requeueSlots(a.slots, slots, func(k accKey) bool { return !k.bucket.Before(oldest) },
+		func(cur, sl *accSlot) { cur.merge(sl) })
+	a.mu.Unlock()
+	if lost > 0 {
+		a.logger.Error("accumulator dropped aggregates after failed writes", "rows_lost", lost, "error", cause)
+	}
+}
+
+func aggregateKey(row repository.Aggregate) accKey {
+	return accKey{
+		projectID: row.ProjectID,
+		service:   row.Service,
+		operation: row.Operation,
+		resource:  row.Resource,
+		kind:      row.Kind,
+		bucket:    row.Bucket,
+	}
+}
+
+func (sl *accSlot) merge(o *accSlot) {
+	sl.count += o.count
+	sl.errorCount += o.errorCount
+	sl.durations = append(sl.durations, o.durations...)
+	sl.sampleWeights = append(sl.sampleWeights, o.sampleWeights...)
+	sl.weights.count += o.weights.count
+	sl.weights.spans += o.weights.spans
+}
+
+// FlushOnStop writes what the slots still hold when the writer drains. There is
+// no next flush, so a failed write loses its rows.
+func (a *Accumulator) FlushOnStop(ctx context.Context) {
+	if err := a.Flush(ctx); err != nil {
+		a.mu.Lock()
+		lost := len(a.slots)
+		a.mu.Unlock()
+		a.logger.Error("accumulator final flush failed", "rows_lost", lost, "error", err)
+	}
 }
 
 // Run starts a periodic flush loop. Blocks until ctx is cancelled.
@@ -215,7 +265,7 @@ func (a *Accumulator) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := a.Flush(ctx); err != nil {
-				a.logger.Warn("accumulator flush failed", "error", err)
+				a.logger.Warn("accumulator flush failed, slots kept for the next flush", "error", err)
 			}
 		}
 	}

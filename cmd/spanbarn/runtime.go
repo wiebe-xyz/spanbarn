@@ -219,6 +219,6 @@ func flushSpanRollupsOnStop(r *aggregation.SpanRollups, logger *slog.Logger) {
 		return
 	}
 	if err := r.Flush(); err != nil {
-		logger.Warn("final span rollup flush failed", "error", err)
+		logger.Error("final span rollup flush failed", "error", err)
 	}
 }
