@@ -96,7 +96,7 @@ func TestMergeCounterContinuesRunningTotal(t *testing.T) {
 	_, fp := DefaultDropPolicy().Reduce(rows[0].Attributes, StepHour)
 	carry := Carry{
 		SourceTail: map[string]repoRow{"reqs\x00v1": src("reqs", "v1", "sum", testStart.Add(-5*time.Minute), withLast(10))},
-		TargetLast: map[string]float64{fp: 1000},
+		TargetLast: map[string]float64{repository.CoarseSeriesKey("reqs", fp): 1000},
 	}
 
 	out := Merge(hourTier, testStart, 7, rows, DefaultDropPolicy(), carry)
@@ -108,6 +108,44 @@ func TestMergeCounterContinuesRunningTotal(t *testing.T) {
 	}
 	if got, want := out[0].Last, 1015.0; got != want {
 		t.Errorf("running total = %v, want %v", got, want)
+	}
+}
+
+// TestMergeKeepsMetricNamesApart: metrics from one library often share a label
+// set. Each keeps its own row and its own running total.
+func TestMergeKeepsMetricNamesApart(t *testing.T) {
+	rows := []repoRow{
+		src("reqs", "v1", "sum", testStart, withLast(10)),
+		src("reqs", "v1", "sum", testStart.Add(5*time.Minute), withLast(25)),
+		src("errs", "v1", "sum", testStart, withLast(1)),
+		src("errs", "v1", "sum", testStart.Add(5*time.Minute), withLast(3)),
+	}
+	_, fp := DefaultDropPolicy().Reduce(rows[0].Attributes, StepHour)
+	tail := testStart.Add(-5 * time.Minute)
+	carry := Carry{
+		SourceTail: map[string]repoRow{
+			"reqs\x00v1": src("reqs", "v1", "sum", tail, withLast(10)),
+			"errs\x00v1": src("errs", "v1", "sum", tail, withLast(1)),
+		},
+		TargetLast: map[string]float64{
+			repository.CoarseSeriesKey("reqs", fp): 1000,
+			repository.CoarseSeriesKey("errs", fp): 50,
+		},
+	}
+
+	out := Merge(hourTier, testStart, 7, rows, DefaultDropPolicy(), carry)
+	if len(out) != 2 {
+		t.Fatalf("got %d rows, want one per metric name", len(out))
+	}
+	want := map[string]struct{ sum, last float64 }{"reqs": {15, 1015}, "errs": {2, 52}}
+	for _, row := range out {
+		w, ok := want[row.Name]
+		if !ok {
+			t.Fatalf("unexpected metric %q", row.Name)
+		}
+		if row.Sum != w.sum || row.Last != w.last {
+			t.Errorf("%s: sum %v last %v, want sum %v last %v", row.Name, row.Sum, row.Last, w.sum, w.last)
+		}
 	}
 }
 
