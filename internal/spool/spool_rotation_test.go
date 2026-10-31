@@ -79,6 +79,36 @@ func TestSpoolReadsWhatRotationLeftUnread(t *testing.T) {
 	wantIDs(t, got, "b-0", "c-0", "c-1", "c-2", "c-3", "c-4", "c-5", "d-0")
 }
 
+// The forwarder keeps its cursor when a read returns nothing, so the read that
+// removes the rotated file leaves it holding an offset from that file. That offset
+// is past the end of the new file, which is what sends the next read to its start.
+func TestSpoolCursorKeptFromARotatedFileStillReadsTheNewFileFromItsStart(t *testing.T) {
+	dir := t.TempDir()
+	sp, err := NewSpool(dir, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sp.Close()
+
+	if err := sp.Write(namedRecords("a", 5)); err != nil {
+		t.Fatal(err)
+	}
+	if sp.Size() != 0 {
+		t.Fatalf("size = %d, want a rotation to have happened", sp.Size())
+	}
+	got, cursor := drain(t, sp, 0)
+	wantIDs(t, got, "a-0", "a-1", "a-2", "a-3", "a-4")
+	if _, err := os.Stat(filepath.Join(dir, oldFileName)); !os.IsNotExist(err) {
+		t.Fatalf("read old file still there: %v", err)
+	}
+
+	if err := sp.Write(namedRecords("b", 1)); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = drain(t, sp, cursor)
+	wantIDs(t, got, "b-0")
+}
+
 // A rotated file goes away once it is read. Its presence is what says it still
 // holds unread records, so a restart carries on where the cursor stopped.
 func TestSpoolRestartWithAnOldFileCarriesOnFromTheCursor(t *testing.T) {
