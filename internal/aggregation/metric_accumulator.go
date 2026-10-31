@@ -330,7 +330,7 @@ func (a *MetricAccumulator) Run(ctx context.Context) {
 		case <-ticker.C:
 			if err := a.Flush(ctx); err != nil {
 				// The next tick retries; a rollup it gives up on logs at ERROR.
-				a.logger.Info("metric accumulator flush failed", "error", err)
+				a.logger.Warn("metric accumulator flush failed", "error", err)
 			}
 		}
 	}
