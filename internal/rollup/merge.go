@@ -4,6 +4,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/metrics"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -195,14 +196,19 @@ func seriesContribution(rows []repository.MetricRollup, prev repository.MetricRo
 	if !prev.Bucket.IsZero() {
 		state.start(prev)
 	}
+	steps := interleavedSteps(rows, prev, cumulative)
 
-	for _, r := range rows {
+	for i, r := range rows {
 		c.count += r.Count
 		c.observe(r)
 
 		switch r.Type {
 		case "sum":
-			c.sum += state.increase(r)
+			if steps != nil {
+				c.sum += steps[i]
+			} else {
+				c.sum += state.increase(r)
+			}
 			c.obsCount += r.ObsCount
 		case "histogram":
 			// A cumulative histogram's sum and count are snapshots as much as
@@ -217,6 +223,37 @@ func seriesContribution(rows []repository.MetricRollup, prev repository.MetricRo
 		}
 	}
 	return c
+}
+
+// interleavedSteps returns the increase of each row of a counter whose window is
+// interleaved, nil for any other series. Pods sharing a label set leave their
+// running totals alternating in the bucket last values, and every fall would add
+// a whole running total to a tier that keeps it for weeks. A chain's value from
+// before the window is unknown, so a pod's first row in the window adds nothing.
+// A window with fewer rebounds than Interleaved requires still adds them in full.
+func interleavedSteps(rows []repository.MetricRollup, prev repository.MetricRollup, cumulative bool) []float64 {
+	if !cumulative || rows[0].Type != "sum" {
+		return nil
+	}
+	values := make([]float64, 0, len(rows)+1)
+	offset := 0
+	if !prev.Bucket.IsZero() {
+		values = append(values, prev.Last)
+		offset = 1
+	}
+	for _, r := range rows {
+		values = append(values, r.Last)
+	}
+	if !metrics.Interleaved(values) {
+		return nil
+	}
+	steps := make([]float64, len(rows))
+	for i, p := range metrics.ChainPrevious(values)[offset:] {
+		if p >= 0 {
+			steps[i] = values[i+offset] - values[p]
+		}
+	}
+	return steps
 }
 
 // observe extends the contribution's min/max with a source row's.
