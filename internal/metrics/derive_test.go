@@ -51,6 +51,30 @@ func TestDeriveRate(t *testing.T) {
 	}
 }
 
+func TestDeriveRateFirstPoint(t *testing.T) {
+	// A cumulative series with one stored point has no earlier total to measure
+	// from, so it renders nothing until a second point arrives.
+	first := InputPoint{T: 3600e9, Value: 40}
+	if got := Derive("sum", []InputPoint{first}); len(got) != 0 {
+		t.Fatalf("want 0 points for a lone cumulative point, got %+v", got)
+	}
+
+	got := Derive("sum", []InputPoint{first, {T: 7200e9, Value: 76}})
+	if len(got) != 1 || got[0].T != 7200e9 {
+		t.Fatalf("want 1 point at the second timestamp, got %+v", got)
+	}
+	if !approx(got[0].Value, 0.01, 1e-9) { // +36 over 3600s
+		t.Errorf("rate = %v, want 0.01", got[0].Value)
+	}
+
+	// A delta point holds its own increase, so it renders from the first point.
+	delta := InputPoint{T: 3600e9, Value: 36, Delta: true, IntervalNano: 3600e9}
+	got = Derive("sum", []InputPoint{delta})
+	if len(got) != 1 || !approx(got[0].Value, 0.01, 1e-9) {
+		t.Errorf("want one delta point at rate 0.01, got %+v", got)
+	}
+}
+
 func TestDeriveRateCounterReset(t *testing.T) {
 	// Counter resets (300 -> 50): treat 50 as the increase over the interval.
 	pts := []InputPoint{
