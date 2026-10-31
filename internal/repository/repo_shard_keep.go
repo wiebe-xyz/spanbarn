@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
@@ -19,8 +21,28 @@ func keepLogsSelectSQL(resume bool) string {
 	return logWindowSelectSQL("expiring.logs AS l", "l", resume)
 }
 
-const keepLogsInsertSQL = `INSERT OR IGNORE INTO main.kept_logs
-	SELECT * FROM expiring.logs WHERE rowid IN (SELECT value FROM json_each(?1))`
+// keepLogsInsertSQL copies the columns kept_logs and the shard share. A shard
+// can be a migration ahead of or behind kept_logs after a rollback, and a plain
+// SELECT * would then fail and hold the shard back from expiring.
+func keepLogsInsertSQL(ctx context.Context, conn *sql.Conn) (string, error) {
+	kept, err := columnsOf(ctx, conn, "main", "kept_logs")
+	if err != nil {
+		return "", err
+	}
+	shard, err := columnsOf(ctx, conn, "expiring", "logs")
+	if err != nil {
+		return "", err
+	}
+	var shared []string
+	for _, col := range kept {
+		if slices.Contains(shard, col) {
+			shared = append(shared, quoteColumn(col))
+		}
+	}
+	cols := strings.Join(shared, ", ")
+	return "INSERT OR IGNORE INTO main.kept_logs (" + cols + ") SELECT " + cols +
+		" FROM expiring.logs WHERE rowid IN (SELECT value FROM json_each(?1))", nil
+}
 
 // keepLogsWindowRows caps the rows one keepLogs write slot scans, and so the
 // rows it copies. Windows of retentionDeleteBatch (1000) rows took 0.5 to 4 s
@@ -95,7 +117,11 @@ func (r *Repository) keepLogsWindow(
 		if err != nil {
 			return 0, err
 		}
-		res, err := conn.ExecContext(ctx, keepLogsInsertSQL, string(ids))
+		insert, err := keepLogsInsertSQL(ctx, conn)
+		if err != nil {
+			return 0, err
+		}
+		res, err := conn.ExecContext(ctx, insert, string(ids))
 		if err != nil {
 			return 0, err
 		}

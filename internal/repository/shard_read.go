@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 )
@@ -18,6 +17,10 @@ const maxAttached = 10
 // poolCloseDelay is how long a replaced family pool stays open, so a query
 // that picked it just before the swap still runs.
 const poolCloseDelay = time.Minute
+
+// columnCheckTimeout bounds the column read of a refresh, so a pool whose
+// connections are all busy does not hold up the other families.
+const columnCheckTimeout = 5 * time.Second
 
 // familyPool is a read pool over one sharded family. Each connection attaches
 // the family's shards and creates a TEMP view per table that unions them with
@@ -36,6 +39,9 @@ type familyPool struct {
 	// segments are the schemas that hold the family's rows, newest first:
 	// one per shard, then main when it holds the tables.
 	segments []string
+	// columns are the columns of each table the views union, as they read when
+	// the views were built.
+	columns tableColumns
 }
 
 func (p *familyPool) same(files []string, mainHas, kept bool) bool {
@@ -116,12 +122,15 @@ func (s *ShardReaders) refreshFamily(ctx context.Context, f Family, files []stri
 	s.mu.RLock()
 	current := s.pools[f]
 	s.mu.RUnlock()
-	if current.same(files, mainHas, kept) || (current == nil && len(files) == 0) {
+	if current == nil && len(files) == 0 {
+		return nil
+	}
+	if current.same(files, mainHas, kept) && s.columnsUnchanged(ctx, f, current) {
 		return nil
 	}
 	var next *familyPool
 	if len(files) > 0 {
-		if next, err = s.openPool(f, files, mainHas, kept); err != nil {
+		if next, err = s.openPool(ctx, f, files, mainHas, kept); err != nil {
 			return err
 		}
 	}
@@ -165,7 +174,7 @@ func (s *ShardReaders) activeShards(ctx context.Context) (map[Family][]string, e
 
 // openPool opens a read pool on main that attaches files, newest first, and
 // views f's tables over them.
-func (s *ShardReaders) openPool(f Family, files []string, mainHas, kept bool) (*familyPool, error) {
+func (s *ShardReaders) openPool(ctx context.Context, f Family, files []string, mainHas, kept bool) (*familyPool, error) {
 	p := &familyPool{files: files, mainHas: mainHas, kept: kept}
 	attach := make([]Attachment, len(files))
 	for i, file := range files {
@@ -176,18 +185,20 @@ func (s *ShardReaders) openPool(f Family, files []string, mainHas, kept bool) (*
 	if mainHas {
 		p.segments = append(p.segments, "main")
 	}
+	opts := OpenOptions{ReadOnly: true, CacheMB: s.cacheMB, MmapMB: s.mmapMB, Attach: attach}
+	if err := p.readColumnsOnce(ctx, s.dbPath, opts, f); err != nil {
+		return nil, err
+	}
 	views := make([]string, 0, len(f.Tables()))
 	for _, table := range f.Tables() {
-		parts := make([]string, len(p.segments))
-		for i, schema := range p.segments {
-			parts[i] = "SELECT * FROM " + schema + "." + table
+		view, err := p.viewSQL(table)
+		if err != nil {
+			return nil, err
 		}
-		if kept && table == "logs" {
-			parts = append(parts, "SELECT * FROM main.kept_logs")
-		}
-		views = append(views, "CREATE TEMP VIEW "+table+" AS "+strings.Join(parts, " UNION ALL "))
+		views = append(views, view)
 	}
-	db, err := Open(s.dbPath, OpenOptions{ReadOnly: true, CacheMB: s.cacheMB, MmapMB: s.mmapMB, Attach: attach, Setup: views})
+	opts.Setup = views
+	db, err := Open(s.dbPath, opts)
 	if err != nil {
 		return nil, err
 	}
