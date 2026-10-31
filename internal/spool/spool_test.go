@@ -159,7 +159,7 @@ func TestSpoolRotation(t *testing.T) {
 		t.Fatal("expected spool.ndjson.old to exist after rotation")
 	}
 
-	// Now write one more small batch. These should be readable from cursor 0 of the current file.
+	// Now write one more small batch. Reading on from cursor 0 reaches it after the rotated file.
 	finalRecs := []model.SpanRecord{{
 		ProjectID: 1,
 		SpanID:    "final-span",
@@ -172,10 +172,7 @@ func TestSpoolRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, nextCursor, err := sp.Read(0, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got, nextCursor := drain(t, sp, 0)
 
 	// We should get at least the final record from the current file.
 	if len(got) == 0 {
@@ -184,15 +181,8 @@ func TestSpoolRotation(t *testing.T) {
 	t.Logf("read %d records from current spool, nextCursor=%d", len(got), nextCursor)
 
 	// Verify the final record is present.
-	found := false
-	for _, r := range got {
-		if r.SpanID == "final-span" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected to find 'final-span' in current spool after rotation")
+	if got[len(got)-1] != "final-span" {
+		t.Errorf("last record read = %q, want 'final-span' from the current spool", got[len(got)-1])
 	}
 }
 
@@ -236,17 +226,9 @@ func TestSpoolReadAfterRotation_CursorResets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// cursor exceeds new file size → should reset to 0 and read new file.
-	got2, _, err := sp.Read(cursor, 1000)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got2) != 3 {
-		t.Fatalf("expected 3 records from new file after cursor reset, got %d", len(got2))
-	}
-	if got2[0].SpanID != "new-0" {
-		t.Errorf("got2[0].SpanID = %q, want %q", got2[0].SpanID, "new-0")
-	}
+	// The cursor finishes the rotated file, then resets to 0 for the new one.
+	got2, _ := drain(t, sp, cursor)
+	wantIDs(t, got2, "span-3", "span-4", "new-0", "new-1", "new-2")
 }
 
 func TestSpoolConcurrentWrites(t *testing.T) {
