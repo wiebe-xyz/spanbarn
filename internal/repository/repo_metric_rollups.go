@@ -89,20 +89,35 @@ const metricRollupWarmSQL = `SELECT count FROM metric_rollups
 // it updates are in the OS page cache before it takes the write slot.
 func (r *Repository) SetRollupReads(db *sql.DB) { r.rollupReads = db }
 
+// UnwrittenRollupsError reports a batch that stopped at a failed chunk. Rows are
+// the rollups not written. The chunks before them stay written and the upsert
+// adds on conflict, so only Rows may be written again.
+type UnwrittenRollupsError struct {
+	Rows []MetricRollup
+	Err  error
+}
+
+func (e *UnwrittenRollupsError) Error() string {
+	return fmt.Sprintf("%d metric rollups not written: %v", len(e.Rows), e.Err)
+}
+
+func (e *UnwrittenRollupsError) Unwrap() error { return e.Err }
+
 // UpsertMetricRollups persists a batch of rollup buckets in chunks of
 // metricRollupChunk rows in key order, one transaction and one write slot per
-// chunk. A chunk that fails stops the batch; the chunks before it stay
-// written.
+// chunk. A chunk that fails stops the batch with an UnwrittenRollupsError; the
+// chunks before it stay written.
 func (r *Repository) UpsertMetricRollups(rollups []MetricRollup) error {
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
 	ctx := WithoutSpanTracing(context.Background())
-	for _, chunk := range metricRollupChunks(rollups) {
+	chunks := metricRollupChunks(rollups)
+	for i, chunk := range chunks {
 		r.warmMetricRollups(ctx, chunk)
 		_, err := r.submitRows(FamilyCore, writescheduler.Low, "UpsertMetricRollups", func(db *sql.DB) (int64, error) {
 			return int64(len(chunk)), upsertMetricRollupChunk(ctx, db, chunk)
 		})
 		if err != nil {
-			return err
+			return &UnwrittenRollupsError{Rows: slices.Concat(chunks[i:]...), Err: err}
 		}
 	}
 	return nil
