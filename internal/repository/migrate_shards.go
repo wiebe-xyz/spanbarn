@@ -38,7 +38,9 @@ func MigrateShard(ctx context.Context, db *sql.DB, f Family) error {
 	if err != nil {
 		return err
 	}
-	_, err = p.Up(ctx)
+	// goose probes a new shard for its version table first, and "no such table"
+	// would read as an error span for every shard created.
+	_, err = p.Up(WithoutSpanTracing(ctx))
 	return err
 }
 
