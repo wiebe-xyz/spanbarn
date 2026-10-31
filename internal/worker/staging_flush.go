@@ -159,12 +159,17 @@ func (f *StagingFlusher) flushOnce(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
+	// A reclaimed queue batch can stage the same spans twice. Only one copy is
+	// classified, stored and counted; every staged row still leaves staging.
+	spans, replayed := dropReplayedSpans(spans)
+
 	interesting := classifySpansForStorage(spans, f.cfg.SlowThresholdUs, f.cfg.BoringRetention, f.boringPolicy, f.floor, f.hourFloor)
 
 	// Move the traces in chunks of whole traces, one job each, so no job holds
 	// the spans writer for the whole batch. Every span (boring included) still
 	// reaches the accumulator, chunk by chunk as each one commits.
 	for _, c := range stagingChunks(traceIDs, spans, interesting, stagingChunkRows) {
+		c.addReplayedRows(replayed)
 		if err := f.commitChunk(ctx, c); err != nil {
 			return 0, err
 		}

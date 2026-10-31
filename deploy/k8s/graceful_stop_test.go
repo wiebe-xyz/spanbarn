@@ -3,8 +3,11 @@ package k8s
 import (
 	"os"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/wiebe-xyz/spanbarn/internal/queue"
 )
 
 // A RollingUpdate deployment sleeps in preStop so the old pod keeps its
@@ -19,6 +22,7 @@ const shutdownHeadroomSeconds = 20
 
 type deployment struct {
 	Spec struct {
+		Replicas int `yaml:"replicas"`
 		Strategy struct {
 			Type string `yaml:"type"`
 		} `yaml:"strategy"`
@@ -38,6 +42,31 @@ type deployment struct {
 			} `yaml:"spec"`
 		} `yaml:"template"`
 	} `yaml:"spec"`
+}
+
+// The write queue's processing list has one consumer, so whatever a writer finds
+// there while it holds no batch was left behind. That rests on one writer pod,
+// replaced only after the old one has gone on a rollout, and on the reclaim delay
+// outlasting the drain of a pod replaced outside a rollout (deleted or evicted).
+func TestWriterReclaimAssumptions(t *testing.T) {
+	raw, err := os.ReadFile("base/deployment.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d deployment
+	if err := yaml.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Spec.Replicas != 1 {
+		t.Errorf("writer replicas = %d, want 1", d.Spec.Replicas)
+	}
+	if d.Spec.Strategy.Type != "Recreate" {
+		t.Errorf("writer strategy = %q, want Recreate", d.Spec.Strategy.Type)
+	}
+	grace := time.Duration(d.Spec.Template.Spec.TerminationGracePeriodSeconds) * time.Second
+	if queue.ReclaimDelay <= grace {
+		t.Errorf("queue.ReclaimDelay %v does not outlast the writer grace period %v", queue.ReclaimDelay, grace)
+	}
 }
 
 func TestPreStopSleepMatchesRolloutStrategy(t *testing.T) {
