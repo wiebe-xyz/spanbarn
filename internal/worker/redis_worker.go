@@ -54,6 +54,7 @@ type RedisWorker struct {
 	// Redis drain fast (cheap unindexed appends) so the queue never backs up.
 	stageOnly bool
 	ledger    *spanledger.Tally
+	now       func() time.Time
 }
 
 // SetStagingMode switches the worker to append consumed spans to spans_staging
@@ -68,7 +69,7 @@ func NewRedisWorker(q *queue.RedisQueue, repo Repository, logger *slog.Logger) *
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &RedisWorker{queue: q, repo: repo, logger: logger}
+	return &RedisWorker{queue: q, repo: repo, logger: logger, now: time.Now}
 }
 
 // SetAccumulator wires in the in-memory accumulator. Every span in each batch
@@ -101,8 +102,9 @@ func (w *RedisWorker) SetHourFloor(f *sampling.MinuteFloor) {
 	w.hourFloor = f
 }
 
-// Run loops on BRPOP until ctx is cancelled.
+// Run consumes batches until ctx is cancelled.
 func (w *RedisWorker) Run(ctx context.Context) {
+	reclaimFrom := w.now().Add(queue.ReclaimDelay)
 	for {
 		select {
 		case <-ctx.Done():
@@ -110,14 +112,19 @@ func (w *RedisWorker) Run(ctx context.Context) {
 		default:
 		}
 
-		records, err := w.queue.Consume(ctx)
+		if !w.now().Before(reclaimFrom) {
+			w.reclaim(ctx)
+		}
+
+		batch, err := w.queue.Consume(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
 			// Warn, not error: the connection drop is transient, the backoff
-			// below handles it, and nothing has been lost. Logging it at error
-			// filed a BugBarn issue for every Redis reconnect.
+			// below handles it, and a batch whose reply was lost waits on the
+			// processing list for reclaim. Logging it at error filed a BugBarn
+			// issue for every Redis reconnect.
 			w.logger.Warn("redis worker: consume failed, retrying", "error", err)
 			// Brief backoff to avoid spinning on a broken Redis connection.
 			select {
@@ -127,12 +134,43 @@ func (w *RedisWorker) Run(ctx context.Context) {
 			}
 			continue
 		}
-		if len(records) == 0 {
-			// BRPOP timed out — no items, loop.
+		if batch == nil {
+			// The block timed out: no items, loop.
 			continue
 		}
 
-		w.processBatch(ctx, records)
+		w.finish(ctx, batch)
+	}
+}
+
+// finish processes a batch and removes it from the processing list. The removal
+// is deferred so a batch that panics leaves too: replayed on every start, it
+// would stop span ingest for good.
+func (w *RedisWorker) finish(ctx context.Context, batch *queue.SpanBatch) {
+	defer w.ack(ctx, batch)
+	w.processBatch(ctx, batch.Records)
+}
+
+// reclaim returns batches left on the processing list to the queue. Run calls
+// it holding no batch, so none of them is this worker's own. The warning is how
+// a later gap in the span ledger gets tied to a lost reply: nothing else records
+// what the reply held.
+func (w *RedisWorker) reclaim(ctx context.Context) {
+	got, err := w.queue.Reclaim(ctx)
+	if got.Batches > 0 {
+		w.logger.Warn("redis worker: reclaimed batches from the processing list, a reply was lost or a writer stopped mid-batch",
+			"batches", got.Batches, "spans", got.Spans)
+	}
+	if err != nil && ctx.Err() == nil {
+		w.logger.Warn("redis worker: reclaim failed, retrying", "error", err)
+	}
+}
+
+// ack removes a finished batch from the processing list. A shutdown does not
+// cancel it, or the next writer would replay a batch this one stored.
+func (w *RedisWorker) ack(ctx context.Context, batch *queue.SpanBatch) {
+	if err := w.queue.Ack(context.WithoutCancel(ctx), batch); err != nil {
+		w.logger.Warn("redis worker: ack failed, the batch will replay", "spans", len(batch.Records), "error", err)
 	}
 }
 

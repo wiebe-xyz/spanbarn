@@ -20,16 +20,28 @@ const (
 	WriteQueueBacklogKey = "spanbarn:write-queue"
 	// WriteQueueKey is kept as an alias of WriteQueueBacklogKey so that any
 	// external tooling referencing it still works.
-	WriteQueueKey     = WriteQueueBacklogKey
-	maxRecordsPerItem = 500
-	brpopTimeout      = 5 * time.Second
+	WriteQueueKey = WriteQueueBacklogKey
+	// WriteQueueProcessingKey holds the batch the writer is working on. A batch
+	// stays here until it is stored, so a reply lost on the way to the writer or
+	// a writer killed mid-write leaves it recoverable.
+	WriteQueueProcessingKey = "spanbarn:write-queue:processing"
+	maxRecordsPerItem       = 500
+	brpopTimeout            = 5 * time.Second
+	// ReclaimDelay is how long a writer leaves the processing list alone after
+	// it starts. A writer pod normally replaces the old one only after it has
+	// gone (Recreate), but a deleted or evicted pod is replaced at once while
+	// the old one drains its last batch for up to terminationGracePeriodSeconds.
+	// The delay outlasts that grace period, so the batch left on the list is one
+	// nobody is working on. deploy/k8s/graceful_stop_test.go holds it above the
+	// grace period.
+	ReclaimDelay = 2 * time.Minute
 	// RecentThreshold is the max age of start_time_us for a batch to be routed
 	// to the recent (high-priority) queue.
 	RecentThreshold = 5 * time.Minute
 )
 
 // RedisQueue is a durable write queue backed by a Redis list.
-// Producers call Publish (LPUSH); the single consumer calls Consume (BRPOP).
+// Producers call Publish (LPUSH); the single consumer calls Consume (LMOVE) and Ack.
 type RedisQueue struct {
 	client *redis.Client
 }
@@ -117,24 +129,93 @@ func (q *RedisQueue) Publish(ctx context.Context, records []model.SpanRecord) er
 	return nil
 }
 
-// Consume blocks for up to brpopTimeout waiting for a batch from either queue.
-// The recent (high-priority) queue is checked first; if empty, the backlog queue
-// is checked. Returns nil, nil when both queues are empty.
+// SpanBatch is one consumed queue item. It stays on the processing list until
+// Ack removes it.
+type SpanBatch struct {
+	Records []model.SpanRecord
+	raw     string
+}
+
+// Consume moves one batch to the processing list and returns it, blocking for
+// up to brpopTimeout when both queues are empty. The recent (high-priority)
+// queue is checked first; if empty, the backlog queue is checked. Returns nil,
+// nil when both queues are empty.
+//
+// BRPOP removed the item on the server before the reply reached the writer, so
+// a read timeout during a stalled write lost the batch. The move keeps a copy
+// until Ack, so a lost reply delays the batch and Reclaim returns it.
+//
 // Called by the RedisWorker in writer mode.
-func (q *RedisQueue) Consume(ctx context.Context) ([]model.SpanRecord, error) {
-	result, err := q.client.BRPop(ctx, brpopTimeout, WriteQueueRecentKey, WriteQueueBacklogKey).Result()
+func (q *RedisQueue) Consume(ctx context.Context) (*SpanBatch, error) {
+	raw, err := q.claim(ctx)
 	if err == redis.Nil {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("queue: brpop: %w", err)
+		return nil, fmt.Errorf("queue: claim: %w", err)
 	}
-	// result[0] = key, result[1] = JSON payload
 	var records []model.SpanRecord
-	if err := json.Unmarshal([]byte(result[1]), &records); err != nil {
+	if err := json.Unmarshal([]byte(raw), &records); err != nil {
+		// It cannot parse on a replay either, so it leaves the list here.
+		if ackErr := q.client.LRem(ctx, WriteQueueProcessingKey, 1, raw).Err(); ackErr != nil {
+			return nil, fmt.Errorf("queue: unmarshal: %w (and lrem: %v)", err, ackErr)
+		}
 		return nil, fmt.Errorf("queue: unmarshal: %w", err)
 	}
-	return records, nil
+	return &SpanBatch{Records: records, raw: raw}, nil
+}
+
+// claim moves the next batch to the processing list. BLMOVE takes one source,
+// so it blocks on the recent queue only: a batch landing on an empty backlog
+// waits for that block to end, up to brpopTimeout.
+func (q *RedisQueue) claim(ctx context.Context) (string, error) {
+	for _, key := range []string{WriteQueueRecentKey, WriteQueueBacklogKey} {
+		raw, err := q.client.LMove(ctx, key, WriteQueueProcessingKey, "RIGHT", "LEFT").Result()
+		if err != redis.Nil {
+			return raw, err
+		}
+	}
+	return q.client.BLMove(ctx, WriteQueueRecentKey, WriteQueueProcessingKey, "RIGHT", "LEFT", brpopTimeout).Result()
+}
+
+// Ack removes a batch from the processing list once it is stored or counted as
+// failed.
+func (q *RedisQueue) Ack(ctx context.Context, b *SpanBatch) error {
+	if err := q.client.LRem(ctx, WriteQueueProcessingKey, 1, b.raw).Err(); err != nil {
+		return fmt.Errorf("queue: lrem: %w", err)
+	}
+	return nil
+}
+
+// Reclaimed reports what Reclaim moved back.
+type Reclaimed struct {
+	Batches int
+	Spans   int
+}
+
+// Reclaim moves every batch on the processing list to the front of the recent
+// queue, where the next Consume finds it. The consumer calls it holding no batch
+// of its own, so whatever is on the list was left by a lost reply, a failed Ack
+// or a writer that stopped mid-batch. A failure partway leaves the rest on the
+// list for the next call; the move loses nothing.
+func (q *RedisQueue) Reclaim(ctx context.Context) (Reclaimed, error) {
+	var out Reclaimed
+	for {
+		raw, err := q.client.LMove(ctx, WriteQueueProcessingKey, WriteQueueRecentKey, "RIGHT", "RIGHT").Result()
+		if err == redis.Nil {
+			return out, nil
+		}
+		if err != nil {
+			return out, fmt.Errorf("queue: reclaim: %w", err)
+		}
+		out.Batches++
+		// Only the count is read. A batch that does not parse counts no spans,
+		// and Consume drops it with an error.
+		var records []json.RawMessage
+		if json.Unmarshal([]byte(raw), &records) == nil {
+			out.Spans += len(records)
+		}
+	}
 }
 
 // Len returns the total depth of both write queues. Used for health metrics.
