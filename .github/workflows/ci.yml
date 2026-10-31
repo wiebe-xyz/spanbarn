@@ -10,9 +10,12 @@ on:
       - main
   workflow_dispatch:
 
+# Each job runs for pull requests from branches in this repository. The merge
+# group run covers a pull request from a fork before it merges.
 jobs:
   spec:
     runs-on: [self-hosted, build]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v6
       - name: Spec checks
@@ -21,6 +24,7 @@ jobs:
 
   code:
     runs-on: [self-hosted, build]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v6
         with:
@@ -197,6 +201,7 @@ jobs:
 
   quality:
     runs-on: [self-hosted, build]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v6
       - name: Set up Go
@@ -253,6 +258,7 @@ jobs:
 
   secret-scan:
     runs-on: [self-hosted, build]
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 10
     env:
       HOME: /Users/wiebe
