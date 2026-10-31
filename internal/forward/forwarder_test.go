@@ -134,3 +134,47 @@ func TestRedisForwarderDrainStopsOnPublishError(t *testing.T) {
 		t.Errorf("cursor moved to %d after a failed publish", cur)
 	}
 }
+
+// Every span reaches the queue once across a rotation, including the batch that
+// triggered it and what the forwarder had not reached yet.
+func TestRedisForwarderPublishesAcrossARotation(t *testing.T) {
+	sp, err := spool.NewSpool(t.TempDir(), 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sp.Close()
+	pub := &fakePublisher{}
+	f := &RedisForwarder{spool: sp, queue: pub, logger: quiet()}
+
+	write := func(ids ...string) {
+		t.Helper()
+		recs := make([]model.SpanRecord, len(ids))
+		for i, id := range ids {
+			recs[i] = model.SpanRecord{TraceID: "t", SpanID: id, Name: "operation", Service: "service"}
+		}
+		if err := sp.Write(recs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a")
+	if _, err := f.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	write("b")
+	write("c", "d", "e", "f", "g", "h", "i", "j")
+	if sp.Size() != 0 {
+		t.Fatalf("size = %d, want a rotation to have happened", sp.Size())
+	}
+	write("k")
+	if _, err := f.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	got := ""
+	for _, r := range pub.got {
+		got += r.SpanID
+	}
+	if got != "abcdefghijk" {
+		t.Errorf("published %q, want every span once, in order", got)
+	}
+}

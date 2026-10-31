@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -95,10 +96,27 @@ func (s *Spool) Write(records []model.SpanRecord) error {
 	return nil
 }
 
-// Read reads records from the spool file starting at byte offset cursor.
-// It returns up to limit records and the next cursor position.
-// After rotation the cursor may exceed the new (smaller) file — reset to 0.
+// Read reads records starting at byte offset cursor and returns up to limit of
+// them with the next cursor position. A rotated file is finished first, because
+// the cursor still points into it, and removed once it has nothing left: its
+// presence is what says it holds unread records, also across a restart. The lock
+// keeps a rotation from moving the files between those steps.
 func (s *Spool) Read(cursor int64, limit int) ([]model.SpanRecord, int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	old := filepath.Join(s.dir, oldFileName)
+	if _, err := os.Stat(old); err == nil {
+		records, next, err := s.readFile(old, cursor, limit)
+		if err != nil || len(records) > 0 {
+			return records, next, err
+		}
+		if err := os.Remove(old); err != nil {
+			return nil, cursor, fmt.Errorf("spool remove old: %w", err)
+		}
+		cursor = 0
+	}
+
 	path := filepath.Join(s.dir, spoolFileName)
 
 	if cursor > 0 {
@@ -190,7 +208,10 @@ func (s *Spool) Close() error {
 	return nil
 }
 
-// rotate renames the current spool file to .old and opens a fresh one.
+// rotate renames the current spool file to .old and opens a fresh one. An .old
+// that is still there has unread records and the reader's cursor points into it,
+// so it stays and the current file is emptied instead: the spool never holds more
+// than two files, and a reader a whole file behind loses the newer one.
 // Must be called with s.mu held.
 func (s *Spool) rotate() error {
 	if err := s.file.Close(); err != nil {
@@ -200,13 +221,15 @@ func (s *Spool) rotate() error {
 	cur := filepath.Join(s.dir, spoolFileName)
 	old := filepath.Join(s.dir, oldFileName)
 
-	// Remove previous .old if it exists, then rename current.
-	_ = os.Remove(old)
-	if err := os.Rename(cur, old); err != nil {
+	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
+	if _, err := os.Stat(old); err == nil {
+		slog.Default().Error("spool: reader is a whole file behind, dropping the newest records", "bytes", s.size)
+		flags |= os.O_TRUNC
+	} else if err := os.Rename(cur, old); err != nil {
 		return err
 	}
 
-	f, err := os.OpenFile(cur, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(cur, flags, 0o644)
 	if err != nil {
 		return err
 	}
