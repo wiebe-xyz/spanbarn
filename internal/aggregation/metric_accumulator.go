@@ -43,7 +43,7 @@ type MetricAccumulator struct {
 // metricRetryWindow is how long past its bucket start a rollup keeps being
 // retried after a failed write. It bounds what an outage can hold in memory, and
 // a rollup past it is dropped and logged at ERROR.
-const metricRetryWindow = 30 * time.Minute
+const metricRetryWindow = repository.MetricRollupLateWrite
 
 // SetOnPersist registers a callback invoked with the number of rollups written
 // on each successful flush. Used to feed self-metrics. Call before Run.
