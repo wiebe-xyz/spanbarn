@@ -165,7 +165,11 @@ func (c *Compactor) compactTier(ctx context.Context, tier Tier, policy DropPolic
 		if err := ctx.Err(); err != nil {
 			return buckets, rows, err
 		}
-		if !BucketClosed(start, tier.Step, c.now()) {
+		// The wait covers the source bucket a flush has not written yet: the last
+		// 5-minute bucket of an hour lands up to a flush interval after the hour
+		// closes, or later when a failed write is retried, and the watermark
+		// never comes back for it.
+		if !BucketClosed(start, tier.Step, c.now().Add(-repository.MetricRollupLateWrite)) {
 			break // still taking writes
 		}
 		n, err := c.compactBucket(ctx, tier, start, policy)
