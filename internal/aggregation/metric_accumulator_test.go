@@ -1,8 +1,12 @@
 package aggregation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -205,5 +209,156 @@ func TestMetricAccumulatorSplitsByAttributes(t *testing.T) {
 	}
 	if w.got[0].AttrFingerprint == w.got[1].AttrFingerprint {
 		t.Error("distinct attribute sets should have distinct fingerprints")
+	}
+}
+
+// failingRollupWriter stores nothing while fail is set. With writeFirst set it
+// fails like the repository does part way through a batch: it stores that many
+// rows and reports the rest as unwritten.
+type failingRollupWriter struct {
+	fakeRollupWriter
+	fail       bool
+	writeFirst int
+}
+
+func (f *failingRollupWriter) UpsertMetricRollups(r []repository.MetricRollup) error {
+	if !f.fail {
+		return f.fakeRollupWriter.UpsertMetricRollups(r)
+	}
+	if f.writeFirst == 0 {
+		return errors.New("write failed")
+	}
+	_ = f.fakeRollupWriter.UpsertMetricRollups(r[:f.writeFirst])
+	return &repository.UnwrittenRollupsError{Rows: r[f.writeFirst:], Err: errors.New("write failed")}
+}
+
+func flushLogAccumulator(w MetricRollupWriter, now *time.Time) (*MetricAccumulator, *bytes.Buffer) {
+	var logs bytes.Buffer
+	acc := NewMetricAccumulator(w, time.Minute, time.Minute, slog.New(slog.NewTextHandler(&logs, nil)))
+	acc.now = func() time.Time { return *now }
+	return acc, &logs
+}
+
+func TestMetricAccumulatorRetriesAFailedFlush(t *testing.T) {
+	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	now := base.Add(90 * time.Second)
+	w := &failingRollupWriter{fail: true}
+	acc, logs := flushLogAccumulator(w, &now)
+	acc.AddMetric(gaugeRec("g", `{"a":"1"}`, uint64(base.Add(10*time.Second).UnixNano()), 10))
+
+	if err := acc.Flush(context.Background()); err == nil {
+		t.Fatal("flush with a failing writer returned nil")
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Fatalf("a flush that will retry logged at ERROR:\n%s", logs)
+	}
+
+	w.fail = false
+	if err := acc.Flush(context.Background()); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if len(w.got) != 1 || w.got[0].Count != 1 {
+		t.Fatalf("after retry got %+v, want the one rollup", w.got)
+	}
+	if err := acc.Flush(context.Background()); err != nil {
+		t.Fatalf("third flush: %v", err)
+	}
+	if len(w.got) != 1 {
+		t.Fatalf("rollup written %d times, want once", len(w.got))
+	}
+}
+
+// The upsert adds on conflict, so the chunks that landed must not go again.
+func TestMetricAccumulatorRetriesOnlyTheUnwrittenRows(t *testing.T) {
+	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	now := base.Add(90 * time.Second)
+	w := &failingRollupWriter{fail: true, writeFirst: 1}
+	acc, _ := flushLogAccumulator(w, &now)
+	var persisted int64
+	acc.SetOnPersist(func(n int64) { persisted += n })
+	for _, name := range []string{"a", "b", "c"} {
+		acc.AddMetric(gaugeRec(name, `{}`, uint64(base.Add(10*time.Second).UnixNano()), 1))
+	}
+
+	if err := acc.Flush(context.Background()); err == nil {
+		t.Fatal("partial flush returned nil")
+	}
+	w.fail = false
+	if err := acc.Flush(context.Background()); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	seen := map[string]int{}
+	for _, r := range w.got {
+		seen[r.Name]++
+	}
+	if len(seen) != 3 || seen["a"] != 1 || seen["b"] != 1 || seen["c"] != 1 {
+		t.Fatalf("written per name = %v, want each once", seen)
+	}
+	if persisted != 3 {
+		t.Fatalf("persisted count = %d, want 3", persisted)
+	}
+}
+
+// A late point for a bucket waiting on a retry goes in the same batch, and the
+// upsert adds the two.
+func TestMetricAccumulatorLatePointBesideARetry(t *testing.T) {
+	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	now := base.Add(90 * time.Second)
+	w := &failingRollupWriter{fail: true}
+	acc, _ := flushLogAccumulator(w, &now)
+	acc.AddMetric(gaugeRec("g", `{}`, uint64(base.Add(10*time.Second).UnixNano()), 10))
+	_ = acc.Flush(context.Background())
+
+	acc.AddMetric(gaugeRec("g", `{}`, uint64(base.Add(20*time.Second).UnixNano()), 20))
+	w.fail = false
+	if err := acc.Flush(context.Background()); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	var count int64
+	for _, r := range w.got {
+		count += r.Count
+	}
+	if len(w.got) != 2 || count != 2 {
+		t.Fatalf("got %+v, want two rows that add to count 2", w.got)
+	}
+}
+
+func TestMetricAccumulatorLogsRowsLostPastTheRetryWindow(t *testing.T) {
+	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	now := base.Add(90 * time.Second)
+	w := &failingRollupWriter{fail: true}
+	acc, logs := flushLogAccumulator(w, &now)
+	acc.AddMetric(gaugeRec("g", `{}`, uint64(base.Add(10*time.Second).UnixNano()), 10))
+	_ = acc.Flush(context.Background())
+
+	now = base.Add(metricRetryWindow + time.Second)
+	_ = acc.Flush(context.Background())
+	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "rows_lost=1") {
+		t.Fatalf("drop past the window not logged at ERROR with rows_lost:\n%s", logs)
+	}
+	if len(acc.pending) != 0 {
+		t.Fatalf("pending = %d past the window, want 0", len(acc.pending))
+	}
+}
+
+func TestMetricAccumulatorFinalFlushWritesPendingAndLogsLoss(t *testing.T) {
+	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	now := base.Add(90 * time.Second)
+	w := &failingRollupWriter{fail: true}
+	acc, logs := flushLogAccumulator(w, &now)
+	acc.AddMetric(gaugeRec("g", `{}`, uint64(base.Add(10*time.Second).UnixNano()), 10))
+	_ = acc.Flush(context.Background())
+
+	acc.AddMetric(gaugeRec("h", `{}`, uint64(now.UnixNano()), 1)) // an open bucket
+	acc.flushAll(context.Background())
+	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "rows_lost=2") {
+		t.Fatalf("failed final flush not logged at ERROR with rows_lost=2:\n%s", logs)
+	}
+
+	w.fail = false
+	acc.pending = []repository.MetricRollup{{Name: "waiting"}}
+	acc.flushAll(context.Background())
+	if w.got[len(w.got)-1].Name != "waiting" {
+		t.Fatalf("final flush skipped a pending rollup: %+v", w.got)
 	}
 }
