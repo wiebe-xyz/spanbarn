@@ -145,7 +145,8 @@ func (w *RedisWorker) Run(ctx context.Context) {
 // later, once retention frees space. The caller requeues it instead.
 func (w *RedisWorker) insertWithRetry(ctx context.Context, spans []repository.Span) (err error, diskFull bool) {
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		err = w.repo.InsertSpans(ctx, spans)
+		// The batch has left the queue, so a shutdown does not cancel its write.
+		err = w.repo.InsertSpans(context.WithoutCancel(ctx), spans)
 		if err == nil {
 			return nil, false
 		}
@@ -275,22 +276,7 @@ func (w *RedisWorker) stageSpans(ctx context.Context, spans []repository.Span) {
 	defer span.End()
 	span.SetAttributes(attribute.Int("batch.size", len(spans)))
 
-	var lastErr error
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if err := w.repo.InsertSpansStaging(ctx, spans); err != nil {
-			lastErr = err
-			backoff := time.Duration(attempt*attempt) * 500 * time.Millisecond
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(backoff):
-			}
-			continue
-		}
-		lastErr = nil
-		break
-	}
-	if lastErr != nil {
+	if lastErr := w.stageWithRetry(ctx, spans); lastErr != nil {
 		span.RecordError(lastErr)
 		span.SetStatus(codes.Error, lastErr.Error())
 		w.logger.Error("redis worker: staging insert failed after retries", "count", len(spans), "error", lastErr)
@@ -302,6 +288,27 @@ func (w *RedisWorker) stageSpans(ctx context.Context, spans []repository.Span) {
 	}
 	w.countProcessed(len(spans))
 	w.settleLedger(spans, nil)
+}
+
+// stageWithRetry writes the batch with the same quadratic backoff as
+// insertWithRetry. The batch has left the queue, so a writer shutting down
+// still stores it: a cancelled context stops the retries and leaves the write
+// alone. Cancelling the write itself lost the batch with no log and no ledger
+// count, at every rollout that caught a write in flight (#478).
+func (w *RedisWorker) stageWithRetry(ctx context.Context, spans []repository.Span) error {
+	var err error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err = w.repo.InsertSpansStaging(context.WithoutCancel(ctx), spans)
+		if err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(attempt*attempt) * insertRetryBackoff):
+		}
+	}
+	return err
 }
 
 func (w *RedisWorker) countProcessed(n int) {
