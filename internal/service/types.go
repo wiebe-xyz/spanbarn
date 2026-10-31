@@ -180,6 +180,11 @@ type PromptSummary struct {
 	InputTokens  int64   `json:"inputTokens"`
 	OutputTokens int64   `json:"outputTokens"`
 	TotalCostUSD float64 `json:"totalCostUsd"`
+	// WindowLostSpans is the spans of this project the span ledger counts as
+	// lost before storage in the range, across all its operations. A lost span
+	// leaves no stored record, so CallCount and StoredCount cannot show it.
+	// Absent for a read over all projects or when the ledger read failed.
+	WindowLostSpans *int64 `json:"windowLostSpans,omitempty"`
 }
 
 // TraceSearchFilter holds parameters for searching traces.

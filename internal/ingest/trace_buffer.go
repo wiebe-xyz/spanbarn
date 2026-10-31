@@ -9,6 +9,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
+	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 )
 
 const (
@@ -133,6 +134,8 @@ type TraceBuffer struct {
 	// See trace_buffer_decided.go.
 	decided *decidedTraces
 
+	ledger *spanledger.Tally // see trace_buffer_ledger.go
+
 	// now is the clock for arrival times and for decisions made at eviction.
 	// Tests replace it.
 	now func() time.Time
@@ -159,6 +162,7 @@ type bufferedTrace struct {
 	rootSeen    time.Time // when the root span arrived; zero until then
 	sacrificial bool      // the ratio sample skips it; evict this one first
 	seq         uint64    // arrival order among traces
+	droppedAs   spanledger.Column
 }
 
 // hasRoot reports whether the trace's root span arrived.
@@ -265,6 +269,7 @@ func NewTraceBufferWithRules(ttl time.Duration, maxSpans int, rules RescueRules,
 func (tb *TraceBuffer) Add(rec model.SpanRecord) {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
+	tb.ledger.Add(spanledger.Accepted, rec.ProjectID, rec.StartTimeUs, 1)
 
 	isErr := isErrorStatus(rec.Status)
 	tr := tb.traces[rec.TraceID]
@@ -279,6 +284,7 @@ func (tb *TraceBuffer) Add(rec model.SpanRecord) {
 	if !tb.ensureRoom(tr) && !protected {
 		tb.refused++
 		tb.refusedTotal++
+		tb.ledger.Add(spanledger.LostInBuffer, rec.ProjectID, rec.StartTimeUs, 1)
 		return
 	}
 
@@ -414,10 +420,11 @@ func (tb *TraceBuffer) flush(now time.Time, all bool) (sent int) {
 			stampWeight(tr, weights[i])
 			kept = append(kept, tr)
 		} else {
+			tb.ledgerDropped(tr, spanledger.SampledOut)
 			tb.carry.drop(tr, now)
 		}
 	}
-	kept = append(kept, tb.carry.expired(now, all)...)
+	kept = append(kept, tb.ledgerCarriers(tb.carry.expired(now, all))...)
 	late := tb.settle(toDecide, weights, now)
 	return tb.deliverAll(kept, late)
 }
@@ -440,8 +447,10 @@ func (tb *TraceBuffer) deliverAll(kept []*bufferedTrace, late []model.SpanRecord
 		// and report what we lose instead of losing it invisibly.
 		if tb.deliver(spans) {
 			sent += len(spans)
+			tb.ledger.AddSpans(spanledger.Forwarded, spans, 1)
 		} else {
 			undelivered += int64(len(spans))
+			tb.ledger.AddSpans(spanledger.LostInBuffer, spans, 1)
 		}
 	}
 	if undelivered > 0 {

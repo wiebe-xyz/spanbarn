@@ -18,12 +18,14 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
+	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/releasemark"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 	"github.com/wiebe-xyz/spanbarn/internal/worker"
 )
 
@@ -187,6 +189,11 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	rw.SetMinuteFloor(minuteFloor)
 	rw.SetHourFloor(hourFloor)
 	rw.SetStagingMode(cfg.SpanStagingEnabled)
+	ledger := spanledger.New()
+	rw.SetLedger(ledger)
+	finishLedger := startSpanLedgerReports(ledger, func(_ context.Context, rows []model.SpanLedgerRow) error {
+		return repo.AddSpanLedgerRows(rows)
+	}, logger)
 	apiServer.RegisterWorkerCounters(rw.Counts)
 	safeGo("redis-worker", &wg, func() { rw.Run(workerCtx) })
 
@@ -206,6 +213,9 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	safeGo("metrics-consumer", &wg, func() { runMetricsConsumer(workerCtx, writeQueue, metricAccumulator, rawMetrics, logger) })
 	safeGo("logs-consumer", &wg, func() { runLogsConsumer(workerCtx, writeQueue, repo, logger) })
 	safeGo("apikey-touch-consumer", &wg, func() { runTouchConsumer(workerCtx, writeQueue, repo, logger) })
+	safeGo("span-ledger-consumer", &wg, func() { runSpanLedgerConsumer(workerCtx, writeQueue, repo, logger) })
+	ledgerWatch := service.NewSpanLedgerWatch(queryRepo, writeQueue.Len, logger)
+	safeGo("span-ledger-watch", &wg, func() { ledgerWatch.Run(workerCtx) })
 	startCheckpoints(workerCtx, &wg, store, logger)
 
 	// Retention queries (DELETE/SELECT on the full spans table) can take
@@ -267,6 +277,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	wg.Wait()
 	logger.Info("writer drain: workers stopped", "duration_ms", time.Since(drainStart).Milliseconds())
 	flushSpanRollupsOnStop(spanRollups, logger)
+	finishLedger()
 	schedCancel()
 	schedWG.Wait()
 	store.FinalCheckpoint(logger)

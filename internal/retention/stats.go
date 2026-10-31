@@ -34,7 +34,7 @@ type Stats struct {
 var RetentionTables = []string{
 	"spans", "boring_spans", "error_samples", "aggregates", "metrics",
 	"metric_rollups", "logs", "prompt_records", "project_traces",
-	"web_sessions", "e2e_users",
+	"web_sessions", "span_ledger", "e2e_users",
 }
 
 // BacklogTables are the keys of Stats.Backlog.
@@ -114,6 +114,7 @@ func (c *cycleStats) deletedByTable() map[string]int64 {
 		"prompt_records": c.promptsDeleted,
 		"project_traces": c.projectTracesEvicted,
 		"web_sessions":   c.webSessionsDeleted,
+		"span_ledger":    c.spanLedgerDeleted,
 		"e2e_users":      c.e2eUsersDeleted,
 	}
 }

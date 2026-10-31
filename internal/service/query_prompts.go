@@ -33,6 +33,7 @@ func (s *QueryService) ListPrompts(ctx context.Context, projectID int64, from, t
 		sort.Slice(result, func(i, j int) bool {
 			return result[i].TotalCostUSD > result[j].TotalCostUSD
 		})
+		s.attachWindowLoss(ctx, result, projectID, from, to)
 
 		return result, nil
 	})

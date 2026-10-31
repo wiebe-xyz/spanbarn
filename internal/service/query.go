@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
+	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -30,6 +31,7 @@ type QueryRepository interface {
 	QuerySpanTimeseries(projectID int64, service, operation string, from, to time.Time, intervalSec int64) ([]repository.SpanBucket, error)
 	QueryPromptRecords(filter repository.PromptFilter) ([]repository.PromptRecord, error)
 	QueryPromptGroups(ctx context.Context, filter repository.PromptFilter) ([]repository.PromptGroup, error)
+	ListSpanLedger(ctx context.Context, projectID int64, from, to time.Time) ([]model.SpanLedgerRow, error)
 	GetSpansBySpanIDs(spanIDs []string) ([]repository.Span, error)
 	StreamSpans(filter repository.SpanFilter, fn func(repository.Span) error) error
 	QueryWebVitals(service string, from, to time.Time) ([]repository.WebVitalRow, error)

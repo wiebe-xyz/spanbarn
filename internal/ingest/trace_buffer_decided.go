@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 )
 
 // Remembering decisions (#451).
@@ -48,6 +49,8 @@ type decidedTraces struct {
 
 	held map[string][]model.SpanRecord // spans that arrived while pending
 	late []model.SpanRecord            // late spans kept, for the next flush
+
+	ledger *spanledger.Tally
 
 	evicted     int64 // decisions dropped by the cap before the TTL
 	lateKept    int64
@@ -96,6 +99,7 @@ func (d *decidedTraces) follow(rec model.SpanRecord) bool {
 		d.m[rec.TraceID] = e
 	case e.weight == 0:
 		d.lateDropped++
+		d.ledger.Add(spanledger.SampledOut, rec.ProjectID, rec.StartTimeUs, 1)
 		return true
 	}
 	rec.SampleWeight = e.weight
