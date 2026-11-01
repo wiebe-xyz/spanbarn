@@ -168,6 +168,20 @@ func TestMergeCounterReset(t *testing.T) {
 
 // TestMergeDeltaSumAdds: a delta series already holds per-bucket movement, so it
 // is summed rather than differenced — and needs no carry row.
+// Pods sharing a label set leave their running totals alternating in the bucket
+// last values. Each fall would otherwise add a whole running total to a tier that
+// keeps it for weeks.
+func TestMergeSharedCounterAddsOnlyGrowth(t *testing.T) {
+	var rows []repoRow
+	for i, last := range []float64{8000, 40, 8060, 100, 8120, 160} {
+		rows = append(rows, src("hits", "fp", "sum", testStart.Add(time.Duration(i)*5*time.Minute), withLast(last)))
+	}
+	got := Merge(hourTier, testStart, 7, rows, DropPolicy{}, Carry{})
+	if len(got) != 1 || got[0].Sum != 240 {
+		t.Fatalf("merged = %+v, want sum 240", got)
+	}
+}
+
 func TestMergeDeltaSumAdds(t *testing.T) {
 	rows := []repoRow{
 		src("reqs", "v1", "sum", testStart, withDelta(), withSum(3)),

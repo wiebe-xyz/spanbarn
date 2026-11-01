@@ -6,6 +6,8 @@ import "sort"
 type Total struct {
 	Labels map[string]string `json:"labels"`
 	Total  float64           `json:"total"`
+	// SharedSeries marks a group holding an interleaved series; see Series.
+	SharedSeries bool `json:"shared_series,omitempty"`
 }
 
 // Totals sums how much each counter grew over its points, grouped by the
@@ -23,6 +25,7 @@ func Totals(metricType string, in []InputPoint, groupBy []string) []Total {
 	type group struct {
 		labels map[string]string
 		total  float64
+		shared bool
 	}
 	groups := map[string]*group{}
 	var order []string
@@ -46,19 +49,29 @@ func Totals(metricType string, in []InputPoint, groupBy []string) []Total {
 			order = append(order, gkey)
 		}
 		g.total += increase(pts)
+		g.shared = g.shared || sharedPoints(pts)
 	}
 
 	out := make([]Total, 0, len(order))
 	for _, k := range order {
-		out = append(out, Total{Labels: groups[k].labels, Total: groups[k].total})
+		out = append(out, Total{Labels: groups[k].labels, Total: groups[k].total, SharedSeries: groups[k].shared})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Total > out[j].Total })
 	return out
 }
 
-// increase is how much one series grew across its points.
+// increase is how much one series grew across its points. An interleaved series
+// adds the steps of its chains.
 func increase(pts []InputPoint) float64 {
 	var sum float64
+	if values, ok := cumulativeValues(pts); ok && Interleaved(values) {
+		for i, p := range ChainPrevious(values) {
+			if p >= 0 {
+				sum += values[i] - values[p]
+			}
+		}
+		return sum
+	}
 	for i, p := range pts {
 		switch {
 		case p.Delta:
