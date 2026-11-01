@@ -247,6 +247,7 @@ project automatically.
 | `SPANBARN_ADMIN_USERNAME` | | Dashboard login username |
 | `SPANBARN_ADMIN_PASSWORD` | | Dashboard login password |
 | `SPANBARN_SESSION_TTL_SECONDS` | `43200` | Absolute session cap (12h); OIDC sessions additionally track the ~15m access token via refresh |
+| `SPANBARN_OIDC_ORGANIZATION_ID` | unset | IamBarn organization allowed to sign in. Unset refuses every OIDC sign-in |
 | `SPANBARN_OIDC_REFRESH_GRACE_SECONDS` | `3600` | Stale-serve ceiling while IamBarn refresh fails transiently |
 | `SPANBARN_E2E_ENABLED` | `false` | Open the e2e session endpoint (never in production) |
 | `SPANBARN_TRUSTED_PROXIES` | | CIDRs allowed to assert X-Forwarded-Proto; unset outside dev assumes upstream TLS |
