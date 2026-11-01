@@ -297,23 +297,7 @@ func (r *Repository) DeleteProjectLogsOlderThan(ctx context.Context, projectID i
 		} else if !has {
 			continue
 		}
-		n, err := r.batchedDelete(ctx, TableFamily(table), func(db *sql.DB) (int64, error) {
-			res, e := db.ExecContext(ctx, `
-				DELETE FROM `+table+` WHERE rowid IN (
-				    SELECT rowid FROM `+table+` l
-				    WHERE project_id = ? AND ingested_at < ?
-				    AND (trace_id IS NULL OR NOT EXISTS (
-				            SELECT 1 FROM pinned_traces p
-				            WHERE p.project_id = l.project_id AND p.trace_id = l.trace_id))
-				    LIMIT ?)`,
-				projectID, cutoff, retentionDeleteBatch,
-			)
-			if e != nil {
-				return 0, e
-			}
-			n, _ := res.RowsAffected()
-			return n, nil
-		})
+		n, err := r.deleteProjectLogsFromTable(ctx, table, projectID, cutoff)
 		total += n
 		if err != nil {
 			return total, err
