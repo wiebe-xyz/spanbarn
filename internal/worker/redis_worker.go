@@ -159,7 +159,7 @@ func (w *RedisWorker) reclaim(ctx context.Context) {
 	got, err := w.queue.Reclaim(ctx)
 	if got.Batches > 0 {
 		w.logger.Warn("redis worker: reclaimed batches from the processing list, a reply was lost or a writer stopped mid-batch",
-			"batches", got.Batches, "spans", got.Spans)
+			"batches", got.Batches, "spans", got.Records)
 	}
 	if err != nil && ctx.Err() == nil {
 		w.logger.Warn("redis worker: reclaim failed, retrying", "error", err)

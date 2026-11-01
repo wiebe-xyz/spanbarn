@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
-	"github.com/wiebe-xyz/spanbarn/internal/queue"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 )
 
@@ -18,7 +16,7 @@ const (
 	spanLedgerFinalReportTimeout = 5 * time.Second
 
 	// spanLedgerRetryWait keeps the consumer from spinning on a batch it cannot
-	// store or a queue it cannot read.
+	// store.
 	spanLedgerRetryWait = 5 * time.Second
 )
 
@@ -41,35 +39,25 @@ func startSpanLedgerReports(tally *spanledger.Tally, sink spanledger.Sink, logge
 	}
 }
 
-// runSpanLedgerConsumer stores the ledger rows reader pods publish. A batch it
-// cannot store goes back on the queue, because a missing exit count reads as
-// loss.
-func runSpanLedgerConsumer(ctx context.Context, writeQueue *queue.RedisQueue, repo *repository.Repository, logger *slog.Logger) {
-	for ctx.Err() == nil {
-		rows, err := writeQueue.ConsumeSpanLedger(ctx)
-		if err != nil {
-			if ctx.Err() == nil {
-				logger.Warn("span ledger consumer error", "error", err)
-				waitSpanLedgerRetry(ctx)
-			}
-			continue
-		}
-		if err := repo.AddSpanLedgerRows(rows); err != nil {
-			logger.Warn("span ledger: store failed, returning rows to the queue", "rows", len(rows), "error", err)
-			returnSpanLedgerRows(writeQueue, rows, logger)
-			waitSpanLedgerRetry(ctx)
-		}
-	}
+// spanLedgerStore is the ledger's storage side.
+type spanLedgerStore interface {
+	AddSpanLedgerRows(rows []model.SpanLedgerRow) error
 }
 
-// returnSpanLedgerRows runs on its own context, because the store can fail while
-// the writer is stopping.
-func returnSpanLedgerRows(writeQueue *queue.RedisQueue, rows []model.SpanLedgerRow, logger *slog.Logger) {
-	ctx, cancel := context.WithTimeout(context.Background(), spanLedgerFinalReportTimeout)
-	defer cancel()
-	if err := writeQueue.PublishSpanLedger(ctx, rows); err != nil {
-		logger.Error("span ledger: rows lost", "rows", len(rows), "error", err)
-	}
+// runSpanLedgerConsumer stores the ledger rows reader pods publish. A batch it
+// cannot store stays on the processing list for the reclaim, because a missing
+// exit count reads as loss. The store is one transaction, so a failed one leaves
+// nothing to count twice. A writer killed after the commit does replay the batch:
+// the ledger then reads high by those rows, and the reclaim warning names it.
+func runSpanLedgerConsumer(ctx context.Context, q batchSource[model.SpanLedgerRow], repo spanLedgerStore, logger *slog.Logger) {
+	newBatchConsumer("span ledger", q, func(_ context.Context, rows []model.SpanLedgerRow) bool {
+		if err := repo.AddSpanLedgerRows(rows); err != nil {
+			logger.Warn("span ledger: store failed, leaving rows for the reclaim", "rows", len(rows), "error", err)
+			waitSpanLedgerRetry(ctx)
+			return false
+		}
+		return true
+	}, logger).run(ctx)
 }
 
 func waitSpanLedgerRetry(ctx context.Context) {

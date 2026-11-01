@@ -210,10 +210,10 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 		safeGo("span-rollups", &wg, func() { spanRollups.Run(workerCtx) })
 	}
 	safeGo("metric-accumulator", &wg, func() { metricAccumulator.Run(workerCtx) })
-	safeGo("metrics-consumer", &wg, func() { runMetricsConsumer(workerCtx, writeQueue, metricAccumulator, rawMetrics, logger) })
-	safeGo("logs-consumer", &wg, func() { runLogsConsumer(workerCtx, writeQueue, repo, logger) })
+	safeGo("metrics-consumer", &wg, func() { runMetricsConsumer(workerCtx, writeQueue.Metrics(), metricAccumulator, rawMetrics, logger) })
+	safeGo("logs-consumer", &wg, func() { runLogsConsumer(workerCtx, writeQueue.Logs(), repo, logger) })
 	safeGo("apikey-touch-consumer", &wg, func() { runTouchConsumer(workerCtx, writeQueue, repo, logger) })
-	safeGo("span-ledger-consumer", &wg, func() { runSpanLedgerConsumer(workerCtx, writeQueue, repo, logger) })
+	safeGo("span-ledger-consumer", &wg, func() { runSpanLedgerConsumer(workerCtx, writeQueue.SpanLedger(), repo, logger) })
 	ledgerWatch := service.NewSpanLedgerWatch(queryRepo, writeQueue.Len, logger)
 	safeGo("span-ledger-watch", &wg, func() { ledgerWatch.Run(workerCtx) })
 	startCheckpoints(workerCtx, &wg, store, logger)
