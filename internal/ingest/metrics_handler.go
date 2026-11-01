@@ -84,13 +84,16 @@ func (h *MetricsHandler) Run(ctx context.Context) {
 	defer ticker.Stop()
 
 	var pending []model.MetricRecord
+	failures := flushFailures{logger: h.logger, msg: "metrics insert failed"}
+	defer func() { failures.report(time.Now(), true) }()
 
 	flush := func() {
+		failures.report(time.Now(), false)
 		if len(pending) == 0 {
 			return
 		}
 		if err := h.repo.InsertMetrics(context.Background(), pending); err != nil {
-			h.logger.Error("metrics insert failed", "error", err, "count", len(pending))
+			failures.add(len(pending), err, time.Now())
 		}
 		pending = pending[:0]
 	}
