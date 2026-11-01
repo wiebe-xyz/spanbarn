@@ -24,17 +24,24 @@ func ValidLabelKey(k string) bool {
 	return validLabelKey.MatchString(k)
 }
 
-// appendAttrFilters adds one `JSON_EXTRACT(attributes, '$."<key>"') = ?`
-// predicate per attribute to where/args, binding each value as a parameter. Each
-// key is validated with ValidLabelKey first; an invalid key returns
-// ErrInvalidLabelKey rather than being interpolated, closing the JSON-path
-// injection vector shared by the metric-series and rollup queries.
+// attrTextSQL renders one attribute as the text a response label shows, because
+// a filter value comes in as text and SQLite treats an integer and a text value
+// as unequal. JSON_EXTRACT turns a boolean into 1 or 0, so booleans go by
+// json_type: a filter on "1" must not match a true attribute.
+const attrTextSQL = `CASE json_type(attributes, '$."%[1]s"') WHEN 'true' THEN 'true' WHEN 'false' THEN 'false'
+	ELSE CAST(JSON_EXTRACT(attributes, '$."%[1]s"') AS TEXT) END`
+
+// appendAttrFilters adds one equality predicate on attrTextSQL per attribute to
+// where/args, binding each value as a parameter. Each key is validated with
+// ValidLabelKey first; an invalid key returns ErrInvalidLabelKey rather than
+// being interpolated, closing the JSON-path injection vector shared by the
+// metric-series, rollup and log queries.
 func appendAttrFilters(where []string, args []any, attrs map[string]string) ([]string, []any, error) {
 	for k, v := range attrs {
 		if !validLabelKey.MatchString(k) {
 			return nil, nil, fmt.Errorf("%w: %q", ErrInvalidLabelKey, k)
 		}
-		where = append(where, fmt.Sprintf(`JSON_EXTRACT(attributes, '$."%s"') = ?`, k))
+		where = append(where, fmt.Sprintf(attrTextSQL, k)+" = ?")
 		args = append(args, v)
 	}
 	return where, args, nil
