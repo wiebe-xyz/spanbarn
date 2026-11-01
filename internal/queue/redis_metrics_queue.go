@@ -17,11 +17,9 @@ func (q *RedisQueue) PublishMetrics(ctx context.Context, records []model.MetricR
 	return publishBatch(ctx, q, MetricsQueueKey, "metrics", metricsQueueBatchSize, records)
 }
 
-// ConsumeMetrics blocks for up to brpopTimeout waiting for a batch from the
-// metrics queue. Returns nil, nil when the queue is empty.
-// Called by the writer pod's metrics consumer goroutine.
-func (q *RedisQueue) ConsumeMetrics(ctx context.Context) ([]model.MetricRecord, error) {
-	return consumeBatch[model.MetricRecord](ctx, q, MetricsQueueKey, "metrics")
+// Metrics returns the metrics queue, for the single consumer in writer mode.
+func (q *RedisQueue) Metrics() *BatchQueue[model.MetricRecord] {
+	return newBatchQueue[model.MetricRecord](q, MetricsQueueKey, "metrics")
 }
 
 // MetricsPublisher implements ingest.MetricsRepository by publishing records to

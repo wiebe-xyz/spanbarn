@@ -17,11 +17,9 @@ func (q *RedisQueue) PublishLogs(ctx context.Context, records []model.LogRecord)
 	return publishBatch(ctx, q, LogsQueueKey, "logs", logsQueueBatchSize, records)
 }
 
-// ConsumeLogs blocks for up to brpopTimeout waiting for a batch from the logs
-// queue. Returns nil, nil when the queue is empty.
-// Called by the writer pod's logs consumer goroutine.
-func (q *RedisQueue) ConsumeLogs(ctx context.Context) ([]model.LogRecord, error) {
-	return consumeBatch[model.LogRecord](ctx, q, LogsQueueKey, "logs")
+// Logs returns the logs queue, for the single consumer in writer mode.
+func (q *RedisQueue) Logs() *BatchQueue[model.LogRecord] {
+	return newBatchQueue[model.LogRecord](q, LogsQueueKey, "logs")
 }
 
 // LogsPublisher implements ingest.LogsRepository by publishing records to the

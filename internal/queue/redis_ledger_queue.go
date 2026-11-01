@@ -18,8 +18,7 @@ func (q *RedisQueue) PublishSpanLedger(ctx context.Context, rows []model.SpanLed
 	return publishBatch(ctx, q, SpanLedgerQueueKey, "span-ledger", spanLedgerQueueBatchSize, rows)
 }
 
-// ConsumeSpanLedger blocks for up to brpopTimeout waiting for a batch of ledger
-// rows. Returns nil, nil when the queue is empty.
-func (q *RedisQueue) ConsumeSpanLedger(ctx context.Context) ([]model.SpanLedgerRow, error) {
-	return consumeBatch[model.SpanLedgerRow](ctx, q, SpanLedgerQueueKey, "span-ledger")
+// SpanLedger returns the span ledger queue, for the single consumer in writer mode.
+func (q *RedisQueue) SpanLedger() *BatchQueue[model.SpanLedgerRow] {
+	return newBatchQueue[model.SpanLedgerRow](q, SpanLedgerQueueKey, "span-ledger")
 }

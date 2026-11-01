@@ -8,80 +8,128 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 	"github.com/wiebe-xyz/spanbarn/internal/worker"
 )
 
-// metricsSource and logsSource are the queue's consume side.
-type metricsSource interface {
-	ConsumeMetrics(ctx context.Context) ([]model.MetricRecord, error)
-}
-
-type logsSource interface {
-	ConsumeLogs(ctx context.Context) ([]model.LogRecord, error)
-}
-
 type logsSink interface {
 	InsertLogs(ctx context.Context, recs []model.LogRecord) error
 }
 
-// A consumed batch is already off the queue, so the consumers store it with
-// a context that shutdown does not cancel: a cancelled insert drops the
-// batch. The write schedulers run until the consumers have returned.
+// batchSource is one queue's consume side.
+type batchSource[T any] interface {
+	Consume(ctx context.Context) (*queue.Batch[T], error)
+	Ack(ctx context.Context, batch *queue.Batch[T]) error
+	Reclaim(ctx context.Context) (queue.Reclaimed, error)
+}
 
-// runMetricsConsumer drains the metrics queue into the rollup accumulator and
-// the metrics table until ctx is cancelled. The accumulator sees every point;
-// repo is the raw insert, usually behind a MetricRepeatFilter.
-func runMetricsConsumer(ctx context.Context, q metricsSource, acc *aggregation.MetricAccumulator, repo aggregation.MetricWriter, logger *slog.Logger) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
+// batchConsumer drains one queue until its context is cancelled. A consumed
+// batch stays on the queue's processing list until it is acked, so a lost reply
+// or a killed writer leaves it for the reclaim.
+//
+// store runs with a context that shutdown does not cancel, because a cancelled
+// insert would drop the batch. The write schedulers run until the consumers have
+// returned. It reports whether the batch is finished with; false leaves it on
+// the processing list for the reclaim to return.
+type batchConsumer[T any] struct {
+	name   string
+	source batchSource[T]
+	store  func(ctx context.Context, records []T) bool
+	logger *slog.Logger
+	now    func() time.Time
+}
+
+func newBatchConsumer[T any](name string, source batchSource[T], store func(context.Context, []T) bool, logger *slog.Logger) *batchConsumer[T] {
+	return &batchConsumer[T]{name: name, source: source, store: store, logger: logger, now: time.Now}
+}
+
+func (c *batchConsumer[T]) run(ctx context.Context) {
+	reclaimFrom := c.now().Add(queue.ReclaimDelay)
+	for ctx.Err() == nil {
+		if !c.now().Before(reclaimFrom) {
+			c.reclaim(ctx)
 		}
-		recs, err := q.ConsumeMetrics(ctx)
+		batch, err := c.source.Consume(ctx)
 		if err != nil {
-			if !backoffAfterConsumeError(ctx, logger, "metrics", err) {
+			if !backoffAfterConsumeError(ctx, c.logger, c.name, err) {
 				return
 			}
 			continue
 		}
-		if len(recs) == 0 {
-			continue
-		}
-		for i := range recs {
-			acc.AddMetric(recs[i])
-		}
-		if err := repo.InsertMetrics(context.WithoutCancel(ctx), recs); err != nil {
-			logger.Error("metrics insert error", "error", err)
+		if batch != nil {
+			c.process(ctx, batch)
 		}
 	}
 }
 
+// process acks on a panic too: a batch that panics the store would panic every
+// replay.
+func (c *batchConsumer[T]) process(ctx context.Context, batch *queue.Batch[T]) {
+	finished := true
+	defer func() {
+		if finished {
+			c.ack(ctx, batch)
+		}
+	}()
+	finished = c.store(context.WithoutCancel(ctx), batch.Records)
+}
+
+// ack removes a finished batch from the processing list. A shutdown does not
+// cancel it, or the next writer would replay a batch this one stored.
+func (c *batchConsumer[T]) ack(ctx context.Context, batch *queue.Batch[T]) {
+	if err := c.source.Ack(context.WithoutCancel(ctx), batch); err != nil {
+		c.logger.Warn(c.name+" consumer: ack failed, the batch will replay", "records", len(batch.Records), "error", err)
+	}
+}
+
+// reclaim returns batches left on the processing list to the queue. run calls it
+// holding no batch, so none of them is its own. The warning is how a doubled
+// count or a repeated log line gets tied to a replay: a replay of a stored batch
+// looks the same as new data once it is stored.
+func (c *batchConsumer[T]) reclaim(ctx context.Context) {
+	got, err := c.source.Reclaim(ctx)
+	if got.Batches > 0 {
+		c.logger.Warn(c.name+" consumer: reclaimed batches from the processing list, a reply was lost or a writer stopped mid-batch",
+			"batches", got.Batches, "records", got.Records)
+	}
+	if err != nil && ctx.Err() == nil {
+		c.logger.Warn(c.name+" consumer: reclaim failed, retrying", "error", err)
+	}
+}
+
+// runMetricsConsumer drains the metrics queue into the rollup accumulator and
+// the metrics table until ctx is cancelled. The accumulator sees every point;
+// repo is the raw insert, usually behind a MetricRepeatFilter.
+//
+// A failed raw insert still finishes the batch, because the accumulator has
+// counted it and a replay would add its sums and counts again. A writer killed
+// after the raw insert does replay the batch. If the accumulator flushed those
+// points first, that bucket reads high by one batch.
+func runMetricsConsumer(ctx context.Context, q batchSource[model.MetricRecord], acc *aggregation.MetricAccumulator, repo aggregation.MetricWriter, logger *slog.Logger) {
+	newBatchConsumer("metrics", q, func(ctx context.Context, recs []model.MetricRecord) bool {
+		for i := range recs {
+			acc.AddMetric(recs[i])
+		}
+		if err := repo.InsertMetrics(ctx, recs); err != nil {
+			logger.Error("metrics insert error", "error", err)
+		}
+		return true
+	}, logger).run(ctx)
+}
+
 // runLogsConsumer drains the logs queue into the logs table until ctx is
-// cancelled.
-func runLogsConsumer(ctx context.Context, q logsSource, repo logsSink, logger *slog.Logger) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		recs, err := q.ConsumeLogs(ctx)
-		if err != nil {
-			if !backoffAfterConsumeError(ctx, logger, "logs", err) {
-				return
-			}
-			continue
-		}
-		if len(recs) == 0 {
-			continue
-		}
-		if err := repo.InsertLogs(context.WithoutCancel(ctx), recs); err != nil {
+// cancelled. A failed insert is logged and the batch finished. A writer killed
+// after the insert replays the batch, and the logs table has no key to catch the
+// repeated lines.
+func runLogsConsumer(ctx context.Context, q batchSource[model.LogRecord], repo logsSink, logger *slog.Logger) {
+	newBatchConsumer("logs", q, func(ctx context.Context, recs []model.LogRecord) bool {
+		if err := repo.InsertLogs(ctx, recs); err != nil {
 			logger.Error("logs insert error", "error", err)
 		}
-	}
+		return true
+	}, logger).run(ctx)
 }
 
 // newStagingFlusher builds the span staging flusher (opt-in): the redis worker

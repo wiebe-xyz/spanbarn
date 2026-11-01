@@ -33,7 +33,7 @@ const (
 	// the old one drains its last batch for up to terminationGracePeriodSeconds.
 	// The delay outlasts that grace period, so the batch left on the list is one
 	// nobody is working on. deploy/k8s/graceful_stop_test.go holds it above the
-	// grace period.
+	// grace period. The logs, metrics and span ledger queues use the same delay.
 	ReclaimDelay = 2 * time.Minute
 	// RecentThreshold is the max age of start_time_us for a batch to be routed
 	// to the recent (high-priority) queue.
@@ -154,13 +154,9 @@ func (q *RedisQueue) Consume(ctx context.Context) (*SpanBatch, error) {
 	if err != nil {
 		return nil, fmt.Errorf("queue: claim: %w", err)
 	}
-	var records []model.SpanRecord
-	if err := json.Unmarshal([]byte(raw), &records); err != nil {
-		// It cannot parse on a replay either, so it leaves the list here.
-		if ackErr := q.client.LRem(ctx, WriteQueueProcessingKey, 1, raw).Err(); ackErr != nil {
-			return nil, fmt.Errorf("queue: unmarshal: %w (and lrem: %v)", err, ackErr)
-		}
-		return nil, fmt.Errorf("queue: unmarshal: %w", err)
+	records, err := decodeClaim[model.SpanRecord](ctx, q, WriteQueueProcessingKey, raw)
+	if err != nil {
+		return nil, fmt.Errorf("queue: %w", err)
 	}
 	return &SpanBatch{Records: records, raw: raw}, nil
 }
@@ -181,41 +177,14 @@ func (q *RedisQueue) claim(ctx context.Context) (string, error) {
 // Ack removes a batch from the processing list once it is stored or counted as
 // failed.
 func (q *RedisQueue) Ack(ctx context.Context, b *SpanBatch) error {
-	if err := q.client.LRem(ctx, WriteQueueProcessingKey, 1, b.raw).Err(); err != nil {
-		return fmt.Errorf("queue: lrem: %w", err)
-	}
-	return nil
-}
-
-// Reclaimed reports what Reclaim moved back.
-type Reclaimed struct {
-	Batches int
-	Spans   int
+	return q.ack(ctx, WriteQueueProcessingKey, b.raw)
 }
 
 // Reclaim moves every batch on the processing list to the front of the recent
 // queue, where the next Consume finds it. The consumer calls it holding no batch
-// of its own, so whatever is on the list was left by a lost reply, a failed Ack
-// or a writer that stopped mid-batch. A failure partway leaves the rest on the
-// list for the next call; the move loses nothing.
+// of its own.
 func (q *RedisQueue) Reclaim(ctx context.Context) (Reclaimed, error) {
-	var out Reclaimed
-	for {
-		raw, err := q.client.LMove(ctx, WriteQueueProcessingKey, WriteQueueRecentKey, "RIGHT", "RIGHT").Result()
-		if err == redis.Nil {
-			return out, nil
-		}
-		if err != nil {
-			return out, fmt.Errorf("queue: reclaim: %w", err)
-		}
-		out.Batches++
-		// Only the count is read. A batch that does not parse counts no spans,
-		// and Consume drops it with an error.
-		var records []json.RawMessage
-		if json.Unmarshal([]byte(raw), &records) == nil {
-			out.Spans += len(records)
-		}
-	}
+	return q.reclaim(ctx, WriteQueueProcessingKey, WriteQueueRecentKey)
 }
 
 // Len returns the total depth of both write queues. Used for health metrics.

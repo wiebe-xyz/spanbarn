@@ -110,7 +110,7 @@ func TestConsumeLostReplyLeavesTheBatchRecoverable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got != (Reclaimed{Batches: 1, Spans: 2}) {
+			if got != (Reclaimed{Batches: 1, Records: 2}) {
 				t.Fatalf("Reclaim = %+v, want 1 batch of 2 spans: the batch was lost", got)
 			}
 
@@ -202,7 +202,7 @@ func TestReclaimReturnsEveryBatchLeftBehind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != (Reclaimed{Batches: 2, Spans: 3}) {
+	if got != (Reclaimed{Batches: 2, Records: 3}) {
 		t.Errorf("Reclaim = %+v, want 2 batches of 3 spans", got)
 	}
 	if queued, _ := mr.List(WriteQueueRecentKey); len(queued) != 3 {
