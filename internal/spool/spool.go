@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 )
@@ -19,6 +20,10 @@ const (
 	spoolFileName   = "spool.ndjson"
 	oldFileName     = "spool.ndjson.old"
 	cursorFileName  = "cursor"
+
+	// undecodableLogInterval caps the undecodable-line ERROR at one line per
+	// pod per minute, however damaged the file is.
+	undecodableLogInterval = time.Minute
 )
 
 // Spool is a durable, append-only NDJSON file for span records.
@@ -29,6 +34,13 @@ type Spool struct {
 	maxBytes int64
 	file     *os.File
 	size     int64
+
+	// readUndecodable is what the last Read skipped. It counts once the reader
+	// moves past those lines, because a failed publish reads them again.
+	readUndecodable int64
+	undecodable     int64
+	unloggedLines   int64
+	lastLinesLog    time.Time
 }
 
 // NewSpool creates or opens a spool in the given directory.
@@ -105,6 +117,7 @@ func (s *Spool) Read(cursor int64, limit int) ([]model.SpanRecord, int64, error)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.readUndecodable = 0
 	old := filepath.Join(s.dir, oldFileName)
 	if _, err := os.Stat(old); err == nil {
 		records, next, err := s.readFile(old, cursor, limit)
@@ -115,6 +128,7 @@ func (s *Spool) Read(cursor int64, limit int) ([]model.SpanRecord, int64, error)
 			return nil, cursor, fmt.Errorf("spool remove old: %w", err)
 		}
 		cursor = 0
+		s.countUndecodable(time.Now())
 	}
 
 	path := filepath.Join(s.dir, spoolFileName)
@@ -166,6 +180,7 @@ func (s *Spool) readFile(path string, cursor int64, limit int) ([]model.SpanReco
 
 		var rec model.SpanRecord
 		if err := json.Unmarshal(line, &rec); err != nil {
+			s.readUndecodable++
 			continue
 		}
 		records = append(records, rec)
@@ -174,8 +189,39 @@ func (s *Spool) readFile(path string, cursor int64, limit int) ([]model.SpanReco
 	return records, pos, nil
 }
 
+// Undecodable returns how many lines this process skipped because they did not
+// decode. A line like that names no project, so the ledger can only show it as a
+// gap, and this count is what ties the gap to the spool.
+func (s *Spool) Undecodable() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.undecodable
+}
+
+// countUndecodable moves the last Read's skipped lines into the total. Must be
+// called with s.mu held.
+func (s *Spool) countUndecodable(now time.Time) {
+	s.undecodable += s.readUndecodable
+	s.unloggedLines += s.readUndecodable
+	s.readUndecodable = 0
+	if s.unloggedLines > 0 && now.Sub(s.lastLinesLog) >= undecodableLogInterval {
+		s.logUndecodable(now)
+	}
+}
+
+// logUndecodable must be called with s.mu held.
+func (s *Spool) logUndecodable(now time.Time) {
+	slog.Default().Error("spool: skipped undecodable lines", "lines", s.unloggedLines, "total", s.undecodable)
+	s.unloggedLines = 0
+	s.lastLinesLog = now
+}
+
 // SaveCursor persists the cursor position to disk.
 func (s *Spool) SaveCursor(pos int64) error {
+	s.mu.Lock()
+	s.countUndecodable(time.Now())
+	s.mu.Unlock()
+
 	path := filepath.Join(s.dir, cursorFileName)
 	data := []byte(fmt.Sprintf("%d", pos))
 	return os.WriteFile(path, data, 0o644)
@@ -202,6 +248,9 @@ func (s *Spool) LoadCursor() (int64, error) {
 func (s *Spool) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.unloggedLines > 0 {
+		s.logUndecodable(time.Now())
+	}
 	if s.file != nil {
 		return s.file.Close()
 	}
