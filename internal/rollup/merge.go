@@ -2,6 +2,7 @@ package rollup
 
 import (
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/metrics"
@@ -33,9 +34,11 @@ type Carry struct {
 	TargetLast map[string]float64
 }
 
-// SourceTailKey addresses a source row within Carry.SourceTail.
+// SourceTailKey addresses a source row within Carry.SourceTail. A pass reads the
+// carry rows of every project into one map, and two projects can hold the same
+// metric name and fingerprint, so the project is part of the key.
 func SourceTailKey(m repository.MetricRollup) string {
-	return repository.CoarseSeriesKey(m.Name, m.AttrFingerprint)
+	return strconv.FormatInt(m.ProjectID, 10) + "\x00" + repository.CoarseSeriesKey(m.Name, m.AttrFingerprint)
 }
 
 // Merge folds the source rows of one target bucket into rows of the coarser
