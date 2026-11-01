@@ -99,7 +99,12 @@ func TestDeleteProjectLogRowsChecksEachRowAgain(t *testing.T) {
 	if n != 1 {
 		t.Errorf("deleted %d of the listed rows, want only the unpinned row of project 1", n)
 	}
-	early, err := deleteRowsByID(ctx, repo.db, deleteProjectLogRowsSQL("logs"), ids, int64(1), time.Now().Add(-time.Hour).UTC())
+	var early int64
+	err = repo.submit(TableFamily("logs"), writescheduler.Low, "test", func(db *sql.DB) error {
+		var e error
+		early, e = deleteRowsByID(ctx, db, deleteProjectLogRowsSQL("logs"), ids, int64(1), time.Now().Add(-time.Hour).UTC())
+		return e
+	})
 	if err != nil || early != 0 {
 		t.Errorf("before the cutoff deleted %d (err %v), want 0", early, err)
 	}
