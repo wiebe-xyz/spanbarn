@@ -221,6 +221,15 @@ func seriesContribution(rows []repository.MetricRollup, prev repository.MetricRo
 			c.sum += sum
 			c.obsCount += obs
 			c.hist = addHistogram(c.hist, state.histogram(r))
+		case "exp_histogram", "summary":
+			// Their buckets stay an opaque snapshot, but a 5-minute row's sum and
+			// count are running totals as well. A coarse row holds its own change.
+			sum, obs := r.Sum, r.ObsCount
+			if r.StepSeconds == 0 {
+				sum, obs = state.distribution(r)
+			}
+			c.sum += sum
+			c.obsCount += obs
 		default:
 			c.sum += r.Sum
 			c.obsCount += r.ObsCount
