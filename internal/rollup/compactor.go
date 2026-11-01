@@ -231,11 +231,12 @@ func (c *Compactor) tierStart(ctx context.Context, tier Tier) (time.Time, bool, 
 // many coarse rows it wrote.
 //
 // The read starts one source bucket early. That extra row is what a cumulative
-// counter needs to yield the increase inside the window; it takes part in the
-// arithmetic without contributing to the bucket itself.
+// 5-minute series needs to yield the increase inside the window; it takes part in
+// the arithmetic without contributing to the bucket itself. A coarse source holds
+// its own increases and ignores it.
 func (c *Compactor) compactBucket(ctx context.Context, tier Tier, bucket time.Time, policy DropPolicy) (int, error) {
-	end := NextBucket(bucket, tier.Step)
-	rows, err := c.repo.RollupWindow(ctx, tier.Source, PrevBucket(bucket, tier.Source), end, 0)
+	from, to := sourceWindow(tier, bucket)
+	rows, err := c.repo.RollupWindow(ctx, tier.Source, PrevBucket(from, tier.Source), to, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -243,7 +244,7 @@ func (c *Compactor) compactBucket(ctx context.Context, tier Tier, bucket time.Ti
 		return 0, nil
 	}
 
-	tails, byProject := splitWindow(rows, bucket)
+	tails, byProject := splitWindow(rows, from)
 	var written int
 	for _, pid := range byProject.order {
 		targetLast, err := c.repo.CoarseLastBySeries(ctx, pid, tier.Step, PrevBucket(bucket, tier.Step))
@@ -272,14 +273,14 @@ type projectRows struct {
 	rows  map[int64][]repository.MetricRollup
 }
 
-// splitWindow separates the carry rows (before the bucket) from the rows being
-// compacted, keeping the newest carry row per source series.
-func splitWindow(rows []repository.MetricRollup, bucket time.Time) (map[string]repository.MetricRollup, projectRows) {
+// splitWindow separates the carry rows (before the source window) from the rows
+// being compacted, keeping the newest carry row per source series.
+func splitWindow(rows []repository.MetricRollup, from time.Time) (map[string]repository.MetricRollup, projectRows) {
 	tails := map[string]repository.MetricRollup{}
 	out := projectRows{rows: map[int64][]repository.MetricRollup{}}
 
 	for _, r := range rows {
-		if r.Bucket.Before(bucket) {
+		if r.Bucket.Before(from) {
 			k := SourceTailKey(r)
 			if prev, ok := tails[k]; !ok || r.Bucket.After(prev.Bucket) {
 				tails[k] = r

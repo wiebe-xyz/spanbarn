@@ -68,7 +68,7 @@ func Merge(
 
 	accs := map[string]*targetAcc{}
 	var order []string
-	for _, c := range contributionsBySeries(src, carry) {
+	for _, c := range contributionsBySeries(src, carry, tier.Source) {
 		attrs, fp := policy.Reduce(c.row.Attributes, tier.Step)
 		key := repository.CoarseSeriesKey(c.row.Name, fp)
 		acc := accs[key]
@@ -169,7 +169,7 @@ type contribution struct {
 
 // contributionsBySeries reduces the window's rows to one contribution per source
 // series, ordered by bucket so cumulative values can be differenced.
-func contributionsBySeries(src []repository.MetricRollup, carry Carry) []contribution {
+func contributionsBySeries(src []repository.MetricRollup, carry Carry, source int64) []contribution {
 	bySeries := map[seriesKey][]repository.MetricRollup{}
 	var order []seriesKey
 	for _, m := range src {
@@ -184,17 +184,23 @@ func contributionsBySeries(src []repository.MetricRollup, carry Carry) []contrib
 	for _, k := range order {
 		rows := bySeries[k]
 		sort.Slice(rows, func(i, j int) bool { return rows[i].Bucket.Before(rows[j].Bucket) })
-		out = append(out, seriesContribution(rows, carry.SourceTail[SourceTailKey(rows[0])]))
+		out = append(out, seriesContribution(rows, carry.SourceTail[SourceTailKey(rows[0])], source))
 	}
 	return out
 }
 
 // seriesContribution reduces one source series to a single contribution. prev is
-// the row immediately before the window, zero-valued when there is none.
-func seriesContribution(rows []repository.MetricRollup, prev repository.MetricRollup) contribution {
+// the row immediately before the window, zero-valued when there is none. source
+// is the width of the tier the rows come from.
+func seriesContribution(rows []repository.MetricRollup, prev repository.MetricRollup, source int64) contribution {
 	newest := rows[len(rows)-1]
 	c := contribution{row: newest, last: newest.Last, extra: newest.Extra}
-	cumulative := newest.Temporality != TemporalityDelta
+	// Only the 5-minute tier stores snapshots. A coarse row's sum, observation
+	// count and histogram hold the change inside its own bucket, while its
+	// temporality column still names the temporality of the series it came from.
+	// Differencing such a histogram again would keep only the step up between two
+	// buckets, and a counter would lose the first bucket after any gap.
+	cumulative := newest.Temporality != TemporalityDelta && source == Step5m
 
 	state := &cumulativeState{cumulative: cumulative}
 	if !prev.Bucket.IsZero() {

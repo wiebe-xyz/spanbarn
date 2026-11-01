@@ -100,6 +100,18 @@ func PrevBucket(start time.Time, step int64) time.Time {
 	}
 }
 
+// sourceWindow returns the source buckets [from, to) that make up the target
+// bucket of this tier starting at bucket.
+//
+// Every tier nests inside the one above it except weeks in months. A week that
+// straddles two months belongs to the month it ends in: the earlier month closes
+// before that week does, and waiting for the week would hold the month back for
+// up to six days. Each week so lands in exactly one month, and every week of a
+// month has closed by the time the month does.
+func sourceWindow(tier Tier, bucket time.Time) (from, to time.Time) {
+	return TruncateBucket(bucket, tier.Source), TruncateBucket(NextBucket(bucket, tier.Step), tier.Source)
+}
+
 // BucketClosed reports whether the bucket starting at start is complete as of
 // now. Only closed buckets are compacted: a bucket still taking writes would be
 // merged twice and counted twice.

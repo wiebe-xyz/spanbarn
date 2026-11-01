@@ -244,6 +244,66 @@ func TestMergeCumulativeHistogram(t *testing.T) {
 	}
 }
 
+// TestMergeCoarseHistogramRowsAdd: an hour row holds the observations of its own
+// hour and still carries its series' cumulative temporality, including rows
+// written before this was understood. The day adds them up, a lower hour after a
+// higher one included.
+func TestMergeCoarseHistogramRowsAdd(t *testing.T) {
+	rows := []repoRow{
+		src("dur", "v1", "histogram", testStart, withHist(90, 9, 3, 4, 2)),
+		src("dur", "v1", "histogram", testStart.Add(time.Hour), withHist(40, 4, 1, 2, 1)),
+		src("dur", "v1", "histogram", testStart.Add(2*time.Hour), withHist(70, 7, 2, 3, 2)),
+	}
+	carry := Carry{SourceTail: map[string]repoRow{
+		"dur\x00v1": src("dur", "v1", "histogram", testStart.Add(-time.Hour), withHist(50, 5, 1, 2, 2)),
+	}}
+
+	dayTier := Tier{Step: StepDay, Source: StepHour, Label: "daily"}
+	out := Merge(dayTier, testStart.Truncate(24*time.Hour), 7, rows, DefaultDropPolicy(), carry)
+	if len(out) != 1 {
+		t.Fatalf("got %d rows, want 1", len(out))
+	}
+	if got, want := out[0].ObsCount, int64(20); got != want {
+		t.Errorf("obs_count = %d, want %d", got, want)
+	}
+	if got, want := out[0].Sum, 200.0; got != want {
+		t.Errorf("sum = %v, want %v", got, want)
+	}
+	var h histogram
+	if err := json.Unmarshal([]byte(out[0].Extra), &h); err != nil {
+		t.Fatalf("extra: %v", err)
+	}
+	for i, want := range []float64{6, 9, 5} {
+		if h.Counts[i] != want {
+			t.Errorf("bucket %d = %v, want %v", i, h.Counts[i], want)
+		}
+	}
+}
+
+// TestMergeCoarseCounterKeepsFirstBucket: an hour row's sum is already the
+// increase, so the day needs no earlier row to count it. The running total
+// continues from the previous day.
+func TestMergeCoarseCounterKeepsFirstBucket(t *testing.T) {
+	rows := []repoRow{
+		src("reqs", "v1", "sum", testStart, withLast(30), withSum(30)),
+		src("reqs", "v1", "sum", testStart.Add(time.Hour), withLast(50), withSum(20)),
+	}
+	dayTier := Tier{Step: StepDay, Source: StepHour, Label: "daily"}
+	_, fp := DefaultDropPolicy().Reduce(rows[0].Attributes, StepDay)
+	out := Merge(dayTier, testStart.Truncate(24*time.Hour), 7, rows, DefaultDropPolicy(), Carry{
+		TargetLast: map[string]float64{repository.CoarseSeriesKey("reqs", fp): 100},
+	})
+	if len(out) != 1 {
+		t.Fatalf("got %d rows, want 1", len(out))
+	}
+	if got := out[0].Sum; got != 50 {
+		t.Errorf("increase = %v, want 50", got)
+	}
+	if got := out[0].Last; got != 150 {
+		t.Errorf("running total = %v, want 150", got)
+	}
+}
+
 // TestMergeWithoutCarryContributesNothing: with no earlier sample the movement
 // inside the window is unknowable. Counting the running total in full would
 // inflate every sparse series, and most series here report a few times a day.
