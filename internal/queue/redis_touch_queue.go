@@ -30,6 +30,9 @@ func (q *RedisQueue) PublishAPIKeyTouches(ctx context.Context, ids []int64) erro
 	return publishBatch(ctx, q, TouchQueueKey, "apikey-touch", touchQueueBatchSize, ids)
 }
 
+// A lost batch or a replay only moves a last-used time, so this queue keeps
+// BRPOP and has no processing list.
+//
 // ConsumeAPIKeyTouches blocks for up to brpopTimeout waiting for a batch of
 // api-key IDs. Returns nil, nil when the queue is empty. Called by the writer's
 // touch consumer goroutine.

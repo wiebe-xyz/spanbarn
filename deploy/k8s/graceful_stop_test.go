@@ -44,8 +44,8 @@ type deployment struct {
 	} `yaml:"spec"`
 }
 
-// The write queue's processing list has one consumer, so whatever a writer finds
-// there while it holds no batch was left behind. That rests on one writer pod,
+// Each queue's processing list has one consumer, so whatever a writer finds there
+// while it holds no batch was left behind. That rests on one writer pod,
 // replaced only after the old one has gone on a rollout, and on the reclaim delay
 // outlasting the drain of a pod replaced outside a rollout (deleted or evicted).
 func TestWriterReclaimAssumptions(t *testing.T) {
