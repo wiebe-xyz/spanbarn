@@ -439,6 +439,12 @@ type MetricPoint = {
 export type MetricSeries = {
   labels: Record<string, string>
   points: MetricPoint[]
+  /**
+   * The counter's stored values fall and climb back: pods sharing one label set
+   * because they send no service.instance.id, or a non-monotonic sum. The rate
+   * is an estimate until the producer sets the attribute.
+   */
+  shared_series?: boolean
 }
 
 /** Response from GET /api/v1/metrics/names */
@@ -560,6 +566,8 @@ export type LogsParams = {
 export type MetricTotal = {
   labels: Record<string, string>
   total: number
+  /** The group holds a series with `MetricSeries.shared_series` set. */
+  shared_series?: boolean
 }
 
 /** Response from GET /api/v1/metrics/totals */

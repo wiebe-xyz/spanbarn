@@ -352,6 +352,12 @@ function MetricChart({
         </span>
       </div>
       <p style={{ margin: '0 0 0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>{RENDER_HINT[render]}</p>
+      {series.some((s) => s.shared_series) && (
+        <p role="status" style={{ margin: '0 0 0.75rem', fontSize: '0.75rem', color: 'var(--warning)' }}>
+          Values on this counter fall and climb back, so several pods appear to share one series. The rate is an
+          estimate until they send service.instance.id.
+        </p>
+      )}
 
       {keys.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>

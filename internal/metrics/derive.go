@@ -68,6 +68,11 @@ type DerivedPoint struct {
 type Series struct {
 	Labels map[string]string `json:"labels"`
 	Points []DerivedPoint    `json:"points"`
+	// SharedSeries marks a counter whose stored values fall and climb back: pods
+	// sharing one label set because they send no service.instance.id, or a
+	// non-monotonic sum. The rate is worked out per producer, and it is an
+	// estimate until the producer sets the attribute.
+	SharedSeries bool `json:"shared_series,omitempty"`
 }
 
 // BuildSeries splits raw points into one Series per distinct label set (or per
@@ -97,8 +102,9 @@ func BuildSeries(metricType string, in []InputPoint, groupBy []string) []Series 
 	for _, key := range order {
 		b := groups[key]
 		out = append(out, Series{
-			Labels: b.labels,
-			Points: Derive(metricType, b.points),
+			Labels:       b.labels,
+			Points:       Derive(metricType, b.points),
+			SharedSeries: RenderFor(metricType) == RenderRate && sharedPoints(b.points),
 		})
 	}
 	return out
@@ -164,8 +170,12 @@ func deriveGauge(points []InputPoint) []DerivedPoint {
 // the previous point divided by the elapsed seconds; a decrease is a counter
 // reset and the new value itself is taken as the increase. A delta point
 // already holds the increase over its own interval, so its rate is the value
-// divided by that interval and the previous point plays no part.
+// divided by that interval and the previous point plays no part. An interleaved
+// series has no single running total to difference, so it goes per producer.
 func deriveRate(points []InputPoint) []DerivedPoint {
+	if values, ok := cumulativeValues(points); ok && Interleaved(values) {
+		return interleavedRates(points, values)
+	}
 	out := make([]DerivedPoint, 0, len(points))
 	for i, cur := range points {
 		var prev *InputPoint
