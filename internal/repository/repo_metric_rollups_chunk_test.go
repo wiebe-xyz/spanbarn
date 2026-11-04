@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -125,8 +126,13 @@ func TestUpsertMetricRollupsStopsAtFailedChunk(t *testing.T) {
 		t.Fatal(err)
 	}
 	bucket := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
-	if err := repo.UpsertMetricRollups(rollupBatch(3*metricRollupChunk, bucket)); err == nil {
-		t.Fatal("UpsertMetricRollups with a failing chunk returned no error")
+	err := repo.UpsertMetricRollups(rollupBatch(3*metricRollupChunk, bucket))
+	var unwritten *UnwrittenRollupsError
+	if !errors.As(err, &unwritten) {
+		t.Fatalf("UpsertMetricRollups with a failing chunk returned %v, want an UnwrittenRollupsError", err)
+	}
+	if len(unwritten.Rows) != 2*metricRollupChunk || unwritten.Rows[0].AttrFingerprint != failKey {
+		t.Errorf("%d unwritten rows from %s, want %d from %s", len(unwritten.Rows), unwritten.Rows[0].AttrFingerprint, 2*metricRollupChunk, failKey)
 	}
 	var rows int
 	var maxKey string

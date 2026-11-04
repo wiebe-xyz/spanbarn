@@ -129,6 +129,43 @@ func TestCompactorLeavesOpenBucketAlone(t *testing.T) {
 	}
 }
 
+// The last 5-minute bucket of an hour lands after the hour closes, so a pass in
+// that gap must not advance the watermark past it.
+func TestCompactorWaitsForALateLastBucket(t *testing.T) {
+	repo := testRepo(t)
+	ctx := context.Background()
+
+	h1 := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	last := h1.Add(55 * time.Minute)
+	if err := repo.UpsertMetricRollups([]repository.MetricRollup{counterRow(h1, "v1", 1)}); err != nil {
+		t.Fatalf("UpsertMetricRollups: %v", err)
+	}
+	closed := h1.Add(time.Hour)
+	if err := newTestCompactor(t, repo, closed.Add(10*time.Second)).RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce right after close: %v", err)
+	}
+
+	late := counterRow(last, "v1", 2)
+	late.Count = 5
+	if err := repo.UpsertMetricRollups([]repository.MetricRollup{late}); err != nil {
+		t.Fatalf("UpsertMetricRollups: %v", err)
+	}
+	if err := newTestCompactor(t, repo, closed.Add(repository.MetricRollupLateWrite)).RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce after the wait: %v", err)
+	}
+
+	got, err := repo.QueryCoarseRollups(ctx, repository.CoarseRollupFilter{
+		ProjectID: 1, Name: "reqs", StepSeconds: StepHour,
+		From: h1, To: closed,
+	})
+	if err != nil {
+		t.Fatalf("QueryCoarseRollups: %v", err)
+	}
+	if len(got) != 1 || got[0].Count != 6 {
+		t.Fatalf("hour tier = %+v, want one row with count 6", got)
+	}
+}
+
 // TestCompactorIsIdempotent: a repeated pass replaces its own output rather than
 // adding to it, which is what makes an interrupted pass safe to redo.
 func TestCompactorIsIdempotent(t *testing.T) {

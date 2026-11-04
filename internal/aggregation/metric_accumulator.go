@@ -3,6 +3,7 @@ package aggregation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -35,7 +36,14 @@ type MetricAccumulator struct {
 	logger        *slog.Logger
 	now           func() time.Time
 	onPersist     func(int64) // optional: notified of rollups persisted (self-metrics)
+	// pending holds rollups a failed flush did not write, for the next flush.
+	pending []repository.MetricRollup
 }
+
+// metricRetryWindow is how long past its bucket start a rollup keeps being
+// retried after a failed write. It bounds what an outage can hold in memory, and
+// a rollup past it is dropped and logged at ERROR.
+const metricRetryWindow = repository.MetricRollupLateWrite
 
 // SetOnPersist registers a callback invoked with the number of rollups written
 // on each successful flush. Used to feed self-metrics. Call before Run.
@@ -208,14 +216,19 @@ func (a *MetricAccumulator) foldHistogram(sl *metricSlot, extra json.RawMessage)
 	}
 }
 
-// Flush writes all closed buckets to SQLite and removes them from memory. Open
-// buckets (those whose window has not yet elapsed) are kept so later points fold
-// into the same row.
+// Flush writes all closed buckets to SQLite and removes them from memory, along
+// with whatever an earlier failed flush left unwritten. Open buckets (those whose
+// window has not yet elapsed) are kept so later points fold into the same row.
+// Rollups a failed write left behind wait for the next flush as finished rows. A
+// late point for the same bucket can sit beside one in a batch, since the upsert
+// adds on conflict.
 func (a *MetricAccumulator) Flush(ctx context.Context) error {
-	cutoff := a.now().Add(-a.interval)
+	now := a.now()
+	cutoff := now.Add(-a.interval)
 
 	a.mu.Lock()
-	var rollups []repository.MetricRollup
+	rollups := a.pending
+	a.pending = nil
 	for k, sl := range a.slots {
 		if k.bucket.After(cutoff) {
 			continue // bucket still open
@@ -228,14 +241,49 @@ func (a *MetricAccumulator) Flush(ctx context.Context) error {
 	if len(rollups) == 0 {
 		return nil
 	}
-	if err := a.repo.UpsertMetricRollups(rollups); err != nil {
+	unwritten, err := a.persist(rollups)
+	if err != nil {
+		a.keepForRetry(unwritten, now, err)
 		return fmt.Errorf("metric accumulator flush: %w", err)
 	}
 	a.logger.Info("persisted metric rollups", "count", len(rollups))
-	if a.onPersist != nil {
-		a.onPersist(int64(len(rollups)))
-	}
 	return nil
+}
+
+// persist writes rollups and returns the ones it did not write. The chunks of a
+// partly failed batch that did land count as persisted.
+func (a *MetricAccumulator) persist(rollups []repository.MetricRollup) ([]repository.MetricRollup, error) {
+	err := a.repo.UpsertMetricRollups(rollups)
+	var unwritten []repository.MetricRollup
+	if err != nil {
+		unwritten = rollups
+		var partial *repository.UnwrittenRollupsError
+		if errors.As(err, &partial) {
+			unwritten = partial.Rows
+		}
+	}
+	if written := len(rollups) - len(unwritten); written > 0 && a.onPersist != nil {
+		a.onPersist(int64(written))
+	}
+	return unwritten, err
+}
+
+// keepForRetry queues unwritten rollups for the next flush and drops the ones
+// past metricRetryWindow.
+func (a *MetricAccumulator) keepForRetry(unwritten []repository.MetricRollup, now time.Time, cause error) {
+	oldest := now.Add(-metricRetryWindow)
+	keep := make([]repository.MetricRollup, 0, len(unwritten))
+	for _, r := range unwritten {
+		if r.Bucket.After(oldest) {
+			keep = append(keep, r)
+		}
+	}
+	if lost := len(unwritten) - len(keep); lost > 0 {
+		a.logger.Error("metric accumulator dropped rollups after failed writes", "rows_lost", lost, "error", cause)
+	}
+	a.mu.Lock()
+	a.pending = append(keep, a.pending...)
+	a.mu.Unlock()
 }
 
 func (a *MetricAccumulator) toRollup(k metricKey, sl *metricSlot) repository.MetricRollup {
@@ -281,17 +329,20 @@ func (a *MetricAccumulator) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := a.Flush(ctx); err != nil {
+				// The next tick retries; a rollup it gives up on logs at ERROR.
 				a.logger.Warn("metric accumulator flush failed", "error", err)
 			}
 		}
 	}
 }
 
-// flushAll drains every slot regardless of whether its bucket is closed. Used on
-// shutdown so buffered data is not lost.
-func (a *MetricAccumulator) flushAll(ctx context.Context) {
+// flushAll drains every slot regardless of whether its bucket is closed, and
+// whatever an earlier flush left unwritten. Used on shutdown so buffered data is
+// not lost. There is no next flush, so a failed write loses its rollups.
+func (a *MetricAccumulator) flushAll(_ context.Context) {
 	a.mu.Lock()
-	var rollups []repository.MetricRollup
+	rollups := a.pending
+	a.pending = nil
 	for k, sl := range a.slots {
 		rollups = append(rollups, a.toRollup(k, sl))
 	}
@@ -301,11 +352,7 @@ func (a *MetricAccumulator) flushAll(ctx context.Context) {
 	if len(rollups) == 0 {
 		return
 	}
-	if err := a.repo.UpsertMetricRollups(rollups); err != nil {
-		a.logger.Warn("metric accumulator final flush failed", "error", err)
-		return
-	}
-	if a.onPersist != nil {
-		a.onPersist(int64(len(rollups)))
+	if unwritten, err := a.persist(rollups); err != nil {
+		a.logger.Error("metric accumulator final flush failed", "rows_lost", len(unwritten), "error", err)
 	}
 }
