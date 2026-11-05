@@ -128,7 +128,9 @@ func (q AnalyzeQuery) baseSelect(sample int) (string, []any, error) {
 		args = append(args, a...)
 	}
 	if q.BucketSeconds > 0 {
-		cols = append(cols, "(CAST(strftime('%s', ingested_at) AS INTEGER) / ?) * ? AS b")
+		// ingestedEpochSQL reads the stored time.String() form, which strftime
+		// cannot parse whole: every span landed in bucket 0, off the grid.
+		cols = append(cols, "("+ingestedEpochSQL+" / ?) * ? AS b")
 		args = append(args, q.BucketSeconds, q.BucketSeconds)
 	}
 	where, wargs, err := q.scanWhere(sample)

@@ -256,3 +256,42 @@ func TestAnalyzeRejectsAnInvalidFilter(t *testing.T) {
 		t.Fatal("want an error for a non numeric duration")
 	}
 }
+
+// Ingest stores ingested_at from a Go time.Time, in a form strftime cannot
+// parse whole. A series read on it put every row in bucket 0, outside the
+// grid, so each line read as zero.
+func TestAnalyzeSeriesBucketsTheStoredIngestedAtForm(t *testing.T) {
+	repo := setupTestDB(t)
+	at := time.Now().UTC().Add(-10 * time.Minute)
+	var spans []Span
+	for i := 1; i <= 3; i++ {
+		s := analyzeSpan(i, "/a", "server", "error", 1000, "")
+		s.IngestedAt = at
+		spans = append(spans, s)
+	}
+	tx, err := repo.DB().BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := insertStagedSpansTx(t.Context(), tx, spans); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	q := baseQuery(AnalyzeCalc{Fn: CalcCount})
+	q.GroupBy = []string{"service"}
+	q.BucketSeconds = 60
+	q.Only = [][]string{{"web"}}
+	res, err := repo.Analyze(t.Context(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := at.Unix() / 60 * 60
+	if len(res.Rows) != 1 || res.Rows[0].Bucket != want || res.Rows[0].Count != 3 {
+		var stored string
+		_ = repo.DB().QueryRow(`SELECT ingested_at || '' FROM spans LIMIT 1`).Scan(&stored)
+		t.Fatalf("rows = %+v, want one row in bucket %d with 3 spans (stored ingested_at %q)", res.Rows, want, stored)
+	}
+}
