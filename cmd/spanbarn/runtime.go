@@ -154,6 +154,8 @@ func retentionConfigFrom(cfg config.Config) retention.Config {
 		MonthlyRollupDays:         cfg.Retention.RollupMonthlyDays,
 		SpanRollup5mHours:         cfg.Retention.SpanRollup5mHours,
 		SpanRollupHourlyDays:      cfg.Retention.SpanRollupHourlyDays,
+		MetricCompactionOff:       !cfg.Retention.CompactEnabled,
+		SpanCompactionOff:         !cfg.SpanRollups,
 		SpanRollupDailyDays:       cfg.Retention.SpanRollupDailyDays,
 		SlowThresholdUS:           int64(cfg.SlowThresholdMS) * 1000,
 		DBPath:                    cfg.DBPath,

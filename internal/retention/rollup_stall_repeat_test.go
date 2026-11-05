@@ -63,3 +63,39 @@ func TestBucketsBehind(t *testing.T) {
 		}
 	}
 }
+
+// A compactor turned off on purpose leaves its tiers waiting by design: that
+// ladder is skipped with one info line, and the other ladder is still checked.
+func TestRollupStallSkipsLadderWithCompactionOff(t *testing.T) {
+	w, repo, buf := loggedWorker(t)
+	w.cfg.MetricCompactionOff = true
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 5, 12, 40, 0, 0, time.UTC)
+	stale := t0.Add(-6 * time.Hour).Truncate(time.Hour)
+	if err := repo.SetMetricRollupWatermark(ctx, rollup.Step5m, stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSpanRollupWatermark(ctx, rollup.Step5m, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	w.reportRollupStalls(ctx, t0)
+	w.reportRollupStalls(ctx, t0.Add(2*time.Hour))
+
+	got := stallErrors(t, buf)
+	if len(got) != 2 || got[0] != "span/hourly" || got[1] != "span/hourly" {
+		t.Errorf("stalls reported %v, want span/hourly twice and no metric tier", got)
+	}
+	var skipped int
+	for _, l := range logLines(t, buf) {
+		if l.Msg == "rollup stall check skipped: compaction is off" {
+			if l.Level != "INFO" || l.Ladder != "metric" {
+				t.Errorf("skip line at %s for ladder %q, want INFO for metric", l.Level, l.Ladder)
+			}
+			skipped++
+		}
+	}
+	if skipped != 1 {
+		t.Errorf("skip logged %d times, want 1", skipped)
+	}
+}

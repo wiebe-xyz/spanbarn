@@ -38,29 +38,36 @@ type stallTier struct {
 	label        string
 }
 
-// stallLadder is a compaction ladder and how to read its watermarks.
+// stallLadder is a compaction ladder and how to read its watermarks. off
+// means its compactor was turned off on purpose, and setting names the switch.
 type stallLadder struct {
 	name      string
 	tiers     []stallTier
 	watermark func(ctx context.Context, step int64) (time.Time, bool, error)
+	off       bool
+	setting   string
 }
 
 func (w *RetentionWorker) stallLadders() []stallLadder {
-	metric := stallLadder{name: "metric", watermark: w.repo.MetricRollupWatermark}
+	metric := stallLadder{name: "metric", watermark: w.repo.MetricRollupWatermark,
+		off: w.cfg.MetricCompactionOff, setting: "SPANBARN_ROLLUP_COMPACT_ENABLED=0"}
 	for _, t := range rollup.Ladder() {
 		metric.tiers = append(metric.tiers, stallTier{t.Step, t.Source, t.Label})
 	}
-	span := stallLadder{name: "span", watermark: w.repo.SpanRollupWatermark, tiers: []stallTier{
-		{rollup.StepHour, rollup.Step5m, "hourly"},
-		{rollup.StepDay, rollup.StepHour, "daily"},
-	}}
+	span := stallLadder{name: "span", watermark: w.repo.SpanRollupWatermark,
+		off: w.cfg.SpanCompactionOff, setting: "SPANBARN_SPAN_ROLLUPS=0", tiers: []stallTier{
+			{rollup.StepHour, rollup.Step5m, "hourly"},
+			{rollup.StepDay, rollup.StepHour, "daily"},
+		}}
 	return []stallLadder{metric, span}
 }
 
-// stallState remembers when each stalled tier was last reported.
+// stallState remembers when each stalled tier was last reported, and which
+// ladders' skip has been logged.
 type stallState struct {
 	mu       sync.Mutex
 	reported map[string]time.Time
+	skipped  map[string]bool
 }
 
 // bucketsBehind counts the closed target buckets of step after through, up to
@@ -77,14 +84,24 @@ func bucketsBehind(through time.Time, step int64, now time.Time, limit int) int 
 // reportRollupStalls logs every compaction tier that owes stallBuckets or more
 // closed buckets at error level, once per stallReportInterval while it lasts,
 // and logs the catch-up once it is back under. A tier with no watermark has not
-// compacted yet and is left out.
+// compacted yet and is left out, and so is a ladder whose compactor is off.
 func (w *RetentionWorker) reportRollupStalls(ctx context.Context, now time.Time) {
 	w.stalls.mu.Lock()
 	defer w.stalls.mu.Unlock()
 	if w.stalls.reported == nil {
 		w.stalls.reported = map[string]time.Time{}
+		w.stalls.skipped = map[string]bool{}
 	}
 	for _, ladder := range w.stallLadders() {
+		// An operator who turns compaction off means the tiers to wait, so
+		// that is no stall to report every hour.
+		if ladder.off {
+			if !w.stalls.skipped[ladder.name] {
+				w.stalls.skipped[ladder.name] = true
+				w.logger.Info("rollup stall check skipped: compaction is off", "ladder", ladder.name, "setting", ladder.setting)
+			}
+			continue
+		}
 		for _, tier := range ladder.tiers {
 			through, ok, err := ladder.watermark(ctx, tier.source)
 			if err != nil {

@@ -33,6 +33,12 @@ type Config struct {
 	SpanRollupHourlyDays int // days to keep hourly span rollups (default 30)
 	SpanRollupDailyDays  int // days to keep daily span rollups (default 400)
 
+	// MetricCompactionOff and SpanCompactionOff say a compactor was turned off
+	// on purpose (SPANBARN_ROLLUP_COMPACT_ENABLED=0, SPANBARN_SPAN_ROLLUPS=0).
+	// Its ladder is then left out of the stall check.
+	MetricCompactionOff bool
+	SpanCompactionOff   bool
+
 	// BatchYield is how long the worker voluntarily releases the write lock
 	// between deletion batches so the span-insert worker can drain the Redis
 	// queue. 0 disables yielding (old behaviour). Default 30s.
