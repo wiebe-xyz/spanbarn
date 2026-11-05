@@ -66,6 +66,11 @@ type ShardManager struct {
 	// beforeClose, when set, runs ahead of each ended shard's close. Tests
 	// use it to hold a close open.
 	beforeClose func()
+	// closeBudget is the time each final checkpoint of an ended shard may
+	// take; zero means endedCheckpointBudget. beforeCheckpointRetry, when
+	// set, runs ahead of the retry. Tests set both.
+	closeBudget           time.Duration
+	beforeCheckpointRetry func()
 }
 
 // openShardManager prepares the shards directory next to dbPath, brings the
@@ -345,9 +350,7 @@ func (m *ShardManager) awaitIdle(q *writescheduler.Scheduler) {
 // longer reports through a write job, so its errors log at error level here.
 func (m *ShardManager) closeShard(h *DB) {
 	file := filepath.Base(h.path)
-	if frames := h.FinalCheckpoint(m.logger); frames < 0 {
-		m.logger.Error("close ended shard: final checkpoint failed", "file", file)
-	}
+	m.finalCheckpoint(h, file)
 	if err := h.Close(); err != nil {
 		m.logger.Error("close ended shard", "file", file, "error", err)
 	}
