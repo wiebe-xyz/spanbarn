@@ -269,14 +269,7 @@ func TestAnalyzeSeriesBucketsTheStoredIngestedAtForm(t *testing.T) {
 		s.IngestedAt = at
 		spans = append(spans, s)
 	}
-	tx, err := repo.DB().BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := insertStagedSpansTx(t.Context(), tx, spans); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
+	if err := repo.CommitStagingFlush(t.Context(), []string{"t1", "t2", "t3"}, spans); err != nil {
 		t.Fatal(err)
 	}
 
@@ -290,8 +283,6 @@ func TestAnalyzeSeriesBucketsTheStoredIngestedAtForm(t *testing.T) {
 	}
 	want := at.Unix() / 60 * 60
 	if len(res.Rows) != 1 || res.Rows[0].Bucket != want || res.Rows[0].Count != 3 {
-		var stored string
-		_ = repo.DB().QueryRow(`SELECT ingested_at || '' FROM spans LIMIT 1`).Scan(&stored)
-		t.Fatalf("rows = %+v, want one row in bucket %d with 3 spans (stored ingested_at %q)", res.Rows, want, stored)
+		t.Fatalf("rows = %+v, want one row in bucket %d with 3 spans", res.Rows, want)
 	}
 }
