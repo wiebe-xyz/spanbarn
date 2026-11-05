@@ -160,6 +160,11 @@ func (c *Compactor) compactTier(ctx context.Context, tier Tier, policy DropPolic
 		return 0, 0, err
 	}
 
+	sourceThrough, sourceLimited, err := c.sourceThrough(ctx, tier)
+	if err != nil {
+		return 0, 0, err
+	}
+
 	var buckets, rows int
 	for buckets < c.cfg.BucketsPerPass {
 		if err := ctx.Err(); err != nil {
@@ -171,6 +176,11 @@ func (c *Compactor) compactTier(ctx context.Context, tier Tier, policy DropPolic
 		// never comes back for it.
 		if !BucketClosed(start, tier.Step, c.now().Add(-repository.MetricRollupLateWrite)) {
 			break // still taking writes
+		}
+		// The watermark never comes back for a bucket, so one compacted before the
+		// tier below has caught up would miss those source rows for good.
+		if sourceLimited && sourceThrough.Before(TruncateBucket(NextBucket(start, tier.Step), tier.Source)) {
+			break
 		}
 		n, err := c.compactBucket(ctx, tier, start, policy)
 		if err != nil {
@@ -185,6 +195,19 @@ func (c *Compactor) compactTier(ctx context.Context, tier Tier, policy DropPolic
 		start = end
 	}
 	return buckets, rows, nil
+}
+
+// sourceThrough reports how far this tier's source rows are complete: the
+// watermark of the rung that writes them. Ingest writes the 5-minute tier, so the
+// hourly tier has no such limit, and neither has a tier whose source was never
+// compacted, because nothing is on its way to that source.
+func (c *Compactor) sourceThrough(ctx context.Context, tier Tier) (time.Time, bool, error) {
+	for _, below := range Ladder() {
+		if below.Step == tier.Source {
+			return c.repo.MetricRollupWatermark(ctx, below.Source)
+		}
+	}
+	return time.Time{}, false, nil
 }
 
 // tierStart is the first target bucket this tier still owes: the watermark where
