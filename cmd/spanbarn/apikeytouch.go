@@ -71,13 +71,26 @@ func newReadOnlyKeyLookup(roRepo *repository.Repository, writeQueue *queue.Redis
 	}
 }
 
+// touchSource is the queue side of runTouchConsumer: *queue.RedisQueue.
+type touchSource interface {
+	ConsumeAPIKeyTouches(ctx context.Context) ([]int64, error)
+}
+
+// touchSink applies a touch: *repository.Repository.
+type touchSink interface {
+	TouchAPIKey(id int64) error
+}
+
 // runTouchConsumer drains api-key touches published by reader pods and applies
 // them. Runs on the writer, which owns the only read-write connection.
 //
 // Touches are best-effort telemetry about telemetry: a failure is logged and
 // the batch moves on rather than retrying, since a stale last_used_at is not
-// worth contending for the write connection with actual span ingest.
-func runTouchConsumer(ctx context.Context, writeQueue *queue.RedisQueue, repo *repository.Repository, logger *slog.Logger) {
+// worth contending for the write connection with actual span ingest. A failed
+// consume goes through backoffAfterConsumeError like the other consumers: it
+// warns and waits, so a Redis outage is no hot loop of captured errors
+// (SPA-90), and a cancelled context ends the loop without a log line.
+func runTouchConsumer(ctx context.Context, writeQueue touchSource, repo touchSink, logger *slog.Logger) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -86,7 +99,9 @@ func runTouchConsumer(ctx context.Context, writeQueue *queue.RedisQueue, repo *r
 		}
 		ids, err := writeQueue.ConsumeAPIKeyTouches(ctx)
 		if err != nil {
-			logger.Error("apikey touch consumer error", "error", err)
+			if !backoffAfterConsumeError(ctx, logger, "apikey touch", err) {
+				return
+			}
 			continue
 		}
 		for _, id := range ids {
