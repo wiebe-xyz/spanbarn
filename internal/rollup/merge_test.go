@@ -67,7 +67,7 @@ func TestMergeCounterAcrossDeploy(t *testing.T) {
 	carry := Carry{
 		// what each series read just before the window
 		SourceTail: map[string]repoRow{
-			"reqs\x00v1": src("reqs", "v1", "sum", testStart.Add(-m5), withLast(90)),
+			"7\x00reqs\x00v1": src("reqs", "v1", "sum", testStart.Add(-m5), withLast(90)),
 		},
 		TargetLast: map[string]float64{},
 	}
@@ -95,7 +95,7 @@ func TestMergeCounterContinuesRunningTotal(t *testing.T) {
 	}
 	_, fp := DefaultDropPolicy().Reduce(rows[0].Attributes, StepHour)
 	carry := Carry{
-		SourceTail: map[string]repoRow{"reqs\x00v1": src("reqs", "v1", "sum", testStart.Add(-5*time.Minute), withLast(10))},
+		SourceTail: map[string]repoRow{"7\x00reqs\x00v1": src("reqs", "v1", "sum", testStart.Add(-5*time.Minute), withLast(10))},
 		TargetLast: map[string]float64{repository.CoarseSeriesKey("reqs", fp): 1000},
 	}
 
@@ -124,8 +124,8 @@ func TestMergeKeepsMetricNamesApart(t *testing.T) {
 	tail := testStart.Add(-5 * time.Minute)
 	carry := Carry{
 		SourceTail: map[string]repoRow{
-			"reqs\x00v1": src("reqs", "v1", "sum", tail, withLast(10)),
-			"errs\x00v1": src("errs", "v1", "sum", tail, withLast(1)),
+			"7\x00reqs\x00v1": src("reqs", "v1", "sum", tail, withLast(10)),
+			"7\x00errs\x00v1": src("errs", "v1", "sum", tail, withLast(1)),
 		},
 		TargetLast: map[string]float64{
 			repository.CoarseSeriesKey("reqs", fp): 1000,
@@ -157,7 +157,7 @@ func TestMergeCounterReset(t *testing.T) {
 		src("reqs", "v1", "sum", testStart.Add(5*time.Minute), withLast(7)),
 	}
 	carry := Carry{
-		SourceTail: map[string]repoRow{"reqs\x00v1": src("reqs", "v1", "sum", testStart.Add(-5*time.Minute), withLast(80))},
+		SourceTail: map[string]repoRow{"7\x00reqs\x00v1": src("reqs", "v1", "sum", testStart.Add(-5*time.Minute), withLast(80))},
 	}
 
 	out := Merge(hourTier, testStart, 7, rows, DefaultDropPolicy(), carry)
@@ -219,7 +219,7 @@ func TestMergeCumulativeHistogram(t *testing.T) {
 		src("dur", "v1", "histogram", testStart.Add(5*time.Minute), withHist(260, 25, 9, 11, 5)),
 	}
 	carry := Carry{SourceTail: map[string]repoRow{
-		"dur\x00v1": src("dur", "v1", "histogram", testStart.Add(-5*time.Minute), withHist(100, 10, 4, 4, 2)),
+		"7\x00dur\x00v1": src("dur", "v1", "histogram", testStart.Add(-5*time.Minute), withHist(100, 10, 4, 4, 2)),
 	}}
 
 	out := Merge(hourTier, testStart, 7, rows, DefaultDropPolicy(), carry)
