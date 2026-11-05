@@ -187,7 +187,18 @@ func NewFilteredMetricWriter(w MetricWriter, f *MetricRepeatFilter) *FilteredMet
 
 // InsertMetrics writes the points of recs that f keeps.
 func (fw *FilteredMetricWriter) InsertMetrics(ctx context.Context, recs []model.MetricRecord) error {
-	recs = fw.f.Keep(recs)
+	return fw.Write(ctx, fw.Keep(recs))
+}
+
+// Keep returns the points of recs that f keeps and records them as written.
+func (fw *FilteredMetricWriter) Keep(recs []model.MetricRecord) []model.MetricRecord {
+	return fw.f.Keep(recs)
+}
+
+// Write inserts points Keep returned, unfiltered. A retry of a failed insert
+// goes through Write: Keep has recorded the points as written and would hold an
+// unchanged one back as a repeat on a second pass.
+func (fw *FilteredMetricWriter) Write(ctx context.Context, recs []model.MetricRecord) error {
 	if len(recs) == 0 {
 		return nil
 	}

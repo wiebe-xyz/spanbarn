@@ -106,7 +106,7 @@ func consumerRuns(logger *slog.Logger) map[string]consumerRun {
 		"metrics": func(ctx context.Context, cancel context.CancelFunc, sink *recordingSink) (int, bool) {
 			src := metricsSource(cancel)
 			acc := aggregation.NewMetricAccumulator(nil, time.Minute, time.Hour, logger)
-			runMetricsConsumer(ctx, src, acc, sink, logger)
+			runMetricsConsumer(ctx, src, acc, aggregation.NewFilteredMetricWriter(sink, nil), logger)
 			return src.acks, src.ackCancel
 		},
 	}
@@ -141,16 +141,18 @@ func TestConsumersStoreTheBatchInFlightAtShutdown(t *testing.T) {
 	}
 }
 
-// A failed insert finishes the batch. On metrics a replay would add it to the
-// accumulator again; on logs the error log is the record, as it was before the
-// processing list.
-func TestFailedInsertFinishesTheBatch(t *testing.T) {
+// An insert that fails at shutdown gets no retry. The logs batch stays on the
+// processing list for the next writer, since its insert stored nothing. The
+// metrics batch is finished, since the accumulator has counted it and a replay
+// would add its sums and counts again.
+func TestFailedInsertAtShutdown(t *testing.T) {
+	want := map[string]int{"logs": 0, "metrics": 1}
 	for name, run := range consumerRuns(slog.New(slog.DiscardHandler)) {
 		ctx, cancel := context.WithCancel(context.Background())
 		acks, _ := run(ctx, cancel, &recordingSink{err: errors.New("disk stall")})
 		cancel()
-		if acks != 1 {
-			t.Errorf("%s: %d acks after a failed insert, want 1", name, acks)
+		if acks != want[name] {
+			t.Errorf("%s: %d acks after a failed insert at shutdown, want %d", name, acks, want[name])
 		}
 	}
 }

@@ -101,33 +101,51 @@ func (c *batchConsumer[T]) reclaim(ctx context.Context) {
 
 // runMetricsConsumer drains the metrics queue into the rollup accumulator and
 // the metrics table until ctx is cancelled. The accumulator sees every point;
-// repo is the raw insert, usually behind a MetricRepeatFilter.
+// raw is the raw insert behind the repeat filter.
 //
-// A failed raw insert still finishes the batch, because the accumulator has
-// counted it and a replay would add its sums and counts again. A writer killed
-// after the raw insert does replay the batch. If the accumulator flushed those
-// points first, that bucket reads high by one batch.
-func runMetricsConsumer(ctx context.Context, q batchSource[model.MetricRecord], acc *aggregation.MetricAccumulator, repo aggregation.MetricWriter, logger *slog.Logger) {
-	newBatchConsumer("metrics", q, func(ctx context.Context, recs []model.MetricRecord) bool {
+// The accumulator counts a batch before its raw insert, so only the raw insert
+// is retried, and the batch is finished even when the retries fail: a replay
+// would add its sums and counts again. The filter has then recorded the dropped
+// points as written, so an unchanged stream writes its next raw point at the
+// next heartbeat. A writer killed after the raw insert does replay the batch. If
+// the accumulator flushed those points first, that bucket reads high by one
+// batch.
+func runMetricsConsumer(ctx context.Context, q batchSource[model.MetricRecord], acc *aggregation.MetricAccumulator, raw *aggregation.FilteredMetricWriter, logger *slog.Logger) {
+	newBatchConsumer("metrics", q, func(_ context.Context, recs []model.MetricRecord) bool {
 		for i := range recs {
 			acc.AddMetric(recs[i])
 		}
-		if err := repo.InsertMetrics(ctx, recs); err != nil {
-			logger.Error("metrics insert error", "error", err)
+		kept := raw.Keep(recs)
+		err := storeWithRetry(ctx, logger, "metrics", len(kept), func(sctx context.Context) error {
+			return raw.Write(sctx, kept)
+		})
+		if err != nil {
+			logger.Error("metrics insert failed, raw points dropped", "points", len(kept), "error", err)
 		}
 		return true
 	}, logger).run(ctx)
 }
 
 // runLogsConsumer drains the logs queue into the logs table until ctx is
-// cancelled. A failed insert is logged and the batch finished. A writer killed
-// after the insert replays the batch, and the logs table has no key to catch the
-// repeated lines.
+// cancelled. The insert is one transaction, so a failed one stored nothing and
+// is retried. A shutdown during the retries leaves the batch on the processing
+// list for the next writer. A batch that still fails after storeAttempts is
+// dropped with an error, so it does not hold up the queue behind it. A writer
+// killed after the insert replays the batch, and the logs table has no key to
+// catch the repeated lines.
 func runLogsConsumer(ctx context.Context, q batchSource[model.LogRecord], repo logsSink, logger *slog.Logger) {
-	newBatchConsumer("logs", q, func(ctx context.Context, recs []model.LogRecord) bool {
-		if err := repo.InsertLogs(ctx, recs); err != nil {
-			logger.Error("logs insert error", "error", err)
+	newBatchConsumer("logs", q, func(_ context.Context, recs []model.LogRecord) bool {
+		err := storeWithRetry(ctx, logger, "logs", len(recs), func(sctx context.Context) error {
+			return repo.InsertLogs(sctx, recs)
+		})
+		switch {
+		case err == nil:
+			return true
+		case ctx.Err() != nil:
+			logger.Warn("logs insert failed at shutdown, leaving the batch for the next writer", "records", len(recs), "error", err)
+			return false
 		}
+		logger.Error("logs insert failed after retries, batch dropped", "records", len(recs), "attempts", storeAttempts, "error", err)
 		return true
 	}, logger).run(ctx)
 }
