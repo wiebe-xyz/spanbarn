@@ -74,12 +74,8 @@ func (r endedCheckpoint) attrs(file string, attempt int) []any {
 // the first attempt leaves it in place. Only a WAL still in place after the
 // retry logs at error level; the message is the one SPA-89 groups on.
 func (m *ShardManager) finalCheckpoint(h *DB, file string) {
-	budget := m.closeBudget
-	if budget == 0 {
-		budget = endedCheckpointBudget
-	}
 	for attempt := 1; ; attempt++ {
-		r := h.checkpointEnded(budget, m.logger)
+		r := h.checkpointEnded(m.attemptBudget(), m.logger)
 		switch {
 		case r.cause == "":
 			if attempt > 1 {
@@ -96,4 +92,13 @@ func (m *ShardManager) finalCheckpoint(h *DB, file string) {
 		}
 		time.Sleep(endedCheckpointPause)
 	}
+}
+
+// attemptBudget is the time one final checkpoint attempt may take. It is read
+// per attempt, so a test can give the retry a budget its machine can meet.
+func (m *ShardManager) attemptBudget() time.Duration {
+	if m.closeBudget == 0 {
+		return endedCheckpointBudget
+	}
+	return m.closeBudget
 }

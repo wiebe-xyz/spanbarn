@@ -70,10 +70,15 @@ func heldEndedShard(t *testing.T) (store *Storage, path string, log *lockedLog, 
 const checkpointFailed = `msg="close ended shard: final checkpoint failed"`
 
 // A final checkpoint that times out once is retried, and the retry that resets
-// the WAL logs a warning and no error (#501, SPA-89).
+// the WAL logs a warning and no error (#501, SPA-89). The retry gets the
+// production budget: under the first attempt's 200 ms its TRUNCATE ran out of
+// time on a loaded CI runner (658 ms on 2026-11-05).
 func TestShardCloseRetriesFinalCheckpoint(t *testing.T) {
 	store, path, log, held := heldEndedShard(t)
-	store.Shards.beforeCheckpointRetry = func() { held.Close() }
+	store.Shards.beforeCheckpointRetry = func() {
+		held.Close()
+		store.Shards.closeBudget = endedCheckpointBudget
+	}
 
 	if err := store.Shards.Maintain(context.Background()); err != nil {
 		t.Fatal(err)
