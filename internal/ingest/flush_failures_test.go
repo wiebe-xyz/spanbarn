@@ -14,7 +14,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 )
 
-var errRedisFull = errors.New("queue: lpush: OOM command not allowed when used memory > 'maxmemory'.")
+var errRedisFull = errors.New("queue: lpush: OOM command not allowed when used memory > 'maxmemory'")
 
 // failingStore fails every insert and signals each attempt.
 type failingStore struct{ calls chan struct{} }

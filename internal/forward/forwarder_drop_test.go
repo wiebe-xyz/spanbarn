@@ -13,7 +13,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 )
 
-var errQueueFull = errors.New("queue: lpush: OOM command not allowed when used memory > 'maxmemory'.")
+var errQueueFull = errors.New("queue: lpush: OOM command not allowed when used memory > 'maxmemory'")
 
 func droppingForwarder(t *testing.T, n int) (*RedisForwarder, *spanledger.Tally, *bytes.Buffer) {
 	t.Helper()
