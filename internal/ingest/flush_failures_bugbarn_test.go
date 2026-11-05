@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/observability/bugbarntest"
+	"github.com/wiebe-xyz/spanbarn/internal/bugbarntest"
 )
 
 // The first failed flush in a minute files a BugBarn event at once; the cap

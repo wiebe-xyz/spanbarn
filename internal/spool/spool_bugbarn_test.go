@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wiebe-xyz/spanbarn/internal/observability/bugbarntest"
+	"github.com/wiebe-xyz/spanbarn/internal/bugbarntest"
 )
 
 // The first undecodable line files a BugBarn event as soon as the reader moves

@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/wiebe-xyz/spanbarn/internal/observability/bugbarntest"
+	"github.com/wiebe-xyz/spanbarn/internal/bugbarntest"
 )
 
 // The cap holds back later lines in a minute and never the first: the first
