@@ -307,9 +307,9 @@ func rollupTierSteps(width time.Duration) []int64 {
 }
 
 // tierStepsForRead is rollupTierSteps with the 5-minute tier left out of a
-// filtered read too wide for it. A series too young to have reached the hour tier
-// then reads empty on that range. Falling back to the 5-minute tier would turn
-// every filter that matches nothing into a timeout.
+// filtered read too wide for it. Falling back to the whole range of the 5-minute
+// tier would turn every filter that matches nothing into a timeout, so the hour
+// tier read takes only its uncompacted tail from there (hourTierWithTail).
 func tierStepsForRead(width time.Duration, labels map[string]string) []int64 {
 	steps := rollupTierSteps(width)
 	if len(labels) > 0 && width > filteredFineTierWidth && steps[0] == rollup.Step5m {
@@ -328,9 +328,19 @@ func (h *metricsQueryHandlers) rollupInput(r *http.Request, projectID int64, nam
 	filter := service.MetricRollupFilter{
 		ProjectID: projectID, Name: name, From: from, To: to, Attributes: labels, Limit: limit,
 	}
+	fineRead := false
 	for _, step := range tierStepsForRead(to.Sub(from), labels) {
 		filter.From = rollup.TruncateBucket(from, step)
-		rows, err := h.queryTier(r, step, filter)
+		var rows []service.MetricRollup
+		var err error
+		// A read that has tried the 5-minute tier and found nothing has no
+		// tail to add.
+		if step == rollup.StepHour && !fineRead {
+			rows, err = h.hourTierWithTail(r, filter, from)
+		} else {
+			rows, err = h.queryTier(r, step, filter)
+		}
+		fineRead = fineRead || step == rollup.Step5m
 		if err != nil {
 			return "", "", nil, 0, err
 		}
@@ -345,7 +355,11 @@ func (h *metricsQueryHandlers) rollupInput(r *http.Request, projectID int64, nam
 			}
 			p := rollupToInput(row)
 			if p.Delta {
-				p.IntervalNano = step * int64(time.Second)
+				width := row.StepSeconds
+				if width == 0 {
+					width = step
+				}
+				p.IntervalNano = width * int64(time.Second)
 			}
 			in = append(in, p)
 		}
