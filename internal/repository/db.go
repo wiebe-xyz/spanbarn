@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -67,6 +68,11 @@ var otelOpts = []otelsql.Option{
 	otelsql.WithAttributes(semconv.DBSystemSqlite),
 	otelsql.WithSpanNameFormatter(sqliteSpanName),
 	otelsql.WithSpanOptions(otelsql.SpanOptions{
+		// A cancelled statement means its caller stopped: a writer shutting
+		// down with a checkpoint in flight, or a client that went away. Marked
+		// as an error, every rollout could file a new barn-watch signature (#382).
+		// A deadline stays an error, since the database was too slow for it.
+		RecordError: func(err error) bool { return !errors.Is(err, context.Canceled) },
 		SpanFilter: func(ctx context.Context, method otelsql.Method, query string, _ []driver.NamedValue) bool {
 			if c := statementCountsFrom(ctx); c != nil {
 				c.count(ctx, method, query)
