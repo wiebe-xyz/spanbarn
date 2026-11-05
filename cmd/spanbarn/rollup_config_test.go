@@ -89,3 +89,17 @@ func TestNewRollupCompactorUsesConfiguredBudget(t *testing.T) {
 		t.Fatal("newRollupCompactor returned nil")
 	}
 }
+
+// The stall check skips a ladder only when that ladder's own compactor is off.
+func TestRetentionConfigCarriesCompactionSwitches(t *testing.T) {
+	for _, tc := range []struct{ metricOn, spanOn bool }{{true, true}, {false, true}, {true, false}} {
+		var cfg config.Config
+		cfg.Retention.CompactEnabled = tc.metricOn
+		cfg.SpanRollups = tc.spanOn
+		got := retentionConfigFrom(cfg)
+		if got.MetricCompactionOff != !tc.metricOn || got.SpanCompactionOff != !tc.spanOn {
+			t.Errorf("metric on %v, span on %v: MetricCompactionOff %v, SpanCompactionOff %v",
+				tc.metricOn, tc.spanOn, got.MetricCompactionOff, got.SpanCompactionOff)
+		}
+	}
+}
