@@ -94,6 +94,9 @@ type RetentionWorker struct {
 
 	// slow caps how many slow-only traces each operation copies per hour.
 	slow slowSampler
+
+	// stalls remembers which compaction tiers were last reported stalled.
+	stalls stallState
 }
 
 // NewRetentionWorker creates a new retention worker.
@@ -293,9 +296,12 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	defer span.End()
 	ctx, calls := repository.WithStatementCounts(ctx)
 
+	now := time.Now().UTC()
 	cfg := w.applyDiskPressure(ctx, w.effectiveConfig())
-	cut := newCycleCutoffs(time.Now().UTC(), cfg)
+	cut := newCycleCutoffs(now, cfg)
 	var st cycleStats
+
+	w.reportRollupStalls(ctx, now)
 
 	w.warnOnLargeBacklog(cut.interesting)
 	if err := ctx.Err(); err != nil {
