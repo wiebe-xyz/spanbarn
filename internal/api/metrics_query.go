@@ -186,18 +186,7 @@ func (h *metricsQueryHandlers) loadMetricQuery(w http.ResponseWriter, r *http.Re
 	}
 	groupBy := parseGroupBy(r)
 
-	// Long ranges read the downsampled rollups instead of scanning raw points.
-	var (
-		metricType, unit string
-		in               []metrics.InputPoint
-		step             int64
-		queryErr         error
-	)
-	if to.Sub(from) > rollupQueryThreshold {
-		metricType, unit, in, step, queryErr = h.rollupInput(r, projectID, name, from, to, labels, limit)
-	} else {
-		metricType, unit, in, queryErr = h.rawInput(r, projectID, name, from, to, labels, limit)
-	}
+	metricType, unit, in, step, queryErr := h.readMetricInput(r, projectID, name, from, to, labels, limit)
 	if queryErr != nil {
 		writeServerError(w, r, "query failed", queryErr)
 		return metricQuery{}, false
@@ -240,6 +229,29 @@ func (h *metricsQueryHandlers) handleMetricSeries(w http.ResponseWriter, r *http
 // rollupQueryThreshold is the range width above which the series query reads
 // pre-aggregated rollups rather than raw data points.
 const rollupQueryThreshold = 6 * time.Hour
+
+// filteredFineTierWidth is the widest range a label filter reads from the
+// 5-minute tier. The filter has to look at every row in the range unless enough
+// of them match to reach the limit, so a selective filter costs far more than an
+// unfiltered read, and a two-day read of one times out where the hour tier answers
+// in under a second.
+const filteredFineTierWidth = 24 * time.Hour
+
+// readMetricInput reads raw points for a narrow range and rollups for a long one,
+// which spares a long range the raw scan. A narrow range with no raw points also
+// reads rollups: raw points expire long before the tiers do, and an empty result
+// there would look like a metric that reported nothing. The returned step is 0
+// for raw points.
+func (h *metricsQueryHandlers) readMetricInput(r *http.Request, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, int64, error) {
+	if to.Sub(from) > rollupQueryThreshold {
+		return h.rollupInput(r, projectID, name, from, to, labels, limit)
+	}
+	metricType, unit, in, err := h.rawInput(r, projectID, name, from, to, labels, limit)
+	if err != nil || len(in) > 0 {
+		return metricType, unit, in, 0, err
+	}
+	return h.rollupInput(r, projectID, name, from, to, labels, limit)
+}
 
 // rawInput loads raw metric data points and maps them to derivation input.
 func (h *metricsQueryHandlers) rawInput(r *http.Request, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, error) {
@@ -294,16 +306,30 @@ func rollupTierSteps(width time.Duration) []int64 {
 	}
 }
 
+// tierStepsForRead is rollupTierSteps with the 5-minute tier left out of a
+// filtered read too wide for it. A series too young to have reached the hour tier
+// then reads empty on that range. Falling back to the 5-minute tier would turn
+// every filter that matches nothing into a timeout.
+func tierStepsForRead(width time.Duration, labels map[string]string) []int64 {
+	steps := rollupTierSteps(width)
+	if len(labels) > 0 && width > filteredFineTierWidth && steps[0] == rollup.Step5m {
+		return steps[1:]
+	}
+	return steps
+}
+
 // rollupInput loads downsampled rollup buckets and maps them to derivation
 // input, returning the resolution it read. The per-type value choice keeps
 // metrics.Derive working unchanged: gauges use the bucket average, counters use
 // the bucket-end cumulative value (so rate is derived across buckets),
-// distributions carry their merged extra.
+// distributions carry their merged extra. Each read starts at the bucket holding
+// from, so a range narrower than a coarse bucket still finds that bucket.
 func (h *metricsQueryHandlers) rollupInput(r *http.Request, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, int64, error) {
 	filter := service.MetricRollupFilter{
 		ProjectID: projectID, Name: name, From: from, To: to, Attributes: labels, Limit: limit,
 	}
-	for _, step := range rollupTierSteps(to.Sub(from)) {
+	for _, step := range tierStepsForRead(to.Sub(from), labels) {
+		filter.From = rollup.TruncateBucket(from, step)
 		rows, err := h.queryTier(r, step, filter)
 		if err != nil {
 			return "", "", nil, 0, err
