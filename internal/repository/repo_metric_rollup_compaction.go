@@ -93,7 +93,16 @@ func (r *Repository) rollupWindowForProject(ctx context.Context, step, projectID
 	}
 	defer rows.Close()
 
-	return scanMetricRollups(rows)
+	out, err := scanMetricRollups(rows)
+	if err != nil {
+		return nil, err
+	}
+	if step != Rollup5mStep {
+		for i := range out {
+			out[i].StepSeconds = step
+		}
+	}
+	return out, nil
 }
 
 // CoarseSeriesKey addresses one series of a project within a tier: two metrics

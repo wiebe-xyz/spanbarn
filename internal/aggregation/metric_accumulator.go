@@ -142,12 +142,27 @@ func (a *MetricAccumulator) AddMetric(rec model.MetricRecord) {
 	case model.MetricTypeHistogram:
 		a.addHistogramPoint(sl, rec)
 	case model.MetricTypeExponentialHistogram, model.MetricTypeSummary:
+		a.addOpaquePoint(sl, rec)
+	}
+}
+
+// addOpaquePoint folds one exp_histogram or summary data point into its slot. As
+// in addHistogramPoint, a cumulative point holds running totals, so the newest one
+// stands for the bucket and compaction differences consecutive buckets. A summary
+// has no temporality field in OTLP and is cumulative.
+func (a *MetricAccumulator) addOpaquePoint(sl *metricSlot, rec model.MetricRecord) {
+	newest := rec.TimeUnixNano >= sl.lastNano
+	switch {
+	case rec.Temporality == temporalityDelta:
 		sl.sum += rec.Value
 		sl.obsCount += int64(rec.Count)
-		if rec.TimeUnixNano >= sl.lastNano {
-			sl.lastExtra = rec.Extra
-			sl.lastNano = rec.TimeUnixNano
-		}
+	case newest:
+		sl.sum = rec.Value
+		sl.obsCount = int64(rec.Count)
+	}
+	if newest {
+		sl.lastExtra = rec.Extra
+		sl.lastNano = rec.TimeUnixNano
 	}
 }
 
