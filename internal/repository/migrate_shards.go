@@ -24,6 +24,9 @@ func shardMigrations(f Family) []*goose.Migration {
 		goose.NewGoMigration(2, &goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) error {
 			return addPromptSampleWeight(ctx, tx)
 		}}, nil),
+		goose.NewGoMigration(3, &goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) error {
+			return addPromptGroupIndex(ctx, tx)
+		}}, nil),
 	}
 }
 

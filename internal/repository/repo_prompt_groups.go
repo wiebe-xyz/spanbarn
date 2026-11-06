@@ -39,19 +39,7 @@ func (r *Repository) QueryPromptGroups(ctx context.Context, f PromptFilter) ([]P
 	ctx, cancel := r.readContext(ctx)
 	defer cancel()
 	where, args := f.where()
-	query := func(table string) string {
-		q := fmt.Sprintf(`
-			SELECT project_id, name, model, service, MAX(gen_ai_system), %s AS bin, COUNT(*),
-			       SUM(COALESCE(sample_weight, 1)),
-			       SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),
-			       MIN(duration_us), MAX(duration_us), SUM(duration_us),
-			       SUM(input_tokens), SUM(output_tokens), SUM(cost_usd)
-			FROM %s`, spanhist.IndexSQL("duration_us"), table)
-		if len(where) > 0 {
-			q += " WHERE " + strings.Join(where, " AND ")
-		}
-		return q + " GROUP BY project_id, name, model, service, bin"
-	}
+	query := func(table string) string { return promptGroupsQuery(table, where) }
 
 	g := promptGrouper{byKey: map[promptGroupKey]*PromptGroup{}}
 	if p := r.shardReaders.pool(FamilyPrompts); p != nil {
@@ -68,6 +56,35 @@ func (r *Repository) QueryPromptGroups(ctx context.Context, f PromptFilter) ([]P
 		out = append(out, *g.byKey[k])
 	}
 	return out, nil
+}
+
+// promptGroupsQuery is the group query over table with the filter's where
+// terms. It names only columns of idx_prompt_records_groups, so SQLite answers
+// it from that index without reading table rows. The project term is written
+// +project_id: the unary plus keeps SQLite from seeking on it, which would pick
+// a (project_id, ingested_at) index that does not cover the query, and leaves
+// the window range on ingested_at, where the group index starts. The prompts
+// page asks for every project, so its query has no project term at all.
+func promptGroupsQuery(table string, where []string) string {
+	terms := make([]string, len(where))
+	for i, w := range where {
+		if w == "project_id = ?" {
+			w = "+project_id = ?"
+		}
+		terms[i] = w
+	}
+	where = terms
+	q := fmt.Sprintf(`
+		SELECT project_id, name, model, service, MAX(gen_ai_system), %s AS bin, COUNT(*),
+		       SUM(COALESCE(sample_weight, 1)),
+		       SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END),
+		       MIN(duration_us), MAX(duration_us), SUM(duration_us),
+		       SUM(input_tokens), SUM(output_tokens), SUM(cost_usd)
+		FROM %s`, spanhist.IndexSQL("duration_us"), table)
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	return q + " GROUP BY project_id, name, model, service, bin"
 }
 
 type promptGroupKey struct {
