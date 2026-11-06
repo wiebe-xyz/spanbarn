@@ -24,7 +24,7 @@ type SpanLedgerRow struct {
 	Forwarded int64 `json:"forwarded"`
 	// Processed is spans the writer stored or aggregated.
 	Processed int64 `json:"processed"`
-	// Failed is spans the writer gave up on.
+	// Failed is spans the writer gave up on or a reader dropped at a full queue.
 	Failed int64 `json:"failed"`
 }
 

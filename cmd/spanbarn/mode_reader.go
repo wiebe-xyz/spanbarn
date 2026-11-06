@@ -66,7 +66,9 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	readerLogsHandler := ingest.NewLogsHandler(logsPublisher, logger)
 
 	var wg sync.WaitGroup
+	ledger := spanledger.New()
 	fwd := forward.NewRedisForwarder(eventSpool, writeQueue, logger)
+	fwd.SetLedger(ledger)
 	// Not readerCtx: the forwarder keeps publishing while the trace buffer
 	// drains in order after SIGTERM, so the drained spans reach the writer as
 	// they come due instead of in one batch at the end (#451).
@@ -120,7 +122,6 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		ratioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
 	}
 	traceBuffer := newTraceBuffer(cfg, ratioLookup, logger)
-	ledger := spanledger.New()
 	traceBuffer.SetLedger(ledger)
 	finishLedger := startSpanLedgerReports(ledger, writeQueue.PublishSpanLedger, logger)
 	traceDrained := drainTraceBuffer(&wg, traceBuffer, ingestHandler)
@@ -139,6 +140,9 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	readerSelfRec := selfmetrics.NewRecorder()
 	readerSelfRec.RegisterGauge("spanbarn.spool.bytes", map[string]string{"dir": cfg.SpoolDir}, func() float64 {
 		return float64(eventSpool.Size())
+	})
+	readerSelfRec.RegisterGauge("spanbarn.spool.undecodable_lines", map[string]string{"dir": cfg.SpoolDir}, func() float64 {
+		return float64(eventSpool.Undecodable())
 	})
 	registerQueueDepthGauges(readerCtx, readerSelfRec, writeQueue)
 	registerTraceBufferGauges(readerSelfRec, traceBuffer)

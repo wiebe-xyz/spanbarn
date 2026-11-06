@@ -17,6 +17,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
+	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
 
@@ -26,6 +27,10 @@ const (
 	defaultBatchSize    = 500
 	defaultTickInterval = 1 * time.Second
 	maxRetryDelay       = 30 * time.Second
+
+	// dropReportInterval caps the queue-full ERROR at one line per pod per
+	// minute, so an hour at maxmemory files 60 BugBarn events per pod.
+	dropReportInterval = time.Minute
 )
 
 // Forwarder reads SpanRecords from a spool and POSTs them to a writer endpoint.
@@ -110,7 +115,17 @@ type RedisForwarder struct {
 	spool  *spool.Spool
 	queue  spanPublisher
 	logger *slog.Logger
+	ledger *spanledger.Tally
+
+	// Drops not logged yet. Run and then Drain use these from one goroutine.
+	droppedBatches int64
+	droppedSpans   int64
+	lastDropCause  error
+	lastDropReport time.Time
 }
+
+// SetLedger makes the forwarder count the spans it drops. Call it before Run.
+func (f *RedisForwarder) SetLedger(t *spanledger.Tally) { f.ledger = t }
 
 // NewRedisForwarder creates a RedisForwarder that drains sp into q.
 func NewRedisForwarder(sp *spool.Spool, q *queue.RedisQueue, logger *slog.Logger) *RedisForwarder {
@@ -162,6 +177,7 @@ func (f *RedisForwarder) Run(ctx context.Context) {
 // and the ingest handler has written its last spans: the reader's spool is on
 // the pod's own disk, so whatever is still in it when the pod goes is lost.
 func (f *RedisForwarder) Drain(ctx context.Context) (int, error) {
+	defer func() { f.reportDrops(time.Now(), true) }()
 	cursor, err := f.spool.LoadCursor()
 	if err != nil {
 		return 0, err
@@ -184,6 +200,7 @@ func (f *RedisForwarder) Drain(ctx context.Context) (int, error) {
 // It returns that cursor and the batch size, 0 when the spool has nothing
 // after cursor. On error the cursor stays where it was.
 func (f *RedisForwarder) forwardBatch(ctx context.Context, cursor int64) (int64, int, error) {
+	f.reportDrops(time.Now(), false)
 	records, newCursor, err := f.spool.Read(cursor, defaultBatchSize)
 	if err != nil {
 		f.logger.Error("redis forwarder: spool read failed", "error", err)
@@ -207,16 +224,39 @@ func (f *RedisForwarder) forwardBatch(ctx context.Context, cursor int64) (int64,
 			f.logger.Error("redis forwarder: publish failed, will retry", "error", err, "count", len(records))
 			return cursor, 0, err
 		}
-		// Redis is at maxmemory — drop this batch to shed load.
-		// The write contention that caused the backup will resolve
-		// faster without unbounded retries piling up.
-		f.logger.Warn("redis forwarder: queue full, dropping batch", "count", len(records))
+		// Redis is at maxmemory, so this batch is dropped to shed load. The write
+		// contention that caused the backup will resolve faster without unbounded
+		// retries piling up.
+		f.dropBatch(records, err)
 	}
 
 	if err := f.spool.SaveCursor(newCursor); err != nil {
 		f.logger.Error("redis forwarder: failed to save cursor", "error", err)
 	}
 	return newCursor, len(records), nil
+}
+
+// dropBatch counts a batch Redis refused. The ledger holds the spans per project
+// and bucket, because nothing downstream ever sees them.
+func (f *RedisForwarder) dropBatch(records []model.SpanRecord, cause error) {
+	f.ledger.AddSpans(spanledger.Failed, records, 1)
+	f.droppedBatches++
+	f.droppedSpans += int64(len(records))
+	f.lastDropCause = cause
+	f.reportDrops(time.Now(), false)
+}
+
+// reportDrops logs the drops since the last line, at most once per
+// dropReportInterval unless force is set. A Redis at maxmemory refuses every
+// batch, one per tick, and each ERROR files a BugBarn event.
+func (f *RedisForwarder) reportDrops(now time.Time, force bool) {
+	if f.droppedBatches == 0 || (!force && now.Sub(f.lastDropReport) < dropReportInterval) {
+		return
+	}
+	f.logger.Error("redis forwarder: queue full, dropped batches",
+		"batches", f.droppedBatches, "spans", f.droppedSpans, "error", f.lastDropCause)
+	f.droppedBatches, f.droppedSpans, f.lastDropCause = 0, 0, nil
+	f.lastDropReport = now
 }
 
 func (f *Forwarder) send(ctx context.Context, records []model.SpanRecord) error {
