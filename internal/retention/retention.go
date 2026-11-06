@@ -9,7 +9,6 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
@@ -97,6 +96,9 @@ type RetentionWorker struct {
 
 	// stalls remembers which compaction tiers were last reported stalled.
 	stalls stallState
+
+	// afterBatch, set only by tests, runs after each drain batch.
+	afterBatch func()
 }
 
 // NewRetentionWorker creates a new retention worker.
@@ -144,6 +146,9 @@ func (w *RetentionWorker) Run(ctx context.Context) {
 // to drain high-priority writes between retention deletion batches.
 func (w *RetentionWorker) lockBatch(ctx context.Context, yield time.Duration, fn func()) {
 	fn()
+	if w.afterBatch != nil {
+		w.afterBatch()
+	}
 	if yield > 0 {
 		select {
 		case <-ctx.Done():
@@ -166,6 +171,7 @@ func (w *RetentionWorker) runWithRetry(ctx context.Context, sleep func(time.Dura
 			return
 		}
 		if ctx.Err() != nil {
+			w.logger.Info("retention cycle stopped at shutdown", "attempt", attempt)
 			return
 		}
 		w.logger.Warn("retention cycle attempt failed", "attempt", attempt, "error", lastErr)
@@ -304,11 +310,14 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	w.reportRollupStalls(ctx, now)
 
 	w.warnOnLargeBacklog(cut.interesting)
-	if err := ctx.Err(); err != nil {
-		return err
+	err := ctx.Err()
+	if err == nil {
+		err = w.runPhases(ctx, span, cfg, cut, &st)
 	}
-
-	if err := w.runPhases(ctx, span, cfg, cut, &st); err != nil {
+	if err != nil {
+		if stopped(err) {
+			span.SetAttributes(cancelledAttr)
+		}
 		return err
 	}
 
@@ -357,8 +366,7 @@ func (w *RetentionWorker) drainOldSpans(ctx context.Context, span trace.Span, cf
 			batchErr = w.sampleAndDeleteInParts(ctx, cfg, batch, st)
 		})
 		if batchErr != nil {
-			span.RecordError(batchErr)
-			span.SetStatus(codes.Error, batchErr.Error())
+			markOutcome(span, batchErr)
 			return batchErr
 		}
 		if len(batch) < defaultBatchSize {
