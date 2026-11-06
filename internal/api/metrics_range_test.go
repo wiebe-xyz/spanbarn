@@ -131,3 +131,100 @@ func TestFilteredReadTierFollowsTheRangeWidth(t *testing.T) {
 		})
 	}
 }
+
+// seedTailRollups stores one gauge bucket of value v per entry of at, in the
+// 5-minute tier or the hour tier.
+func seedTailRollups(t *testing.T, repo *repository.Repository, step int64, v float64, at ...time.Time) {
+	t.Helper()
+	rows := make([]repository.MetricRollup, 0, len(at))
+	for _, b := range at {
+		rows = append(rows, repository.MetricRollup{
+			ProjectID: 1, Name: "g", Type: "gauge", AttrFingerprint: "a", Attributes: `{"svc":"a"}`,
+			Bucket: b, StepSeconds: step, Count: 1, Sum: v, Last: v,
+		})
+	}
+	var err error
+	if step == rollup.Step5m {
+		err = repo.UpsertMetricRollups(rows)
+	} else {
+		err = repo.UpsertCoarseRollups(context.Background(), rows)
+	}
+	if err != nil {
+		t.Fatalf("seed step %d: %v", step, err)
+	}
+}
+
+// pointTimes lists the bucket times of a response's only series.
+func pointTimes(t *testing.T, resp metricSeriesResponse) []time.Time {
+	t.Helper()
+	if len(resp.Series) != 1 {
+		t.Fatalf("%d series, want 1", len(resp.Series))
+	}
+	var out []time.Time
+	for _, p := range resp.Series[0].Points {
+		out = append(out, time.Unix(0, p.T).UTC())
+	}
+	return out
+}
+
+// A filtered read wider than a day starts at the hour tier, and the hours the
+// compactor has not reached yet were missing from it (#497). The read now takes
+// those from the 5-minute tier, from the hour tier's watermark on, so no bucket
+// is read twice.
+func TestWideFilteredReadKeepsTheNewestHour(t *testing.T) {
+	srv, sm, repo := setupMetricsQueryServer(t)
+	through := rangeTestBase
+	seedTailRollups(t, repo, rollup.StepHour, 1, through.Add(-2*time.Hour), through.Add(-time.Hour))
+	// The 5-minute tier still holds a compacted bucket, which the hour tier
+	// already counts, and two the compactor has not reached.
+	seedTailRollups(t, repo, rollup.Step5m, 2, through.Add(-30*time.Minute), through, through.Add(5*time.Minute))
+	if err := repo.SetMetricRollupWatermark(context.Background(), rollup.Step5m, through); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := readRange(t, srv, sm, through.Add(-47*time.Hour), through.Add(time.Hour), map[string]string{"svc": "a"})
+	want := []time.Time{through.Add(-2 * time.Hour), through.Add(-time.Hour), through, through.Add(5 * time.Minute)}
+	got := pointTimes(t, resp)
+	if len(got) != len(want) {
+		t.Fatalf("points at %v, want %v", got, want)
+	}
+	for i := range want {
+		if !got[i].Equal(want[i]) {
+			t.Fatalf("points at %v, want %v", got, want)
+		}
+	}
+	if resp.Step != rollup.StepHour {
+		t.Errorf("step_seconds = %d, want the hour tier", resp.Step)
+	}
+}
+
+// A series too young to have reached the hour tier read empty on a wide
+// filtered range while a narrower one showed it (#497).
+func TestWideFilteredReadShowsAYoungSeries(t *testing.T) {
+	srv, sm, repo := setupMetricsQueryServer(t)
+	seedTailRollups(t, repo, rollup.Step5m, 1, rangeTestBase, rangeTestBase.Add(5*time.Minute))
+	if err := repo.SetMetricRollupWatermark(context.Background(), rollup.Step5m, rangeTestBase.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	resp := readRange(t, srv, sm, rangeTestBase.Add(-47*time.Hour), rangeTestBase.Add(time.Hour), map[string]string{"svc": "a"})
+	if got := pointTimes(t, resp); len(got) != 2 {
+		t.Errorf("points at %v, want the two 5-minute buckets", got)
+	}
+}
+
+// The tail stays bounded: a watermark far behind the end of the range reads at
+// most fineTailWidth of 5-minute buckets, so a stalled compactor cannot turn a
+// filtered read back into the scan that timed out.
+func TestWideFilteredReadBoundsTheTail(t *testing.T) {
+	srv, sm, repo := setupMetricsQueryServer(t)
+	end := rangeTestBase
+	old, recent := end.Add(-fineTailWidth-time.Hour), end.Add(-time.Hour)
+	seedTailRollups(t, repo, rollup.Step5m, 1, old, recent)
+	if err := repo.SetMetricRollupWatermark(context.Background(), rollup.Step5m, end.Add(-30*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	resp := readRange(t, srv, sm, end.Add(-48*time.Hour), end, map[string]string{"svc": "a"})
+	if got := pointTimes(t, resp); len(got) != 1 || !got[0].Equal(recent) {
+		t.Errorf("points at %v, want only %v inside the tail", got, recent)
+	}
+}
