@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -16,10 +18,15 @@ const promptGroupIndexDDL = `CREATE INDEX IF NOT EXISTS main.idx_prompt_records_
 	ingested_at, project_id, name, model, service, gen_ai_system, status,
 	duration_us, sample_weight, input_tokens, output_tokens, cost_usd)`
 
-// addPromptGroupIndex creates the covering index for the prompt group query.
-// It runs after addPromptSampleWeight, since the index names that column. A
-// handle whose main file has no prompt_records is left alone. Building it reads
-// every row once, bodies included, so its cost scales with the file's size.
+// addPromptGroupIndex creates the covering index for the prompt group query
+// on an empty prompt_records only. It runs after addPromptSampleWeight, since
+// the index names that column. Building it on a table that holds rows reads
+// every row once, bodies included, and the writer would do that for every
+// prompts shard before it serves. So a new shard gets the index when it is
+// created, and so does main once retention has emptied it. A shard that
+// already holds rows is left without it: the group query still answers there
+// from the table, as before, and the shard ages out under prompt retention.
+// A handle whose main file has no prompt_records is left alone.
 func addPromptGroupIndex(ctx context.Context, db schemaExec) error {
 	var tables int
 	if err := db.QueryRowContext(ctx,
@@ -28,6 +35,14 @@ func addPromptGroupIndex(ctx context.Context, db schemaExec) error {
 	}
 	if tables == 0 {
 		return nil
+	}
+	var one int
+	err := db.QueryRowContext(ctx, `SELECT 1 FROM main.prompt_records LIMIT 1`).Scan(&one)
+	switch {
+	case err == nil:
+		return nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("prompt group index: %w", err)
 	}
 	if _, err := db.ExecContext(ctx, promptGroupIndexDDL); err != nil {
 		return fmt.Errorf("prompt group index: %w", err)
