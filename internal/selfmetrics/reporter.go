@@ -25,6 +25,9 @@ const (
 	metricRequests = "spanbarn.http.requests"
 	metricDuration = "spanbarn.http.server.duration"
 	metricRollups  = "spanbarn.rollups.persisted"
+
+	// attrRoute is the OpenTelemetry semantic-convention key for a route pattern.
+	attrRoute = "http.route"
 )
 
 // Reporter periodically snapshots a Recorder and POSTs the values as OTLP
@@ -161,25 +164,32 @@ func (rp *Reporter) buildRequest(snap snapshot, nowNano uint64) *collectormetric
 	}
 
 	// Request latency (delta histogram), so each point reflects that interval.
-	if snap.durCount > 0 {
-		bucketCounts := make([]uint64, len(snap.durCounts))
-		for i, c := range snap.durCounts {
-			bucketCounts[i] = uint64(c)
+	// One point per route pattern, so a slow page read shows under its own
+	// route instead of inside the ingest traffic.
+	if len(snap.durations) > 0 {
+		dps := make([]*metricspb.HistogramDataPoint, 0, len(snap.durations))
+		for _, d := range snap.durations {
+			bucketCounts := make([]uint64, len(d.counts))
+			for i, c := range d.counts {
+				bucketCounts[i] = uint64(c)
+			}
+			sum := d.sum
+			dps = append(dps, &metricspb.HistogramDataPoint{
+				StartTimeUnixNano: rp.startNano,
+				TimeUnixNano:      nowNano,
+				Attributes:        kv(map[string]string{attrRoute: d.route}),
+				Count:             uint64(d.count),
+				Sum:               &sum,
+				BucketCounts:      bucketCounts,
+				ExplicitBounds:    snap.durBounds,
+			})
 		}
-		sum := snap.durSum
 		metrics = append(metrics, &metricspb.Metric{
 			Name: metricDuration,
 			Unit: "ms",
 			Data: &metricspb.Metric_Histogram{Histogram: &metricspb.Histogram{
 				AggregationTemporality: metricspb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA,
-				DataPoints: []*metricspb.HistogramDataPoint{{
-					StartTimeUnixNano: rp.startNano,
-					TimeUnixNano:      nowNano,
-					Count:             uint64(snap.durCount),
-					Sum:               &sum,
-					BucketCounts:      bucketCounts,
-					ExplicitBounds:    snap.durBounds,
-				}},
+				DataPoints:             dps,
 			}},
 		})
 	}
