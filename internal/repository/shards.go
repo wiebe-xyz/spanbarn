@@ -23,6 +23,16 @@ func ShardsDir(dbPath string) string { return dbPath + ".d" }
 // so the first write of a period does not wait for a migration.
 const shardLead = time.Hour
 
+// endedCloseDelay is how long after its period ends a shard's handle stays
+// open. The first minutes of a day are the slowest of the day for the disk:
+// on 2026-11-06 the TRUNCATE checkpoints of the other files took 2 to 10s
+// between 00:00 and 00:03, and under 1s again by 00:09. The final checkpoint
+// of the ended shard ran inside that window with a 10s budget and timed out on
+// 11-01 and 11-04 (#501). Kept open, the ended shard still gets the periodic
+// checkpoint, which retries on its own, so its final checkpoint runs on a
+// WAL that is already empty, after the burst.
+const endedCloseDelay = 10 * time.Minute
+
 // ShardRetention is the retention window of each sharded family. A family
 // with a zero window keeps writing to main.
 type ShardRetention map[Family]time.Duration
@@ -282,9 +292,9 @@ func (m *ShardManager) ensure(ctx context.Context, t time.Time) error {
 	return nil
 }
 
-// closeEnded closes the handles of periods that ended before now. Writes pick
-// their shard by the time they run, so no write reaches an ended period once
-// its handle is out of the map. A write that picked the handle before then
+// closeEnded closes the handles of periods that ended endedCloseDelay or more
+// before now. Writes pick their shard by the time they run, so no write reaches
+// an ended period once its handle is out of the map. A write that picked the handle before then
 // still runs on it, so a no-op barrier goes through the family's queue first;
 // once it has run, the handle is idle and the checkpoint and close run outside
 // the write slot, one shard at a time.
@@ -297,7 +307,7 @@ func (m *ShardManager) closeEnded(now time.Time) {
 	var ended, inline []*DB
 	var queues []*writescheduler.Scheduler
 	for key, h := range m.handles {
-		if now.Before(key.start.Add(m.specs[key.family].length())) {
+		if now.Before(key.start.Add(m.specs[key.family].length() + endedCloseDelay)) {
 			continue
 		}
 		delete(m.handles, key)

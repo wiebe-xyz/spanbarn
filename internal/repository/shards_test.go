@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -156,6 +157,46 @@ func TestShardMaintainCreatesAheadAndClosesEnded(t *testing.T) {
 	}
 	if got := openShardFiles(store.Shards); !equalStrings(got, []string{"logs-20261005.db", "metrics-20261005.db", "prompts-2026w41.db"}) {
 		t.Errorf("open shards after midnight: %v", got)
+	}
+}
+
+// An ended shard stays open through the first minutes of the next period,
+// when the checkpoints of every other file are slowest, and closes after
+// endedCloseDelay (#501).
+func TestShardCloseWaitsPastMidnightBurst(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spanbarn.db")
+	clock := mustTime(t, "2026-10-04T23:30:00Z")
+	store := openShardedStorage(t, path, &clock)
+	ctx := context.Background()
+	if err := store.Shards.Maintain(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	clock = mustTime(t, "2026-10-05T00:02:00Z")
+	if err := store.Shards.Maintain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	open := openShardFiles(store.Shards)
+	for _, file := range []string{"logs-20261004.db", "metrics-20261004.db", "prompts-2026w40.db"} {
+		if !slices.Contains(open, file) {
+			t.Errorf("%s closed 2 minutes after its period ended; open: %v", file, open)
+		}
+	}
+
+	clock = mustTime(t, "2026-10-05T00:09:59Z")
+	if err := store.Shards.Maintain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if open := openShardFiles(store.Shards); !slices.Contains(open, "logs-20261004.db") {
+		t.Errorf("logs-20261004.db closed before endedCloseDelay; open: %v", open)
+	}
+
+	clock = mustTime(t, "2026-10-05T00:10:00Z")
+	if err := store.Shards.Maintain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := openShardFiles(store.Shards); !equalStrings(got, []string{"logs-20261005.db", "metrics-20261005.db", "prompts-2026w41.db"}) {
+		t.Errorf("open shards after endedCloseDelay: %v", got)
 	}
 }
 
