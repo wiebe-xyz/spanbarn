@@ -161,7 +161,10 @@ func migrateSingleFile(ctx context.Context, db *sql.DB) error {
 	if err := MigrateSpans(ctx, db); err != nil {
 		return fmt.Errorf("run spans migrations: %w", err)
 	}
-	return addPromptSampleWeight(ctx, db)
+	if err := addPromptSampleWeight(ctx, db); err != nil {
+		return err
+	}
+	return addPromptGroupIndex(ctx, db)
 }
 
 // prepareSplit creates and migrates the spans file, then migrates main and
@@ -188,6 +191,9 @@ func prepareSplit(ctx context.Context, main *sql.DB, dbPath string, o StorageOpt
 	// A split database keeps its prompt_records in main until shards have
 	// taken over and retention has emptied it, and reads still cover that copy.
 	if err := addPromptSampleWeight(ctx, main); err != nil {
+		return err
+	}
+	if err := addPromptGroupIndex(ctx, main); err != nil {
 		return err
 	}
 	return dropMovedTables(ctx, main, false)
