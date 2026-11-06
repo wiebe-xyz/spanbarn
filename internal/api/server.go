@@ -242,7 +242,7 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 	h = readBudgetMiddleware(cfg.ReadBudget, h)
 	h = maxBodyBytesMiddleware(s.maxBodyBytes, h)
 	h = corsMiddleware(s.allowedOrigins, h)
-	h = loggingMiddleware(logger, s.selfMetrics, h)
+	h = loggingMiddleware(logger, s.recordRequest, h)
 	h = MetricsMiddleware(s.metrics)(h)
 	h = observability.TracingMiddleware(h)
 	h = SecurityHeaders(h)
@@ -251,6 +251,26 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 	s.handler = h
 
 	return s
+}
+
+// recordRequest feeds one finished request's status and latency to the
+// self-metrics recorder, with the latency under its route pattern. It reads
+// s.selfMetrics per request: the recorder is set after NewServer has built the
+// middleware chain, and a recorder captured at build time stayed nil, so no
+// request was ever recorded.
+func (s *Server) recordRequest(r *http.Request, status int, elapsed time.Duration) {
+	if s.selfMetrics == nil {
+		return
+	}
+	s.selfMetrics.RecordRequest(s.routePattern(r), statusClass(status), float64(elapsed.Microseconds())/1000.0)
+}
+
+// routePattern returns the pattern of the registered route that serves r, or
+// "" when none does. It matches without serving, so it works on the request
+// the logging middleware holds, which the mux never sees.
+func (s *Server) routePattern(r *http.Request) string {
+	_, pattern := s.mux.Handler(r)
+	return pattern
 }
 
 func defaultRate(v, fallback int) int {

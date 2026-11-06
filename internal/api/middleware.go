@@ -13,7 +13,6 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
-	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 )
 
 const requestIDKey contextKey = "request_id"
@@ -40,15 +39,14 @@ func getRequestID(r *http.Request) string {
 }
 
 // loggingMiddleware logs every request with method, path, status, duration, and
-// request ID, and (when a recorder is set) feeds request rate + latency to
-// self-metrics.
-func loggingMiddleware(logger *slog.Logger, rec *selfmetrics.Recorder, next http.Handler) http.Handler {
+// request ID, and hands each finished request to record.
+func loggingMiddleware(logger *slog.Logger, record func(r *http.Request, status int, elapsed time.Duration), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
 		elapsed := time.Since(start)
-		rec.RecordRequest(statusClass(sw.status), float64(elapsed.Microseconds())/1000.0)
+		record(r, sw.status, elapsed)
 		attrs := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
