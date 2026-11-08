@@ -16,7 +16,7 @@ FROM alpine:3.20
 
 WORKDIR /app
 
-RUN apk add --no-cache ca-certificates sqlite
+RUN apk upgrade --no-cache musl && apk add --no-cache ca-certificates sqlite
 RUN addgroup -S spanbarn && adduser -S spanbarn -G spanbarn
 
 COPY --from=build /out/spanbarn /usr/local/bin/spanbarn
