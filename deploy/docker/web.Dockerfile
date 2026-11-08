@@ -15,6 +15,8 @@ RUN pnpm --filter @spanbarn/web build
 
 FROM caddy:2.8-alpine
 
+RUN apk upgrade --no-cache musl
+
 COPY --from=build /app/web/dist /srv
 COPY deploy/docker/Caddyfile /etc/caddy/Caddyfile
 
