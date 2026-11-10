@@ -113,7 +113,8 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	w.SetAggregator(aggregator)
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
-	if spanRollups := newSpanRollups(repo, cfg, logger); spanRollups != nil {
+	spanRollups := newSpanRollups(repo, cfg, logger)
+	if spanRollups != nil {
 		w.SetSpanRollups(spanRollups)
 		safeGo("span-rollups", &wg, func() { spanRollups.Run(workerCtx) })
 	}
@@ -233,6 +234,9 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	ingestHandler.Stop()
 	workerCancel()
 	wg.Wait()
+	// The worker has stopped feeding the rollups; write what is still in memory
+	// before the final checkpoint, as writer mode does.
+	flushSpanRollupsOnStop(spanRollups, logger)
 	store.FinalCheckpoint(logger)
 
 	logger.Info("shutdown complete")
