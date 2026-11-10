@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"path"
+	"regexp"
 	"strings"
 )
 
@@ -81,19 +83,61 @@ func (s *Server) handleIAMProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 // iamProxyTarget strips the /api/iam-proxy prefix and builds the URL on
-// IamBarn. Only the widget's own API namespace may be reached — this is a
-// scoped proxy for the iambarn-profile widget, not an open relay for
-// arbitrary IamBarn paths with the user's bearer token.
+// IamBarn. Only the endpoints the iambarn-profile widget calls, with the
+// methods it uses, may be reached. This is a scoped proxy, not a relay for the
+// user's bearer token to other IamBarn routes such as admin or organization
+// switching.
 func (s *Server) iamProxyTarget(r *http.Request) (string, bool) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/iam-proxy")
-	if !strings.HasPrefix(path, "/api/") {
+	p := strings.TrimPrefix(r.URL.Path, "/api/iam-proxy")
+	if !iamProxyAllowed(r.Method, p) {
 		return "", false
 	}
-	targetURL := strings.TrimRight(s.oidc.Config().Issuer, "/") + path
+	targetURL := strings.TrimRight(s.oidc.Config().Issuer, "/") + p
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery
 	}
 	return targetURL, true
+}
+
+// iamProxyRoute is one widget endpoint. The pattern is matched against the
+// whole decoded path; id segments are a single URL-safe token.
+type iamProxyRoute struct {
+	method  string
+	pattern *regexp.Regexp
+}
+
+func iamRoute(method, pattern string) iamProxyRoute {
+	return iamProxyRoute{method: method, pattern: regexp.MustCompile("^" + pattern + "$")}
+}
+
+// iamProxyRoutes is the endpoint list of the iambarn-profile widget
+// (web/widget/src/api.ts in IamBarn). Add a route here when the widget gains
+// one; nothing else under /api/ is forwarded.
+var iamProxyRoutes = []iamProxyRoute{
+	iamRoute(http.MethodGet, `/api/v1/csrf`),
+	iamRoute(http.MethodGet, `/api/v1/me`),
+	iamRoute(http.MethodPut, `/api/v1/me/profile`),
+	iamRoute(http.MethodPost, `/api/v1/me/avatar`),
+	iamRoute(http.MethodPost, `/api/v1/me/password`),
+	iamRoute(http.MethodGet, `/api/v1/me/sessions`),
+	iamRoute(http.MethodDelete, `/api/v1/me/sessions/[A-Za-z0-9_-]+`),
+	iamRoute(http.MethodGet, `/api/v1/me/passkeys`),
+	iamRoute(http.MethodDelete, `/api/v1/me/passkeys/[A-Za-z0-9_-]+`),
+	iamRoute(http.MethodPost, `/api/v1/me/passkeys/register/begin`),
+	iamRoute(http.MethodPost, `/api/v1/me/passkeys/register/finish`),
+}
+
+func iamProxyAllowed(method, p string) bool {
+	// A path that changes under Clean has dot segments or doubled slashes.
+	if path.Clean(p) != p {
+		return false
+	}
+	for _, rt := range iamProxyRoutes {
+		if rt.method == method && rt.pattern.MatchString(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // proxyToIAM issues one proxied request to IamBarn with the given bearer

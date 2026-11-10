@@ -134,6 +134,60 @@ func TestIAMProxyPathScope(t *testing.T) {
 	}
 }
 
+// TestIAMProxyAllowlist: only the iambarn-profile widget's endpoints, with the
+// methods it uses, reach IamBarn. Everything else under /api/ is refused, so
+// a user token cannot be sent to admin or organization routes through here.
+func TestIAMProxyAllowlist(t *testing.T) {
+	_, svc, _, handler := iamProxyStack(t)
+	token := newOIDCSessionRow(t, svc, time.Now().Add(10*time.Minute), "rt-1")
+
+	cases := []struct {
+		method, path string
+		allowed      bool
+	}{
+		{"GET", "/api/v1/csrf", true},
+		{"GET", "/api/v1/me", true},
+		{"PUT", "/api/v1/me/profile", true},
+		{"POST", "/api/v1/me/avatar", true},
+		{"POST", "/api/v1/me/password", true},
+		{"GET", "/api/v1/me/sessions", true},
+		{"DELETE", "/api/v1/me/sessions/3f2a-91bc", true},
+		{"GET", "/api/v1/me/passkeys", true},
+		{"DELETE", "/api/v1/me/passkeys/Xy_9-aZ", true},
+		{"POST", "/api/v1/me/passkeys/register/begin", true},
+		{"POST", "/api/v1/me/passkeys/register/finish", true},
+
+		{"GET", "/api/v1/admin/users", false},
+		{"POST", "/api/v1/admin/users", false},
+		{"POST", "/api/v1/me/switch-org", false},
+		{"POST", "/api/v1/organizations/switch", false},
+		{"GET", "/api/v1/me/other", false},
+		{"DELETE", "/api/v1/me", false},
+		{"POST", "/api/v1/me/profile", false},
+		{"GET", "/api/v1/me/sessions/abc", false},
+		{"DELETE", "/api/v1/me/sessions", false},
+		{"DELETE", "/api/v1/me/sessions/a/b", false},
+		{"GET", "/api/v1/csrf/x", false},
+		{"GET", "/api/v1/me/../admin/users", false},
+		{"GET", "/api/v1/me/%2e%2e/admin/users", false},
+		{"GET", "/api/v1/me/sessions/..", false},
+		{"GET", "/api/v1//me", false},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(tc.method, "/api/iam-proxy"+tc.path, nil)
+		req.AddCookie(&http.Cookie{Name: "session", Value: token})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		forbidden := rec.Code == http.StatusForbidden
+		if tc.allowed && forbidden {
+			t.Errorf("%s %s: refused, want forwarded", tc.method, tc.path)
+		}
+		if !tc.allowed && !forbidden {
+			t.Errorf("%s %s: got %d, want 403", tc.method, tc.path, rec.Code)
+		}
+	}
+}
+
 // TestIAMProxyConcurrentRequestsShareOneRefresh reproduces two widget API
 // calls firing back-to-back right after upstream starts rejecting the stored
 // access token. Both requests belong to the same session (single-use refresh
