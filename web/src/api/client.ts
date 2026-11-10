@@ -286,6 +286,9 @@ export const api = {
       `/api/v1/dashboard/heatmap${dashboardQs(f, { root_only: rootOnly ? 'true' : undefined })}`,
     ),
 
+  /** The session check. A signed-out caller gets the 401 redirect from fetchJSON. */
+  getMe: () => fetchJSON<{ display_name: string; auth_method?: string }>('/api/v1/me'),
+
   login: (username: string, password: string) =>
     fetchJSON<{ username: string }>('/api/v1/login', {
       method: 'POST',
