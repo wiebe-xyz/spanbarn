@@ -1,7 +1,7 @@
 package api
 
 import (
-	"net/http"
+	"context"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/rollup"
@@ -22,8 +22,8 @@ const fineTailWidth = 6 * time.Hour
 // The tail starts at the watermark, which keeps a bucket from being read from
 // both tiers, and covers at most fineTailWidth. The tail is read first: the
 // rows limit keeps the newest buckets.
-func (h *metricsQueryHandlers) hourTierWithTail(r *http.Request, f service.MetricRollupFilter, from time.Time) ([]service.MetricRollup, error) {
-	through, ok, err := h.svc.HourTierThrough(r.Context())
+func (h *metricsQueryHandlers) hourTierWithTail(ctx context.Context, f service.MetricRollupFilter, from time.Time) ([]service.MetricRollup, error) {
+	through, ok, err := h.svc.HourTierThrough(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +33,7 @@ func (h *metricsQueryHandlers) hourTierWithTail(r *http.Request, f service.Metri
 	if tailFrom.Before(f.To) {
 		tf := f
 		tf.From = tailFrom
-		if tail, err = h.svc.Rollups(r.Context(), tf); err != nil {
+		if tail, err = h.svc.Rollups(ctx, tf); err != nil {
 			return nil, err
 		}
 		for i := range tail {
@@ -52,7 +52,7 @@ func (h *metricsQueryHandlers) hourTierWithTail(r *http.Request, f service.Metri
 			return tail, nil
 		}
 	}
-	hours, err := h.queryTier(r, rollup.StepHour, hf)
+	hours, err := h.queryTier(ctx, rollup.StepHour, hf)
 	if err != nil {
 		return nil, err
 	}

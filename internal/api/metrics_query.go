@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -157,18 +160,55 @@ type metricQuery struct {
 // group_by, then reads raw points or rollups depending on the range. On a bad
 // request or a failed query it writes the error response and returns false.
 func (h *metricsQueryHandlers) loadMetricQuery(w http.ResponseWriter, r *http.Request, defaultLimit int) (metricQuery, bool) {
+	req, ok := parseMetricRequest(w, r, defaultLimit)
+	if !ok {
+		return metricQuery{}, false
+	}
+	q, err := h.readMetricQuery(r.Context(), req, req.from, req.to)
+	if err != nil {
+		writeServerError(w, r, "query failed", err)
+		return metricQuery{}, false
+	}
+	return q, true
+}
+
+// metricRequest is a parsed metric read: what to read, before any data is.
+type metricRequest struct {
+	name      string
+	projectID int64
+	limit     int
+	from, to  time.Time
+	labels    map[string]string
+	groupBy   []string
+}
+
+// cacheKey names every input of the read except the range.
+func (m metricRequest) cacheKey(kind string) string {
+	keys := make([]string, 0, len(m.labels))
+	for k := range m.labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var lb strings.Builder
+	for _, k := range keys {
+		fmt.Fprintf(&lb, "%q=%q,", k, m.labels[k])
+	}
+	return fmt.Sprintf("metric:%s:%d:%q:%d:%s:%s", kind, m.projectID, m.name, m.limit, lb.String(), strings.Join(m.groupBy, ","))
+}
+
+// parseMetricRequest reads and checks the query parameters, writing the error
+// response itself when they are wrong.
+func parseMetricRequest(w http.ResponseWriter, r *http.Request, defaultLimit int) (metricRequest, bool) {
 	name := r.URL.Query().Get("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "missing name parameter", "")
-		return metricQuery{}, false
+		return metricRequest{}, false
 	}
 
-	projectID := parseInt64Param(r, "project_id", 0)
-	limit := parseIntParam(r, "limit", defaultLimit)
 	from, to, err := parseTimeRange(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
-		return metricQuery{}, false
+		return metricRequest{}, false
 	}
 	if from.IsZero() {
 		from = time.Now().Add(-24 * time.Hour)
@@ -181,18 +221,27 @@ func (h *metricsQueryHandlers) loadMetricQuery(w http.ResponseWriter, r *http.Re
 	for k := range labels {
 		if !service.ValidLabelKey(k) {
 			writeError(w, http.StatusBadRequest, "invalid label key", "")
-			return metricQuery{}, false
+			return metricRequest{}, false
 		}
 	}
-	groupBy := parseGroupBy(r)
+	return metricRequest{
+		name:      name,
+		projectID: parseInt64Param(r, "project_id", 0),
+		limit:     parseIntParam(r, "limit", defaultLimit),
+		from:      from,
+		to:        to,
+		labels:    labels,
+		groupBy:   parseGroupBy(r),
+	}, true
+}
 
-	metricType, unit, in, step, queryErr := h.readMetricInput(r, projectID, name, from, to, labels, limit)
-	if queryErr != nil {
-		writeServerError(w, r, "query failed", queryErr)
-		return metricQuery{}, false
+// readMetricQuery reads the data of req over [from, to].
+func (h *metricsQueryHandlers) readMetricQuery(ctx context.Context, req metricRequest, from, to time.Time) (metricQuery, error) {
+	metricType, unit, in, step, err := h.readMetricInput(ctx, req.projectID, req.name, from, to, req.labels, req.limit)
+	if err != nil {
+		return metricQuery{}, err
 	}
-
-	return metricQuery{name: name, metricType: metricType, unit: unit, in: in, step: step, groupBy: groupBy}, true
+	return metricQuery{name: req.name, metricType: metricType, unit: unit, in: in, step: step, groupBy: req.groupBy}, nil
 }
 
 // handleMetricSeries returns data points for a named metric.
@@ -242,20 +291,20 @@ const filteredFineTierWidth = 24 * time.Hour
 // reads rollups: raw points expire long before the tiers do, and an empty result
 // there would look like a metric that reported nothing. The returned step is 0
 // for raw points.
-func (h *metricsQueryHandlers) readMetricInput(r *http.Request, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, int64, error) {
+func (h *metricsQueryHandlers) readMetricInput(ctx context.Context, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, int64, error) {
 	if to.Sub(from) > rollupQueryThreshold {
-		return h.rollupInput(r, projectID, name, from, to, labels, limit)
+		return h.rollupInput(ctx, projectID, name, from, to, labels, limit)
 	}
-	metricType, unit, in, err := h.rawInput(r, projectID, name, from, to, labels, limit)
+	metricType, unit, in, err := h.rawInput(ctx, projectID, name, from, to, labels, limit)
 	if err != nil || len(in) > 0 {
 		return metricType, unit, in, 0, err
 	}
-	return h.rollupInput(r, projectID, name, from, to, labels, limit)
+	return h.rollupInput(ctx, projectID, name, from, to, labels, limit)
 }
 
 // rawInput loads raw metric data points and maps them to derivation input.
-func (h *metricsQueryHandlers) rawInput(r *http.Request, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, error) {
-	rows, err := h.svc.Series(r.Context(), service.MetricFilter{
+func (h *metricsQueryHandlers) rawInput(ctx context.Context, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, error) {
+	rows, err := h.svc.Series(ctx, service.MetricFilter{
 		ProjectID: projectID, Name: name, From: from, To: to, Attributes: labels, Limit: limit,
 	})
 	if err != nil {
@@ -324,7 +373,7 @@ func tierStepsForRead(width time.Duration, labels map[string]string) []int64 {
 // the bucket-end cumulative value (so rate is derived across buckets),
 // distributions carry their merged extra. Each read starts at the bucket holding
 // from, so a range narrower than a coarse bucket still finds that bucket.
-func (h *metricsQueryHandlers) rollupInput(r *http.Request, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, int64, error) {
+func (h *metricsQueryHandlers) rollupInput(ctx context.Context, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, int64, error) {
 	filter := service.MetricRollupFilter{
 		ProjectID: projectID, Name: name, From: from, To: to, Attributes: labels, Limit: limit,
 	}
@@ -336,9 +385,9 @@ func (h *metricsQueryHandlers) rollupInput(r *http.Request, projectID int64, nam
 		// A read that has tried the 5-minute tier and found nothing has no
 		// tail to add.
 		if step == rollup.StepHour && !fineRead {
-			rows, err = h.hourTierWithTail(r, filter, from)
+			rows, err = h.hourTierWithTail(ctx, filter, from)
 		} else {
-			rows, err = h.queryTier(r, step, filter)
+			rows, err = h.queryTier(ctx, step, filter)
 		}
 		fineRead = fineRead || step == rollup.Step5m
 		if err != nil {
@@ -370,11 +419,11 @@ func (h *metricsQueryHandlers) rollupInput(r *http.Request, projectID int64, nam
 
 // queryTier reads one resolution. The 5-minute tier is the accumulator's own
 // table; every coarser tier shares metric_rollups_coarse.
-func (h *metricsQueryHandlers) queryTier(r *http.Request, step int64, f service.MetricRollupFilter) ([]service.MetricRollup, error) {
+func (h *metricsQueryHandlers) queryTier(ctx context.Context, step int64, f service.MetricRollupFilter) ([]service.MetricRollup, error) {
 	if step == service.Rollup5mStep {
-		return h.svc.Rollups(r.Context(), f)
+		return h.svc.Rollups(ctx, f)
 	}
-	return h.svc.CoarseRollups(r.Context(), service.CoarseRollupFilter{
+	return h.svc.CoarseRollups(ctx, service.CoarseRollupFilter{
 		ProjectID:   f.ProjectID,
 		Name:        f.Name,
 		StepSeconds: step,
