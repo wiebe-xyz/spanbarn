@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { DashboardLayout } from './components/DashboardLayout'
+import { AuthGate } from './components/AuthGate'
 import { TimeRangeProvider } from './contexts/TimeRangeContext'
 
 // Route-level code splitting: each page becomes its own chunk so initial
@@ -46,7 +47,7 @@ function App() {
         <Suspense fallback={<div style={{ padding: 24, color: '#9ca3af' }}>Loading…</div>}>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/" element={<DashboardLayout />}>
+            <Route path="/" element={<AuthGate><DashboardLayout /></AuthGate>}>
               <Route index element={<DashboardPage />} />
               <Route path="services" element={<ServicesPage />} />
               <Route path="services/:service" element={<OperationsPage />} />
