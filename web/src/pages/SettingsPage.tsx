@@ -21,6 +21,21 @@ type RuntimeStats = {
 
 type RetentionSettings = Record<string, string>
 
+function saveFailureMessage(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : 'Save failed'
+}
+
+// A rejected save leaves the form as typed; this says why instead of resetting
+// the button as if nothing happened.
+function SaveError({ message }: { message: string | null }): ReactElement | null {
+  if (!message) return null
+  return (
+    <div role="alert" style={{ fontSize: '0.75rem', color: 'var(--error, #ef4444)', marginTop: 8 }}>
+      Could not save: {message}
+    </div>
+  )
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -120,6 +135,7 @@ function RetentionSettingsPanel() {
   const [obsoleteSet, setObsoleteSet] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -139,12 +155,13 @@ function RetentionSettingsPanel() {
   // and returns the window to the server default.
   const save = async (patch: RetentionSettings) => {
     setSaving(true)
+    setSaveError(null)
     try {
       await fetchJSON('/api/v1/settings', { method: 'PUT', body: JSON.stringify(patch) })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-    } catch {
-      // ignore
+    } catch (err) {
+      setSaveError(saveFailureMessage(err))
     } finally {
       setSaving(false)
     }
@@ -195,6 +212,7 @@ function RetentionSettingsPanel() {
           {saved ? 'Saved!' : saving ? 'Saving...' : 'Save'}
         </button>
       </div>
+      <SaveError message={saveError} />
       <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: 8 }}>
         Rollups are compacted 5m to 1h to 1d to 1w to 1mo, dropping volatile attributes such as
         service.version at each step. A tier is deleted only once it has been compacted into the
@@ -248,6 +266,7 @@ function SamplingSettingsPanel() {
   const [, setAllSettings] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState<string | null>(null)
   const [savedKey, setSavedKey] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -275,6 +294,7 @@ function SamplingSettingsPanel() {
 
   const save = async (key: string, value: string) => {
     setSaving(key)
+    setSaveError(null)
     try {
       await fetchJSON('/api/v1/settings', {
         method: 'PUT',
@@ -282,7 +302,9 @@ function SamplingSettingsPanel() {
       })
       setSavedKey(key)
       setTimeout(() => setSavedKey(null), 1500)
-    } catch { /* ignore */ } finally {
+    } catch (err) {
+      setSaveError(saveFailureMessage(err))
+    } finally {
       setSaving(null)
     }
   }
@@ -382,6 +404,7 @@ function SamplingSettingsPanel() {
           </tbody>
         </table>
       </div>
+      <SaveError message={saveError} />
 
       <div style={{ fontSize: '0.6875rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
         Per-operation overrides can be set via the settings API:
@@ -406,6 +429,7 @@ function PerProjectRetentionPanel() {
   const [projects, setProjects] = useState<RetentionCapProject[]>([])
   const [saving, setSaving] = useState<string | null>(null)
   const [savedKey, setSavedKey] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -433,6 +457,7 @@ function PerProjectRetentionPanel() {
   const saveProject = async (p: RetentionCapProject) => {
     const rowKey = `retention.project.${p.id}`
     setSaving(rowKey)
+    setSaveError(null)
     try {
       await fetchJSON('/api/v1/settings', {
         method: 'PUT',
@@ -443,7 +468,9 @@ function PerProjectRetentionPanel() {
       })
       setSavedKey(rowKey)
       setTimeout(() => setSavedKey(null), 1500)
-    } catch { /* ignore */ } finally {
+    } catch (err) {
+      setSaveError(saveFailureMessage(err))
+    } finally {
       setSaving(null)
     }
   }
@@ -521,6 +548,7 @@ function PerProjectRetentionPanel() {
           </tbody>
         </table>
       </div>
+      <SaveError message={saveError} />
     </div>
   )
 }
@@ -765,7 +793,7 @@ export function SettingsPage(): ReactElement {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <a
-                  href={`/api/v1/setup/${p.slug}`}
+                  href={`/api/v1/setup/${encodeURIComponent(p.slug)}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="btn btn-sm"
@@ -889,7 +917,7 @@ export function SettingsPage(): ReactElement {
                   )}
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
                     <a
-                      href={`/api/v1/setup/${p.slug}`}
+                      href={`/api/v1/setup/${encodeURIComponent(p.slug)}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="btn btn-sm"

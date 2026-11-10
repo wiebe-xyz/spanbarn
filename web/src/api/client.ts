@@ -320,6 +320,7 @@ export const api = {
         operation: params.operation,
         status: params.status,
         min_duration_us: params.minDurationUs,
+        min_spans: params.minSpans,
         root_only: params.rootOnly ? 'true' : undefined,
         from: params.from,
         to: params.to,
