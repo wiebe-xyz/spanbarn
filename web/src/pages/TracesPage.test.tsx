@@ -60,7 +60,6 @@ describe('TracesPage structure', () => {
         <TracesPage />
       </MemoryRouter>,
     )
-    // Loading the exclusions re-runs the search, so assert once the list settles.
     await waitFor(() => {
       expect(screen.getByText('no root span')).toBeInTheDocument()
       expect(screen.getByText('2 orphan spans')).toBeInTheDocument()
@@ -200,5 +199,60 @@ describe('TracesPage project scope', () => {
     )
     await waitFor(() => expect(screen.getByText('GET /ok')).toBeInTheDocument())
     expect(tracesUrls[0]).toContain('project_id=7')
+  })
+})
+
+describe('TracesPage first load', () => {
+  it('fetches once on mount and keeps the offset from the URL', async () => {
+    render(
+      <MemoryRouter initialEntries={['/traces?structure=orphans&offset=50']}>
+        <TracesPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('GET /ok')).toBeInTheDocument())
+    // Give any extra effect-driven fetch the chance to land before counting.
+    await new Promise((r) => setTimeout(r, 50))
+    expect(tracesUrls).toHaveLength(1)
+    expect(tracesUrls[0]).toContain('offset=50')
+  })
+
+  it('sends the saved exclusions with the first fetch', async () => {
+    vi.mocked(api.listTraceExclusions).mockResolvedValueOnce([
+      { id: 1, projectId: 1, operation: 'GET /noise', createdAt: '2026-10-01T10:00:00Z' },
+    ])
+    render(
+      <MemoryRouter initialEntries={['/traces?structure=orphans']}>
+        <TracesPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('GET /ok')).toBeInTheDocument())
+    await new Promise((r) => setTimeout(r, 50))
+    expect(tracesUrls).toHaveLength(1)
+    expect(tracesUrls[0]).toContain('exclude_operation=GET+%2Fnoise')
+  })
+
+  it('shows the latest search when an older response arrives last', async () => {
+    render(
+      <MemoryRouter initialEntries={['/traces?structure=orphans']}>
+        <TracesPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('GET /ok')).toBeInTheDocument())
+
+    let releaseOld: (r: Response) => void = () => {}
+    const old = new Promise<Response>((resolve) => { releaseOld = resolve })
+    const rows = (name: string) => new Response(JSON.stringify([trace({ rootSpanName: name })]))
+    vi.mocked(fetch)
+      .mockImplementationOnce(() => old)
+      .mockImplementationOnce(() => Promise.resolve(rows('GET /new')))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    await waitFor(() => expect(screen.getByText('GET /new')).toBeInTheDocument())
+
+    releaseOld(rows('GET /old'))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.getByText('GET /new')).toBeInTheDocument()
+    expect(screen.queryByText('GET /old')).not.toBeInTheDocument()
   })
 })

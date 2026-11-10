@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Ban } from 'lucide-react'
 import type { SavedQuery, TraceSummary, TraceGroupSummary } from '../api/types'
@@ -126,12 +126,23 @@ export function TracesPage(): ReactElement {
 
   type Exclusion = { id: number; operation: string }
   const [exclusions, setExclusions] = useState<Exclusion[]>([])
+  // The first detail fetch waits for the saved exclusions so it carries them
+  // and the offset from the URL; a later change re-searches from page 1.
+  const [exclusionsReady, setExclusionsReady] = useState(false)
+  const initialLoadDone = useRef(false)
+  const exclusionsSearched = useRef<Exclusion[] | null>(null)
+  // Only the newest search may write results, so a slow older response cannot
+  // replace a newer one.
+  const groupsSeq = useRef(0)
+  const tracesSeq = useRef(0)
 
   const loadExclusions = useCallback(async () => {
     try {
       const data = await api.listTraceExclusions()
       setExclusions(data ?? [])
-    } catch { /* ignore */ }
+    } catch { /* ignore */ } finally {
+      setExclusionsReady(true)
+    }
   }, [])
 
   const excludeOp = async (op: string) => {
@@ -170,6 +181,7 @@ export function TracesPage(): ReactElement {
   }, [filters.from, filters.to])
 
   const searchGroups = useCallback(async () => {
+    const seq = ++groupsSeq.current
     setLoading(true)
     setError(null)
     try {
@@ -181,19 +193,22 @@ export function TracesPage(): ReactElement {
         filters.status && filters.status !== 'all' ? filters.status : undefined,
         minDurUs && minDurUs > 0 ? minDurUs : undefined,
       )
+      if (seq !== groupsSeq.current) return
       setGroups(data ?? [])
       const urlParams = filtersToParams(filters)
       setSearchParams(urlParams, { replace: true })
     } catch (err) {
+      if (seq !== groupsSeq.current) return
       setError(err instanceof Error ? err.message : 'Search failed')
       setGroups([])
     } finally {
-      setLoading(false)
+      if (seq === groupsSeq.current) setLoading(false)
     }
   }, [filters, setSearchParams])
 
   const searchTraces = useCallback(
     async (newOffset: number = 0) => {
+      const seq = ++tracesSeq.current
       setLoading(true)
       setError(null)
       try {
@@ -226,6 +241,7 @@ export function TracesPage(): ReactElement {
         const resp = await fetch(`/api/v1/traces?${params}`)
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
         const data: TraceSummary[] = await resp.json()
+        if (seq !== tracesSeq.current) return
         setTraces(data)
         setOffset(newOffset)
 
@@ -233,10 +249,11 @@ export function TracesPage(): ReactElement {
         if (newOffset > 0) urlParams.set('offset', String(newOffset))
         setSearchParams(urlParams, { replace: true })
       } catch (err) {
+        if (seq !== tracesSeq.current) return
         setError(err instanceof Error ? err.message : 'Search failed')
         setTraces([])
       } finally {
-        setLoading(false)
+        if (seq === tracesSeq.current) setLoading(false)
       }
     },
     [filters, exclusions, setSearchParams],
@@ -252,27 +269,35 @@ export function TracesPage(): ReactElement {
     setViewMode('grouped')
   }
 
-  // Initial load
+  // Initial load. Grouped mode fetches at once. Detail mode waits for the saved
+  // exclusions, so one fetch carries both them and the offset from the URL.
   useEffect(() => {
+    if (initialLoadDone.current) return
     if (viewMode === 'grouped') {
+      initialLoadDone.current = true
       void searchGroups() // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
-    } else {
-      void searchTraces(offset)
+      return
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!exclusionsReady) return
+    initialLoadDone.current = true
+    exclusionsSearched.current = exclusions
+    void searchTraces(offset)
+  }, [exclusionsReady]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // When viewMode switches to 'detail' (after clicking a group row), fetch traces
   useEffect(() => {
-    if (viewMode === 'detail') {
+    if (viewMode === 'detail' && initialLoadDone.current) {
+      exclusionsSearched.current = exclusions
       void searchTraces(0) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
     }
   }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-search from page 1 when exclusions change (only in detail mode; groups load via own mechanism)
   useEffect(() => {
-    if (viewMode === 'detail') {
-      void searchTraces(0) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
-    }
+    if (viewMode !== 'detail' || !initialLoadDone.current) return
+    if (exclusionsSearched.current === exclusions) return
+    exclusionsSearched.current = exclusions
+    void searchTraces(0) // eslint-disable-line react-hooks/set-state-in-effect -- data fetching is a valid effect pattern
   }, [exclusions]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateFilter = (key: keyof Filters, value: string | boolean) => {
