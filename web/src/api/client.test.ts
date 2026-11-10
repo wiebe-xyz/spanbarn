@@ -179,6 +179,36 @@ describe('api methods construct correct URLs', () => {
     expect(url).toContain('min_spans=5')
   })
 
+  it('searchTraces sends the page filters and one exclude_operation per exclusion', async () => {
+    const { api } = await import('./client')
+    await api.searchTraces({
+      from: '2024-01-01T00:00:00Z',
+      to: '2024-01-02T00:00:00Z',
+      sortErrorsFirst: true,
+      hasRoot: false,
+      orphans: true,
+      filter: 'http.status>=500',
+      projectId: '7',
+      excludeOperations: ['GET /a b', 'GET /c'],
+    })
+    const q = new URL(mockFetch.mock.calls[0][0] as string, 'http://x').searchParams
+    expect(q.get('sort_errors_first')).toBe('true')
+    expect(q.get('has_root')).toBe('false')
+    expect(q.get('orphans')).toBe('true')
+    expect(q.get('filter')).toBe('http.status>=500')
+    expect(q.get('project_id')).toBe('7')
+    expect(q.getAll('exclude_operation')).toEqual(['GET /a b', 'GET /c'])
+  })
+
+  it('searchTraces leaves the new params out when unset', async () => {
+    const { api } = await import('./client')
+    await api.searchTraces({ from: 'f', to: 't' })
+    const url = mockFetch.mock.calls[0][0] as string
+    for (const k of ['has_root', 'orphans', 'sort_errors_first', 'filter', 'project_id', 'exclude_operation']) {
+      expect(url).not.toContain(k)
+    }
+  })
+
   it('getTrace includes traceId in path', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,

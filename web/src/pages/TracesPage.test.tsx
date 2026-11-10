@@ -4,8 +4,14 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { TracesPage } from './TracesPage'
 import { api } from '../api/client'
 
-vi.mock('../api/client', () => ({
-  api: {
+vi.mock('../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/client')>()
+  return {
+    ...actual,
+    api: {
+      // The real list reads run through fetchJSON, so the fetch stub below sees their URLs.
+      searchTraces: actual.api.searchTraces,
+      getServices: actual.api.getServices,
     getSavedQueries: vi.fn().mockResolvedValue([]),
     listProjects: vi.fn().mockResolvedValue([{ id: 1, name: 'p' }]),
     getAttributes: vi.fn().mockResolvedValue({ scanned: 0, sample: 1, truncated: false, maxSpans: 0, keys: [] }),
@@ -13,8 +19,9 @@ vi.mock('../api/client', () => ({
     listTraceExclusions: vi.fn().mockResolvedValue([]),
     getTraceGroups: vi.fn().mockResolvedValue([]),
     getExportUrl: vi.fn().mockReturnValue('/export'),
-  },
-}))
+    },
+  }
+})
 
 const trace = (over: Record<string, unknown>) => ({
   traceId: 'a'.repeat(32),
@@ -228,7 +235,7 @@ describe('TracesPage first load', () => {
     await waitFor(() => expect(screen.getByText('GET /ok')).toBeInTheDocument())
     await new Promise((r) => setTimeout(r, 50))
     expect(tracesUrls).toHaveLength(1)
-    expect(tracesUrls[0]).toContain('exclude_operation=GET+%2Fnoise')
+    expect(new URL(tracesUrls[0], 'http://x').searchParams.getAll('exclude_operation')).toEqual(['GET /noise'])
   })
 
   it('shows the latest search when an older response arrives last', async () => {
@@ -254,5 +261,41 @@ describe('TracesPage first load', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(screen.getByText('GET /new')).toBeInTheDocument()
     expect(screen.queryByText('GET /old')).not.toBeInTheDocument()
+  })
+})
+
+describe('TracesPage reads go through fetchJSON', () => {
+  it('retries a trace search that hits query_timeout', async () => {
+    const normal = vi.mocked(fetch).getMockImplementation()!
+    let timedOut = false
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      if (!timedOut && String(input).startsWith('/api/v1/traces?')) {
+        timedOut = true
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: 'query_timeout' }), { status: 503, headers: { 'Retry-After': '0' } }),
+        )
+      }
+      return normal(input, init)
+    })
+    render(
+      <MemoryRouter initialEntries={['/traces?structure=orphans']}>
+        <TracesPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('GET /ok')).toBeInTheDocument(), { timeout: 5000 })
+    expect(screen.queryByText('HTTP 503')).not.toBeInTheDocument()
+  })
+
+  it('loads the service dropdown through the client without the server-only filter', async () => {
+    render(
+      <MemoryRouter initialEntries={['/traces?structure=orphans']}>
+        <TracesPage />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('GET /ok')).toBeInTheDocument())
+    const urls = vi.mocked(fetch).mock.calls.map((c) => String(c[0]))
+    const services = urls.filter((u) => u.startsWith('/api/v1/services?'))
+    expect(services).toHaveLength(1)
+    expect(services[0]).not.toContain('server_only')
   })
 })

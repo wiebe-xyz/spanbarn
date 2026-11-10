@@ -185,6 +185,13 @@ function qs(params: Record<string, string | number | undefined>): string {
   return '?' + entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')
 }
 
+/** Appends one key=value pair per value onto a query string that qs may have started (or left empty). */
+function repeatedParam(base: string, key: string, values: string[] | undefined): string {
+  const parts = (values ?? []).map((v) => `${key}=${encodeURIComponent(v)}`)
+  if (parts.length === 0) return base
+  return base + (base.includes('?') ? '&' : '?') + parts.join('&')
+}
+
 /** Encodes label[key]=value filters, joined onto an existing query string. */
 function labelQuery(labels: Record<string, string> | undefined, base: string): string {
   const parts = Object.entries(labels ?? {}).map(
@@ -315,18 +322,23 @@ export const api = {
 
   searchTraces: (params: TraceSearchParams) =>
     fetchJSON<TraceSummary[]>(
-      `/api/v1/traces${qs({
+      `/api/v1/traces${repeatedParam(qs({
         service: params.service,
         operation: params.operation,
         status: params.status,
         min_duration_us: params.minDurationUs,
         min_spans: params.minSpans,
         root_only: params.rootOnly ? 'true' : undefined,
+        has_root: params.hasRoot === false ? 'false' : undefined,
+        orphans: params.orphans ? 'true' : undefined,
+        sort_errors_first: params.sortErrorsFirst ? 'true' : undefined,
+        filter: params.filter,
+        project_id: params.projectId,
         from: params.from,
         to: params.to,
         limit: params.limit,
         offset: params.offset,
-      })}`,
+      }), 'exclude_operation', params.excludeOperations)}`,
     ),
 
   getTraceGroups: (from: string, to: string, service?: string, status?: string, minDurationUs?: number) =>

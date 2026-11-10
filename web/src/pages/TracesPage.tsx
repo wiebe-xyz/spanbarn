@@ -168,14 +168,9 @@ export function TracesPage(): ReactElement {
 
   // Fetch services for dropdown
   useEffect(() => {
-    const params = new URLSearchParams({
-      from: new Date(filters.from).toISOString(),
-      to: new Date(filters.to).toISOString(),
-    })
-    fetch(`/api/v1/services?${params}`)
-      .then((r) => r.json())
-      .then((data: Array<{ service: string }>) => {
-        setServices(data.map((d) => d.service))
+    api.getServices(new Date(filters.from).toISOString(), new Date(filters.to).toISOString(), false)
+      .then((data) => {
+        setServices((data ?? []).map((d) => d.service))
       })
       .catch(() => { /* ignore */ })
   }, [filters.from, filters.to])
@@ -212,35 +207,27 @@ export function TracesPage(): ReactElement {
       setLoading(true)
       setError(null)
       try {
-        const params = new URLSearchParams({
+        const us = filters.minDurationMs ? parseFloat(filters.minDurationMs) * 1000 : 0
+        const spans = filters.minSpans ? parseInt(filters.minSpans, 10) : 0
+        const expr = serializeFilter(filters.expr)
+        const data = await api.searchTraces({
           from: new Date(filters.from).toISOString(),
           to: new Date(filters.to).toISOString(),
-          limit: String(PAGE_SIZE),
-          offset: String(newOffset),
-          sort_errors_first: 'true',
+          limit: PAGE_SIZE,
+          offset: newOffset,
+          sortErrorsFirst: true,
+          service: filters.service || undefined,
+          operation: filters.operation || undefined,
+          status: filters.status && filters.status !== 'all' ? filters.status : undefined,
+          minDurationUs: us > 0 ? Math.round(us) : undefined,
+          minSpans: spans > 0 ? spans : undefined,
+          rootOnly: filters.rootOnly || undefined,
+          hasRoot: filters.structure === 'rootless' ? false : undefined,
+          orphans: filters.structure === 'orphans' || undefined,
+          filter: expr || undefined,
+          projectId: filters.project || undefined,
+          excludeOperations: exclusions.map((e) => e.operation),
         })
-        if (filters.service) params.set('service', filters.service)
-        if (filters.operation) params.set('operation', filters.operation)
-        if (filters.status && filters.status !== 'all') params.set('status', filters.status)
-        if (filters.minDurationMs) {
-          const us = parseFloat(filters.minDurationMs) * 1000
-          if (us > 0) params.set('min_duration_us', String(Math.round(us)))
-        }
-        if (filters.minSpans) {
-          const n = parseInt(filters.minSpans, 10)
-          if (n > 0) params.set('min_spans', String(n))
-        }
-        if (filters.rootOnly) params.set('root_only', 'true')
-        if (filters.structure === 'rootless') params.set('has_root', 'false')
-        if (filters.structure === 'orphans') params.set('orphans', 'true')
-        const expr = serializeFilter(filters.expr)
-        if (expr) params.set('filter', expr)
-        if (filters.project) params.set('project_id', filters.project)
-        for (const e of exclusions) params.append('exclude_operation', e.operation)
-
-        const resp = await fetch(`/api/v1/traces?${params}`)
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-        const data: TraceSummary[] = await resp.json()
         if (seq !== tracesSeq.current) return
         setTraces(data)
         setOffset(newOffset)

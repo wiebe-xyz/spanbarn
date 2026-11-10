@@ -393,6 +393,13 @@ export type TraceSearchParams = {
   minDurationUs?: number
   minSpans?: number
   rootOnly?: boolean
+  /** false asks for traces with no root span. */
+  hasRoot?: boolean
+  orphans?: boolean
+  sortErrorsFirst?: boolean
+  filter?: string
+  projectId?: string
+  excludeOperations?: string[]
   from: string
   to: string
   limit?: number
