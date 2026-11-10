@@ -64,8 +64,8 @@ func TestMetricTotalsRequiresName(t *testing.T) {
 // production.
 func totalsServerWithCache(t *testing.T) (*Server, *SessionService, *repository.Repository) {
 	t.Helper()
-	srv, sm, repo := setupMetricsQueryServer(t)
-	srv = NewServerWithQuery(ServerConfig{APIKey: "test-key", Version: "test"}, nil, nil, sm, nil,
+	_, sm, repo := setupMetricsQueryServer(t)
+	srv := NewServerWithQuery(ServerConfig{APIKey: "test-key", Version: "test"}, nil, nil, sm, nil,
 		WithRepository(repo), WithCache(cache.New(cache.NewMemoryStore(), time.Minute)))
 	return srv, sm, repo
 }
