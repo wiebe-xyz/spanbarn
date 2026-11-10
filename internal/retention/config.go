@@ -6,14 +6,14 @@ import "time"
 type Config struct {
 	InterestingRetentionHours int           // hours to keep spans (default 48 = 2d); this is the cutoff RunOnce deletes spans on, so it sizes the database
 	BoringRetentionMinutes    int           // minutes to keep sampled boring spans (default 30); 0 or less falls back to the default
-	ErrorRetentionDays        int           // days to keep error samples (default 30)
+	ErrorRetentionDays        int           // days to keep error samples (default 90)
 	ErrorExemplarDays         int           // days to keep one error trace per (project, service, operation, day) after the error cutoff has taken the rest (default 30)
-	AggregateRetentionDays    int           // days to keep aggregates (default 365)
+	AggregateRetentionDays    int           // days to keep aggregates (default 30)
 	MetricsRetentionDays      int           // days to keep raw metric data points (default 7). Raw points are only ever read for ranges <= rollupQueryThreshold (6h); longer ranges read the rollup tiers.
 	LogRetentionHours         int           // hours to keep log records (default 24)
 	ErrorLogRetentionDays     int           // days to keep logs for error-sampled traces (default 30)
 	PromptRetentionDays       int           // days to keep LLM prompt records (default 30). They carry full prompt and response bodies, so per row they are the largest thing stored.
-	SlowThresholdUS           int64         // microseconds above which a span is "slow"
+	SlowThresholdUS           int64         // microseconds above which a span is "slow" (default 500000 = 500ms)
 	SlowSampleTraces          int           // traces per (project, service, operation) and hour copied to error_samples for being slow alone (default 10)
 	Interval                  time.Duration // how often to run (default 5m)
 
@@ -58,6 +58,12 @@ type Config struct {
 	BallastBytes int64
 }
 
+// DefaultConfig is what the worker runs with when no window is set: the
+// fallbacks withDefaults fills in. The app's own defaults live in
+// internal/config; a test in cmd/spanbarn holds the two equal, so the fallback
+// cannot drift from what Load supplies.
+func DefaultConfig() Config { return Config{}.withDefaults() }
+
 func (c Config) withDefaults() Config {
 	for _, d := range []struct {
 		dst *int
@@ -65,9 +71,9 @@ func (c Config) withDefaults() Config {
 	}{
 		{&c.InterestingRetentionHours, 48},
 		{&c.BoringRetentionMinutes, 30},
-		{&c.ErrorRetentionDays, 30},
+		{&c.ErrorRetentionDays, 90},
 		{&c.ErrorExemplarDays, 30},
-		{&c.AggregateRetentionDays, 365},
+		{&c.AggregateRetentionDays, 30},
 		{&c.MetricsRetentionDays, 7},
 		{&c.LogRetentionHours, 24},
 		{&c.ErrorLogRetentionDays, 30},
@@ -89,7 +95,7 @@ func (c Config) withDefaults() Config {
 	// is the point of a monthly tier. At ~1,500 series a month it costs about a
 	// megabyte a year.
 	if c.SlowThresholdUS <= 0 {
-		c.SlowThresholdUS = 1_000_000 // 1 second
+		c.SlowThresholdUS = 500_000 // 500ms, the same as config's SPANBARN_SLOW_THRESHOLD_MS default
 	}
 	if c.Interval <= 0 {
 		c.Interval = 5 * time.Minute

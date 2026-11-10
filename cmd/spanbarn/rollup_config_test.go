@@ -1,10 +1,13 @@
 package main
 
 import (
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/wiebe-xyz/spanbarn/internal/config"
+	"github.com/wiebe-xyz/spanbarn/internal/retention"
 )
 
 // notMappedFromRetentionConfig are the retention.Config fields that
@@ -100,6 +103,37 @@ func TestRetentionConfigCarriesCompactionSwitches(t *testing.T) {
 		if got.MetricCompactionOff != !tc.metricOn || got.SpanCompactionOff != !tc.spanOn {
 			t.Errorf("metric on %v, span on %v: MetricCompactionOff %v, SpanCompactionOff %v",
 				tc.metricOn, tc.spanOn, got.MetricCompactionOff, got.SpanCompactionOff)
+		}
+	}
+}
+
+// TestLoadDefaultsReachTheRetentionWorker holds the two default tables equal.
+// internal/config cannot import internal/retention (it is a depguard leaf), so
+// both declare a default for every window; Load's values are the ones that run,
+// and retention's are the fallback for a Config built without them. When they
+// disagreed (aggregates 30 vs 365 days, errors 90 vs 30) the fallback was
+// unreachable, which hid that one of them was wrong.
+//
+// Every window the fallback sets must come out of Load with the same value
+// after retentionConfigFrom, so a new window with a default on one side only,
+// or two different defaults, fails here.
+func TestLoadDefaultsReachTheRetentionWorker(t *testing.T) {
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); strings.HasPrefix(name, "SPANBARN_") {
+			t.Setenv(name, "")
+		}
+	}
+
+	got := reflect.ValueOf(retentionConfigFrom(config.Load()))
+	want := reflect.ValueOf(retention.DefaultConfig())
+	for i := 0; i < want.NumField(); i++ {
+		name := want.Type().Field(i).Name
+		if want.Field(i).IsZero() || notMappedFromRetentionConfig[name] {
+			continue
+		}
+		if !reflect.DeepEqual(got.Field(i).Interface(), want.Field(i).Interface()) {
+			t.Errorf("retention.Config.%s: config.Load default reaches the worker as %v, the retention fallback is %v",
+				name, got.Field(i).Interface(), want.Field(i).Interface())
 		}
 	}
 }
