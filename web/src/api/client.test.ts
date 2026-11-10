@@ -168,6 +168,17 @@ describe('api methods construct correct URLs', () => {
     expect(url).toContain('limit=10')
   })
 
+  it('searchTraces sends minSpans as min_spans', async () => {
+    const { api } = await import('./client')
+    await api.searchTraces({
+      minSpans: 5,
+      from: '2024-01-01T00:00:00Z',
+      to: '2024-01-02T00:00:00Z',
+    })
+    const url = mockFetch.mock.calls[0][0] as string
+    expect(url).toContain('min_spans=5')
+  })
+
   it('getTrace includes traceId in path', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,

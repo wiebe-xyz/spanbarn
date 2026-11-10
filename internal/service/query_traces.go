@@ -31,21 +31,7 @@ func (s *QueryService) SearchTraces(ctx context.Context, filter TraceSearchFilte
 		limit = 50
 	}
 
-	// Merge caller-supplied exclusions with project-level saved exclusions.
-	excluded := filter.ExcludeOperations
-	if filter.ProjectID != 0 {
-		if saved, err := s.repo.ExcludedOperations(filter.ProjectID); err == nil && len(saved) > 0 {
-			seen := make(map[string]bool, len(excluded))
-			for _, op := range excluded {
-				seen[op] = true
-			}
-			for _, op := range saved {
-				if !seen[op] {
-					excluded = append(excluded, op)
-				}
-			}
-		}
-	}
+	excluded := s.withSavedExclusions(filter)
 
 	sf := repository.SpanFilter{
 		ProjectID:         filter.ProjectID,
@@ -115,21 +101,7 @@ func (s *QueryService) ListTraceGroups(ctx context.Context, filter TraceSearchFi
 }
 
 func (s *QueryService) listTraceGroupsUncached(ctx context.Context, filter TraceSearchFilter) ([]TraceGroupSummary, error) {
-	// Merge saved exclusions with caller-supplied ones.
-	excluded := filter.ExcludeOperations
-	if filter.ProjectID != 0 {
-		if saved, err := s.repo.ExcludedOperations(filter.ProjectID); err == nil && len(saved) > 0 {
-			seen := make(map[string]bool, len(excluded))
-			for _, op := range excluded {
-				seen[op] = true
-			}
-			for _, op := range saved {
-				if !seen[op] {
-					excluded = append(excluded, op)
-				}
-			}
-		}
-	}
+	excluded := s.withSavedExclusions(filter)
 
 	sf := repository.SpanFilter{
 		ProjectID:         filter.ProjectID,
@@ -321,4 +293,31 @@ func truncateTraceSpans(spans []repository.Span, root *repository.Span) ([]repos
 	}
 	spans[0] = rootSpan
 	return spans, true
+}
+
+// withSavedExclusions merges the caller's excluded operations with the ones
+// saved for the filter's project. A failed lookup is logged and the search goes
+// on with the caller's list alone, so excluded operations show up again; the
+// log line says why.
+func (s *QueryService) withSavedExclusions(filter TraceSearchFilter) []string {
+	excluded := filter.ExcludeOperations
+	if filter.ProjectID == 0 {
+		return excluded
+	}
+	saved, err := s.repo.ExcludedOperations(filter.ProjectID)
+	if err != nil {
+		s.logger.Error("load saved trace exclusions failed, searching without them",
+			"project_id", filter.ProjectID, "error", err)
+		return excluded
+	}
+	seen := make(map[string]bool, len(excluded))
+	for _, op := range excluded {
+		seen[op] = true
+	}
+	for _, op := range saved {
+		if !seen[op] {
+			excluded = append(excluded, op)
+		}
+	}
+	return excluded
 }
