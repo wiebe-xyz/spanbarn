@@ -1,6 +1,7 @@
 import { installStaleChunkHandler } from './staleChunk'
+import { createTelemetryGate, spanStatusFor, TELEMETRY_PATH } from './telemetryGate'
 
-const TELEMETRY_ENDPOINT ='/api/v1/telemetry'
+const TELEMETRY_ENDPOINT = TELEMETRY_PATH
 const CLIENT_ERRORS_ENDPOINT = '/api/v1/client-errors'
 const SERVICE_NAME = 'spanbarn-web'
 const SAMPLE_PERCENT = 1 // 1 in 100 traces sampled
@@ -61,15 +62,21 @@ function finalizePageSpan() {
   }
 }
 
+const telemetryGate = createTelemetryGate()
+
 function sendBatch(spans: SpanPayload[]) {
   if (spans.length === 0) return
+  // A signed-out page gets 401 for every batch; stop until a sign-in succeeds.
+  if (!telemetryGate.canSend()) return
   fetch(TELEMETRY_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ spans }),
     credentials: 'same-origin',
     keepalive: true,
-  }).catch(() => {})
+  })
+    .then((response) => telemetryGate.observe(TELEMETRY_PATH, response.status))
+    .catch(() => {})
 }
 
 function commitTrace() {
@@ -205,7 +212,7 @@ function instrumentFetch() {
           name: `${method} ${new URL(url, location.origin).pathname}`,
           service: SERVICE_NAME,
           kind: 'CLIENT',
-          status: response.ok ? 'OK' : 'ERROR',
+          status: spanStatusFor(response.status),
           startTime: startUs,
           duration: nowUs() - startUs,
           attributes: {
@@ -214,6 +221,8 @@ function instrumentFetch() {
             'http.status_code': response.status,
           },
         })
+
+        telemetryGate.observe(new URL(url, location.origin).pathname, response.status)
 
         if (!response.ok && response.status >= 500) {
           reportError(
