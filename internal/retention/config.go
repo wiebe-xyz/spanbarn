@@ -5,7 +5,7 @@ import "time"
 // Config controls the retention worker's behaviour.
 type Config struct {
 	InterestingRetentionHours int           // hours to keep spans (default 48 = 2d); this is the cutoff RunOnce deletes spans on, so it sizes the database
-	BoringRetentionMinutes    int           // minutes to keep sampled boring spans (default 30); 0 disables boring cleanup
+	BoringRetentionMinutes    int           // minutes to keep sampled boring spans (default 30); 0 or less falls back to the default
 	ErrorRetentionDays        int           // days to keep error samples (default 30)
 	ErrorExemplarDays         int           // days to keep one error trace per (project, service, operation, day) after the error cutoff has taken the rest (default 30)
 	AggregateRetentionDays    int           // days to keep aggregates (default 365)

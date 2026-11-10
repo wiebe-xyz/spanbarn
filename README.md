@@ -254,7 +254,7 @@ project automatically.
 | `SPANBARN_MAX_SPOOL_BYTES` | | Spool backpressure limit |
 | `SPANBARN_RETENTION_FULL_HOURS` | — | **Obsolete and ignored.** Logs a warning if set. Uninteresting spans now expire via `SPANBARN_BORING_RETENTION_MINUTES`. |
 | `SPANBARN_RETENTION_INTERESTING_HOURS` | `48` | Hours to keep spans (2 days). This is the window spans are actually deleted on, so it sizes the database. |
-| `SPANBARN_BORING_RETENTION_MINUTES` | `30` | Minutes to keep uninteresting (non-error, non-slow) spans |
+| `SPANBARN_BORING_RETENTION_MINUTES` | `30` | Minutes to keep uninteresting (non-error, non-slow) spans; `0` or less uses the default |
 | `SPANBARN_RETENTION_AGGREGATED_DAYS` | `30` | Days to keep aggregates |
 | `SPANBARN_RETENTION_ERROR_DAYS` | `90` | Days to keep error samples |
 | `SPANBARN_RETENTION_ERROR_EXEMPLAR_DAYS` | `30` | Days to keep one error trace per (service, operation, UTC day) after the error samples around it are deleted |
@@ -269,7 +269,7 @@ project automatically.
 | `SPANBARN_SPAN_ROLLUP_MAX_NAMES` | `300` | Span names kept per service per hour; the rest count as `~other` |
 | `SPANBARN_SPAN_ROLLUP_MAX_SERVICES` | `200` | Services kept per project per hour; the rest count as `~other` |
 | `SPANBARN_SPAN_ROLLUP_HTTP_STATUS` | `true` | Split root span rows by response code; `false` writes 0 and keeps the key |
-| `SPANBARN_SPAN_ROLLUP_READS` | `auto` | `auto` reads dashboard cards, trace groups, services, operation timeseries, the service map and dependencies from span rollups and span edges where they cover the range; `off` reads raw spans and aggregates |
+| `SPANBARN_SPAN_ROLLUP_READS` | `auto` | `auto` reads dashboard cards, trace groups, services, operation timeseries, the service map and dependencies from span rollups and span edges where they cover the range; `off`, `0`, `false` or `no` reads raw spans and aggregates |
 | `SPANBARN_SPAN_EDGE_MAX_TARGETS` | `200` | Call targets kept per service per hour in span edges; the rest count as `~other` |
 | `SPANBARN_SPAN_ROLLUP_5M_HOURS` | `72` | Hours to keep 5-minute span rollups |
 | `SPANBARN_SPAN_ROLLUP_HOURLY_DAYS` | `30` | Days to keep hourly span rollups |
