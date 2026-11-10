@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, LayoutDashboard, BarChart2, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Database, Radio, Network, Globe, LogOut, ScrollText, Target } from 'lucide-react'
+import { Activity, LayoutDashboard, BarChart2, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Table2, LayoutGrid, Terminal, Database, Radio, Network, Globe, LogOut, ScrollText, Target } from 'lucide-react'
 import { useIambarnSession, iambarnLogout, useIambarnProfile } from '../api/iambarnWidget'
 import { isOIDCSession } from '../api/clientConfig'
 import { IambarnProfileModal } from './IambarnProfileModal'
@@ -10,6 +10,14 @@ const tabs = [
   { to: '/traces', icon: Search, label: 'Traces' },
   { to: '/dependencies', icon: GitBranch, label: 'Deps' },
   { to: '/prompts', icon: BrainCircuit, label: 'Prompts' },
+]
+
+// Pages the desktop sidebar lists that the tabs and the hand-written links below
+// do not reach. A single manifest for both navs is tracked in #526.
+const extraMoreItems = [
+  { to: '/analyze', icon: Table2, label: 'Query' },
+  { to: '/boards', icon: LayoutGrid, label: 'Boards' },
+  { to: '/claude-code', icon: Terminal, label: 'Claude Code' },
 ]
 
 export function MobileTabBar(): ReactElement {
@@ -230,6 +238,28 @@ export function MobileTabBar(): ReactElement {
             <Target size={18} />
             SLOs
           </NavLink>
+          {extraMoreItems.map(({ to, icon: Icon, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              onClick={() => setMoreOpen(false)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.625rem',
+                width: '100%',
+                padding: '0.625rem 0.75rem',
+                borderRadius: '0.5rem',
+                fontSize: '0.875rem',
+                fontWeight: 500,
+                color: 'var(--text-muted)',
+                textDecoration: 'none',
+              }}
+            >
+              <Icon size={18} />
+              {label}
+            </NavLink>
+          ))}
           <NavLink
             to="/settings"
             onClick={() => setMoreOpen(false)}
