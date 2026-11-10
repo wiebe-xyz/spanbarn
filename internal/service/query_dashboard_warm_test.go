@@ -111,3 +111,32 @@ func TestWarmDashboardScansOnTheWarmersBudget(t *testing.T) {
 		t.Errorf("request without a deadline: err = %v, want the per-query timeout", err)
 	}
 }
+
+// The services page asks for its window and the one before it. The wide ones
+// are the slow cold reads (#457), so the warm fills both. With the query
+// timeout already expired after the warm, only a cache hit can answer.
+func TestWarmServicesFillsTheWindowAndThePreviousOne(t *testing.T) {
+	repo := setupTestRepo(t)
+	seedDashboardSpans(t, repo)
+	svc := NewQueryService(repo, nil, nil)
+	svc.SetCache(cache.New(cache.NewMemoryStore(), time.Minute))
+
+	base := time.Now().UTC().Add(16 * time.Minute).Truncate(dashboardCoarseGrain)
+	if err := svc.WarmServices(context.Background(), base.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	repo.SetQueryTimeout(-time.Second)
+
+	viewer := base.Add(10 * time.Minute)
+	for _, w := range servicesWarmWindows {
+		if _, err := svc.ListServices(context.Background(), 0, viewer.Add(-w), viewer, true); err != nil {
+			t.Errorf("%s window: %v, want a cache hit", w, err)
+		}
+		if _, err := svc.ListServices(context.Background(), 0, viewer.Add(-2*w), viewer.Add(-w), true); err != nil {
+			t.Errorf("%s previous window: %v, want a cache hit", w, err)
+		}
+	}
+	if _, err := svc.ListServices(context.Background(), 0, viewer.Add(-time.Hour), viewer, true); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("a window nobody warmed: err = %v, want the expired timeout", err)
+	}
+}

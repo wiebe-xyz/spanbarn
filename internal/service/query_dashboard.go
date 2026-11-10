@@ -332,3 +332,25 @@ func (s *QueryService) WarmDashboard(ctx context.Context, now time.Time) error {
 	note(err)
 	return errors.Join(errs...)
 }
+
+// servicesWarmWindows are the services page ranges wide enough to snap to the
+// coarse grain, where one warm per period serves every viewer in it. The
+// shorter ranges snap to seconds and would be stale again before a viewer came.
+var servicesWarmWindows = []time.Duration{24 * time.Hour, 48 * time.Hour, 7 * 24 * time.Hour}
+
+// WarmServices fills the cache for the services page over all projects: each
+// window of servicesWarmWindows and the equally wide window before it, which
+// the page reads to show the change. The cold read of the wider windows is the
+// slow one (#457), and the page asks for both at once.
+func (s *QueryService) WarmServices(ctx context.Context, now time.Time) error {
+	var errs []error
+	for _, w := range servicesWarmWindows {
+		from := now.Add(-w)
+		for _, win := range [][2]time.Time{{from, now}, {from.Add(-w), from}} {
+			if _, err := s.ListServices(ctx, 0, win[0], win[1], true); err != nil {
+				errs = append(errs, fmt.Errorf("services %s: %w", w, err))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}

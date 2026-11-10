@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
@@ -139,7 +140,8 @@ func nextDashboardWarm(now time.Time, jitter time.Duration) time.Time {
 	return now.Truncate(dashboardWarmPeriod).Add(dashboardWarmPeriod + dashboardWarmSettle + jitter)
 }
 
-// WarmDashboardLoop warms the dashboard's landing view once at start and then
+// WarmDashboardLoop warms the dashboard's landing view and the services page
+// windows once at start and then
 // once per period, until ctx is cancelled. Failures log at warn: a missed warm
 // costs the next viewer a slow load and loses no data.
 func WarmDashboardLoop(ctx context.Context, qs *service.QueryService, logger *slog.Logger) {
@@ -152,7 +154,8 @@ func WarmDashboardLoop(ctx context.Context, qs *service.QueryService, logger *sl
 			start := time.Now()
 			wctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 			defer cancel()
-			if err := qs.WarmDashboard(wctx, start); err != nil {
+			err := errors.Join(qs.WarmDashboard(wctx, start), qs.WarmServices(wctx, start))
+			if err != nil {
 				if ctx.Err() == nil {
 					logger.Warn("warm dashboard: failed", "elapsed", time.Since(start), "error", err)
 				}
