@@ -1,31 +1,12 @@
 import { type ReactElement, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Activity, LayoutDashboard, Table2, LayoutGrid, BarChart2, Bell, GitBranch, Network, Search, Database, BrainCircuit, Radio, Settings, LogOut, Globe, ScrollText, Target, Terminal } from 'lucide-react'
+import { Activity, LogOut } from 'lucide-react'
 import { useIambarnSession, iambarnLogout, useIambarnProfile } from '../api/iambarnWidget'
 import { isOIDCSession } from '../api/clientConfig'
 import { IambarnProfileModal } from './IambarnProfileModal'
 import { MobileTabBar } from './MobileTabBar'
 import { PWAInstallBanner } from './PWAInstallBanner'
-
-const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/services', icon: Activity, label: 'Services' },
-  { to: '/traces', icon: Search, label: 'Traces' },
-  { to: '/analyze', icon: Table2, label: 'Query' },
-  { to: '/boards', icon: LayoutGrid, label: 'Boards' },
-  { to: '/dependencies', icon: GitBranch, label: 'Dependencies' },
-  { to: '/service-map', icon: Network, label: 'Service Map' },
-  { to: '/logs', icon: ScrollText, label: 'Logs' },
-  { to: '/live', icon: Radio, label: 'Live Tail' },
-  { to: '/database', icon: Database, label: 'Database' },
-  { to: '/prompts', icon: BrainCircuit, label: 'Prompts' },
-  { to: '/pages', icon: Globe, label: 'Pages' },
-  { to: '/metrics', icon: BarChart2, label: 'Metrics' },
-  { to: '/claude-code', icon: Terminal, label: 'Claude Code' },
-  { to: '/alerts', icon: Bell, label: 'Alerts' },
-  { to: '/slos', icon: Target, label: 'SLOs' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
-]
+import { navManifest } from '../navManifest'
 
 export function DashboardLayout(): ReactElement {
   const navigate = useNavigate()
@@ -82,7 +63,7 @@ export function DashboardLayout(): ReactElement {
 
         {/* Navigation */}
         <nav style={{ flex: 1, padding: '0.75rem 0.5rem' }}>
-          {navItems.map(({ to, icon: Icon, label }) => (
+          {navManifest.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
