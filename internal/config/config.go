@@ -163,7 +163,7 @@ type Config struct {
 	SpanRollupMaxServices    int  // SPANBARN_SPAN_ROLLUP_MAX_SERVICES — services per project per hour before the rest fold into ~other (default 200)
 	SpanEdgeMaxTargets       int  // SPANBARN_SPAN_EDGE_MAX_TARGETS — call targets per (project, source service) per hour in span_edges before the rest fold into ~other (default 200)
 	SpanRollupHTTPStatus     bool // SPANBARN_SPAN_ROLLUP_HTTP_STATUS — split root span rows by response code; off writes 0 (default 1)
-	SpanRollupReads          bool // SPANBARN_SPAN_ROLLUP_READS — auto (default) reads dashboard cards and trace groups from span_rollups where they cover the range; off reads raw spans
+	SpanRollupReads          bool // SPANBARN_SPAN_ROLLUP_READS — auto (default) reads dashboard cards and trace groups from span_rollups where they cover the range; off, 0, false or no reads raw spans
 	SpanStagingEnabled       bool // SPANBARN_SPAN_STAGING_ENABLED — when true, the redis worker appends consumed spans to spans_staging (cheap) and a background flusher does accumulation+classification+indexed storage per complete trace off the hot path (default false)
 	TraceBufferWindowSeconds int  // SPANBARN_TRACE_BUFFER_WINDOW_SECONDS — how long a trace's spans buffer in spans_staging before the flusher treats the trace as complete (default 90)
 	StagingMaxAgeSeconds     int  // SPANBARN_STAGING_MAX_AGE_SECONDS — hard backstop: spans_staging rows older than this are dropped unconditionally so the table can never grow without bound (default 900)
@@ -241,7 +241,7 @@ func Load() Config {
 		SessionTTLSeconds:   getenvInt("SPANBARN_SESSION_TTL_SECONDS", 43200),
 		MaxBodyBytes:        getenvInt64("SPANBARN_MAX_BODY_BYTES", DefaultMaxBodyBytes),
 		MaxSpoolBytes:       getenvInt64("SPANBARN_MAX_SPOOL_BYTES", 0),
-		IngestRejectDiskPct: getenvInt("SPANBARN_INGEST_REJECT_DISK_PCT", 95),
+		IngestRejectDiskPct: getenvIntAllowZero("SPANBARN_INGEST_REJECT_DISK_PCT", 95),
 		Retention: RetentionConfig{
 			FullHours:          getenvInt("SPANBARN_RETENTION_FULL_HOURS", 0),
 			AggregatedDays:     getenvInt("SPANBARN_RETENTION_AGGREGATED_DAYS", 30),
@@ -258,7 +258,7 @@ func Load() Config {
 			DiskElevatedPct:    getenvInt("SPANBARN_RETENTION_DISK_ELEVATED_PCT", 75),
 			DiskCriticalPct:    getenvInt("SPANBARN_RETENTION_DISK_CRITICAL_PCT", 90),
 			DiskTargetPct:      getenvInt("SPANBARN_RETENTION_DISK_TARGET_PCT", 70),
-			BallastMB:          getenvInt("SPANBARN_DB_BALLAST_MB", 256),
+			BallastMB:          getenvIntAllowZero("SPANBARN_DB_BALLAST_MB", 256),
 
 			RollupDays:            getenvInt("SPANBARN_METRIC_ROLLUP_RETENTION_DAYS", 2),
 			RollupHourlyDays:      getenvInt("SPANBARN_METRIC_ROLLUP_HOURLY_DAYS", 30),
@@ -285,9 +285,9 @@ func Load() Config {
 		SpanRollupMaxServices:        getenvInt("SPANBARN_SPAN_ROLLUP_MAX_SERVICES", 200),
 		SpanEdgeMaxTargets:           getenvInt("SPANBARN_SPAN_EDGE_MAX_TARGETS", 200),
 		SpanRollupHTTPStatus:         getenvBool("SPANBARN_SPAN_ROLLUP_HTTP_STATUS", true),
-		SpanRollupReads:              getenv("SPANBARN_SPAN_ROLLUP_READS", "auto") != "off",
+		SpanRollupReads:              getenvBool("SPANBARN_SPAN_ROLLUP_READS", true),
 		TraceBufferWindowSeconds:     getenvInt("SPANBARN_TRACE_BUFFER_WINDOW_SECONDS", 90),
-		TraceBufferMaxSpans:          getenvInt("SPANBARN_TRACE_BUFFER_MAX_SPANS", 50000),
+		TraceBufferMaxSpans:          getenvIntAllowZero("SPANBARN_TRACE_BUFFER_MAX_SPANS", 50000),
 		TraceBufferTTLSeconds:        getenvInt("SPANBARN_TRACE_BUFFER_TTL_SECONDS", 600),
 		TraceBufferRootGraceSeconds:  getenvIntAllowZero("SPANBARN_TRACE_BUFFER_ROOT_GRACE_SECONDS", 30),
 		StagingMaxAgeSeconds:         getenvInt("SPANBARN_STAGING_MAX_AGE_SECONDS", 900),
@@ -316,7 +316,7 @@ func Load() Config {
 		APIRatePerMinute:    getenvInt("SPANBARN_API_RATE_PER_MINUTE", 300),
 		MetricsToken:        os.Getenv("SPANBARN_METRICS_TOKEN"),
 		QueryTimeoutSeconds: getenvInt("SPANBARN_QUERY_TIMEOUT_SECONDS", 30),
-		ReadBudgetSeconds:   getenvInt("SPANBARN_READ_BUDGET_SECONDS", 10),
+		ReadBudgetSeconds:   getenvIntAllowZero("SPANBARN_READ_BUDGET_SECONDS", 10),
 		RedisURL:            os.Getenv("SPANBARN_REDIS_URL"),
 		RedisQueueURL:       os.Getenv("SPANBARN_REDIS_QUEUE_URL"),
 		CacheTTLSeconds:     getenvInt("SPANBARN_CACHE_TTL_SECONDS", 30),
