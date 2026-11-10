@@ -21,11 +21,15 @@ import (
 
 // OIDCConfig is the static configuration for the OIDC login flow.
 type OIDCConfig struct {
-	Issuer        string // iambarn issuer URL, e.g. https://iam.wiebe.xyz
-	ClientID      string
-	ClientSecret  string
-	RedirectURL   string // e.g. https://spanbarn.wiebe.xyz/api/v1/oidc/callback
-	RequiredGroup string // group slug that grants access; bypass roles always win
+	Issuer       string // iambarn issuer URL, e.g. https://iam.wiebe.xyz
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string // e.g. https://spanbarn.wiebe.xyz/api/v1/oidc/callback
+
+	// RequiredOrganizationID is the IamBarn organization this instance belongs
+	// to. Roles only mean something inside it, so a token from any other
+	// organization is refused, and an empty value refuses every token.
+	RequiredOrganizationID string
 
 	// ResourceAudiences lists the audiences accepted on IamBarn access-token
 	// JWTs when SpanBarn acts as an OAuth2 resource server (the `sb` CLI's
@@ -70,9 +74,6 @@ type OIDCClient struct {
 // NewOIDCClient returns a client. Discovery is deferred to the first call so
 // that an unreachable issuer at startup does not crash the process.
 func NewOIDCClient(cfg OIDCConfig) *OIDCClient {
-	if cfg.RequiredGroup == "" {
-		cfg.RequiredGroup = "spanbarn-users"
-	}
 	return &OIDCClient{cfg: cfg, timeout: 10 * time.Second}
 }
 
@@ -164,9 +165,8 @@ type RefreshedTokens struct {
 	RefreshToken string
 	ExpiresAt    time.Time
 	// IDToken and Claims are set when the token response included a fresh
-	// id_token (iambarn does on refresh). Claims lets the caller re-snapshot
-	// groups/roles so central role changes propagate on the next refresh
-	// instead of the next login.
+	// id_token. Claims lets the caller re-snapshot groups/roles so central role
+	// changes propagate on the next refresh instead of the next login.
 	IDToken string
 	Claims  *OIDCClaims
 }
@@ -341,7 +341,7 @@ func (c *OIDCClient) VerifyLogoutToken(ctx context.Context, raw string) (LogoutC
 // `sb` CLI as a Bearer token) and returns its claims. It checks the signature
 // and issuer/expiry via the issuer's JWKS, requires token_use=="access_token",
 // and requires one of the token's audiences to be in ResourceAudiences (or to
-// equal the configured ClientID). Authorization (role/group) is left to the
+// equal the configured ClientID). Authorization (organization/role) is left to the
 // caller via Allowed.
 func (c *OIDCClient) VerifyAccessToken(ctx context.Context, raw string) (OIDCClaims, error) {
 	if err := c.ensureReady(ctx); err != nil {
@@ -386,17 +386,15 @@ func audienceAllowed(tokenAud, allowed []string) bool {
 	return false
 }
 
-// Allowed returns true if the claims grant access to this barn.
-// Owner/organization_admin/operator roles bypass the group check.
+// Allowed returns true if the claims grant access to this barn: an
+// owner/organization_admin/operator role in the required organization.
 func (c *OIDCClient) Allowed(claims OIDCClaims) bool {
+	if c.cfg.RequiredOrganizationID == "" || claims.OrganizationID != c.cfg.RequiredOrganizationID {
+		return false
+	}
 	for _, role := range claims.Roles {
 		switch role {
 		case "owner", "organization_admin", "operator":
-			return true
-		}
-	}
-	for _, g := range claims.Groups {
-		if g == c.cfg.RequiredGroup {
 			return true
 		}
 	}
@@ -459,6 +457,7 @@ func (c *OIDCClient) ensureReady(ctx context.Context) error {
 // about.
 type OIDCClaims struct {
 	Subject           string   `json:"sub"`
+	OrganizationID    string   `json:"organization_id"`
 	SessionID         string   `json:"sid"` // IdP session id; keys back-channel logout
 	Email             string   `json:"email"`
 	PreferredUsername string   `json:"preferred_username"`

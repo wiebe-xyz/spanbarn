@@ -80,7 +80,7 @@ type OIDCConfig struct {
 	ClientID          string   // SPANBARN_OIDC_CLIENT_ID
 	ClientSecret      string   // SPANBARN_OIDC_CLIENT_SECRET
 	RedirectURL       string   // SPANBARN_OIDC_REDIRECT_URL
-	RequiredGroup     string   // SPANBARN_OIDC_REQUIRED_GROUP — defaults to "spanbarn-users"
+	OrganizationID    string   // SPANBARN_OIDC_ORGANIZATION_ID — unset refuses every OIDC sign-in
 	ResourceAudiences []string // SPANBARN_OIDC_RESOURCE_AUDIENCES — CSV of audiences accepted on IamBarn access tokens (sb CLI)
 	CLIClientID       string   // SPANBARN_OIDC_CLI_CLIENT_ID — public IamBarn client the sb device-code flow uses
 	// PostLogoutRedirectURI is where IamBarn sends the browser back after an
@@ -327,7 +327,7 @@ func Load() Config {
 			ClientID:              os.Getenv("SPANBARN_OIDC_CLIENT_ID"),
 			ClientSecret:          os.Getenv("SPANBARN_OIDC_CLIENT_SECRET"),
 			RedirectURL:           os.Getenv("SPANBARN_OIDC_REDIRECT_URL"),
-			RequiredGroup:         getenv("SPANBARN_OIDC_REQUIRED_GROUP", "spanbarn-users"),
+			OrganizationID:        os.Getenv("SPANBARN_OIDC_ORGANIZATION_ID"),
 			CLIClientID:           os.Getenv("SPANBARN_OIDC_CLI_CLIENT_ID"),
 			PostLogoutRedirectURI: os.Getenv("SPANBARN_OIDC_POST_LOGOUT_REDIRECT_URI"),
 			RefreshGraceSeconds:   getenvInt("SPANBARN_OIDC_REFRESH_GRACE_SECONDS", 3600),

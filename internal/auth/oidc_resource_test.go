@@ -80,9 +80,10 @@ func (it *oidcTestIssuer) sign(t *testing.T, claims map[string]any) string {
 
 func (it *oidcTestIssuer) client(aud ...string) *OIDCClient {
 	return NewOIDCClient(OIDCConfig{
-		Issuer:            it.server.URL,
-		ClientID:          "spanbarn-web",
-		ResourceAudiences: aud,
+		Issuer:                 it.server.URL,
+		ClientID:               "spanbarn-web",
+		ResourceAudiences:      aud,
+		RequiredOrganizationID: "org_home",
 	})
 }
 
@@ -96,6 +97,8 @@ func baseClaims(issuer string) map[string]any {
 		"token_use": "access_token",
 		"roles":     []string{"operator"},
 		"email":     "wiebe@wiebe.xyz",
+
+		"organization_id": "org_home",
 	}
 }
 
@@ -177,7 +180,23 @@ func TestVerifyAccessToken_NotAllowedRole(t *testing.T) {
 		t.Fatalf("token should verify, got %v", err)
 	}
 	if oc.Allowed(claims) {
-		t.Error("member role without group should not be allowed")
+		t.Error("member role should not be allowed")
+	}
+}
+
+func TestVerifyAccessToken_OtherOrganizationNotAllowed(t *testing.T) {
+	it := newOIDCTestIssuer(t)
+	oc := it.client("spanbarn-cli")
+	c := baseClaims(it.server.URL)
+	c["organization_id"] = "org_other"
+	c["roles"] = []string{"owner"}
+
+	claims, err := oc.VerifyAccessToken(context.Background(), it.sign(t, c))
+	if err != nil {
+		t.Fatalf("token should verify, got %v", err)
+	}
+	if oc.Allowed(claims) {
+		t.Error("owner of another organization should not be allowed")
 	}
 }
 

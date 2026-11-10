@@ -126,12 +126,12 @@ func SessionOrReadKey(sessions *SessionService, authorizer *auth.Authorizer, oid
 							return
 						}
 						if !oc.Allowed(claims) {
-							writeError(w, http.StatusForbidden, "not authorized for SpanBarn", "")
+							writeError(w, http.StatusForbidden, oidcAccessDenied, "")
 							return
 						}
 						// OIDC access-token users are read-only, exactly like
 						// read-scoped API keys (serveAPIKey below). Without this
-						// gate a token authorized only for the read group could
+						// gate an authorized token could
 						// reach the mutating project routes mounted on this same
 						// middleware (DELETE/approve/e2e/verbose).
 						if r.Method != http.MethodGet && r.Method != http.MethodHead {
