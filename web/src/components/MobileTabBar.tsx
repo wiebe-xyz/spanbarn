@@ -1,24 +1,11 @@
 import { useRef, useState, type ReactElement } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Activity, LayoutDashboard, BarChart2, Bell, Search, GitBranch, BrainCircuit, MoreHorizontal, Settings, Table2, LayoutGrid, Terminal, Database, Radio, Network, Globe, LogOut, ScrollText, Target } from 'lucide-react'
+import { MoreHorizontal, LogOut } from 'lucide-react'
 import { useIambarnSession, iambarnLogout, useIambarnProfile } from '../api/iambarnWidget'
 import { isOIDCSession } from '../api/clientConfig'
 import { IambarnProfileModal } from './IambarnProfileModal'
-
-const tabs = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/traces', icon: Search, label: 'Traces' },
-  { to: '/dependencies', icon: GitBranch, label: 'Deps' },
-  { to: '/prompts', icon: BrainCircuit, label: 'Prompts' },
-]
-
-// Pages the desktop sidebar lists that the tabs and the hand-written links below
-// do not reach. A single manifest for both navs is tracked in #526.
-const extraMoreItems = [
-  { to: '/analyze', icon: Table2, label: 'Query' },
-  { to: '/boards', icon: LayoutGrid, label: 'Boards' },
-  { to: '/claude-code', icon: Terminal, label: 'Claude Code' },
-]
+import { MenuButton, MenuLink } from './MobileMenuItems'
+import { mobileMoreItems, mobileTabs } from '../navManifest'
 
 export function MobileTabBar(): ReactElement {
   const [moreOpen, setMoreOpen] = useState(false)
@@ -67,239 +54,15 @@ export function MobileTabBar(): ReactElement {
             boxShadow: '0 -4px 24px rgba(0, 0, 0, 0.4)',
           }}
         >
-          <NavLink
-            to="/services"
-            onClick={() => setMoreOpen(false)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              textDecoration: 'none',
-            }}
-          >
-            <Activity size={18} />
-            Services
-          </NavLink>
-          <NavLink
-            to="/logs"
-            onClick={() => setMoreOpen(false)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              textDecoration: 'none',
-            }}
-          >
-            <ScrollText size={18} />
-            Logs
-          </NavLink>
-          <NavLink
-            to="/live"
-            onClick={() => setMoreOpen(false)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              textDecoration: 'none',
-            }}
-          >
-            <Radio size={18} />
-            Live Tail
-          </NavLink>
-          <NavLink
-            to="/service-map"
-            onClick={() => setMoreOpen(false)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              textDecoration: 'none',
-            }}
-          >
-            <Network size={18} />
-            Service Map
-          </NavLink>
-          <NavLink
-            to="/database"
-            onClick={() => setMoreOpen(false)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              textDecoration: 'none',
-            }}
-          >
-            <Database size={18} />
-            Database
-          </NavLink>
-          <NavLink
-            to="/pages"
-            onClick={() => setMoreOpen(false)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              textDecoration: 'none',
-            }}
-          >
-            <Globe size={18} />
-            Pages
-          </NavLink>
-          <NavLink
-            to="/metrics"
-            onClick={() => setMoreOpen(false)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              textDecoration: 'none',
-            }}
-          >
-            <BarChart2 size={18} />
-            Metrics
-          </NavLink>
-          <NavLink
-            to="/alerts"
-            onClick={() => setMoreOpen(false)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              textDecoration: 'none',
-            }}
-          >
-            <Bell size={18} />
-            Alerts
-          </NavLink>
-          <NavLink
-            to="/slos"
-            onClick={() => setMoreOpen(false)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              textDecoration: 'none',
-            }}
-          >
-            <Target size={18} />
-            SLOs
-          </NavLink>
-          {extraMoreItems.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              onClick={() => setMoreOpen(false)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.625rem',
-                width: '100%',
-                padding: '0.625rem 0.75rem',
-                borderRadius: '0.5rem',
-                fontSize: '0.875rem',
-                fontWeight: 500,
-                color: 'var(--text-muted)',
-                textDecoration: 'none',
-              }}
-            >
-              <Icon size={18} />
-              {label}
-            </NavLink>
+          {mobileMoreItems.map(({ to, icon, label }) => (
+            <MenuLink key={to} to={to} icon={icon} label={label} onNavigate={() => setMoreOpen(false)} />
           ))}
-          <NavLink
-            to="/settings"
-            onClick={() => setMoreOpen(false)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              textDecoration: 'none',
-            }}
-          >
-            <Settings size={18} />
-            Settings
-          </NavLink>
           {oidc && (
-            <button
-              ref={profileBtnRef}
+            <MenuButton
+              buttonRef={profileBtnRef}
               onClick={() => {
                 setMoreOpen(false)
                 setProfileOpen(true)
-              }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.625rem',
-                width: '100%',
-                padding: '0.625rem 0.75rem',
-                borderRadius: '0.5rem',
-                fontSize: '0.875rem',
-                fontWeight: 500,
-                color: 'var(--text-muted)',
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                textAlign: 'left',
               }}
             >
               {profile?.picture ? (
@@ -320,32 +83,17 @@ export function MobileTabBar(): ReactElement {
                 </div>
               )}
               {profile?.name || profile?.email || 'Account'}
-            </button>
+            </MenuButton>
           )}
-          <button
+          <MenuButton
             onClick={() => {
               setMoreOpen(false)
               void handleLogout()
             }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              width: '100%',
-              padding: '0.625rem 0.75rem',
-              borderRadius: '0.5rem',
-              fontSize: '0.875rem',
-              fontWeight: 500,
-              color: 'var(--text-muted)',
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
           >
             <LogOut size={18} />
             Logout
-          </button>
+          </MenuButton>
         </div>
       )}
 
@@ -369,7 +117,7 @@ export function MobileTabBar(): ReactElement {
           height: 'calc(60px + env(safe-area-inset-bottom, 0px))',
         }}
       >
-        {tabs.map(({ to, icon: Icon, label }) => (
+        {mobileTabs.map(({ to, icon: Icon, label, tabLabel }) => (
           <NavLink
             key={to}
             to={to}
@@ -390,7 +138,7 @@ export function MobileTabBar(): ReactElement {
             })}
           >
             <Icon size={22} />
-            {label}
+            {tabLabel ?? label}
           </NavLink>
         ))}
         <button
