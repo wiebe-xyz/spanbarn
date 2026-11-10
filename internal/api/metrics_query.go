@@ -180,6 +180,8 @@ type metricRequest struct {
 	from, to  time.Time
 	labels    map[string]string
 	groupBy   []string
+	// totals marks a sum over the range, which reads the hour tier from a day on.
+	totals bool
 }
 
 // cacheKey names every input of the read except the range.
@@ -237,7 +239,7 @@ func parseMetricRequest(w http.ResponseWriter, r *http.Request, defaultLimit int
 
 // readMetricQuery reads the data of req over [from, to].
 func (h *metricsQueryHandlers) readMetricQuery(ctx context.Context, req metricRequest, from, to time.Time) (metricQuery, error) {
-	metricType, unit, in, step, err := h.readMetricInput(ctx, req.projectID, req.name, from, to, req.labels, req.limit)
+	metricType, unit, in, step, err := h.readMetricInput(ctx, req.projectID, req.name, from, to, req.labels, req.limit, req.totals)
 	if err != nil {
 		return metricQuery{}, err
 	}
@@ -291,15 +293,15 @@ const filteredFineTierWidth = 24 * time.Hour
 // reads rollups: raw points expire long before the tiers do, and an empty result
 // there would look like a metric that reported nothing. The returned step is 0
 // for raw points.
-func (h *metricsQueryHandlers) readMetricInput(ctx context.Context, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, int64, error) {
+func (h *metricsQueryHandlers) readMetricInput(ctx context.Context, projectID int64, name string, from, to time.Time, labels map[string]string, limit int, totals bool) (string, string, []metrics.InputPoint, int64, error) {
 	if to.Sub(from) > rollupQueryThreshold {
-		return h.rollupInput(ctx, projectID, name, from, to, labels, limit)
+		return h.rollupInput(ctx, projectID, name, from, to, labels, limit, totals)
 	}
 	metricType, unit, in, err := h.rawInput(ctx, projectID, name, from, to, labels, limit)
 	if err != nil || len(in) > 0 {
 		return metricType, unit, in, 0, err
 	}
-	return h.rollupInput(ctx, projectID, name, from, to, labels, limit)
+	return h.rollupInput(ctx, projectID, name, from, to, labels, limit, totals)
 }
 
 // rawInput loads raw metric data points and maps them to derivation input.
@@ -359,9 +361,18 @@ func rollupTierSteps(width time.Duration) []int64 {
 // filtered read too wide for it. Falling back to the whole range of the 5-minute
 // tier would turn every filter that matches nothing into a timeout, so the hour
 // tier read takes only its uncompacted tail from there (hourTierWithTail).
-func tierStepsForRead(width time.Duration, labels map[string]string) []int64 {
+//
+// A totals read starts at the hour tier from a day on, filtered or not. It sums
+// every bucket in the range and has no chart to keep smooth, so the 12 times
+// fewer rows are all gain: a delta total is the same sum either way, and a
+// cumulative one only loses a reset that happened inside one hour.
+func tierStepsForRead(width time.Duration, labels map[string]string, totals bool) []int64 {
 	steps := rollupTierSteps(width)
-	if len(labels) > 0 && width > filteredFineTierWidth && steps[0] == rollup.Step5m {
+	wide := len(labels) > 0 && width > filteredFineTierWidth
+	if totals && width >= filteredFineTierWidth {
+		wide = true
+	}
+	if wide && steps[0] == rollup.Step5m {
 		return steps[1:]
 	}
 	return steps
@@ -373,12 +384,12 @@ func tierStepsForRead(width time.Duration, labels map[string]string) []int64 {
 // the bucket-end cumulative value (so rate is derived across buckets),
 // distributions carry their merged extra. Each read starts at the bucket holding
 // from, so a range narrower than a coarse bucket still finds that bucket.
-func (h *metricsQueryHandlers) rollupInput(ctx context.Context, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, int64, error) {
+func (h *metricsQueryHandlers) rollupInput(ctx context.Context, projectID int64, name string, from, to time.Time, labels map[string]string, limit int, totals bool) (string, string, []metrics.InputPoint, int64, error) {
 	filter := service.MetricRollupFilter{
 		ProjectID: projectID, Name: name, From: from, To: to, Attributes: labels, Limit: limit,
 	}
 	fineRead := false
-	for _, step := range tierStepsForRead(to.Sub(from), labels) {
+	for _, step := range tierStepsForRead(to.Sub(from), labels, totals) {
 		filter.From = rollup.TruncateBucket(from, step)
 		var rows []service.MetricRollup
 		var err error
