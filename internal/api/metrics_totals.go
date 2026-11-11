@@ -30,6 +30,7 @@ func (h *metricsQueryHandlers) handleMetricTotals(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
+	req.totals = true
 	// The same page asks for several metrics and a reload asks again, each a
 	// scan of up to the limit's worth of points, so the result is kept per
 	// window like the service reads are.

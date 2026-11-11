@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/rollup"
 )
 
 func TestMetricTotalsPerSession(t *testing.T) {
@@ -146,5 +148,62 @@ func TestMetricTotalsCacheKeepsGroupsApart(t *testing.T) {
 	}
 	if len(onlyA.Groups) != 1 || onlyA.Groups[0].Total != 1 {
 		t.Fatalf("filtered %+v, want one group with 1", onlyA.Groups)
+	}
+}
+
+// seedDeltaTotals stores delta sum buckets of value v in one tier.
+func seedDeltaTotals(t *testing.T, repo *repository.Repository, step int64, v float64, at ...time.Time) {
+	t.Helper()
+	rows := make([]repository.MetricRollup, 0, len(at))
+	for _, b := range at {
+		rows = append(rows, repository.MetricRollup{
+			ProjectID: 1, Name: "t", Type: "sum", Unit: "USD", Temporality: "delta",
+			AttrFingerprint: "a", Attributes: `{"svc":"a"}`, Bucket: b, StepSeconds: step, Count: 1, Sum: v, Last: v,
+		})
+	}
+	var err error
+	if step == rollup.Step5m {
+		err = repo.UpsertMetricRollups(rows)
+	} else {
+		err = repo.UpsertCoarseRollups(context.Background(), rows)
+	}
+	if err != nil {
+		t.Fatalf("seed step %d: %v", step, err)
+	}
+}
+
+// A day or more of totals reads the hour tier plus the 5-minute buckets the
+// compactor has not reached, instead of every 5-minute bucket of the range
+// (#457). The 5-minute tier still holds the compacted buckets, so reading it
+// would count them as well.
+func TestWideTotalsReadTheHourTier(t *testing.T) {
+	srv, sm, repo := setupMetricsQueryServer(t)
+	through := rangeTestBase
+	hours := []time.Time{through.Add(-3 * time.Hour), through.Add(-2 * time.Hour), through.Add(-time.Hour)}
+	seedDeltaTotals(t, repo, rollup.StepHour, 10, hours...)
+	var fine []time.Time
+	for b := through.Add(-3 * time.Hour); !b.After(through.Add(5 * time.Minute)); b = b.Add(5 * time.Minute) {
+		fine = append(fine, b)
+	}
+	seedDeltaTotals(t, repo, rollup.Step5m, 1, fine...)
+	if err := repo.SetMetricRollupWatermark(context.Background(), rollup.Step5m, through); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, tc := range map[string]struct {
+		width time.Duration
+		want  float64
+	}{
+		"36 hours reads hours plus the tail": {36 * time.Hour, 32},
+		"12 hours keeps the 5-minute tier":   {12 * time.Hour, 38},
+	} {
+		t.Run(name, func(t *testing.T) {
+			url := "/api/v1/metrics/totals?name=t&project_id=1&from=" + through.Add(time.Hour-tc.width).Format(time.RFC3339) +
+				"&to=" + through.Add(time.Hour).Format(time.RFC3339)
+			resp := totalsFor(t, srv, sm, url)
+			if len(resp.Groups) != 1 || resp.Groups[0].Total != tc.want {
+				t.Fatalf("groups %+v, want one group of %v", resp.Groups, tc.want)
+			}
+		})
 	}
 }
