@@ -92,7 +92,9 @@ func TestAttachWindowLoss(t *testing.T) {
 
 // fakeLedgerReader serves rows and records the range it was asked for.
 type fakeLedgerReader struct {
-	rows     []model.SpanLedgerRow
+	rows []model.SpanLedgerRow
+	// later is what reads after the first return, when set.
+	later    []model.SpanLedgerRow
 	err      error
 	from, to time.Time
 	calls    int
@@ -101,6 +103,9 @@ type fakeLedgerReader struct {
 func (f *fakeLedgerReader) ListSpanLedger(_ context.Context, _ int64, from, to time.Time) ([]model.SpanLedgerRow, error) {
 	f.calls++
 	f.from, f.to = from, to
+	if f.calls > 1 && f.later != nil {
+		return f.later, f.err
+	}
 	return f.rows, f.err
 }
 
@@ -177,4 +182,51 @@ func TestSpanLedgerWatchRunStopsWithContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	w.Run(ctx)
+}
+
+// A bucket whose loss is gone at the second read was late, and one whose loss
+// is still there is logged with both counts.
+func TestSpanLedgerWatchRechecksBeforeLogging(t *testing.T) {
+	first := model.SpanLedgerRow{Bucket: 1_800_001_200, ProjectID: 81, Accepted: 100, Processed: 40}
+	cases := []struct {
+		name      string
+		later     model.SpanLedgerRow
+		wantError bool
+	}{
+		{"counts arrived late", model.SpanLedgerRow{Bucket: 1_800_001_200, ProjectID: 81, Accepted: 100, Processed: 100}, false},
+		{"loss persists", model.SpanLedgerRow{Bucket: 1_800_001_200, ProjectID: 81, Accepted: 100, Processed: 45}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			at := time.Unix(1_800_003_000, 0)
+			repo := &fakeLedgerReader{rows: []model.SpanLedgerRow{first}, later: []model.SpanLedgerRow{c.later}}
+			w, logs := newLedgerWatch(repo, noBacklog, &at)
+			w.SetRecheck(15 * time.Minute)
+
+			at = at.Add(5 * time.Minute)
+			w.Check(context.Background())
+			if strings.Contains(logs.String(), "level=ERROR") {
+				t.Fatalf("logged at the first read: %s", logs.String())
+			}
+
+			at = at.Add(10 * time.Minute)
+			w.Check(context.Background())
+			if strings.Contains(logs.String(), "level=ERROR") {
+				t.Fatalf("logged before the wait was over: %s", logs.String())
+			}
+
+			at = at.Add(6 * time.Minute)
+			w.Check(context.Background())
+			out := logs.String()
+			if got := strings.Contains(out, "level=ERROR"); got != c.wantError {
+				t.Fatalf("error logged = %v, want %v: %s", got, c.wantError, out)
+			}
+			if c.wantError && (!strings.Contains(out, "lost_spans=55") || !strings.Contains(out, "first_lost_spans=60")) {
+				t.Errorf("alert lacks the second and first counts: %s", out)
+			}
+			if !c.wantError && !strings.Contains(out, "counts arrived late") {
+				t.Errorf("late counts not noted: %s", out)
+			}
+		})
+	}
 }

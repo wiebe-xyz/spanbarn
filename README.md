@@ -280,6 +280,7 @@ project automatically.
 | `SPANBARN_RETENTION_DISK_ELEVATED_PCT` | `75` | Volume-used % at which retention halves its raw-telemetry windows (see [Disk-headroom guard](#disk-headroom-guard)) |
 | `SPANBARN_RETENTION_DISK_CRITICAL_PCT` | `90` | Volume-used % at which retention quarters its raw-telemetry windows |
 | `SPANBARN_INGEST_REJECT_DISK_PCT` | `95` | Volume-used % at which telemetry ingest returns 503; `0`/`100` disables |
+| `SPANBARN_SPAN_LEDGER_RECHECK_MINUTES` | `15` | Minutes the span ledger watch waits after first seeing loss in a bucket before it reads the bucket again; loss still there is logged at error level with both counts, `0` logs at the first read |
 | `SPANBARN_RETENTION_DISK_TARGET_PCT` | `70` | Volume-used % the emergency eviction loop reclaims back down to |
 | `SPANBARN_DB_BALLAST_MB` | `256` | Reserved disk space released so a full volume can delete its way out; `0` disables |
 | `SPANBARN_TRACE_BUFFER_MIN_TRACES_PER_HOUR` | `1` | Traces per project and root operation per hour the trace buffer keeps whatever the sample ratio says, so a daily job is stored. `0` disables. Traces whose root span exceeds `SPANBARN_SLOW_THRESHOLD_MS` are always kept. |

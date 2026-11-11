@@ -143,7 +143,12 @@ type Config struct {
 	// disk watermarks so retention gets a chance to reclaim first; 0 or 100
 	// disables shedding.
 	IngestRejectDiskPct int // SPANBARN_INGEST_REJECT_DISK_PCT
-	Retention           RetentionConfig
+	// SpanLedgerRecheckMinutes is how long the span ledger watch waits after it
+	// first sees a bucket with loss before it reads the bucket again. Only loss
+	// still there at the second read is logged at error level; 0 logs at the
+	// first read.
+	SpanLedgerRecheckMinutes int // SPANBARN_SPAN_LEDGER_RECHECK_MINUTES (default 15)
+	Retention                RetentionConfig
 	// Shards writes logs, metrics and prompt records to time-shard files under
 	// $SPANBARN_DB_PATH.d instead of main (specs/002-temporal-sharding). Off
 	// until reads and expiry cover the shards: with it on and neither in place,
@@ -234,14 +239,15 @@ func Load() Config {
 		APIKeySHA256: os.Getenv("SPANBARN_API_KEY_SHA256"),
 		// SPANBARN_SEED_KEYS: JSON array of projects + API key hashes to
 		// register on boot. Hashes, not keys — see internal/seed.
-		SeedKeys:            os.Getenv("SPANBARN_SEED_KEYS"),
-		AdminUsername:       os.Getenv("SPANBARN_ADMIN_USERNAME"),
-		AdminPassword:       os.Getenv("SPANBARN_ADMIN_PASSWORD"),
-		AdminPasswordBcrypt: os.Getenv("SPANBARN_ADMIN_PASSWORD_BCRYPT"),
-		SessionTTLSeconds:   getenvInt("SPANBARN_SESSION_TTL_SECONDS", 43200),
-		MaxBodyBytes:        getenvInt64("SPANBARN_MAX_BODY_BYTES", DefaultMaxBodyBytes),
-		MaxSpoolBytes:       getenvInt64("SPANBARN_MAX_SPOOL_BYTES", 0),
-		IngestRejectDiskPct: getenvIntAllowZero("SPANBARN_INGEST_REJECT_DISK_PCT", 95),
+		SeedKeys:                 os.Getenv("SPANBARN_SEED_KEYS"),
+		AdminUsername:            os.Getenv("SPANBARN_ADMIN_USERNAME"),
+		AdminPassword:            os.Getenv("SPANBARN_ADMIN_PASSWORD"),
+		AdminPasswordBcrypt:      os.Getenv("SPANBARN_ADMIN_PASSWORD_BCRYPT"),
+		SessionTTLSeconds:        getenvInt("SPANBARN_SESSION_TTL_SECONDS", 43200),
+		MaxBodyBytes:             getenvInt64("SPANBARN_MAX_BODY_BYTES", DefaultMaxBodyBytes),
+		MaxSpoolBytes:            getenvInt64("SPANBARN_MAX_SPOOL_BYTES", 0),
+		IngestRejectDiskPct:      getenvIntAllowZero("SPANBARN_INGEST_REJECT_DISK_PCT", 95),
+		SpanLedgerRecheckMinutes: getenvIntAllowZero("SPANBARN_SPAN_LEDGER_RECHECK_MINUTES", 15),
 		Retention: RetentionConfig{
 			FullHours:          getenvInt("SPANBARN_RETENTION_FULL_HOURS", 0),
 			AggregatedDays:     getenvInt("SPANBARN_RETENTION_AGGREGATED_DAYS", 30),
