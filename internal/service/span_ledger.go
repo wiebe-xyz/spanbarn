@@ -115,7 +115,22 @@ type SpanLedgerWatch struct {
 	// starts it at the buckets settling now, so a restart judges each bucket
 	// that was still open and does not repeat the ones before.
 	watermark time.Time
+	// recheck is how long after first seeing loss in a bucket the watch reads
+	// it again. Counts from a pod or the writer can land after the first read,
+	// so loss that is gone by then was lateness.
+	recheck time.Duration
+	pending []pendingLoss
 }
+
+// pendingLoss is a bucket the watch saw loss in and has not yet judged.
+type pendingLoss struct {
+	first  model.SpanLedgerRow
+	seenAt time.Time
+}
+
+// SetRecheck sets the wait between the first read of a bucket with loss and
+// the read that decides whether it is logged. Zero logs at the first read.
+func (w *SpanLedgerWatch) SetRecheck(d time.Duration) { w.recheck = d }
 
 // NewSpanLedgerWatch returns a watch. backlog reports the write queue's depth.
 func NewSpanLedgerWatch(repo SpanLedgerReader, backlog func(ctx context.Context) (int64, error), logger *slog.Logger) *SpanLedgerWatch {
@@ -147,6 +162,7 @@ func (w *SpanLedgerWatch) Run(ctx context.Context) {
 // Check judges the buckets that settled since the last check. When the writer
 // is behind, or the read fails, it leaves them for the next check.
 func (w *SpanLedgerWatch) Check(ctx context.Context) {
+	w.judgePending(ctx)
 	upTo := w.settledUpTo()
 	if !upTo.After(w.watermark) {
 		return
@@ -164,18 +180,74 @@ func (w *SpanLedgerWatch) Check(ctx context.Context) {
 		w.logger.Warn("span ledger: read failed, checking later", "error", err)
 		return
 	}
+	now := w.now()
 	for _, r := range rows {
-		if lost := spanLedgerLost(r, true); lost >= spanLedgerAlertSpans {
-			w.logger.Error("span ledger: accepted spans lost before storage",
-				"project_id", r.ProjectID,
-				"bucket", time.Unix(r.Bucket, 0).UTC().Format(time.RFC3339),
-				"lost_spans", lost,
-				"accepted", r.Accepted,
-				"lost_in_buffer", r.LostInBuffer,
-				"forwarded", r.Forwarded,
-				"processed", r.Processed,
-				"failed", r.Failed)
+		if spanLedgerLost(r, true) < spanLedgerAlertSpans {
+			continue
 		}
+		if w.recheck <= 0 {
+			w.logLoss(r, r)
+			continue
+		}
+		w.pending = append(w.pending, pendingLoss{first: r, seenAt: now})
 	}
 	w.watermark = upTo
+}
+
+// judgePending reads the buckets whose wait is over again. Loss still above
+// the threshold is logged with both counts; a bucket whose count dropped below
+// it was late and is noted at info level. A failed read keeps the bucket for
+// the next check.
+func (w *SpanLedgerWatch) judgePending(ctx context.Context) {
+	now := w.now()
+	var keep []pendingLoss
+	for _, p := range w.pending {
+		if now.Sub(p.seenAt) < w.recheck {
+			keep = append(keep, p)
+			continue
+		}
+		start := time.Unix(p.first.Bucket, 0)
+		rows, err := w.repo.ListSpanLedger(ctx, p.first.ProjectID, start, start.Add(time.Second))
+		if err != nil {
+			w.logger.Warn("span ledger: recheck read failed, checking later", "error", err)
+			keep = append(keep, p)
+			continue
+		}
+		second := p.first
+		second.Accepted, second.LostInBuffer, second.Forwarded = 0, 0, 0
+		second.Processed, second.Failed, second.SampledOut, second.ShedUnsampled = 0, 0, 0, 0
+		for _, r := range rows {
+			if r.ProjectID == p.first.ProjectID && r.Bucket == p.first.Bucket {
+				second = r
+			}
+		}
+		if spanLedgerLost(second, true) >= spanLedgerAlertSpans {
+			w.logLoss(p.first, second)
+			continue
+		}
+		w.logger.Info("span ledger: counts arrived late, no loss",
+			"project_id", p.first.ProjectID,
+			"bucket", time.Unix(p.first.Bucket, 0).UTC().Format(time.RFC3339),
+			"first_lost_spans", spanLedgerLost(p.first, true),
+			"second_lost_spans", spanLedgerLost(second, true))
+	}
+	w.pending = keep
+}
+
+// logLoss logs a bucket's loss at error level, which files a BugBarn issue,
+// with the counts of the first read and of the read that confirmed it.
+func (w *SpanLedgerWatch) logLoss(first, second model.SpanLedgerRow) {
+	w.logger.Error("span ledger: accepted spans lost before storage",
+		"project_id", second.ProjectID,
+		"bucket", time.Unix(second.Bucket, 0).UTC().Format(time.RFC3339),
+		"lost_spans", spanLedgerLost(second, true),
+		"accepted", second.Accepted,
+		"lost_in_buffer", second.LostInBuffer,
+		"forwarded", second.Forwarded,
+		"processed", second.Processed,
+		"failed", second.Failed,
+		"first_lost_spans", spanLedgerLost(first, true),
+		"first_accepted", first.Accepted,
+		"first_forwarded", first.Forwarded,
+		"first_processed", first.Processed)
 }
