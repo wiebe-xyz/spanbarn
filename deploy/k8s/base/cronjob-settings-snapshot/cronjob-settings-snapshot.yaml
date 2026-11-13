@@ -19,7 +19,7 @@ kind: CronJob
 metadata:
   name: spanbarn-settings-snapshot
 spec:
-  schedule: "0 * * * *"
+  schedule: "37 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
