@@ -451,8 +451,7 @@ func timeOpen(runs int, open func() (*sql.DB, error)) (timings, error) {
 	})
 }
 
-// attachLimit attaches the config file under extra aliases until SQLite
-// refuses, and returns how many attaches succeeded.
+// attachLimit attaches the config file until SQLite refuses; it returns the count.
 func attachLimit(ctx context.Context, root string) (int, error) {
 	path := filepath.Join(layoutDir(root, layoutShards), configFile)
 	db, err := engine.NewReadOnlyDB(path)
