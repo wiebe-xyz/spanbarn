@@ -14,19 +14,11 @@ import (
 
 func recordEndedSpans(t *testing.T) func() []sdktrace.ReadOnlySpan {
 	t.Helper()
-	sr := tracetest.NewSpanRecorder()
-	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	exp := tracetest.NewInMemoryExporter()
 	prev := otel.GetTracerProvider()
-	otel.SetTracerProvider(tp)
-	t.Cleanup(func() {
-		otel.SetTracerProvider(prev)
-		_ = tp.Shutdown(context.Background())
-	})
-
-	return func() []sdktrace.ReadOnlySpan {
-		_ = tp.ForceFlush(context.Background())
-		return sr.Ended()
-	}
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp)))
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+	return func() []sdktrace.ReadOnlySpan { return exp.GetSpans().Snapshots() }
 }
 
 // A statement cancelled by its caller, as a checkpoint is at every rollout, is

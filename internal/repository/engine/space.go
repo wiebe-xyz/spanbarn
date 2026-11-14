@@ -1,7 +1,8 @@
-package repository
+package engine
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"math"
 	"os"
@@ -64,7 +65,7 @@ func (s Space) UsedFraction() float64 {
 // that gate behaviour on pressure must not act on an unmeasured Space.
 func (s Space) Measured() bool { return s.VolumeBytes > 0 && s.PageSize > 0 }
 
-// DBSpace samples the database's space usage. It is cheap — a few pragmas
+// MeasureSpace samples the database's space usage. It is cheap — a few pragmas
 // that read each file's header plus one statfs — and safe to call on every
 // retention cycle.
 //
@@ -75,16 +76,19 @@ func (s Space) Measured() bool { return s.VolumeBytes > 0 && s.PageSize > 0 }
 // AutoVacuum is the lowest mode of any file, so a file that cannot return
 // freed pages still raises the warning.
 //
+// addExtra, when set, adds the space of files the handle does not attach (the
+// time shards) after the attached files are summed.
+//
 // dbPath may be ":memory:" or empty, in which case the filesystem figures are
 // left at zero and Measured() reports false.
-func (r *Repository) DBSpace(ctx context.Context, dbPath string) (Space, error) {
-	files, err := r.databaseFiles(ctx)
+func MeasureSpace(ctx context.Context, db *sql.DB, dbPath string, addExtra func(context.Context, *Space) error) (Space, error) {
+	files, err := databaseFiles(ctx, db)
 	if err != nil {
 		return Space{}, err
 	}
 	var s Space
 	for i, f := range files {
-		fs, err := r.fileSpace(ctx, f.schema)
+		fs, err := fileSpace(ctx, db, f.schema)
 		if err != nil {
 			return s, err
 		}
@@ -99,8 +103,8 @@ func (r *Repository) DBSpace(ctx context.Context, dbPath string) (Space, error) 
 	if dbPath == "" || dbPath == ":memory:" {
 		return s, nil
 	}
-	if r.shards != nil {
-		if err := r.shards.addSpace(ctx, &s); err != nil {
+	if addExtra != nil {
+		if err := addExtra(ctx, &s); err != nil {
 			return s, err
 		}
 	}
@@ -137,8 +141,8 @@ type databaseFile struct {
 
 // databaseFiles lists main and the attached files, main first. The temp
 // database is left out.
-func (r *Repository) databaseFiles(ctx context.Context) ([]databaseFile, error) {
-	rows, err := r.db.QueryContext(ctx, `PRAGMA database_list`)
+func databaseFiles(ctx context.Context, db *sql.DB) ([]databaseFile, error) {
+	rows, err := db.QueryContext(ctx, `PRAGMA database_list`)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +161,7 @@ func (r *Repository) databaseFiles(ctx context.Context) ([]databaseFile, error) 
 	return out, rows.Err()
 }
 
-func (r *Repository) fileSpace(ctx context.Context, schema string) (Space, error) {
+func fileSpace(ctx context.Context, db *sql.DB, schema string) (Space, error) {
 	var s Space
 	for _, p := range []struct {
 		pragma string
@@ -168,7 +172,7 @@ func (r *Repository) fileSpace(ctx context.Context, schema string) (Space, error
 		{"freelist_count", &s.FreelistCount},
 		{"auto_vacuum", &s.AutoVacuum},
 	} {
-		if err := r.db.QueryRowContext(ctx, "PRAGMA "+schema+"."+p.pragma).Scan(p.dest); err != nil {
+		if err := db.QueryRowContext(ctx, "PRAGMA "+schema+"."+p.pragma).Scan(p.dest); err != nil {
 			return s, err
 		}
 	}

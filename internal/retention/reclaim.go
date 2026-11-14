@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
@@ -48,7 +47,7 @@ func (w *RetentionWorker) ballastFor(cfg Config) *engine.Ballast {
 // committing one is itself a write; handing back the reserve is a metadata
 // operation that succeeds regardless and buys exactly the room needed to dig
 // out. The ballast is restored once we are back under target.
-func (w *RetentionWorker) reclaimToTarget(ctx context.Context, cfg Config, space repository.Space) error {
+func (w *RetentionWorker) reclaimToTarget(ctx context.Context, cfg Config, space engine.Space) error {
 	reporter, ok := w.repo.(spaceReporter)
 	if !ok {
 		return nil

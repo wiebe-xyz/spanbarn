@@ -165,7 +165,7 @@ func (m *ShardManager) fileBytes(file string) (db, wal int64) {
 // addSpace adds every shard file to s: file and WAL bytes, and the file's
 // pages in s's page size. Shards return freed pages to the volume through
 // incremental vacuum, so their freelist is left out.
-func (m *ShardManager) addSpace(ctx context.Context, s *Space) error {
+func (m *ShardManager) addSpace(ctx context.Context, s *engine.Space) error {
 	rows, err := m.rows(ctx)
 	if err != nil {
 		return err

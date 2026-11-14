@@ -98,5 +98,5 @@ One SQLite file made every heavy write contend with every read, and expiring a d
 ## Sources
 
 - [design.md](./design.md) and the results comment on [#235](https://github.com/wiebe-xyz/spanbarn/issues/235)
-- `internal/repository/{cutover,shards,shard_read,shards_expire,main_retire,space}.go`, `internal/repository/engine/ballast.go`, `internal/retention/`
+- `internal/repository/{cutover,shards,shard_read,shards_expire,main_retire,repo_space}.go`, `internal/repository/engine/{ballast,space}.go`, `internal/retention/`
 - `deploy/docs/compact-main.md`, `deploy/docs/disaster-recovery.md`, `deploy/k8s/base/configmap.yaml`

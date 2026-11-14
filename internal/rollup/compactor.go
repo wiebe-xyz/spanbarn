@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // Repository is the data access the compactor needs.
@@ -23,7 +24,7 @@ type Repository interface {
 // repository that cannot measure space (an in-memory test database) simply runs
 // without the free-space guard rather than failing.
 type spaceReporter interface {
-	DBSpace(ctx context.Context, dbPath string) (repository.Space, error)
+	DBSpace(ctx context.Context, dbPath string) (engine.Space, error)
 }
 
 // Config controls the compactor.
