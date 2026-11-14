@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // A stall that goes on is reported once an hour, and its end is logged once.
@@ -13,7 +13,7 @@ func TestRollupStallReportedHourlyUntilCaughtUp(t *testing.T) {
 	w, repo, buf := loggedWorker(t)
 	ctx := context.Background()
 	t0 := time.Date(2026, 11, 5, 12, 40, 0, 0, time.UTC)
-	if err := repo.SetMetricRollupWatermark(ctx, rollup.Step5m, t0.Add(-5*time.Hour).Truncate(time.Hour)); err != nil {
+	if err := repo.SetMetricRollupWatermark(ctx, tier.Step5m, t0.Add(-5*time.Hour).Truncate(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -24,7 +24,7 @@ func TestRollupStallReportedHourlyUntilCaughtUp(t *testing.T) {
 		t.Fatalf("stall reported %d times over 61 minutes, want 2: %v", len(got), got)
 	}
 
-	if err := repo.SetMetricRollupWatermark(ctx, rollup.Step5m, t0.Truncate(time.Hour)); err != nil {
+	if err := repo.SetMetricRollupWatermark(ctx, tier.Step5m, t0.Truncate(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	w.reportRollupStalls(ctx, t0.Add(2*time.Hour))
@@ -51,12 +51,12 @@ func TestBucketsBehind(t *testing.T) {
 		step    int64
 		want    int
 	}{
-		"hour current":     {time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC), rollup.StepHour, 0},
-		"hour two behind":  {time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC), rollup.StepHour, 2},
-		"hour capped":      {time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), rollup.StepHour, 3},
-		"day current":      {time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), rollup.StepDay, 0},
-		"day one behind":   {time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC), rollup.StepDay, 1},
-		"month one behind": {time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), rollup.StepMonth, 1},
+		"hour current":     {time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC), tier.StepHour, 0},
+		"hour two behind":  {time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC), tier.StepHour, 2},
+		"hour capped":      {time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), tier.StepHour, 3},
+		"day current":      {time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC), tier.StepDay, 0},
+		"day one behind":   {time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC), tier.StepDay, 1},
+		"month one behind": {time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), tier.StepMonth, 1},
 	} {
 		if got := bucketsBehind(tc.through, tc.step, now, stallBuckets(tc.step)); got != tc.want {
 			t.Errorf("%s: %d buckets behind, want %d", name, got, tc.want)
@@ -72,10 +72,10 @@ func TestRollupStallSkipsLadderWithCompactionOff(t *testing.T) {
 	ctx := context.Background()
 	t0 := time.Date(2026, 11, 5, 12, 40, 0, 0, time.UTC)
 	stale := t0.Add(-6 * time.Hour).Truncate(time.Hour)
-	if err := repo.SetMetricRollupWatermark(ctx, rollup.Step5m, stale); err != nil {
+	if err := repo.SetMetricRollupWatermark(ctx, tier.Step5m, stale); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.SetSpanRollupWatermark(ctx, rollup.Step5m, stale); err != nil {
+	if err := repo.SetSpanRollupWatermark(ctx, tier.Step5m, stale); err != nil {
 		t.Fatal(err)
 	}
 

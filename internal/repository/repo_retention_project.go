@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -151,7 +152,7 @@ func (r *Repository) evictTraces(ctx context.Context, projectID int64, cutoff ti
 		query, label := evictRowsSQL(table), "EvictProjectTracesOlderThan:"+table
 		for {
 			var ids []any
-			err := r.submit(FamilySpans, writescheduler.Low, label, func(db *sql.DB) error {
+			err := r.submit(engine.FamilySpans, writescheduler.Low, label, func(db *sql.DB) error {
 				var e error
 				ids, e = queryStrings(ctx, db, query, string(payload), projectID, cutoff, evictChunk)
 				return e
@@ -195,7 +196,7 @@ func (r *Repository) deleteOtherTraceRows(ctx context.Context, ids []any) error 
 	}
 	q := " WHERE trace_id IN (" + placeholderList(len(ids)) + ")"
 	for _, table := range evictCascadeOtherTables {
-		if err := r.execLow(TableFamily(table), func(db *sql.DB) error {
+		if err := r.execLow(engine.TableFamily(table), func(db *sql.DB) error {
 			// Main drops a sharded family's table once it is empty.
 			if has, err := hasTable(ctx, db, table); err != nil || !has {
 				return err

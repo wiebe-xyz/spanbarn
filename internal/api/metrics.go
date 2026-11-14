@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/wiebe-xyz/spanbarn/internal/ingest"
+	"github.com/wiebe-xyz/spanbarn/internal/tracebuffer"
 )
 
 // Metrics holds Prometheus metrics for SpanBarn.
@@ -65,37 +65,37 @@ func NewMetrics() *Metrics {
 // loss. Cap pressure was previously a log line only — which is exactly how a
 // month of missing CronJob traces went unnoticed — so it gets first-class
 // metrics: occupancy to see the cap coming, and loss split by what it costs.
-func (m *Metrics) RegisterTraceBuffer(stats func() ingest.BufferStats) {
+func (m *Metrics) RegisterTraceBuffer(stats func() tracebuffer.BufferStats) {
 	if stats == nil {
 		return
 	}
-	gauge := func(name, help string, read func(ingest.BufferStats) float64) prometheus.Collector {
+	gauge := func(name, help string, read func(tracebuffer.BufferStats) float64) prometheus.Collector {
 		return prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: name, Help: help}, func() float64 {
 			return read(stats())
 		})
 	}
-	counter := func(name, help string, read func(ingest.BufferStats) float64) prometheus.Collector {
+	counter := func(name, help string, read func(tracebuffer.BufferStats) float64) prometheus.Collector {
 		return prometheus.NewCounterFunc(prometheus.CounterOpts{Name: name, Help: help}, func() float64 {
 			return read(stats())
 		})
 	}
 	m.registry.MustRegister(
 		gauge("trace_buffer_spans", "Spans currently held in the tail-sampling trace buffer.",
-			func(s ingest.BufferStats) float64 { return float64(s.BufferedSpans) }),
+			func(s tracebuffer.BufferStats) float64 { return float64(s.BufferedSpans) }),
 		gauge("trace_buffer_traces", "Traces currently held in the tail-sampling trace buffer.",
-			func(s ingest.BufferStats) float64 { return float64(s.BufferedTraces) }),
+			func(s tracebuffer.BufferStats) float64 { return float64(s.BufferedTraces) }),
 		gauge("trace_buffer_max_spans", "Configured span cap for the trace buffer (SPANBARN_TRACE_BUFFER_MAX_SPANS); 0 means uncapped.",
-			func(s ingest.BufferStats) float64 { return float64(s.MaxSpans) }),
+			func(s tracebuffer.BufferStats) float64 { return float64(s.MaxSpans) }),
 		counter("trace_buffer_spans_shed_total", "Spans freed at cap from traces sampling was going to discard anyway. Expected under load; costs no stored telemetry.",
-			func(s ingest.BufferStats) float64 { return float64(s.EvictedSacrificialSpans) }),
+			func(s tracebuffer.BufferStats) float64 { return float64(s.EvictedSacrificialSpans) }),
 		gauge("trace_buffer_carrier_spans", "Spans of dropped traces held to be stored as the carrier of their operation's drop count when no sampled trace comes.",
-			func(s ingest.BufferStats) float64 { return float64(s.CarrierSpans) }),
+			func(s tracebuffer.BufferStats) float64 { return float64(s.CarrierSpans) }),
 		counter("trace_buffer_drops_carried_total", "Dropped traces counted into the sample weight of a kept trace of the same root operation.",
-			func(s ingest.BufferStats) float64 { return float64(s.CarriedDrops) }),
+			func(s tracebuffer.BufferStats) float64 { return float64(s.CarriedDrops) }),
 		counter("trace_buffer_drops_uncarried_total", "Dropped traces that no stored weight counts: their operation had no sampled trace within an hour and no held carrier fit the budget.",
-			func(s ingest.BufferStats) float64 { return float64(s.UncarriedDrops) }),
+			func(s tracebuffer.BufferStats) float64 { return float64(s.UncarriedDrops) }),
 		counter("trace_buffer_spans_lost_total", "Spans lost at cap that would have been stored: evicted from keepable traces, refused outright, or undeliverable to the drain. Non-zero means the cap is too small for the span rate.",
-			func(s ingest.BufferStats) float64 {
+			func(s tracebuffer.BufferStats) float64 {
 				return float64(s.EvictedKeptSpans + s.RefusedSpans + s.UndeliveredSpans)
 			}),
 	)

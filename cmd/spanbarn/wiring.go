@@ -11,6 +11,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -157,7 +158,7 @@ func (a *userLookupAdapter) GetUserByUsername(username string) (auth.UserRecord,
 // the write scheduler: on 2026-10-20 at 13:13Z GetSpansForAggregation held it
 // while TouchAPIKey waited 30s and the watchdog reported a wedge (#360). Call
 // after the write schedulers are set.
-func retentionReads(repo *repository.Repository, roDB *repository.DB) *repository.Repository {
+func retentionReads(repo *repository.Repository, roDB *engine.DB) *repository.Repository {
 	r := repo.WithReads(roDB.DB)
 	r.SetLogTrimReads(roDB.DB)
 	return r

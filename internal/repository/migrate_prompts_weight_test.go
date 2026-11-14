@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/pressly/goose/v3"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // A prompts shard created before the column gets it on the next startup, and
 // its rows read as one call each.
 func TestMigrateShardAddsPromptSampleWeight(t *testing.T) {
 	ctx := context.Background()
-	h, err := NewDB(filepath.Join(t.TempDir(), "prompts.db"))
+	h, err := engine.NewDB(filepath.Join(t.TempDir(), "prompts.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +22,7 @@ func TestMigrateShardAddsPromptSampleWeight(t *testing.T) {
 	p, err := goose.NewProvider(goose.DialectSQLite3, h.DB, nil,
 		goose.WithDisableGlobalRegistry(true),
 		goose.WithTableName(shardVersionTable),
-		goose.WithGoMigrations(shardMigrations(FamilyPrompts)...),
+		goose.WithGoMigrations(shardMigrations(engine.FamilyPrompts)...),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +35,7 @@ func TestMigrateShardAddsPromptSampleWeight(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := MigrateShard(ctx, h.DB, FamilyPrompts); err != nil {
+	if err := MigrateShard(ctx, h.DB, engine.FamilyPrompts); err != nil {
 		t.Fatal(err)
 	}
 
@@ -49,12 +50,12 @@ func TestMigrateShardAddsPromptSampleWeight(t *testing.T) {
 
 func TestMigrateShardSkipsFamiliesWithoutPrompts(t *testing.T) {
 	ctx := context.Background()
-	h, err := NewDB(filepath.Join(t.TempDir(), "logs.db"))
+	h, err := engine.NewDB(filepath.Join(t.TempDir(), "logs.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer h.Close()
-	if err := MigrateShard(ctx, h.DB, FamilyLogs); err != nil {
+	if err := MigrateShard(ctx, h.DB, engine.FamilyLogs); err != nil {
 		t.Fatal(err)
 	}
 	if has, err := hasTable(ctx, h.DB, "prompt_records"); err != nil || has {
@@ -64,7 +65,7 @@ func TestMigrateShardSkipsFamiliesWithoutPrompts(t *testing.T) {
 
 func TestAddPromptSampleWeightRunsTwice(t *testing.T) {
 	ctx := context.Background()
-	h, err := NewDB(filepath.Join(t.TempDir(), "main.db"))
+	h, err := engine.NewDB(filepath.Join(t.TempDir(), "main.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

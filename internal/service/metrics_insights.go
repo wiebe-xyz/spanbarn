@@ -7,8 +7,9 @@ import (
 	"sort"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/metricrollup"
 	"github.com/wiebe-xyz/spanbarn/internal/metrics"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 const (
@@ -61,17 +62,17 @@ func (s *MetricsService) Insights(ctx context.Context, projectID int64, from, to
 func (s *MetricsService) insightsTier(ctx context.Context, from, to time.Time) (int64, time.Time, error) {
 	window := to.Sub(from)
 	if window < insightsCoarseFrom {
-		return rollup.Step5m, to, nil
+		return tier.Step5m, to, nil
 	}
-	through, ok, err := s.repo.MetricRollupWatermark(ctx, rollup.Step5m)
+	through, ok, err := s.repo.MetricRollupWatermark(ctx, tier.Step5m)
 	if err != nil {
 		return 0, time.Time{}, err
 	}
 	if !ok || to.Sub(through) > time.Duration(float64(window)*insightsRecentShare) {
-		return rollup.Step5m, to, nil
+		return tier.Step5m, to, nil
 	}
 	// Buckets start at their hour: the last complete one starts before through.
-	return rollup.StepHour, minTime(to, through.Add(-time.Second)), nil
+	return tier.StepHour, minTime(to, through.Add(-time.Second)), nil
 }
 
 func minTime(a, b time.Time) time.Time {
@@ -138,7 +139,7 @@ func RollupInputPoint(row MetricRollup) metrics.InputPoint {
 	if row.Type == "gauge" && row.Count > 0 {
 		value = row.Sum / float64(row.Count)
 	}
-	delta := row.Type == "sum" && row.Temporality == rollup.TemporalityDelta
+	delta := row.Type == "sum" && row.Temporality == metricrollup.TemporalityDelta
 	if delta {
 		value = row.Sum
 	}

@@ -3,6 +3,8 @@ package repository
 import (
 	"database/sql"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 const E2EAccountTTL = 7 * 24 * time.Hour
@@ -12,7 +14,7 @@ const E2EAccountTTL = 7 * 24 * time.Hour
 // the normal password form; they are only accessible through the E2E session
 // endpoint while e2e_enabled is true on the associated project.
 func (r *Repository) UpsertE2EUser(username string, expiresAt time.Time) (User, error) {
-	err := r.execLow(FamilyCore, func(db *sql.DB) error {
+	err := r.execLow(engine.FamilyCore, func(db *sql.DB) error {
 		tx, e := db.Begin()
 		if e != nil {
 			return e
@@ -41,6 +43,6 @@ func (r *Repository) UpsertE2EUser(username string, expiresAt time.Time) (User, 
 // DeleteExpiredE2EUsers removes all users whose e2e_expires_at is in the past.
 // Returns the number of rows deleted.
 func (r *Repository) DeleteExpiredE2EUsers(now time.Time) (int64, error) {
-	return r.execLowAffecting(FamilyCore,
+	return r.execLowAffecting(engine.FamilyCore,
 		"DELETE FROM users WHERE e2e_expires_at IS NOT NULL AND e2e_expires_at < ?", now)
 }

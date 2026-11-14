@@ -1,7 +1,7 @@
 import { useRef, type ReactElement, type PointerEvent } from 'react'
 import type { DashboardHeatmap } from '../../api/dashboardTypes'
 import { formatDuration } from '../../utils/format'
-import { formatAxisTime, heatOpacity, layoutHeatmap } from '../../utils/dashboardData'
+import { formatAxisTime, heatOpacity, layoutHeatmap } from '../../dashboard/data'
 import { useBrush, xRange, type BrushRect } from './useBrush'
 
 type HeatmapChartProps = {

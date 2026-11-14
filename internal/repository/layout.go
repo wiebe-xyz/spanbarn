@@ -9,6 +9,8 @@ import (
 	"os"
 	"slices"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // Attached schema names. A handle on the main file sees the spans file as
@@ -33,8 +35,8 @@ func SpansPath(dbPath string) string { return dbPath + ".spans" }
 //
 // Shards, when set, holds the time-shard files of the heavy families.
 type Storage struct {
-	Main   *DB
-	Spans  *DB
+	Main   *engine.DB
+	Spans  *engine.DB
 	Shards *ShardManager
 }
 
@@ -105,7 +107,7 @@ func OpenStorage(ctx context.Context, dbPath string, o StorageOptions) (*Storage
 }
 
 func openLayout(ctx context.Context, dbPath string, o StorageOptions) (*Storage, error) {
-	plain, err := Open(dbPath, OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB})
+	plain, err := engine.Open(dbPath, engine.OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB})
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +172,7 @@ func migrateSingleFile(ctx context.Context, db *sql.DB) error {
 // prepareSplit creates and migrates the spans file, then migrates main and
 // drops the empty span tables main's migrations created on a new install.
 func prepareSplit(ctx context.Context, main *sql.DB, dbPath string, o StorageOptions) error {
-	spans, err := Open(SpansPath(dbPath), OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB})
+	spans, err := engine.Open(SpansPath(dbPath), engine.OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB})
 	if err != nil {
 		return err
 	}
@@ -200,13 +202,13 @@ func prepareSplit(ctx context.Context, main *sql.DB, dbPath string, o StorageOpt
 }
 
 func openSplit(dbPath string, o StorageOptions) (*Storage, error) {
-	main, err := Open(dbPath, OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB, Attach: []Attachment{
+	main, err := engine.Open(dbPath, engine.OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB, Attach: []engine.Attachment{
 		{Schema: SpansSchema, Path: SpansPath(dbPath), CacheMB: o.AttachCacheMB, MmapMB: o.AttachMmapMB},
 	}})
 	if err != nil {
 		return nil, err
 	}
-	spans, err := Open(SpansPath(dbPath), OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB, Attach: []Attachment{
+	spans, err := engine.Open(SpansPath(dbPath), engine.OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB, Attach: []engine.Attachment{
 		{Schema: CoreSchema, Path: dbPath, CacheMB: o.AttachCacheMB, MmapMB: o.AttachMmapMB},
 	}})
 	if err != nil {
@@ -221,11 +223,11 @@ func (s *Storage) Split() bool { return s.Spans != nil }
 
 // Handles returns every writable handle, main first. Each needs its own
 // checkpoint loop: a checkpoint only covers the file its handle has as main.
-func (s *Storage) Handles() []*DB {
+func (s *Storage) Handles() []*engine.DB {
 	if s.Spans == nil {
-		return []*DB{s.Main}
+		return []*engine.DB{s.Main}
 	}
-	return []*DB{s.Main, s.Spans}
+	return []*engine.DB{s.Main, s.Spans}
 }
 
 // Repository returns a repository that reads through Main and routes every
@@ -233,7 +235,7 @@ func (s *Storage) Handles() []*DB {
 func (s *Storage) Repository() *Repository {
 	repo := NewRepository(s.Main.DB)
 	if s.Spans != nil {
-		repo.SetFamilyWriter(FamilySpans, s.Spans.DB, nil)
+		repo.SetFamilyWriter(engine.FamilySpans, s.Spans.DB, nil)
 	}
 	if s.Shards != nil {
 		repo.SetShards(s.Shards)
@@ -271,8 +273,8 @@ func (s *Storage) Close() error {
 // Connections are recycled after readConnMaxLifetime, so a reader that opened
 // its connections before the writer cut a single-file database over picks up
 // the spans file within that time.
-func OpenReadDB(dbPath string, cacheMB, mmapMB int) (*DB, error) {
-	db, err := Open(dbPath, OpenOptions{ReadOnly: true, CacheMB: cacheMB, MmapMB: mmapMB, Attach: []Attachment{{
+func OpenReadDB(dbPath string, cacheMB, mmapMB int) (*engine.DB, error) {
+	db, err := engine.Open(dbPath, engine.OpenOptions{ReadOnly: true, CacheMB: cacheMB, MmapMB: mmapMB, Attach: []engine.Attachment{{
 		Schema: SpansSchema, Path: SpansPath(dbPath), CacheMB: cacheMB, MmapMB: mmapMB, UnlessMainHas: "spans",
 	}}})
 	if err != nil {
@@ -319,7 +321,7 @@ func dropMovedTables(ctx context.Context, db *sql.DB, copied bool) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, table := range slices.Concat(FamilySpans.Tables(), []string{spansVersionTable}) {
+	for _, table := range slices.Concat(engine.FamilySpans.Tables(), []string{spansVersionTable}) {
 		var n int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT count(*) FROM main.sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n); err != nil {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // The three layouts the spike compares. Every layout holds the same rows; the
@@ -55,7 +56,7 @@ func shardName(day time.Time) string { return "day-" + day.Format("20060102") + 
 // createFile makes a migrated database at path and drops every table in drop,
 // so the file holds the current schema minus the tables another file owns.
 func createFile(ctx context.Context, path string, drop []string) error {
-	db, err := repository.NewDB(path)
+	db, err := engine.NewDB(path)
 	if err != nil {
 		return err
 	}
@@ -94,7 +95,7 @@ func buildSingle(ctx context.Context, root string, g *generator) error {
 	if err := createFile(ctx, path, nil); err != nil {
 		return err
 	}
-	db, err := repository.NewDB(path)
+	db, err := engine.NewDB(path)
 	if err != nil {
 		return err
 	}
@@ -201,7 +202,7 @@ func copyQuery(table string, columns []string, p copyPlan) (string, []any) {
 // withAttached opens dst as the writable main database with src attached as
 // "src" on a single connection, so the ATTACH holds for every statement fn runs.
 func withAttached(ctx context.Context, dst, src string, fn func(*sql.DB) error) error {
-	db, err := repository.NewDB(dst)
+	db, err := engine.NewDB(dst)
 	if err != nil {
 		return err
 	}
@@ -219,7 +220,7 @@ func checkpoint(ctx context.Context, db *sql.DB) error {
 
 // tableNames lists the user tables in the database at path.
 func tableNames(ctx context.Context, path string) ([]string, error) {
-	db, err := repository.NewReadOnlyDB(path)
+	db, err := engine.NewReadOnlyDB(path)
 	if err != nil {
 		return nil, err
 	}

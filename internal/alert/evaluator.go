@@ -52,7 +52,7 @@ type AlertPayload struct {
 }
 
 // SampleRatioLookup returns the 1-in-N sampling ratio for a project.
-// Satisfied by *ingest.CachedRatioLookup and *ingest.StaticRatioLookup.
+// Satisfied by *tracebuffer.CachedRatioLookup and *tracebuffer.StaticRatioLookup.
 type SampleRatioLookup interface {
 	Ratio(ctx context.Context, projectID int64, operation string) int
 }

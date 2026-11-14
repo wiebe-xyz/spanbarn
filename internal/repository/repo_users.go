@@ -1,9 +1,13 @@
 package repository
 
-import "database/sql"
+import (
+	"database/sql"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
+)
 
 func (r *Repository) CreateUser(username, passwordHash string) error {
-	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+	return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		_, err := db.Exec("INSERT INTO users (username, password_hash) VALUES (?, ?)", username, passwordHash)
 		return err
 	})
@@ -17,11 +21,11 @@ func (r *Repository) GetUserByUsername(username string) (User, error) {
 }
 
 func (r *Repository) UpdateUserPassword(username, passwordHash string) error {
-	return r.execHighExpectingRows(FamilyCore, "UPDATE users SET password_hash = ? WHERE username = ?", passwordHash, username)
+	return r.execHighExpectingRows(engine.FamilyCore, "UPDATE users SET password_hash = ? WHERE username = ?", passwordHash, username)
 }
 
 func (r *Repository) DeleteUser(username string) error {
-	return r.execHighExpectingRows(FamilyCore, "DELETE FROM users WHERE username = ?", username)
+	return r.execHighExpectingRows(engine.FamilyCore, "DELETE FROM users WHERE username = ?", username)
 }
 
 func (r *Repository) ListUsers() ([]User, error) {

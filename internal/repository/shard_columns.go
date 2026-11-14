@@ -7,6 +7,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // tableColumns maps a schema-qualified table to its column names.
@@ -27,7 +29,7 @@ func (p *familyPool) sources(table string) []string {
 
 // readColumns reads the columns of every table f's views union, on db, a handle
 // with the pool's files attached.
-func (p *familyPool) readColumns(ctx context.Context, db *sql.DB, f Family) (tableColumns, error) {
+func (p *familyPool) readColumns(ctx context.Context, db *sql.DB, f engine.Family) (tableColumns, error) {
 	out := tableColumns{}
 	for _, table := range f.Tables() {
 		for _, source := range p.sources(table) {
@@ -44,8 +46,8 @@ func (p *familyPool) readColumns(ctx context.Context, db *sql.DB, f Family) (tab
 
 // readColumnsOnce fills p.columns through a short-lived handle: the views go in
 // the setup of the pool's handle, so they have to be known before it opens.
-func (p *familyPool) readColumnsOnce(ctx context.Context, path string, opts OpenOptions, f Family) error {
-	db, err := Open(path, opts)
+func (p *familyPool) readColumnsOnce(ctx context.Context, path string, opts engine.OpenOptions, f engine.Family) error {
+	db, err := engine.Open(path, opts)
 	if err != nil {
 		return err
 	}
@@ -91,7 +93,7 @@ func (p *familyPool) viewSQL(table string) (string, error) {
 // starting on a newer image migrates shards the pool already holds, and a view
 // built before that reads NULL for the new column until it is rebuilt. A failed
 // read counts as unchanged: the next refresh reads again.
-func (s *ShardReaders) columnsUnchanged(ctx context.Context, f Family, p *familyPool) bool {
+func (s *ShardReaders) columnsUnchanged(ctx context.Context, f engine.Family, p *familyPool) bool {
 	ctx, cancel := context.WithTimeout(ctx, columnCheckTimeout)
 	defer cancel()
 	cols, err := p.readColumns(ctx, p.db.DB, f)

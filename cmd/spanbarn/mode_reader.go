@@ -21,8 +21,10 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
+	"github.com/wiebe-xyz/spanbarn/internal/tracebuffer"
 )
 
 // runReaderMode accepts OTLP spans, serves the read-only dashboard API, and
@@ -82,7 +84,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		roRepo     *repository.Repository
 		keyLookup  auth.KeyLookup
 		querySvc   *service.QueryService
-		sessions   *api.SessionService
+		sessions   *session.Service
 		userAuth   *auth.UserAuthenticator
 		queryCache *cache.Cache
 	)
@@ -101,7 +103,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 			sessions = newSessionService(roRepo, cfg, logger)
 			userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
-			querySvc = service.NewQueryService(roRepo, logger, ingest.NewCachedRatioLookup(roRepo, time.Minute))
+			querySvc = service.NewQueryService(roRepo, logger, tracebuffer.NewCachedRatioLookup(roRepo, time.Minute))
 			applySpanRollupReads(querySvc, cfg)
 
 			queryCache = newQueryCache(cfg, logger, false)
@@ -117,9 +119,9 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	serverCfg := serverConfigFrom(cfg)
 	// Trace buffer: holds spans for up to 10 min then applies ratio-based
 	// sampling per (project, operation). Error traces always pass intact.
-	var ratioLookup ingest.SampleRatioLookup
+	var ratioLookup tracebuffer.SampleRatioLookup
 	if roRepo != nil {
-		ratioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
+		ratioLookup = tracebuffer.NewCachedRatioLookup(roRepo, time.Minute)
 	}
 	traceBuffer := newTraceBuffer(cfg, ratioLookup, logger)
 	traceBuffer.SetLedger(ledger)
@@ -128,7 +130,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer), api.WithMetricsHandler(readerMetricsHandler), api.WithLogsHandler(readerLogsHandler)}
 	if roRepo != nil {
-		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache),
+		opts = append(opts, api.WithLogin(userAuth, cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache),
 			api.WithAdmission(newAdmission(roRepo, cfg, logger)))
 	}
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessions, logger, opts...)
@@ -157,9 +159,6 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	mux := http.NewServeMux()
-	if sessions != nil && userAuth != nil {
-		registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
-	}
 	mux.Handle("/", apiServer.Handler())
 
 	httpServer := newHTTPServer(cfg, mux)

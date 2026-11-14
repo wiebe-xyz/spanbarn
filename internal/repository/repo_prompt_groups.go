@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
@@ -42,7 +43,7 @@ func (r *Repository) QueryPromptGroups(ctx context.Context, f PromptFilter) ([]P
 	query := func(table string) string { return promptGroupsQuery(table, where) }
 
 	g := promptGrouper{byKey: map[promptGroupKey]*PromptGroup{}}
-	if p := r.shardReaders.pool(FamilyPrompts); p != nil {
+	if p := r.shardReaders.pool(engine.FamilyPrompts); p != nil {
 		for _, schema := range p.segments {
 			if err := g.read(ctx, p.db.DB, query(schema+".prompt_records"), args); err != nil {
 				return nil, err

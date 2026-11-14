@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 func insertFineRollup(t *testing.T, repo *repository.Repository, bucket time.Time) {
@@ -69,7 +69,7 @@ func TestRollupTierDeletesOnlyUpToWatermark(t *testing.T) {
 
 	insertFineRollup(t, repo, now.Add(-10*24*time.Hour)) // compacted, past the window
 	insertFineRollup(t, repo, now.Add(-3*24*time.Hour))  // past the window, NOT compacted
-	if err := repo.SetMetricRollupWatermark(ctx, rollup.Step5m, now.Add(-5*24*time.Hour)); err != nil {
+	if err := repo.SetMetricRollupWatermark(ctx, tier.Step5m, now.Add(-5*24*time.Hour)); err != nil {
 		t.Fatalf("SetMetricRollupWatermark: %v", err)
 	}
 
@@ -94,7 +94,7 @@ func TestRollupTierWindowWinsWhenWatermarkIsAhead(t *testing.T) {
 
 	insertFineRollup(t, repo, now.Add(-3*24*time.Hour)) // past the window
 	insertFineRollup(t, repo, now.Add(-1*time.Hour))    // inside the window
-	if err := repo.SetMetricRollupWatermark(ctx, rollup.Step5m, now.Add(-30*time.Minute)); err != nil {
+	if err := repo.SetMetricRollupWatermark(ctx, tier.Step5m, now.Add(-30*time.Minute)); err != nil {
 		t.Fatalf("SetMetricRollupWatermark: %v", err)
 	}
 
@@ -115,7 +115,7 @@ func TestRollupTierWindowWinsWhenWatermarkIsAhead(t *testing.T) {
 func TestCoarsestTierNeedsNoWatermark(t *testing.T) {
 	w, repo := setupTestWorker(t, Config{MonthlyRollupDays: 30})
 	now := time.Now().UTC()
-	insertCoarseRollup(t, repo, rollup.StepMonth, now.AddDate(0, -6, 0))
+	insertCoarseRollup(t, repo, tier.StepMonth, now.AddDate(0, -6, 0))
 
 	deleted, _, err := w.deleteRollupTiers(context.Background(), w.cfg, now, maxRollupRowsPerCycle)
 	if err != nil {
@@ -131,7 +131,7 @@ func TestCoarsestTierNeedsNoWatermark(t *testing.T) {
 func TestMonthlyTierKeptIndefinitelyByDefault(t *testing.T) {
 	w, repo := setupTestWorker(t, Config{})
 	now := time.Now().UTC()
-	insertCoarseRollup(t, repo, rollup.StepMonth, now.AddDate(-5, 0, 0))
+	insertCoarseRollup(t, repo, tier.StepMonth, now.AddDate(-5, 0, 0))
 
 	deleted, _, err := w.deleteRollupTiers(context.Background(), w.cfg, now, maxRollupRowsPerCycle)
 	if err != nil {
@@ -184,7 +184,7 @@ func TestRollupBudgetCapsOneCycleAndResumes(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		insertFineRollup(t, repo, now.Add(-time.Duration(10*24+i)*time.Hour))
 	}
-	if err := repo.SetMetricRollupWatermark(ctx, rollup.Step5m, now); err != nil {
+	if err := repo.SetMetricRollupWatermark(ctx, tier.Step5m, now); err != nil {
 		t.Fatalf("SetMetricRollupWatermark: %v", err)
 	}
 

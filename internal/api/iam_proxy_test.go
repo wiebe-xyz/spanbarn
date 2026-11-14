@@ -12,11 +12,12 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 // iamProxyStack builds a server whose /api/iam-proxy/ route is wrapped in the
 // session middleware, exactly like registerRoutes does.
-func iamProxyStack(t *testing.T) (*fakeIdP, *SessionService, *repository.Repository, http.Handler) {
+func iamProxyStack(t *testing.T) (*fakeIdP, *session.Service, *repository.Repository, http.Handler) {
 	t.Helper()
 	idp := newFakeIdP(t)
 	svc, repo := newTestSessions(t)

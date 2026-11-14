@@ -10,15 +10,17 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	_ "github.com/wiebe-xyz/spanbarn/internal/repository/migrations"
 )
 
 // setupMetricsQueryServer creates a server with a real in-memory DB for metrics query tests.
-func setupMetricsQueryServer(t *testing.T) (*Server, *SessionService, *repository.Repository) {
+func setupMetricsQueryServer(t *testing.T) (*Server, *session.Service, *repository.Repository) {
 	t.Helper()
 
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
@@ -29,7 +31,7 @@ func setupMetricsQueryServer(t *testing.T) (*Server, *SessionService, *repositor
 	}
 
 	repo := repository.NewRepository(db.DB)
-	sm := NewSessionService(repo, 3600, 3600, nil)
+	sm := session.NewService(repo, 3600, 3600, nil)
 
 	srv := NewServerWithQuery(ServerConfig{
 		APIKey:  "test-key",
@@ -39,7 +41,7 @@ func setupMetricsQueryServer(t *testing.T) (*Server, *SessionService, *repositor
 	return srv, sm, repo
 }
 
-func sessionCookie(t *testing.T, sm *SessionService) *http.Cookie {
+func sessionCookie(t *testing.T, sm *session.Service) *http.Cookie {
 	t.Helper()
 	token, _, err := sm.Create("admin", "local", nil)
 	if err != nil {

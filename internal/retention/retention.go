@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 var tracer = otel.Tracer("spanbarn/retention")
@@ -81,7 +82,7 @@ type RetentionWorker struct {
 	warnNoAutoVacuum sync.Once
 
 	// ballast is the reserved space surrendered during emergency eviction.
-	ballast     *repository.Ballast
+	ballast     *engine.Ballast
 	ballastOnce sync.Once
 
 	// pressured is set when the last cycle found the volume critical, so Run
@@ -300,7 +301,7 @@ func (c *cycleStats) logArgs() []any {
 func (w *RetentionWorker) RunOnce(ctx context.Context) error {
 	ctx, span := tracer.Start(ctx, "retention.cycle")
 	defer span.End()
-	ctx, calls := repository.WithStatementCounts(ctx)
+	ctx, calls := engine.WithStatementCounts(ctx)
 
 	now := time.Now().UTC()
 	cfg := w.applyDiskPressure(ctx, w.effectiveConfig())

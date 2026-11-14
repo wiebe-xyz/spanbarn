@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // The window read walks idx_trace_summaries_list from the start of a
@@ -47,7 +49,7 @@ func TestTraceSummaryWindowPlanSeeksListIndex(t *testing.T) {
 // ingested_at.
 func insertTraceSummaries(t *testing.T, repo *Repository, prefix string, n int, ingested time.Time, hasError bool) {
 	t.Helper()
-	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+	if err := repo.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		_, err := db.Exec(`WITH RECURSIVE seq(i) AS (SELECT 0 WHERE ?1 > 0 UNION ALL SELECT i + 1 FROM seq WHERE i + 1 < ?1)
 			INSERT INTO trace_summaries (project_id, trace_id, ingested_at, has_error)
 			SELECT 1, ?2 || i, ?3, ?4 FROM seq`, n, prefix, ingested, hasError)
@@ -61,7 +63,7 @@ func insertTraceSummaries(t *testing.T, repo *Repository, prefix string, n int, 
 func summaryPrefixCounts(t *testing.T, repo *Repository) map[string]int {
 	t.Helper()
 	out := map[string]int{}
-	rows, err := repo.writer(FamilySpans).Query(`SELECT substr(trace_id, 1, 1), count(*) FROM trace_summaries GROUP BY 1`)
+	rows, err := repo.writer(engine.FamilySpans).Query(`SELECT substr(trace_id, 1, 1), count(*) FROM trace_summaries GROUP BY 1`)
 	if err != nil {
 		t.Fatalf("count summaries: %v", err)
 	}
@@ -93,7 +95,7 @@ func seedTraceSummaryWindows(t *testing.T, repo *Repository, kept, deletable int
 	insertTraceSummaries(t, repo, "K", kept, now.Add(-100*time.Hour), true)
 	insertTraceSummaries(t, repo, "D", deletable, now.Add(-60*time.Hour), false)
 	insertTraceSummaries(t, repo, "R", 1, now, false)
-	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+	if err := repo.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		_, err := db.Exec(`INSERT INTO error_exemplars (project_id, service, name, day, trace_id)
 			VALUES (1, 'web', 'root', '2026-01-01', 'X0')`)
 		return err
@@ -146,7 +148,7 @@ func TestDeleteTraceSummaryRowsChecksEachRowAgain(t *testing.T) {
 	repo := setupTestDB(t)
 	ic, ec := seedTraceSummaryWindows(t, repo, 0, 2)
 	var ids []int64
-	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+	if err := repo.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		rows, err := db.Query(`SELECT rowid FROM trace_summaries WHERE trace_id IN ('D0', 'D1', 'E0', 'R0')`)
 		if err != nil {
 			return err
@@ -172,7 +174,7 @@ func TestDeleteTraceSummaryRowsChecksEachRowAgain(t *testing.T) {
 		t.Fatalf("read rows: %v", err)
 	}
 
-	ctx, db := context.Background(), repo.writer(FamilySpans)
+	ctx, db := context.Background(), repo.writer(engine.FamilySpans)
 	n, err := deleteRowsByID(ctx, db, deleteTraceSummaryRowsSQL(traceSummaryPlainSQL), ids, 1, ic)
 	if err != nil {
 		t.Fatalf("delete plain rows: %v", err)

@@ -21,7 +21,7 @@ Sources:
 - `internal/ingest/handler_test.go::TestHandlerFlushesToSpool`
 - `cmd/spanbarn/shutdown_test.go::TestShutdownMovesBufferedTracesToTheSpool`
 - `internal/spool/spool_test.go::TestSpoolWriteAndRead`, `::TestSpoolCursor`
-- `internal/ingest/trace_buffer_cap_rescue_test.go::TestCapEvictionKeepsSlowTraces`
+- `internal/tracebuffer/cap_rescue_test.go::TestCapEvictionKeepsSlowTraces`
 - Issues #3 (spool-based ingest), #166 (trace buffer at cap), #331 (reader rollouts drop buffered traces)
 
 ### II. A write touches one storage family

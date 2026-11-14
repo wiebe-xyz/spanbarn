@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func (r *Repository) ListAlerts(projectID int64) ([]Alert, error) {
@@ -60,7 +62,7 @@ func normalizeLabelFilters(s string) string {
 
 func (r *Repository) CreateAlert(a Alert) (int64, error) {
 	var id int64
-	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+	err := r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		enabled := 0
 		if a.Enabled {
 			enabled = 1
@@ -84,7 +86,7 @@ func (r *Repository) CreateAlert(a Alert) (int64, error) {
 }
 
 func (r *Repository) UpdateAlert(a Alert) error {
-	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+	return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		enabled := 0
 		if a.Enabled {
 			enabled = 1
@@ -111,7 +113,7 @@ func (r *Repository) UpdateAlert(a Alert) error {
 }
 
 func (r *Repository) DeleteAlert(id int64) error {
-	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+	return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		res, err := db.Exec("DELETE FROM alerts WHERE id = ?", id)
 		if err != nil {
 			return err
@@ -125,7 +127,7 @@ func (r *Repository) DeleteAlert(id int64) error {
 }
 
 func (r *Repository) UpdateAlertLastTriggered(id int64, at time.Time) error {
-	return r.execLow(FamilyCore, func(db *sql.DB) error {
+	return r.execLow(engine.FamilyCore, func(db *sql.DB) error {
 		_, err := db.Exec("UPDATE alerts SET last_triggered_at = ? WHERE id = ?", at, id)
 		return err
 	})
@@ -137,7 +139,7 @@ func (r *Repository) InsertErrorSamples(spans []Span) error {
 	if len(spans) == 0 {
 		return nil
 	}
-	return r.execLow(FamilySpans, func(db *sql.DB) error {
+	return r.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		tx, err := db.Begin()
 		if err != nil {
 			return err

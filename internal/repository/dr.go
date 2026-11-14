@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // settingsTables lists the tables that make up a "settings-only" snapshot:
@@ -45,7 +47,7 @@ func SnapshotSettings(ctx context.Context, srcPath, destPath string) (map[string
 		_ = os.Remove(destPath + suffix)
 	}
 
-	src, err := NewReadOnlyDB(srcPath)
+	src, err := engine.NewReadOnlyDB(srcPath)
 	if err != nil {
 		return nil, fmt.Errorf("open source database: %w", err)
 	}
@@ -54,7 +56,7 @@ func SnapshotSettings(ctx context.Context, srcPath, destPath string) (map[string
 		return nil, fmt.Errorf("ping source database: %w", err)
 	}
 
-	dest, err := NewDB(destPath)
+	dest, err := engine.NewDB(destPath)
 	if err != nil {
 		return nil, fmt.Errorf("create snapshot database: %w", err)
 	}

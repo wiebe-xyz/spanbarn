@@ -14,6 +14,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/api"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
+	"github.com/wiebe-xyz/spanbarn/internal/tracebuffer"
 
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
 	"google.golang.org/protobuf/proto"
@@ -30,7 +31,7 @@ const selfInstrumentUA = "spanbarn-self-instrument"
 //
 // The ingest handler flush loop is NOT started, so anything enqueued stays in
 // the queue for inspection.
-func setupSampledOTLPServer(t *testing.T, ratio int) (*httptest.Server, *ingest.Queue, *ingest.TraceBuffer) {
+func setupSampledOTLPServer(t *testing.T, ratio int) (*httptest.Server, *ingest.Queue, *tracebuffer.TraceBuffer) {
 	t.Helper()
 	q := ingest.NewQueue(1024)
 	sp, err := spool.NewSpool(t.TempDir(), 0)
@@ -41,7 +42,7 @@ func setupSampledOTLPServer(t *testing.T, ratio int) (*httptest.Server, *ingest.
 
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := ingest.NewHandler(q, sp, 0, discard)
-	tb := ingest.NewTraceBuffer(time.Hour, ingest.NewStaticRatioLookup(ratio), discard)
+	tb := tracebuffer.NewTraceBuffer(time.Hour, tracebuffer.NewStaticRatioLookup(ratio), discard)
 
 	srv := api.NewServerWithQuery(api.ServerConfig{
 		APIKey:       testAPIKey,
@@ -201,7 +202,7 @@ func TestServerSilentWhenSamplerWired(t *testing.T) {
 	logger := slog.New(warnSpy{warns: &warns, msgs: &msgs})
 	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	tb := ingest.NewTraceBuffer(time.Hour, ingest.NewStaticRatioLookup(1), discard)
+	tb := tracebuffer.NewTraceBuffer(time.Hour, tracebuffer.NewStaticRatioLookup(1), discard)
 	api.NewServerWithQuery(api.ServerConfig{APIKey: testAPIKey, MaxBodyBytes: 1 << 20},
 		newTestIngestHandler(t), nil, nil, logger, api.WithTraceBuffer(tb))
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
@@ -141,7 +142,7 @@ func TestMigrateSpansAddsSpanEdgesOnce(t *testing.T) {
 	if n != 1 {
 		t.Error("span_edges is missing")
 	}
-	if TableFamily("span_edges") != FamilySpans {
+	if engine.TableFamily("span_edges") != engine.FamilySpans {
 		t.Error("span_edges must belong to the spans family")
 	}
 }

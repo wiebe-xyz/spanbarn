@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/metrics"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
@@ -239,11 +238,14 @@ func parseMetricRequest(w http.ResponseWriter, r *http.Request, defaultLimit int
 
 // readMetricQuery reads the data of req over [from, to].
 func (h *metricsQueryHandlers) readMetricQuery(ctx context.Context, req metricRequest, from, to time.Time) (metricQuery, error) {
-	metricType, unit, in, step, err := h.readMetricInput(ctx, req.projectID, req.name, from, to, req.labels, req.limit, req.totals)
+	in, err := h.svc.ReadInput(ctx, service.MetricInputRequest{
+		ProjectID: req.projectID, Name: req.name, From: from, To: to,
+		Labels: req.labels, Limit: req.limit, Totals: req.totals,
+	})
 	if err != nil {
 		return metricQuery{}, err
 	}
-	return metricQuery{name: req.name, metricType: metricType, unit: unit, in: in, step: step, groupBy: req.groupBy}, nil
+	return metricQuery{name: req.name, metricType: in.Type, unit: in.Unit, in: in.Points, step: in.Step, groupBy: req.groupBy}, nil
 }
 
 // handleMetricSeries returns data points for a named metric.
@@ -277,182 +279,6 @@ func (h *metricsQueryHandlers) handleMetricSeries(w http.ResponseWriter, r *http
 	})
 }
 
-// rollupQueryThreshold is the range width above which the series query reads
-// pre-aggregated rollups rather than raw data points.
-const rollupQueryThreshold = 6 * time.Hour
-
-// filteredFineTierWidth is the widest range a label filter reads from the
-// 5-minute tier. The filter has to look at every row in the range unless enough
-// of them match to reach the limit, so a selective filter costs far more than an
-// unfiltered read, and a two-day read of one times out where the hour tier answers
-// in under a second.
-const filteredFineTierWidth = 24 * time.Hour
-
-// readMetricInput reads raw points for a narrow range and rollups for a long one,
-// which spares a long range the raw scan. A narrow range with no raw points also
-// reads rollups: raw points expire long before the tiers do, and an empty result
-// there would look like a metric that reported nothing. The returned step is 0
-// for raw points.
-func (h *metricsQueryHandlers) readMetricInput(ctx context.Context, projectID int64, name string, from, to time.Time, labels map[string]string, limit int, totals bool) (string, string, []metrics.InputPoint, int64, error) {
-	if to.Sub(from) > rollupQueryThreshold {
-		return h.rollupInput(ctx, projectID, name, from, to, labels, limit, totals)
-	}
-	metricType, unit, in, err := h.rawInput(ctx, projectID, name, from, to, labels, limit)
-	if err != nil || len(in) > 0 {
-		return metricType, unit, in, 0, err
-	}
-	return h.rollupInput(ctx, projectID, name, from, to, labels, limit, totals)
-}
-
-// rawInput loads raw metric data points and maps them to derivation input.
-func (h *metricsQueryHandlers) rawInput(ctx context.Context, projectID int64, name string, from, to time.Time, labels map[string]string, limit int) (string, string, []metrics.InputPoint, error) {
-	rows, err := h.svc.Series(ctx, service.MetricFilter{
-		ProjectID: projectID, Name: name, From: from, To: to, Attributes: labels, Limit: limit,
-	})
-	if err != nil {
-		return "", "", nil, err
-	}
-	var metricType, unit string
-	in := make([]metrics.InputPoint, 0, len(rows))
-	for _, row := range rows {
-		if metricType == "" {
-			metricType, unit = row.Type, row.Unit
-		}
-		p := metrics.InputPoint{
-			T:          row.TimeUnixNano,
-			Value:      row.Value,
-			Count:      row.Count,
-			Extra:      service.MarshalMetricExtra(row),
-			Attributes: parseAttrs(row.Attributes),
-		}
-		if row.DeltaSum() {
-			p.Delta = true
-			p.Extra = nil
-			if row.StartTimeUnixNano > 0 && row.TimeUnixNano > row.StartTimeUnixNano {
-				p.IntervalNano = row.TimeUnixNano - row.StartTimeUnixNano
-			}
-		}
-		in = append(in, p)
-	}
-	return metricType, unit, in, nil
-}
-
-// rollupTierSteps lists the resolutions worth trying for a range, finest first.
-//
-// The finest tier that still gives a readable chart is preferred, and the
-// coarser ones are fallbacks: the fine tiers are kept for days while the coarse
-// ones go back years, so a month-old week-long range simply has no 5-minute
-// buckets left to read. Asking in order turns that into a slightly smoother
-// chart instead of an empty one.
-func rollupTierSteps(width time.Duration) []int64 {
-	switch {
-	case width <= 48*time.Hour:
-		return []int64{rollup.Step5m, rollup.StepHour, rollup.StepDay}
-	case width <= 30*24*time.Hour:
-		return []int64{rollup.StepHour, rollup.StepDay, rollup.StepWeek}
-	case width <= 365*24*time.Hour:
-		return []int64{rollup.StepDay, rollup.StepWeek, rollup.StepMonth}
-	default:
-		return []int64{rollup.StepWeek, rollup.StepMonth}
-	}
-}
-
-// tierStepsForRead is rollupTierSteps with the 5-minute tier left out of a
-// filtered read too wide for it. Falling back to the whole range of the 5-minute
-// tier would turn every filter that matches nothing into a timeout, so the hour
-// tier read takes only its uncompacted tail from there (hourTierWithTail).
-//
-// A totals read starts at the hour tier from a day on, filtered or not. It sums
-// every bucket in the range and has no chart to keep smooth, so the 12 times
-// fewer rows are all gain: a delta total is the same sum either way, and a
-// cumulative one only loses a reset that happened inside one hour.
-func tierStepsForRead(width time.Duration, labels map[string]string, totals bool) []int64 {
-	steps := rollupTierSteps(width)
-	wide := len(labels) > 0 && width > filteredFineTierWidth
-	if totals && width >= filteredFineTierWidth {
-		wide = true
-	}
-	if wide && steps[0] == rollup.Step5m {
-		return steps[1:]
-	}
-	return steps
-}
-
-// rollupInput loads downsampled rollup buckets and maps them to derivation
-// input, returning the resolution it read. The per-type value choice keeps
-// metrics.Derive working unchanged: gauges use the bucket average, counters use
-// the bucket-end cumulative value (so rate is derived across buckets),
-// distributions carry their merged extra. Each read starts at the bucket holding
-// from, so a range narrower than a coarse bucket still finds that bucket.
-func (h *metricsQueryHandlers) rollupInput(ctx context.Context, projectID int64, name string, from, to time.Time, labels map[string]string, limit int, totals bool) (string, string, []metrics.InputPoint, int64, error) {
-	filter := service.MetricRollupFilter{
-		ProjectID: projectID, Name: name, From: from, To: to, Attributes: labels, Limit: limit,
-	}
-	fineRead := false
-	for _, step := range tierStepsForRead(to.Sub(from), labels, totals) {
-		filter.From = rollup.TruncateBucket(from, step)
-		var rows []service.MetricRollup
-		var err error
-		// A read that has tried the 5-minute tier and found nothing has no
-		// tail to add.
-		if step == rollup.StepHour && !fineRead {
-			rows, err = h.hourTierWithTail(ctx, filter, from)
-		} else {
-			rows, err = h.queryTier(ctx, step, filter)
-		}
-		fineRead = fineRead || step == rollup.Step5m
-		if err != nil {
-			return "", "", nil, 0, err
-		}
-		if len(rows) == 0 {
-			continue
-		}
-		var metricType, unit string
-		in := make([]metrics.InputPoint, 0, len(rows))
-		for _, row := range rows {
-			if metricType == "" {
-				metricType, unit = row.Type, row.Unit
-			}
-			p := rollupToInput(row)
-			if p.Delta {
-				width := row.StepSeconds
-				if width == 0 {
-					width = step
-				}
-				p.IntervalNano = width * int64(time.Second)
-			}
-			in = append(in, p)
-		}
-		return metricType, unit, in, step, nil
-	}
-	return "", "", nil, 0, nil
-}
-
-// queryTier reads one resolution. The 5-minute tier is the accumulator's own
-// table; every coarser tier shares metric_rollups_coarse.
-func (h *metricsQueryHandlers) queryTier(ctx context.Context, step int64, f service.MetricRollupFilter) ([]service.MetricRollup, error) {
-	if step == service.Rollup5mStep {
-		return h.svc.Rollups(ctx, f)
-	}
-	return h.svc.CoarseRollups(ctx, service.CoarseRollupFilter{
-		ProjectID:   f.ProjectID,
-		Name:        f.Name,
-		StepSeconds: step,
-		From:        f.From,
-		To:          f.To,
-		Attributes:  f.Attributes,
-		Limit:       f.Limit,
-	})
-}
-
-// rollupToInput maps a rollup bucket to a derivation input point with its
-// attributes, which the series path groups by.
-func rollupToInput(row service.MetricRollup) metrics.InputPoint {
-	p := service.RollupInputPoint(row)
-	p.Attributes = parseAttrs(row.Attributes)
-	return p
-}
-
 // parseGroupBy reads the comma-separated group_by attribute keys. When empty,
 // series are split by their full attribute set.
 func parseGroupBy(r *http.Request) []string {
@@ -467,11 +293,6 @@ func parseGroupBy(r *http.Request) []string {
 		}
 	}
 	return keys
-}
-
-// parseAttrs decodes a stored attributes JSON object into string labels.
-func parseAttrs(raw string) map[string]string {
-	return metrics.ParseAttributes([]byte(raw))
 }
 
 // parseLabelParams extracts label[key]=value query parameters.

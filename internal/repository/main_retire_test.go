@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 var heavyTables = []string{"logs", "metrics", "prompt_records"}
@@ -74,7 +75,7 @@ func TestMainDropsEmptiedHeavyTables(t *testing.T) {
 	if n := countLogs(); n != 2 {
 		t.Fatalf("logs after retiring main's table: %d, want 2", n)
 	}
-	if p := rs.pool(FamilyLogs); p.mainHas {
+	if p := rs.pool(engine.FamilyLogs); p.mainHas {
 		t.Fatal("the logs pool still reads main's retiring table")
 	}
 

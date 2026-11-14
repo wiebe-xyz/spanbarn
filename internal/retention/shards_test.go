@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // shardedRepo is a real repository whose shard files are faked: shards lists
@@ -49,7 +50,7 @@ func TestReclaimRetiresOldestShardsBeforeEvictingSpans(t *testing.T) {
 	insertTestSpans(t, repo.Repository, 3, "ok", 500, time.Now().UTC().Add(-2*time.Hour))
 
 	// 95% used of 1000 bytes: three 100-byte shards bring it to 65%.
-	space := repository.Space{PageSize: 4096, VolumeBytes: 1000, VolumeFreeBytes: 50}
+	space := engine.Space{PageSize: 4096, VolumeBytes: 1000, VolumeFreeBytes: 50}
 	used, pending := worker.retireShardsForReclaim(context.Background(), worker.cfg, space, 0.70)
 	if repo.retired != 3 || pending != 300 {
 		t.Fatalf("retired %d shards with %d pending bytes, want 3 and 300", repo.retired, pending)
@@ -78,7 +79,7 @@ func TestReclaimCountsRetiringShardsAsFree(t *testing.T) {
 	worker, repo := newShardedWorker(t, cfg, []int64{100, 100})
 	repo.pending = 300
 
-	space := repository.Space{PageSize: 4096, VolumeBytes: 1000, VolumeFreeBytes: 50}
+	space := engine.Space{PageSize: 4096, VolumeBytes: 1000, VolumeFreeBytes: 50}
 	used, _ := worker.retireShardsForReclaim(context.Background(), worker.cfg, space, 0.70)
 	if repo.retired != 0 {
 		t.Fatalf("retired %d more shards while 300 bytes were already on their way out", repo.retired)
