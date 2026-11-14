@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // The error-sample delete works like the log trim: it reads a window of a
@@ -66,12 +68,12 @@ func deleteErrorSampleRows(ctx context.Context, db *sql.DB, pid int64, cutoff ti
 
 // errorSampleDeleteLabel keeps the label the batched delete had, so slow
 // writes before and after the change group under one op.
-var errorSampleDeleteLabel = "DeleteErrorSamplesOlderThan:" + FamilySpans.String()
+var errorSampleDeleteLabel = "DeleteErrorSamplesOlderThan:" + engine.FamilySpans.String()
 
 // errorSampleDelete deletes one project's samples copied before cutoff.
 func errorSampleDelete(ctx context.Context, pid int64, cutoff time.Time) windowDelete {
 	return windowDelete{
-		family: FamilySpans,
+		family: engine.FamilySpans,
 		label:  errorSampleDeleteLabel,
 		scan: func(q rowQuerier, cur logTrimCursor) (logTrimWindow, error) {
 			return scanErrorSampleWindow(ctx, q, pid, cutoff, cur, retentionDeleteBatch)

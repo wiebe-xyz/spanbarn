@@ -13,13 +13,14 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 // openDB opens the SQLite database, runs migrations, and returns a Repository.
 func openDB(dbPath string) (*repository.Repository, *repository.Storage, error) {
 	store, err := repository.OpenStorage(context.Background(), dbPath, repository.StorageOptions{
-		CacheMB: repository.DefaultWriterCacheMB, MmapMB: repository.DefaultWriterMmapMB,
+		CacheMB: engine.DefaultWriterCacheMB, MmapMB: engine.DefaultWriterMmapMB,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)

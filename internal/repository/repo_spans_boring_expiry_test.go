@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -52,7 +53,7 @@ func TestDeleteBoringRowsChecksEachRowAgain(t *testing.T) {
 		t.Fatalf("read %d spans of %d traces, want 3 of 3", len(ids), len(keys))
 	}
 	later := now.Add(time.Hour)
-	db := repo.writer(FamilySpans)
+	db := repo.writer(engine.FamilySpans)
 	if _, err := db.Exec(`UPDATE spans SET expires_at = ? WHERE rowid = ?`, later, ids[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestDeleteExpiredBoringSpansWithReadPool(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.writer(FamilySpans).Exec(`UPDATE trace_summaries SET expires_at = NULL WHERE trace_id = 'gone'`); err != nil {
+	if _, err := repo.writer(engine.FamilySpans).Exec(`UPDATE trace_summaries SET expires_at = NULL WHERE trace_id = 'gone'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,7 +121,7 @@ func TestDeleteExpiredBoringSpansLabels(t *testing.T) {
 	t.Cleanup(func() { labelScheduler.Store(nil) })
 
 	insertBoringSpans(t, repo, 1, 1, time.Now().Add(-2*time.Hour).UTC())
-	db := repo.writer(FamilySpans)
+	db := repo.writer(engine.FamilySpans)
 	for _, q := range []string{
 		`CREATE TABLE label_probe (tbl TEXT, label TEXT)`,
 		`CREATE TRIGGER spans_label AFTER DELETE ON spans

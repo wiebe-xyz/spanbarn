@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // spanLedgerRetention is how long the span ledger keeps a bucket. A bucket more
@@ -22,7 +23,7 @@ func (r *Repository) AddSpanLedgerRows(rows []model.SpanLedgerRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	return r.execLow(FamilyCore, func(db *sql.DB) error {
+	return r.execLow(engine.FamilyCore, func(db *sql.DB) error {
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -86,7 +87,7 @@ func (r *Repository) ListSpanLedger(ctx context.Context, projectID int64, from, 
 // DeleteExpiredSpanLedger removes the buckets older than the ledger keeps and
 // those too far in the future to come from a right clock.
 func (r *Repository) DeleteExpiredSpanLedger(now time.Time) (int64, error) {
-	return r.execLowAffecting(FamilyCore,
+	return r.execLowAffecting(engine.FamilyCore,
 		`DELETE FROM span_ledger WHERE bucket < ? OR bucket > ?`,
 		now.Add(-spanLedgerRetention).Unix(), now.Add(spanLedgerFutureMax).Unix())
 }

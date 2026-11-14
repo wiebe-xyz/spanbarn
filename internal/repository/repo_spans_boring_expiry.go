@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -24,7 +25,7 @@ const boringExpiryChunk = retentionDeleteBatch
 
 // boringExpiryLabel keeps the label the batched delete had, so slow writes
 // before and after the change group under one op.
-var boringExpiryLabel = "DeleteExpiredBoringSpans:" + FamilySpans.String()
+var boringExpiryLabel = "DeleteExpiredBoringSpans:" + engine.FamilySpans.String()
 
 // boringSummaryLabel names the job that drops the chunk's spanless summaries,
 // so its time reads apart from the span delete's.
@@ -130,7 +131,7 @@ func (r *Repository) boringVictims(ctx context.Context, cutoff time.Time) ([]int
 // the summaries of its traces with no span left in jobs of their own and
 // refreshes the traces that keep spans through RefreshTraceStructure.
 func (r *Repository) deleteBoringChunk(ctx context.Context, ids []int64, keys []TraceKey, cutoff time.Time) (int64, error) {
-	n, err := r.submitRows(FamilySpans, writescheduler.Low, boringExpiryLabel, func(db *sql.DB) (int64, error) {
+	n, err := r.submitRows(engine.FamilySpans, writescheduler.Low, boringExpiryLabel, func(db *sql.DB) (int64, error) {
 		return deleteRowsByID(ctx, db, deleteBoringRowsSQL, ids, cutoff)
 	})
 	if err != nil || n == 0 {
@@ -168,7 +169,7 @@ func (r *Repository) dropSpanlessSummariesInParts(ctx context.Context, keys []Tr
 		}
 		r.warmSummaryKeys(ctx, part)
 		var stay []TraceKey
-		if _, err := r.submitRows(FamilySpans, writescheduler.Low, boringSummaryLabel, func(db *sql.DB) (int64, error) {
+		if _, err := r.submitRows(engine.FamilySpans, writescheduler.Low, boringSummaryLabel, func(db *sql.DB) (int64, error) {
 			var e error
 			if stay, e = dropSpanlessSummaries(ctx, db, part); e != nil {
 				return 0, e

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // shardedReadFixture writes one batch of logs, metrics and prompts to main
@@ -278,7 +279,7 @@ func TestShardReadersWithoutShards(t *testing.T) {
 	if err := rs.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if p := rs.pool(FamilyLogs); p != nil {
+	if p := rs.pool(engine.FamilyLogs); p != nil {
 		t.Fatal("a database without shards has a logs pool")
 	}
 	recs, err := repo.QueryPromptRecords(PromptFilter{ProjectID: 1, Limit: 10})

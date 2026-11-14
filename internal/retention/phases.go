@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
 // cancelledAttr marks a cycle or phase span that stopped because its caller
@@ -49,7 +48,7 @@ func (w *RetentionWorker) runPhases(ctx context.Context, cycle trace.Span, cfg C
 func runPhase(ctx context.Context, name string, run func(context.Context) error) error {
 	ctx, span := tracer.Start(ctx, name)
 	defer span.End()
-	ctx, calls := repository.WithStatementCounts(ctx)
+	ctx, calls := engine.WithStatementCounts(ctx)
 	err := run(ctx)
 	span.SetAttributes(calls.Attributes()...)
 	markOutcome(span, err)

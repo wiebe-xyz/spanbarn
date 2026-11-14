@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -112,12 +113,12 @@ func (e *UnwrittenRowsError[T]) Unwrap() error { return e.Err }
 // loop body of this generic function, which reads as "]-range1" (2026-10-28).
 // Writing telemetry must not emit telemetry, see WithoutSpanTracing.
 func writeTierRows[T any](r *Repository, ctx context.Context, label, query string, rows []T, chunkRows int, compare func(a, b T) int, args func(T) []any) error {
-	ctx = WithoutSpanTracing(ctx)
+	ctx = engine.WithoutSpanTracing(ctx)
 	sorted := slices.Clone(rows)
 	slices.SortFunc(sorted, compare)
 	written := 0
 	for chunk := range slices.Chunk(sorted, chunkRows) {
-		if _, err := r.submitRows(FamilySpans, writescheduler.Low, label, func(db *sql.DB) (int64, error) {
+		if _, err := r.submitRows(engine.FamilySpans, writescheduler.Low, label, func(db *sql.DB) (int64, error) {
 			if err := writeTierChunk(ctx, db, query, chunk, args); err != nil {
 				return 0, err
 			}
@@ -231,8 +232,8 @@ func (r *Repository) SpanRollupWatermark(ctx context.Context, step int64) (time.
 
 // SetSpanRollupWatermark advances a tier's watermark. It never moves back.
 func (r *Repository) SetSpanRollupWatermark(ctx context.Context, step int64, through time.Time) error {
-	ctx = WithoutSpanTracing(ctx)
-	return r.execLow(FamilySpans, func(db *sql.DB) error {
+	ctx = engine.WithoutSpanTracing(ctx)
+	return r.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		_, err := db.ExecContext(ctx,
 			`INSERT INTO span_rollup_compaction (step_seconds, compacted_through) VALUES (?, ?)
 			 ON CONFLICT(step_seconds) DO UPDATE SET
@@ -255,7 +256,7 @@ func (r *Repository) DeleteSpanRollupsOlderThanLimited(ctx context.Context, step
 func (r *Repository) deleteTierRowsOlderThan(ctx context.Context, table, key string, step int64, cutoff time.Time, max int64) (int64, bool, error) {
 	q := `DELETE FROM ` + table + ` WHERE (` + key + `) IN (
 		SELECT ` + key + ` FROM ` + table + ` WHERE step_seconds = ? AND bucket < ? LIMIT ?)`
-	return r.batchedDeleteLimited(ctx, FamilySpans, max, func(db *sql.DB, limit int64) (int64, error) {
+	return r.batchedDeleteLimited(ctx, engine.FamilySpans, max, func(db *sql.DB, limit int64) (int64, error) {
 		res, err := db.ExecContext(ctx, q, step, cutoff.Unix(), limit)
 		if err != nil {
 			return 0, err

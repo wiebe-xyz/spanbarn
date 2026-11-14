@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // traceStructureBatch is how many summaries one backfill transaction refreshes.
@@ -126,7 +128,7 @@ func (r *Repository) RefreshTraceStructure(ctx context.Context, keys []TraceKey)
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := r.execLow(FamilySpans, func(db *sql.DB) error {
+		if err := r.execLow(engine.FamilySpans, func(db *sql.DB) error {
 			tx, err := db.BeginTx(ctx, nil)
 			if err != nil {
 				return err
@@ -193,7 +195,7 @@ func (r *Repository) BackfillTraceStructure(ctx context.Context, max int64) (int
 			batch = remaining
 		}
 		var n int64
-		if err := r.execLow(FamilySpans, func(db *sql.DB) error {
+		if err := r.execLow(engine.FamilySpans, func(db *sql.DB) error {
 			var e error
 			n, e = r.backfillTraceStructureBatch(ctx, db, batch)
 			return e

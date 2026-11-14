@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // shardExpirer is the part of the repository that expires time-shard files.
@@ -45,7 +46,7 @@ func (w *RetentionWorker) expireShards(ctx context.Context, cut cycleCutoffs, st
 // bytes still waiting for deletion. A whole file costs a fraction of the
 // time a row delete of the same data does, and frees its space without a
 // vacuum.
-func (w *RetentionWorker) retireShardsForReclaim(ctx context.Context, cfg Config, space repository.Space, target float64) (float64, int64) {
+func (w *RetentionWorker) retireShardsForReclaim(ctx context.Context, cfg Config, space engine.Space, target float64) (float64, int64) {
 	used := space.UsedFraction()
 	r, ok := w.repo.(shardReclaimer)
 	if !ok || space.VolumeBytes <= 0 {

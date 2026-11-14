@@ -1,7 +1,8 @@
-package repository
+package engine
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -11,7 +12,7 @@ import (
 // A checkpoint that fails with an error inside its budget names the cause
 // error, which tells it apart from a timeout.
 func TestEndedCheckpointCauses(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(&lockedLog{}, nil))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	open := func(t *testing.T) *DB {
 		t.Helper()
 		d, err := Open(filepath.Join(t.TempDir(), "shard.db"), OpenOptions{})
@@ -25,12 +26,12 @@ func TestEndedCheckpointCauses(t *testing.T) {
 	}
 
 	d := open(t)
-	if r := d.checkpointEnded(time.Second, log); r.cause != "" || r.frames != 0 {
-		t.Errorf("free checkpoint: cause %q, frames %d", r.cause, r.frames)
+	if r := d.CheckpointEnded(time.Second, log); r.Cause != "" || r.Frames != 0 {
+		t.Errorf("free checkpoint: cause %q, frames %d", r.Cause, r.Frames)
 	}
 	d.Close()
-	if r := d.checkpointEnded(time.Second, log); r.cause != "error" {
-		t.Errorf("checkpoint on a closed handle: cause %q, want error", r.cause)
+	if r := d.CheckpointEnded(time.Second, log); r.Cause != "error" {
+		t.Errorf("checkpoint on a closed handle: cause %q, want error", r.Cause)
 	}
 
 	d = open(t)
@@ -40,7 +41,7 @@ func TestEndedCheckpointCauses(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer held.Close()
-	if r := d.checkpointEnded(50*time.Millisecond, log); r.cause != "timeout" {
-		t.Errorf("checkpoint behind a held connection: cause %q, want timeout", r.cause)
+	if r := d.CheckpointEnded(50*time.Millisecond, log); r.Cause != "timeout" {
+		t.Errorf("checkpoint behind a held connection: cause %q, want timeout", r.Cause)
 	}
 }

@@ -67,7 +67,7 @@ means changing a committed file, which a reviewer sees in the diff. That is the
 only escape hatch.
 
 Blocking metrics:
-- **Coverage** — `internal/service` and `internal/repository` stay above their package floors, AND every individual source file in them stays above a per-file floor (no fully-uncovered file hiding behind well-covered siblings; migration DDL and test files excluded). Coverage floors are raised by hand from a CI measurement: the workstation and CI measure these packages several points apart, so `--update-baseline` deliberately leaves them alone.
+- **Coverage** — `internal/service` and `internal/repository` (the root package and `internal/repository/engine`, run with `-coverpkg` over the tree so engine files count the repository tests too) stay above their package floors, AND every individual source file in them stays above a per-file floor (no fully-uncovered file hiding behind well-covered siblings; migration DDL and test files excluded). Coverage floors are raised by hand from a CI measurement: the workstation and CI measure these packages several points apart, so `--update-baseline` deliberately leaves them alone.
 - **Cyclomatic complexity** — the count of functions over gocyclo 15, exactly.
 - **File length** — the count of files over 500 lines, exactly, and no file over the hard cap.
 - **Duplication** — the count of `dupl` clone groups, exactly.

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // upsertAggregateSQL adds a row's counts into its bucket. weighted_count and
@@ -39,8 +41,8 @@ func upsertAggregateArgs(agg Aggregate) []any {
 
 func (r *Repository) UpsertAggregate(agg Aggregate) error {
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
-	ctx := WithoutSpanTracing(context.Background())
-	return r.execLow(FamilySpans, func(db *sql.DB) error {
+	ctx := engine.WithoutSpanTracing(context.Background())
+	return r.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		_, err := db.ExecContext(ctx, upsertAggregateSQL, upsertAggregateArgs(agg)...)
 		return err
 	})
@@ -143,7 +145,7 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 }
 
 func (r *Repository) DeleteAggregatesOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
-	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
+	return r.batchedDelete(ctx, engine.FamilySpans, func(db *sql.DB) (int64, error) {
 		res, e := db.ExecContext(ctx,
 			"DELETE FROM aggregates WHERE rowid IN (SELECT rowid FROM aggregates WHERE bucket < ? LIMIT ?)",
 			cutoff, retentionDeleteBatch,

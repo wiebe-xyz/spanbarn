@@ -12,6 +12,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/session"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
@@ -20,7 +21,7 @@ import (
 // for tests living outside the api package.
 func newExtSessionService(t *testing.T) *session.Service {
 	t.Helper()
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}

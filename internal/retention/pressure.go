@@ -3,7 +3,7 @@ package retention
 import (
 	"context"
 
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // Tier is how much disk pressure the database is under. Retention windows are
@@ -133,7 +133,7 @@ func (t Tier) Apply(cfg Config) Config {
 // that a worker built over a repository which cannot measure space (an
 // in-memory test DB, say) simply runs unpressured instead of failing.
 type spaceReporter interface {
-	DBSpace(ctx context.Context, dbPath string) (repository.Space, error)
+	DBSpace(ctx context.Context, dbPath string) (engine.Space, error)
 }
 
 // applyDiskPressure samples the volume and shortens cfg's raw-telemetry windows

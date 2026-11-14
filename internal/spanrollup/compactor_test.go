@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
@@ -19,7 +20,7 @@ func testRepo(t *testing.T) *repository.Repository {
 
 func testRepoDB(t *testing.T) (*repository.Repository, *sql.DB) {
 	t.Helper()
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}

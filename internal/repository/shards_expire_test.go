@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // expiryFixture writes logs of an error-sampled, a pinned and a plain trace
@@ -105,7 +106,7 @@ func TestShardExpiryKeepsErrorAndPinnedLogs(t *testing.T) {
 	if err := rs.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if p := rs.pool(FamilyLogs); p == nil || slices.Contains(p.files, file) {
+	if p := rs.pool(engine.FamilyLogs); p == nil || slices.Contains(p.files, file) {
 		t.Fatalf("logs pool after retiring: %+v", p)
 	}
 	for trace, want := range map[string]int{"err": 1, "pin": 1, "plain": 0} {
@@ -169,7 +170,7 @@ func TestShardExpiryTrimsInsideTheShardForShortWindows(t *testing.T) {
 	if err := repo.InsertLogs(ctx, []model.LogRecord{makeLogRecord(1, "late", "log late", 9)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Shards.handles[shardKey{FamilyLogs, mustTime(t, "2026-10-04T00:00:00Z")}].Exec(
+	if _, err := store.Shards.handles[shardKey{engine.FamilyLogs, mustTime(t, "2026-10-04T00:00:00Z")}].Exec(
 		`UPDATE logs SET ingested_at = '2026-10-04 20:00:00' WHERE trace_id = 'late'`); err != nil {
 		t.Fatal(err)
 	}

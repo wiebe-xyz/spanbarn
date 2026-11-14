@@ -128,7 +128,7 @@ Deletion is two-phase so no reader holds a deleted inode, which kept space alloc
 
 ### Disk ladder and reclaim
 
-`reclaimToTarget` (`retention/reclaim.go`) gains a first step, `retireShardsForReclaim`: retire the oldest shard across all families, oldest period first, until the projected usage is under target. A shard inserts can still reach (the current period or later) is never retired. Retiring shards count as free in that projection, since their files go within `shardDeleteDelay`; span row eviction then runs against the projection, and the ballast is restored only once usage is under target and no retiring shard is pending. The ballast (`repository/ballast.go`) and the size-based target stay.
+`reclaimToTarget` (`retention/reclaim.go`) gains a first step, `retireShardsForReclaim`: retire the oldest shard across all families, oldest period first, until the projected usage is under target. A shard inserts can still reach (the current period or later) is never retired. Retiring shards count as free in that projection, since their files go within `shardDeleteDelay`; span row eviction then runs against the projection, and the ballast is restored only once usage is under target and no retiring shard is pending. The ballast (`repository/engine/ballast.go`) and the size-based target stay.
 
 Retention expires shards by period (`Repository.ExpireShards`, called from the housekeeping step of the cycle): a shard whose whole period is older than its family's cutoff is retired, and a retiring shard older than `shardDeleteDelay` is deleted. When the disk ladder cuts a window below one period (logs to a few hours), the shard that straddles the cutoff also loses its older rows per project in batches, followed by `PRAGMA incremental_vacuum`. Shard files are created with `auto_vacuum=INCREMENTAL` for this.
 
@@ -138,7 +138,7 @@ Retention expires shards by period (`Repository.ExpireShards`, called from the h
 
 `SnapshotSettings` (`repository/dr.go`) keeps snapshotting main only; settings never move. Other single-file assumptions to update:
 
-- WAL checkpointing in `db.go` runs per write handle, so each file gets its own PASSIVE/TRUNCATE loop.
+- WAL checkpointing in `engine/db.go` runs per write handle, so each file gets its own PASSIVE/TRUNCATE loop.
 - `spanbarn db snapshot-settings` (`cmd/spanbarn/cli_db.go`) writes a main file whose telemetry tables are present and empty. After the split the moved tables are absent from main, and the writer creates an empty `spans.db` and empty current shards on first start, so a restored snapshot still serves with no extra step. A test restores a snapshot into an empty directory and starts the writer against it.
 
 ### Migration path

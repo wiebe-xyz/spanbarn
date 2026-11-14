@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // testLayoutEnv selects the storage layout setupTestDB builds. "split" puts
@@ -28,27 +30,27 @@ func setupSplitTestRepo(t *testing.T) *Repository {
 		t.Fatalf("split layout templates: %v", err)
 	}
 	dir := t.TempDir()
-	paths := make([]string, numFamilies)
-	for _, f := range Families() {
+	paths := make([]string, engine.NumFamilies)
+	for _, f := range engine.Families() {
 		paths[f] = filepath.Join(dir, f.String()+".db")
 		if err := os.WriteFile(paths[f], templates[f], 0o600); err != nil {
 			t.Fatalf("copy %s: %v", f, err)
 		}
 	}
 	var repo *Repository
-	for _, f := range Families() {
-		var attach []Attachment
-		for _, o := range Families() {
+	for _, f := range engine.Families() {
+		var attach []engine.Attachment
+		for _, o := range engine.Families() {
 			if o != f {
-				attach = append(attach, Attachment{Schema: "fam_" + o.String(), Path: paths[o]})
+				attach = append(attach, engine.Attachment{Schema: "fam_" + o.String(), Path: paths[o]})
 			}
 		}
-		db, err := Open(paths[f], OpenOptions{CacheMB: 2, MmapMB: 0, Attach: attach})
+		db, err := engine.Open(paths[f], engine.OpenOptions{CacheMB: 2, MmapMB: 0, Attach: attach})
 		if err != nil {
 			t.Fatalf("open %s: %v", f, err)
 		}
 		t.Cleanup(func() { db.Close() })
-		if f == FamilyCore {
+		if f == engine.FamilyCore {
 			repo = NewRepository(db.DB)
 			continue
 		}
@@ -62,16 +64,16 @@ func setupSplitTestRepo(t *testing.T) *Repository {
 // times slower than the default one.
 var splitTemplates struct {
 	once  sync.Once
-	files [numFamilies][]byte
+	files [engine.NumFamilies][]byte
 	err   error
 }
 
 // splitTemplateFiles returns the migrated family files. The first caller's
 // temp dir holds them while they are built; after that only the bytes remain.
-func splitTemplateFiles(t *testing.T) ([numFamilies][]byte, error) {
+func splitTemplateFiles(t *testing.T) ([engine.NumFamilies][]byte, error) {
 	splitTemplates.once.Do(func() {
 		dir := t.TempDir()
-		for _, f := range Families() {
+		for _, f := range engine.Families() {
 			path := filepath.Join(dir, f.String()+".db")
 			if err := createFamilyFile(path, f); err != nil {
 				splitTemplates.err = fmt.Errorf("create %s: %w", f, err)
@@ -90,8 +92,8 @@ func splitTemplateFiles(t *testing.T) ([numFamilies][]byte, error) {
 
 // createFamilyFile migrates a file in full, drops the tables family f does
 // not own, and folds the WAL back into the file before closing it.
-func createFamilyFile(path string, f Family) error {
-	db, err := NewDB(path)
+func createFamilyFile(path string, f engine.Family) error {
+	db, err := engine.NewDB(path)
 	if err != nil {
 		return err
 	}
@@ -104,7 +106,7 @@ func createFamilyFile(path string, f Family) error {
 		return err
 	}
 	for _, tbl := range tables {
-		if tbl == "goose_db_version" || TableFamily(tbl) == f {
+		if tbl == "goose_db_version" || engine.TableFamily(tbl) == f {
 			continue
 		}
 		if _, err := db.Exec("DROP TABLE " + tbl); err != nil {
@@ -146,15 +148,15 @@ func userTables(db *sql.DB) ([]string, error) {
 // sees every table.
 func TestSplitLayoutRoutesWrites(t *testing.T) {
 	repo := setupSplitTestRepo(t)
-	if _, err := repo.writer(FamilySpans).Exec(`INSERT INTO aggregates
+	if _, err := repo.writer(engine.FamilySpans).Exec(`INSERT INTO aggregates
 		(project_id, service, operation, kind, bucket, count)
 		VALUES (1, 's', 'o', 'server', '2026-10-04 00:00:00', 1)`); err != nil {
 		t.Fatalf("spans writer, own table: %v", err)
 	}
-	if _, err := repo.writer(FamilySpans).Exec(`INSERT INTO settings (key, value) VALUES ('k', 'v')`); err == nil {
+	if _, err := repo.writer(engine.FamilySpans).Exec(`INSERT INTO settings (key, value) VALUES ('k', 'v')`); err == nil {
 		t.Fatal("spans writer wrote a core table")
 	}
-	if _, err := repo.writer(FamilyCore).Exec(`DELETE FROM aggregates`); err == nil {
+	if _, err := repo.writer(engine.FamilyCore).Exec(`DELETE FROM aggregates`); err == nil {
 		t.Fatal("core writer wrote a span-family table")
 	}
 	var n int
@@ -170,7 +172,7 @@ func TestSplitLayoutCopiesAreIndependent(t *testing.T) {
 	if _, err := a.CreateProject("only-in-a", "A"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.writer(FamilySpans).Exec(`INSERT INTO aggregates
+	if _, err := a.writer(engine.FamilySpans).Exec(`INSERT INTO aggregates
 		(project_id, service, operation, kind, bucket, count)
 		VALUES (1, 's', 'o', 'server', '2026-10-04 00:00:00', 1)`); err != nil {
 		t.Fatal(err)

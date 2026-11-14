@@ -9,6 +9,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // maxAttached is the most files a connection of the modernc build can attach.
@@ -27,7 +29,7 @@ const columnCheckTimeout = 5 * time.Second
 // main's table, so queries keep their unqualified table names: SQLite resolves
 // a name in temp before main.
 type familyPool struct {
-	db *DB
+	db *engine.DB
 	// files are the attached shard files, newest period first.
 	files []string
 	// mainHas reports whether main still holds the family's tables (rows
@@ -60,7 +62,7 @@ type ShardReaders struct {
 	logger  *slog.Logger
 
 	mu    sync.RWMutex
-	pools [numFamilies]*familyPool
+	pools [engine.NumFamilies]*familyPool
 }
 
 // NewShardReaders returns the shard readers of the database at dbPath. main is
@@ -103,7 +105,7 @@ func (s *ShardReaders) Refresh(ctx context.Context) error {
 	return nil
 }
 
-func (s *ShardReaders) refreshFamily(ctx context.Context, f Family, files []string) error {
+func (s *ShardReaders) refreshFamily(ctx context.Context, f engine.Family, files []string) error {
 	if len(files) > maxAttached {
 		s.logger.Warn("more active shards than a connection can attach, reading the newest",
 			"family", f.String(), "shards", len(files), "attached", maxAttached)
@@ -114,7 +116,7 @@ func (s *ShardReaders) refreshFamily(ctx context.Context, f Family, files []stri
 		return err
 	}
 	kept := false
-	if f == FamilyLogs {
+	if f == engine.FamilyLogs {
 		if kept, err = hasTable(ctx, s.main, "kept_logs"); err != nil {
 			return err
 		}
@@ -147,8 +149,8 @@ func (s *ShardReaders) refreshFamily(ctx context.Context, f Family, files []stri
 // activeShards lists the active shard files per family, newest period first.
 // A main without the shards table (a writer that has not migrated yet) has
 // none.
-func (s *ShardReaders) activeShards(ctx context.Context) (map[Family][]string, error) {
-	out := map[Family][]string{}
+func (s *ShardReaders) activeShards(ctx context.Context) (map[engine.Family][]string, error) {
+	out := map[engine.Family][]string{}
 	if has, err := hasTable(ctx, s.main, "shards"); err != nil || !has {
 		return out, err
 	}
@@ -174,18 +176,18 @@ func (s *ShardReaders) activeShards(ctx context.Context) (map[Family][]string, e
 
 // openPool opens a read pool on main that attaches files, newest first, and
 // views f's tables over them.
-func (s *ShardReaders) openPool(ctx context.Context, f Family, files []string, mainHas, kept bool) (*familyPool, error) {
+func (s *ShardReaders) openPool(ctx context.Context, f engine.Family, files []string, mainHas, kept bool) (*familyPool, error) {
 	p := &familyPool{files: files, mainHas: mainHas, kept: kept}
-	attach := make([]Attachment, len(files))
+	attach := make([]engine.Attachment, len(files))
 	for i, file := range files {
 		schema := fmt.Sprintf("shard_%d", i)
-		attach[i] = Attachment{Schema: schema, Path: filepath.Join(ShardsDir(s.dbPath), file), CacheMB: s.cacheMB, MmapMB: s.mmapMB}
+		attach[i] = engine.Attachment{Schema: schema, Path: filepath.Join(ShardsDir(s.dbPath), file), CacheMB: s.cacheMB, MmapMB: s.mmapMB}
 		p.segments = append(p.segments, schema)
 	}
 	if mainHas {
 		p.segments = append(p.segments, "main")
 	}
-	opts := OpenOptions{ReadOnly: true, CacheMB: s.cacheMB, MmapMB: s.mmapMB, Attach: attach}
+	opts := engine.OpenOptions{ReadOnly: true, CacheMB: s.cacheMB, MmapMB: s.mmapMB, Attach: attach}
 	if err := p.readColumnsOnce(ctx, s.dbPath, opts, f); err != nil {
 		return nil, err
 	}
@@ -198,7 +200,7 @@ func (s *ShardReaders) openPool(ctx context.Context, f Family, files []string, m
 		views = append(views, view)
 	}
 	opts.Setup = views
-	db, err := Open(s.dbPath, opts)
+	db, err := engine.Open(s.dbPath, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +210,7 @@ func (s *ShardReaders) openPool(ctx context.Context, f Family, files []string, m
 }
 
 // pool returns f's read pool, or nil when f has no shards.
-func (s *ShardReaders) pool(f Family) *familyPool {
+func (s *ShardReaders) pool(f engine.Family) *familyPool {
 	if s == nil {
 		return nil
 	}

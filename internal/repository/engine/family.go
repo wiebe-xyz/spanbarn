@@ -1,4 +1,4 @@
-package repository
+package engine
 
 // Family names a group of tables that can live in their own database file.
 // Every write transaction touches the tables of one family only, because
@@ -21,19 +21,20 @@ const (
 	FamilyLogs
 	FamilyMetrics
 	FamilyPrompts
-	numFamilies
+	// NumFamilies is the number of families, for arrays indexed by Family.
+	NumFamilies
 )
 
 // familyTables lists the tables of every family except core. A table not
 // listed here belongs to FamilyCore.
-var familyTables = [numFamilies][]string{
+var familyTables = [NumFamilies][]string{
 	FamilySpans:   {"spans", "trace_summaries", "spans_staging", "aggregates", "error_samples", "error_exemplars", "span_rollups", "span_rollup_compaction", "span_edges"},
 	FamilyLogs:    {"logs"},
 	FamilyMetrics: {"metrics"},
 	FamilyPrompts: {"prompt_records"},
 }
 
-var familyNames = [numFamilies]string{
+var familyNames = [NumFamilies]string{
 	FamilyCore:    "core",
 	FamilySpans:   "spans",
 	FamilyLogs:    "logs",
@@ -42,7 +43,7 @@ var familyNames = [numFamilies]string{
 }
 
 func (f Family) String() string {
-	if f < 0 || f >= numFamilies {
+	if f < 0 || f >= NumFamilies {
 		return "unknown"
 	}
 	return familyNames[f]
@@ -50,7 +51,7 @@ func (f Family) String() string {
 
 // Families returns every family, core first.
 func Families() []Family {
-	out := make([]Family, numFamilies)
+	out := make([]Family, NumFamilies)
 	for i := range out {
 		out[i] = Family(i)
 	}
@@ -60,7 +61,7 @@ func Families() []Family {
 // Tables returns the tables that belong to f. For FamilyCore it returns nil:
 // core owns every table no other family lists.
 func (f Family) Tables() []string {
-	if f < 0 || f >= numFamilies {
+	if f < 0 || f >= NumFamilies {
 		return nil
 	}
 	return familyTables[f]

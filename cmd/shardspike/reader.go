@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // openReader returns a read-only connection that sees the layout's tables
@@ -27,14 +27,14 @@ import (
 func openReader(ctx context.Context, root, layout string) (*sql.DB, error) {
 	dir := layoutDir(root, layout)
 	if layout == layoutSingle {
-		db, err := repository.NewReadOnlyDB(filepath.Join(dir, singleFile))
+		db, err := engine.NewReadOnlyDB(filepath.Join(dir, singleFile))
 		if err != nil {
 			return nil, err
 		}
 		db.SetMaxOpenConns(1)
 		return db.DB, nil
 	}
-	db, err := repository.NewReadOnlyDB(filepath.Join(dir, configFile))
+	db, err := engine.NewReadOnlyDB(filepath.Join(dir, configFile))
 	if err != nil {
 		return nil, err
 	}

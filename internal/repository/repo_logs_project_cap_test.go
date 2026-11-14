@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -42,7 +43,7 @@ func TestDeleteProjectLogsRunsInChunksAndReportsRows(t *testing.T) {
 	if n != projectLogCapChunk+3 {
 		t.Errorf("deleted %d, want %d", n, projectLogCapChunk+3)
 	}
-	label := "DeleteProjectLogsOlderThan:" + TableFamily("logs").String()
+	label := "DeleteProjectLogsOlderThan:" + engine.TableFamily("logs").String()
 	if got, want := jobRows()[label], []int64{projectLogCapChunk, 3}; !slices.Equal(got, want) {
 		t.Errorf("%s job rows = %v, want %v", label, got, want)
 	}
@@ -88,7 +89,7 @@ func TestDeleteProjectLogRowsChecksEachRowAgain(t *testing.T) {
 	}
 
 	var n int64
-	err := repo.submit(TableFamily("logs"), writescheduler.Low, "test", func(db *sql.DB) error {
+	err := repo.submit(engine.TableFamily("logs"), writescheduler.Low, "test", func(db *sql.DB) error {
 		var e error
 		n, e = deleteRowsByID(ctx, db, deleteProjectLogRowsSQL("logs"), ids, int64(1), cutoff)
 		return e
@@ -100,7 +101,7 @@ func TestDeleteProjectLogRowsChecksEachRowAgain(t *testing.T) {
 		t.Errorf("deleted %d of the listed rows, want only the unpinned row of project 1", n)
 	}
 	var early int64
-	err = repo.submit(TableFamily("logs"), writescheduler.Low, "test", func(db *sql.DB) error {
+	err = repo.submit(engine.TableFamily("logs"), writescheduler.Low, "test", func(db *sql.DB) error {
 		var e error
 		early, e = deleteRowsByID(ctx, db, deleteProjectLogRowsSQL("logs"), ids, int64(1), time.Now().Add(-time.Hour).UTC())
 		return e
