@@ -1,9 +1,9 @@
 package repository
 
 import (
-	"context"
-	"log/slog"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // The final checkpoint of an ended shard resets its WAL before the handle
@@ -18,75 +18,25 @@ const (
 	endedCheckpointAttempts = 2
 	// endedCheckpointPause is the wait ahead of the retry.
 	endedCheckpointPause = time.Second
-	// endedBusyRetry is how often an attempt blocked by a reader snapshot
-	// tries again inside its budget.
-	endedBusyRetry = 250 * time.Millisecond
 )
-
-// endedCheckpoint is the outcome of one final checkpoint attempt.
-type endedCheckpoint struct {
-	// frames is the WAL size after the attempt, or -1 if it did not run to
-	// the end.
-	frames int
-	// cause is empty when the WAL was reset. Otherwise it is "busy" (a reader
-	// snapshot kept frames in the WAL for the whole budget), "timeout" (the
-	// budget ran out first, waiting for the connection or inside the
-	// TRUNCATE) or "error" (the checkpoint failed; the error itself is in the
-	// "wal checkpoint error" warning just before).
-	cause string
-	times checkpointTimes
-}
-
-// checkpointEnded runs one TRUNCATE checkpoint of the handle's file under
-// budget, retrying inside it while a reader blocks the reset.
-func (d *DB) checkpointEnded(budget time.Duration, log *slog.Logger) endedCheckpoint {
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
-	frames, times := d.checkpointWith(ctx, endedBusyRetry, log, func() {})
-	r := endedCheckpoint{frames: frames, times: times}
-	switch {
-	case frames == 0:
-	case frames > 0:
-		r.cause = "busy"
-	case ctx.Err() != nil:
-		r.cause = "timeout"
-	default:
-		r.cause = "error"
-	}
-	return r
-}
-
-// attrs are the log attributes of attempt on file.
-func (r endedCheckpoint) attrs(file string, attempt int) []any {
-	return []any{
-		"file", file,
-		"attempt", attempt,
-		"cause", r.cause,
-		"wal_frames", r.frames,
-		"conn_wait_ms", r.times.connWait.Milliseconds(),
-		"truncate_ms", r.times.truncate.Milliseconds(),
-		"vacuum_ms", r.times.vacuum.Milliseconds(),
-		"checkpoint_tries", r.times.attempts,
-	}
-}
 
 // finalCheckpoint resets the WAL of the ended shard h, trying once more if
 // the first attempt leaves it in place. Only a WAL still in place after the
 // retry logs at error level; the message is the one SPA-89 groups on.
-func (m *ShardManager) finalCheckpoint(h *DB, file string) {
+func (m *ShardManager) finalCheckpoint(h *engine.DB, file string) {
 	for attempt := 1; ; attempt++ {
-		r := h.checkpointEnded(m.attemptBudget(), m.logger)
+		r := h.CheckpointEnded(m.attemptBudget(), m.logger)
 		switch {
-		case r.cause == "":
+		case r.Cause == "":
 			if attempt > 1 {
-				m.logger.Warn("close ended shard: final checkpoint recovered on retry", r.attrs(file, attempt)...)
+				m.logger.Warn("close ended shard: final checkpoint recovered on retry", r.Attrs(file, attempt)...)
 			}
 			return
 		case attempt >= endedCheckpointAttempts:
-			m.logger.Error("close ended shard: final checkpoint failed", r.attrs(file, attempt)...)
+			m.logger.Error("close ended shard: final checkpoint failed", r.Attrs(file, attempt)...)
 			return
 		}
-		m.logger.Warn("close ended shard: final checkpoint failed, retrying", r.attrs(file, attempt)...)
+		m.logger.Warn("close ended shard: final checkpoint failed, retrying", r.Attrs(file, attempt)...)
 		if m.beforeCheckpointRetry != nil {
 			m.beforeCheckpointRetry()
 		}

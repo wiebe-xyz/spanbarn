@@ -10,7 +10,7 @@ import type {
 } from '../api/types'
 import { TraceStructureBadges } from '../components/TraceStructureBadges'
 import { formatCount } from '../utils/format'
-import { truncateId } from '../utils/spanTree'
+import { truncateId } from '../traces/spanTree'
 
 /** The queries join spans back to themselves, so the server caps the range at 7 days. */
 const RANGES = [

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // insertTraceAt stores a one-span trace for project 1 with a controlled
@@ -132,7 +134,7 @@ func insertBigTrace(t *testing.T, repo *Repository, projectID int64, trace strin
 func spanCount(t *testing.T, repo *Repository, projectID int64, trace string) int {
 	t.Helper()
 	var n int
-	if err := repo.writer(FamilySpans).QueryRow(`SELECT count(*) FROM spans WHERE project_id = ? AND trace_id = ?`,
+	if err := repo.writer(engine.FamilySpans).QueryRow(`SELECT count(*) FROM spans WHERE project_id = ? AND trace_id = ?`,
 		projectID, trace).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +196,7 @@ func TestEvictTracesChecksEachTraceAgain(t *testing.T) {
 	if err != nil || len(victims) != 3 {
 		t.Fatalf("victims %v, err %v; want 3", victims, err)
 	}
-	if _, err := repo.writer(FamilySpans).Exec(`UPDATE trace_summaries SET has_error = 1 WHERE trace_id = 'erred'`); err != nil {
+	if _, err := repo.writer(engine.FamilySpans).Exec(`UPDATE trace_summaries SET has_error = 1 WHERE trace_id = 'erred'`); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.PinTrace(ctx, 1, "pinned", "keep"); err != nil {

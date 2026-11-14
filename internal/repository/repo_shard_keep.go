@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -138,7 +139,7 @@ func (r *Repository) keepLogsWindow(
 // connection with the logs shard at path attached read-only as expiring. The
 // job reports the rows fn returns as write.rows.
 func (r *Repository) onExpiringShard(ctx context.Context, path string, fn func(conn *sql.Conn) (int64, error)) (int64, error) {
-	return r.submitRows(FamilyCore, writescheduler.Low, "keepLogs", func(db *sql.DB) (int64, error) {
+	return r.submitRows(engine.FamilyCore, writescheduler.Low, "keepLogs", func(db *sql.DB) (int64, error) {
 		conn, err := db.Conn(ctx)
 		if err != nil {
 			return 0, err

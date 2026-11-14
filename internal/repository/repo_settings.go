@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // GetSetting returns a setting value by key, or empty string if not found.
@@ -19,7 +21,7 @@ func (r *Repository) GetSetting(key string) (string, error) {
 
 // SetSetting upserts a setting key/value pair.
 func (r *Repository) SetSetting(key, value string) error {
-	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+	return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		_, err := db.Exec(
 			"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 			key, value,
@@ -30,7 +32,7 @@ func (r *Repository) SetSetting(key, value string) error {
 
 // DeleteSetting removes a setting key. No-op if the key does not exist.
 func (r *Repository) DeleteSetting(key string) error {
-	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+	return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		_, err := db.Exec("DELETE FROM settings WHERE key = ?", key)
 		return err
 	})

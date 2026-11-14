@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -67,13 +68,13 @@ const coarseRollupWarmSQL = `SELECT count FROM metric_rollups_coarse
 // some chunks is simply redone.
 func (r *Repository) UpsertCoarseRollups(ctx context.Context, rollups []MetricRollup) error {
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
-	ctx = WithoutSpanTracing(ctx)
+	ctx = engine.WithoutSpanTracing(ctx)
 	for _, chunk := range coarseRollupChunks(rollups) {
 		r.warmRollupKeys(ctx, coarseRollupWarmSQL, len(chunk), func(i int) []any {
 			m := chunk[i]
 			return []any{m.ProjectID, m.Name, m.AttrFingerprint, m.StepSeconds, m.Bucket}
 		})
-		_, err := r.submitRows(FamilyCore, writescheduler.Low, "UpsertCoarseRollups", func(db *sql.DB) (int64, error) {
+		_, err := r.submitRows(engine.FamilyCore, writescheduler.Low, "UpsertCoarseRollups", func(db *sql.DB) (int64, error) {
 			return int64(len(chunk)), upsertCoarseRollupChunk(ctx, db, chunk)
 		})
 		if err != nil {
@@ -184,7 +185,7 @@ func (r *Repository) DeleteCoarseRollupsOlderThanLimited(ctx context.Context, st
 	var total int64
 	for _, pid := range pids {
 		pid := pid
-		n, _, err := r.batchedDeleteLimited(ctx, FamilyCore, max-total, func(db *sql.DB, limit int64) (int64, error) {
+		n, _, err := r.batchedDeleteLimited(ctx, engine.FamilyCore, max-total, func(db *sql.DB, limit int64) (int64, error) {
 			res, e := db.ExecContext(ctx, q, pid, step, cutoff, limit)
 			if e != nil {
 				return 0, e
@@ -218,7 +219,7 @@ func (r *Repository) DeleteCoarseRollupsOlderThan(ctx context.Context, step int6
 	var total int64
 	for _, pid := range pids {
 		pid := pid
-		n, err := r.batchedDelete(ctx, FamilyCore, func(db *sql.DB) (int64, error) {
+		n, err := r.batchedDelete(ctx, engine.FamilyCore, func(db *sql.DB) (int64, error) {
 			res, e := db.ExecContext(ctx, q, pid, step, cutoff, retentionDeleteBatch)
 			if e != nil {
 				return 0, e

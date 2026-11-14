@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // lockedLog collects log lines written from several goroutines.
@@ -53,7 +55,7 @@ func heldEndedShard(t *testing.T) (store *Storage, path string, log *lockedLog, 
 	store.Shards.logger = slog.New(slog.NewTextHandler(log, nil))
 	store.Shards.closeBudget = 200 * time.Millisecond
 	store.Shards.mu.Lock()
-	h := store.Shards.handles[shardKey{FamilyLogs, mustTime(t, "2026-10-04T00:00:00Z")}]
+	h := store.Shards.handles[shardKey{engine.FamilyLogs, mustTime(t, "2026-10-04T00:00:00Z")}]
 	store.Shards.mu.Unlock()
 	if h == nil {
 		t.Fatal("no logs shard for 2026-10-04")

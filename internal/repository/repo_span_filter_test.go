@@ -10,6 +10,7 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func filterSpan(trace, span, name, service, kind, attrs string, dur int64) Span {
@@ -174,7 +175,7 @@ func TestSavedQueryFiltersRoundTrip(t *testing.T) {
 
 // Migration 036 maps the four legacy saved-query fields onto the filter model.
 func TestMigration036BackfillsSavedQueryFilters(t *testing.T) {
-	db, err := NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

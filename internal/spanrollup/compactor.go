@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // Repository is the data access the compactor needs.
@@ -46,8 +46,8 @@ type Tier struct {
 // Ladder is the compaction order, finest first.
 func Ladder() []Tier {
 	return []Tier{
-		{Step: rollup.StepHour, Source: rollup.Step5m, Label: "hourly"},
-		{Step: rollup.StepDay, Source: rollup.StepHour, Label: "daily"},
+		{Step: tier.StepHour, Source: tier.Step5m, Label: "hourly"},
+		{Step: tier.StepDay, Source: tier.StepHour, Label: "daily"},
 	}
 }
 
@@ -135,13 +135,13 @@ func (c *Compactor) Run(ctx context.Context) {
 // RunOnce walks the ladder once.
 func (c *Compactor) RunOnce(ctx context.Context) error {
 	c.busy = false
-	for _, tier := range Ladder() {
-		done, rows, err := c.compactTier(ctx, tier)
+	for _, rung := range Ladder() {
+		done, rows, err := c.compactTier(ctx, rung)
 		if err != nil {
 			return err
 		}
 		if done > 0 {
-			c.logger.Info("span rollup compaction", "tier", tier.Label, "buckets", done, "rows_written", rows)
+			c.logger.Info("span rollup compaction", "tier", rung.Label, "buckets", done, "rows_written", rows)
 		}
 		if done >= c.cfg.BucketsPerPass {
 			c.busy = true
@@ -150,12 +150,12 @@ func (c *Compactor) RunOnce(ctx context.Context) error {
 	return c.repairIfDue(ctx)
 }
 
-func (c *Compactor) compactTier(ctx context.Context, tier Tier) (int, int, error) {
-	start, ok, err := c.tierStart(ctx, tier)
+func (c *Compactor) compactTier(ctx context.Context, rung Tier) (int, int, error) {
+	start, ok, err := c.tierStart(ctx, rung)
 	if err != nil || !ok {
 		return 0, 0, err
 	}
-	ready, err := c.readyThrough(ctx, tier)
+	ready, err := c.readyThrough(ctx, rung)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -164,15 +164,15 @@ func (c *Compactor) compactTier(ctx context.Context, tier Tier) (int, int, error
 		if err := ctx.Err(); err != nil {
 			return buckets, rows, err
 		}
-		end := rollup.NextBucket(start, tier.Step)
+		end := tier.NextBucket(start, rung.Step)
 		if end.After(ready) {
 			break
 		}
-		n, err := c.compactBucket(ctx, tier, start, end)
+		n, err := c.compactBucket(ctx, rung, start, end)
 		if err != nil {
 			return buckets, rows, err
 		}
-		if err := c.repo.SetSpanRollupWatermark(ctx, tier.Source, end); err != nil {
+		if err := c.repo.SetSpanRollupWatermark(ctx, rung.Source, end); err != nil {
 			return buckets, rows, err
 		}
 		rows += n
@@ -185,11 +185,11 @@ func (c *Compactor) compactTier(ctx context.Context, tier Tier) (int, int, error
 // readyThrough is how far a tier's source is complete. The 5-minute tier is
 // complete up to Lag ago; a coarser source is complete as far as it was
 // itself compacted.
-func (c *Compactor) readyThrough(ctx context.Context, tier Tier) (time.Time, error) {
-	if tier.Source == rollup.Step5m {
+func (c *Compactor) readyThrough(ctx context.Context, rung Tier) (time.Time, error) {
+	if rung.Source == tier.Step5m {
 		return c.now().UTC().Add(-c.cfg.Lag), nil
 	}
-	below, ok, err := c.repo.SpanRollupWatermark(ctx, rollup.Step5m)
+	below, ok, err := c.repo.SpanRollupWatermark(ctx, tier.Step5m)
 	if err != nil || !ok {
 		return time.Time{}, err
 	}
@@ -197,61 +197,61 @@ func (c *Compactor) readyThrough(ctx context.Context, tier Tier) (time.Time, err
 }
 
 // tierStart is the first target bucket the tier still owes.
-func (c *Compactor) tierStart(ctx context.Context, tier Tier) (time.Time, bool, error) {
-	if through, ok, err := c.repo.SpanRollupWatermark(ctx, tier.Source); err != nil || ok {
-		return rollup.TruncateBucket(through, tier.Step), ok, err
+func (c *Compactor) tierStart(ctx context.Context, rung Tier) (time.Time, bool, error) {
+	if through, ok, err := c.repo.SpanRollupWatermark(ctx, rung.Source); err != nil || ok {
+		return tier.TruncateBucket(through, rung.Step), ok, err
 	}
-	oldest, ok, err := c.repo.OldestSpanRollupBucket(ctx, tier.Source)
+	oldest, ok, err := c.repo.OldestSpanRollupBucket(ctx, rung.Source)
 	if err != nil || !ok {
 		return time.Time{}, false, err
 	}
-	return rollup.TruncateBucket(oldest, tier.Step), true, nil
+	return tier.TruncateBucket(oldest, rung.Step), true, nil
 }
 
 // compactBucket builds one coarse bucket of span_rollups and of span_edges.
 // Each table checks its own source window for gaps: span_edges started later
 // than span_rollups, so an hour can be whole in one and not in the other.
-func (c *Compactor) compactBucket(ctx context.Context, tier Tier, start, end time.Time) (int, error) {
-	n, err := c.compactRollupBucket(ctx, tier, start, end)
+func (c *Compactor) compactBucket(ctx context.Context, rung Tier, start, end time.Time) (int, error) {
+	n, err := c.compactRollupBucket(ctx, rung, start, end)
 	if err != nil {
 		return n, err
 	}
-	m, err := c.compactEdgeBucket(ctx, tier, start, end)
+	m, err := c.compactEdgeBucket(ctx, rung, start, end)
 	return n + m, err
 }
 
-func (c *Compactor) compactRollupBucket(ctx context.Context, tier Tier, start, end time.Time) (int, error) {
-	if ok, err := windowComplete(ctx, c.repo, c.repo, tier.Source, start, end); err != nil || !ok {
+func (c *Compactor) compactRollupBucket(ctx context.Context, rung Tier, start, end time.Time) (int, error) {
+	if ok, err := windowComplete(ctx, c.repo, c.repo, rung.Source, start, end); err != nil || !ok {
 		if err == nil {
 			c.logger.Info("span rollup compaction left a bucket out: a source bucket holds no rows",
-				"tier", tier.Label, "bucket", start)
+				"tier", rung.Label, "bucket", start)
 		}
 		return 0, err
 	}
-	src, err := c.repo.SpanRollupWindow(ctx, tier.Source, start, end)
+	src, err := c.repo.SpanRollupWindow(ctx, rung.Source, start, end)
 	if err != nil || len(src) == 0 {
 		return 0, err
 	}
-	merged := Merge(src, tier.Step, start)
+	merged := Merge(src, rung.Step, start)
 	if err := c.repo.ReplaceSpanRollups(ctx, merged); err != nil {
 		return 0, err
 	}
 	return len(merged), nil
 }
 
-func (c *Compactor) compactEdgeBucket(ctx context.Context, tier Tier, start, end time.Time) (int, error) {
-	if ok, err := windowComplete(ctx, BucketCounterFunc(c.repo.CountSpanEdgeBuckets), Arrivals(c.repo, c.repo), tier.Source, start, end); err != nil || !ok {
+func (c *Compactor) compactEdgeBucket(ctx context.Context, rung Tier, start, end time.Time) (int, error) {
+	if ok, err := windowComplete(ctx, BucketCounterFunc(c.repo.CountSpanEdgeBuckets), Arrivals(c.repo, c.repo), rung.Source, start, end); err != nil || !ok {
 		if err == nil {
 			c.logger.Info("span edge compaction left a bucket out: a source bucket holds no rows",
-				"tier", tier.Label, "bucket", start)
+				"tier", rung.Label, "bucket", start)
 		}
 		return 0, err
 	}
-	src, err := c.repo.SpanEdgeWindow(ctx, tier.Source, start, end)
+	src, err := c.repo.SpanEdgeWindow(ctx, rung.Source, start, end)
 	if err != nil || len(src) == 0 {
 		return 0, err
 	}
-	merged := MergeEdges(src, tier.Step, start)
+	merged := MergeEdges(src, rung.Step, start)
 	if err := c.repo.ReplaceSpanEdges(ctx, merged); err != nil {
 		return 0, err
 	}

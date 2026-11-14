@@ -15,7 +15,7 @@ sqlite3 -readonly /var/lib/spanbarn/spanbarn.db "PRAGMA auto_vacuum; PRAGMA free
 ```
 
 - `2` (INCREMENTAL, set by migration 018): the writer's checkpoint loop runs
-  `PRAGMA incremental_vacuum(5000)` every 30 seconds (`internal/repository/db.go`),
+  `PRAGMA incremental_vacuum(5000)` every 30 seconds (`internal/repository/engine/db.go`),
   so pages freed by row retention and by dropped tables go back to the volume
   within the hour. Nothing to do. Production was in this state on 2026-10-05,
   with a freelist of 0.

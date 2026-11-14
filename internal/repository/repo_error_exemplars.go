@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // exemplarDayLayout is the format of error_exemplars.day.
@@ -51,7 +53,7 @@ func exemplarDay(s Span, now time.Time) string {
 // it.
 func (r *Repository) PruneErrorExemplars(ctx context.Context, cutoff time.Time) (int64, error) {
 	day := cutoff.UTC().Format(exemplarDayLayout)
-	n, err := r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
+	n, err := r.batchedDelete(ctx, engine.FamilySpans, func(db *sql.DB) (int64, error) {
 		res, err := db.ExecContext(ctx,
 			`DELETE FROM error_exemplars WHERE rowid IN (
 				SELECT rowid FROM error_exemplars WHERE day < ? LIMIT ?)`,

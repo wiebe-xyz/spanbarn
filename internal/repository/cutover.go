@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // The cut-over moves the spans family of a single-file database into its own
@@ -102,7 +104,7 @@ func finishCutover(ctx context.Context, dbPath string, o StorageOptions) error {
 	if !fileExists(tmp) {
 		return nil
 	}
-	db, err := Open(tmp, OpenOptions{ReadOnly: true, CacheMB: o.CacheMB})
+	db, err := engine.Open(tmp, engine.OpenOptions{ReadOnly: true, CacheMB: o.CacheMB})
 	if err != nil {
 		return err
 	}
@@ -156,19 +158,19 @@ func copySpansFamily(ctx context.Context, dbPath, tmp string, o StorageOptions) 
 	if err := createSpansFile(ctx, tmp, o); err != nil {
 		return 0, err
 	}
-	dst, err := Open(tmp, OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB, Attach: []Attachment{{Schema: CoreSchema, Path: dbPath}}})
+	dst, err := engine.Open(tmp, engine.OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB, Attach: []engine.Attachment{{Schema: CoreSchema, Path: dbPath}}})
 	if err != nil {
 		return 0, err
 	}
 	defer dst.Close()
 	var total int64
-	for _, table := range FamilySpans.Tables() {
+	for _, table := range engine.FamilySpans.Tables() {
 		n, err := copyTable(ctx, dst.DB, table)
 		if err != nil {
 			return 0, fmt.Errorf("copy %s: %w", table, err)
 		}
 		total += n
-		dst.checkpoint(ctx, 0, o.logger())
+		dst.Checkpoint(ctx, 0, o.logger())
 	}
 	if err := copySequences(ctx, dst.DB); err != nil {
 		return 0, err
@@ -179,7 +181,7 @@ func copySpansFamily(ctx context.Context, dbPath, tmp string, o StorageOptions) 
 	if _, err := dst.ExecContext(ctx, `INSERT INTO `+cutoverMarkerTable+` VALUES (?, ?)`, time.Now().UTC().Format(time.RFC3339), total); err != nil {
 		return 0, err
 	}
-	if dst.checkpoint(ctx, 0, o.logger()) != 0 {
+	if dst.Checkpoint(ctx, 0, o.logger()) != 0 {
 		return 0, errors.New("final checkpoint of the copy did not complete")
 	}
 	return total, nil
@@ -190,7 +192,7 @@ func copySpansFamily(ctx context.Context, dbPath, tmp string, o StorageOptions) 
 // unqualified, and a single-file main has a goose_spans_version of its own
 // that would answer for the new file.
 func createSpansFile(ctx context.Context, path string, o StorageOptions) error {
-	db, err := Open(path, OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB})
+	db, err := engine.Open(path, engine.OpenOptions{CacheMB: o.CacheMB, MmapMB: o.MmapMB})
 	if err != nil {
 		return err
 	}
@@ -298,7 +300,7 @@ func hasRowid(ctx context.Context, db *sql.DB, table string) (bool, error) {
 // growing from where main left them even when its newest rows were deleted.
 // Code that walks span ids with a watermark relies on that.
 func copySequences(ctx context.Context, dst *sql.DB) error {
-	tables := FamilySpans.Tables()
+	tables := engine.FamilySpans.Tables()
 	args := make([]any, len(tables))
 	for i, t := range tables {
 		args[i] = t

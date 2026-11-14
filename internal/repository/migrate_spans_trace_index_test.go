@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // traceIndexSeek is how a plan reads idx_spans_trace once it covers the
@@ -35,7 +37,7 @@ func TestTraceIndexPinsReadCoveringIndex(t *testing.T) {
 // name, and leaves a covering one alone.
 func TestSpansTraceIndexMigrationRebuildsOnce(t *testing.T) {
 	repo := setupTestDB(t)
-	db := repo.writer(FamilySpans)
+	db := repo.writer(engine.FamilySpans)
 	ctx := context.Background()
 	for _, stmt := range []string{`DROP INDEX idx_spans_trace`, `CREATE INDEX idx_spans_trace ON spans(trace_id)`} {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

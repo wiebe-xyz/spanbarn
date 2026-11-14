@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -25,7 +26,7 @@ const (
 
 // shardRow is one row of the shards table.
 type shardRow struct {
-	family     Family
+	family     engine.Family
 	file       string
 	start, end time.Time
 	state      string
@@ -65,7 +66,7 @@ func (m *ShardManager) rows(ctx context.Context) ([]shardRow, error) {
 	return out, rows.Err()
 }
 
-func (m *ShardManager) familyNamed(name string) (Family, bool) {
+func (m *ShardManager) familyNamed(name string) (engine.Family, bool) {
 	for f := range m.specs {
 		if f.String() == name {
 			return f, true
@@ -120,7 +121,7 @@ func (m *ShardManager) remove(ctx context.Context, row shardRow) error {
 }
 
 // onShard runs fn on f's queue against the shard whose period starts at start.
-func (m *ShardManager) onShard(f Family, start time.Time, label string, fn func(db *sql.DB) error) error {
+func (m *ShardManager) onShard(f engine.Family, start time.Time, label string, fn func(db *sql.DB) error) error {
 	return m.onQueue(f, label, func() error {
 		h, err := m.shard(context.Background(), m.specs[f], start)
 		if err != nil {
@@ -131,13 +132,13 @@ func (m *ShardManager) onShard(f Family, start time.Time, label string, fn func(
 }
 
 // onQueue runs fn on f's write queue, or inline without one.
-func (m *ShardManager) onQueue(f Family, label string, fn func() error) error {
+func (m *ShardManager) onQueue(f engine.Family, label string, fn func() error) error {
 	return m.onQueueRows(f, label, func() (int64, error) { return writescheduler.NoRows, fn() })
 }
 
 // onQueueRows is onQueue for a write that reports how many rows it wrote, or
 // writescheduler.NoRows.
-func (m *ShardManager) onQueueRows(f Family, label string, fn func() (int64, error)) error {
+func (m *ShardManager) onQueueRows(f engine.Family, label string, fn func() (int64, error)) error {
 	m.mu.Lock()
 	s := m.schedulers[f]
 	m.mu.Unlock()
@@ -164,7 +165,7 @@ func (m *ShardManager) fileBytes(file string) (db, wal int64) {
 // addSpace adds every shard file to s: file and WAL bytes, and the file's
 // pages in s's page size. Shards return freed pages to the volume through
 // incremental vacuum, so their freelist is left out.
-func (m *ShardManager) addSpace(ctx context.Context, s *Space) error {
+func (m *ShardManager) addSpace(ctx context.Context, s *engine.Space) error {
 	rows, err := m.rows(ctx)
 	if err != nil {
 		return err

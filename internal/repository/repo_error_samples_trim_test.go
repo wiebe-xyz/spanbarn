@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // The window read seeks idx_error_samples_project from the start of a
@@ -58,7 +60,7 @@ func seedErrorSampleWindows(t *testing.T, repo *Repository, protected, deletable
 		t.Fatalf("insert error samples: %v", err)
 	}
 	old := now.Add(-10 * 24 * time.Hour)
-	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+	if err := repo.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		for _, stmt := range []struct {
 			sql  string
 			args []any
@@ -83,7 +85,7 @@ func seedErrorSampleWindows(t *testing.T, repo *Repository, protected, deletable
 func errorSampleTraceCounts(t *testing.T, repo *Repository) map[string]int {
 	t.Helper()
 	out := map[string]int{}
-	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+	if err := repo.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		rows, err := db.Query(`SELECT trace_id, count(*) FROM error_samples GROUP BY trace_id`)
 		if err != nil {
 			return err
@@ -147,7 +149,7 @@ func TestDeleteErrorSampleRowsChecksEachRowAgain(t *testing.T) {
 	repo := setupTestDB(t)
 	cutoff := seedErrorSampleWindows(t, repo, 0, 2)
 	ids := map[string]int64{}
-	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+	if err := repo.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		rows, err := db.Query(`SELECT trace_id, rowid FROM error_samples`)
 		if err != nil {
 			return err
@@ -170,7 +172,7 @@ func TestDeleteErrorSampleRowsChecksEachRowAgain(t *testing.T) {
 		t.Fatalf("read rows: %v", err)
 	}
 
-	n, err := deleteErrorSampleRows(context.Background(), repo.writer(FamilySpans), 1, cutoff,
+	n, err := deleteErrorSampleRows(context.Background(), repo.writer(engine.FamilySpans), 1, cutoff,
 		[]int64{ids["D0"], ids["D1"], ids["R"]})
 	if err != nil {
 		t.Fatalf("delete rows: %v", err)

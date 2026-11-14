@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func rollupBatch(n int, bucket time.Time) []MetricRollup {
@@ -84,7 +86,7 @@ func TestUpsertMetricRollupsWarmsOnTheReadPoolFirst(t *testing.T) {
 	ro.DB.SetMaxIdleConns(0) // every warm read opens a fresh connection
 	opened := ro.DB.Stats().MaxIdleClosed
 
-	writer := repo.writer(FamilyCore)
+	writer := repo.writer(engine.FamilyCore)
 	conn, err := writer.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +123,7 @@ func TestUpsertMetricRollupsWarmsOnTheReadPoolFirst(t *testing.T) {
 func TestUpsertMetricRollupsStopsAtFailedChunk(t *testing.T) {
 	repo := setupTestDB(t)
 	failKey := fmt.Sprintf("fp%05d", metricRollupChunk+1) // first key of the second chunk
-	if _, err := repo.writer(FamilyCore).Exec(`CREATE TRIGGER fail_second_chunk BEFORE INSERT ON metric_rollups
+	if _, err := repo.writer(engine.FamilyCore).Exec(`CREATE TRIGGER fail_second_chunk BEFORE INSERT ON metric_rollups
 		WHEN NEW.attr_fingerprint = '` + failKey + `' BEGIN SELECT RAISE(ABORT, 'chunk failed'); END`); err != nil {
 		t.Fatal(err)
 	}

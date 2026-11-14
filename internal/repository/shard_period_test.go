@@ -3,24 +3,26 @@ package repository
 import (
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func TestShardPeriodWidensPastNineFiles(t *testing.T) {
 	cases := []struct {
-		family    Family
+		family    engine.Family
 		weekly    bool
 		retention time.Duration
 		n         int
 	}{
-		{FamilyLogs, false, 24 * time.Hour, 1},
-		{FamilyLogs, false, 4 * time.Hour, 1},
-		{FamilyMetrics, false, 7 * day, 1},
-		{FamilyMetrics, false, 8 * day, 1},  // 8 days + today = 9 files
-		{FamilyMetrics, false, 9 * day, 2},  // would be 10 files
-		{FamilyMetrics, false, 14 * day, 2}, // 7 two-day files + the current one
-		{FamilyMetrics, false, 30 * day, 4},
-		{FamilyPrompts, true, 30 * day, 1},
-		{FamilyPrompts, true, 70 * day, 2},
+		{engine.FamilyLogs, false, 24 * time.Hour, 1},
+		{engine.FamilyLogs, false, 4 * time.Hour, 1},
+		{engine.FamilyMetrics, false, 7 * day, 1},
+		{engine.FamilyMetrics, false, 8 * day, 1},  // 8 days + today = 9 files
+		{engine.FamilyMetrics, false, 9 * day, 2},  // would be 10 files
+		{engine.FamilyMetrics, false, 14 * day, 2}, // 7 two-day files + the current one
+		{engine.FamilyMetrics, false, 30 * day, 4},
+		{engine.FamilyPrompts, true, 30 * day, 1},
+		{engine.FamilyPrompts, true, 70 * day, 2},
 	}
 	for _, c := range cases {
 		s := newShardSpec(c.family, c.weekly, c.retention)
@@ -34,9 +36,9 @@ func TestShardPeriodWidensPastNineFiles(t *testing.T) {
 }
 
 func TestShardPeriodStartAndFile(t *testing.T) {
-	daily := newShardSpec(FamilyLogs, false, 24*time.Hour)
-	weekly := newShardSpec(FamilyPrompts, true, 30*day)
-	twoDay := newShardSpec(FamilyMetrics, false, 14*day)
+	daily := newShardSpec(engine.FamilyLogs, false, 24*time.Hour)
+	weekly := newShardSpec(engine.FamilyPrompts, true, 30*day)
+	twoDay := newShardSpec(engine.FamilyMetrics, false, 14*day)
 	cases := []struct {
 		spec shardSpec
 		at   string
@@ -69,8 +71,8 @@ func TestShardPeriodStartAndFile(t *testing.T) {
 }
 
 func TestShardParseFileRejectsOtherNames(t *testing.T) {
-	daily := newShardSpec(FamilyLogs, false, 24*time.Hour)
-	weekly := newShardSpec(FamilyPrompts, true, 30*day)
+	daily := newShardSpec(engine.FamilyLogs, false, 24*time.Hour)
+	weekly := newShardSpec(engine.FamilyPrompts, true, 30*day)
 	for _, name := range []string{"logs-20261004.db-wal", "metrics-20261004.db", "logs-2026.db", "logs-20261004"} {
 		if _, ok := daily.parseFile(name); ok {
 			t.Errorf("daily parsed %s", name)

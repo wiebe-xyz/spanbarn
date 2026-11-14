@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func addProbeColumn(t *testing.T, db *sql.DB, table string) {
@@ -32,14 +34,14 @@ func addProbeColumnToFile(t *testing.T, path, table string) {
 // restart.
 func TestShardViewsReadShardsWithDifferentColumns(t *testing.T) {
 	for _, tc := range []struct {
-		family        Family
+		family        engine.Family
 		table         string
 		older, newest string
 		rows          int
 	}{
-		{FamilyLogs, "logs", "logs-20261004.db", "logs-20261005.db", 3},
-		{FamilyMetrics, "metrics", "metrics-20261004.db", "metrics-20261005.db", 3},
-		{FamilyPrompts, "prompt_records", "prompts-2026w40.db", "prompts-2026w41.db", 3},
+		{engine.FamilyLogs, "logs", "logs-20261004.db", "logs-20261005.db", 3},
+		{engine.FamilyMetrics, "metrics", "metrics-20261004.db", "metrics-20261005.db", 3},
+		{engine.FamilyPrompts, "prompt_records", "prompts-2026w40.db", "prompts-2026w41.db", 3},
 	} {
 		t.Run(tc.table, func(t *testing.T) {
 			path, _, _, rs, _ := shardedReadFixture(t)
@@ -98,7 +100,7 @@ func TestLogsViewReadsKeptLogsWithDifferentColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	var rows int
-	if err := rs.pool(FamilyLogs).db.QueryRow(`SELECT count(*) FROM logs WHERE rollback_probe IS NULL`).Scan(&rows); err != nil {
+	if err := rs.pool(engine.FamilyLogs).db.QueryRow(`SELECT count(*) FROM logs WHERE rollback_probe IS NULL`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows != 3 {

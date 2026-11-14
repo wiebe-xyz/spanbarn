@@ -26,7 +26,7 @@ type RetentionConfig struct {
 	PromptDays         int // SPANBARN_PROMPT_RETENTION_DAYS — how long to keep LLM prompt records (default 30)
 	DeleteBatchYieldMS int // SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS — pause between batched retention deletes so the WAL checkpoint and reads aren't starved (default 200)
 	// Rollup tier windows. Metric rollups are compacted 5m → 1h → 1d → 1w → 1mo
-	// by internal/rollup, and each tier keeps its own window. Storage is bounded
+	// by internal/metricrollup, and each tier keeps its own window. Storage is bounded
 	// by resolution rather than by a single cutoff: a year of history costs a
 	// few thousand monthly rows, while the 5-minute tier — which is where
 	// cardinality actually bites — is held to days. A tier is only ever deleted
@@ -340,7 +340,7 @@ func Load() Config {
 		},
 		GRPCAddr:   getenv("SPANBARN_GRPC_ADDR", ":4317"),
 		E2EEnabled: getenvBool("SPANBARN_E2E_ENABLED", false),
-		// Defaults match internal/repository.DefaultWriterCacheMB etc — kept as
+		// Defaults match internal/engine.DefaultWriterCacheMB etc — kept as
 		// literals here rather than importing internal/repository, which config
 		// otherwise has zero dependencies on.
 		SQLiteCacheMB:   getenvInt("SPANBARN_SQLITE_CACHE_MB", 256),

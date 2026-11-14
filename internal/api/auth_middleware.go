@@ -8,6 +8,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 type contextKey string
@@ -105,7 +106,7 @@ func APIKeyMiddleware(authorizer *auth.Authorizer) func(http.Handler) http.Handl
 // with 403. oidcFn is resolved at request time because the OIDC client is wired
 // after routes are registered; it may return nil. When authorizer is nil,
 // behaviour falls back to JWT/session.
-func SessionOrReadKey(sessions *SessionService, authorizer *auth.Authorizer, oidcFn func() *auth.OIDCClient) func(http.Handler) http.Handler {
+func SessionOrReadKey(sessions *session.Service, authorizer *auth.Authorizer, oidcFn func() *auth.OIDCClient) func(http.Handler) http.Handler {
 	sessionMW := SessionMiddleware(sessions)
 	return func(next http.Handler) http.Handler {
 		session := sessionMW(next)
@@ -196,7 +197,7 @@ func bearerToken(r *http.Request) string {
 // the refresh_token grant first (singleflighted per session), so a request
 // only proceeds while the IamBarn session is still alive — central revocation
 // bites at the next refresh, worst-case one access-token lifetime (~15m).
-func SessionMiddleware(sessions *SessionService) func(http.Handler) http.Handler {
+func SessionMiddleware(sessions *session.Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := sessionToken(r)

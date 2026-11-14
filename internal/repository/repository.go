@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -37,7 +38,7 @@ func writeOpLabel() string {
 // "batchedDelete" in slow-write warnings and wedge dumps, and the log trim, the
 // staging delete and the aggregate delete cannot be told apart.
 // It must be called directly from batchedDelete or batchedDeleteLimited.
-func batchLabel(f Family) string {
+func batchLabel(f engine.Family) string {
 	// 0 → writeOpLabelAt, 1 → batchLabel, 2 → batchedDelete(Limited), 3 → the repo method.
 	return writeOpLabelAt(3) + ":" + f.String()
 }
@@ -77,8 +78,8 @@ type Repository struct {
 	readOnly     bool
 	// writers and schedulers are per family. A nil writer means db; a nil
 	// scheduler means the write runs inline (tests, CLI commands).
-	writers          [numFamilies]*sql.DB
-	schedulers       [numFamilies]*writescheduler.Scheduler
+	writers          [engine.NumFamilies]*sql.DB
+	schedulers       [engine.NumFamilies]*writescheduler.Scheduler
 	deleteBatchYield time.Duration
 	// shards, when set, takes the inserts of the families it shards.
 	shards *ShardManager
@@ -163,7 +164,7 @@ func (r *Repository) SetWriteScheduler(s *writescheduler.Scheduler) {
 
 // SetFamilyWriter routes f's writes to db, queued on s. Call before starting
 // any goroutines that use this repository.
-func (r *Repository) SetFamilyWriter(f Family, db *sql.DB, s *writescheduler.Scheduler) {
+func (r *Repository) SetFamilyWriter(f engine.Family, db *sql.DB, s *writescheduler.Scheduler) {
 	r.writers[f] = db
 	r.schedulers[f] = s
 }
@@ -178,7 +179,7 @@ func (r *Repository) SetShardReaders(rs *ShardReaders) { r.shardReaders = rs }
 
 // reader returns the handle f's reads run on: f's shard pool when f has
 // shards, otherwise db.
-func (r *Repository) reader(f Family) *sql.DB {
+func (r *Repository) reader(f engine.Family) *sql.DB {
 	if p := r.shardReaders.pool(f); p != nil {
 		return p.db.DB
 	}
@@ -212,7 +213,7 @@ func (r *Repository) WithReads(db *sql.DB) *Repository {
 }
 
 // writer returns the handle f's writes run on.
-func (r *Repository) writer(f Family) *sql.DB {
+func (r *Repository) writer(f engine.Family) *sql.DB {
 	if w := r.writers[f]; w != nil {
 		return w
 	}
@@ -246,7 +247,7 @@ func (r *Repository) readsHaveTable(ctx context.Context, table string) (bool, er
 // and — unlike reading the projects table — also covers rows of deleted
 // projects. table is a trusted internal constant, never user input.
 func (r *Repository) distinctProjectIDs(ctx context.Context, table string) ([]int64, error) {
-	if heavyFamily(TableFamily(table)) {
+	if heavyFamily(engine.TableFamily(table)) {
 		// Main drops a sharded family's table once it is empty.
 		if has, err := r.readsHaveTable(ctx, table); err != nil || !has {
 			return nil, err
@@ -293,7 +294,7 @@ func (r *Repository) deleteOlderThanPerProject(ctx context.Context, table, timeC
 		return 0, err
 	}
 
-	f := TableFamily(table)
+	f := engine.TableFamily(table)
 	q := "DELETE FROM " + table + " WHERE rowid IN (SELECT rowid FROM " + table +
 		" WHERE project_id = ? AND " + timeCol + " < ? LIMIT ?)"
 	var total int64
@@ -323,7 +324,7 @@ func (r *Repository) deleteOlderThanPerProject(ctx context.Context, table, timeC
 // and a cycle that never returns never deletes anything else, never re-measures
 // the disk it is trying to free, and never logs — so from the outside retention
 // simply goes silent while the volume fills.
-func (r *Repository) batchedDeleteLimited(ctx context.Context, f Family, max int64, exec func(db *sql.DB, limit int64) (int64, error)) (int64, bool, error) {
+func (r *Repository) batchedDeleteLimited(ctx context.Context, f engine.Family, max int64, exec func(db *sql.DB, limit int64) (int64, error)) (int64, bool, error) {
 	label := batchLabel(f)
 	var total int64
 	for total < max {
@@ -368,7 +369,7 @@ func (r *Repository) deleteOlderThanPerProjectLimited(ctx context.Context, table
 		return 0, false, err
 	}
 
-	f := TableFamily(table)
+	f := engine.TableFamily(table)
 	q := "DELETE FROM " + table + " WHERE rowid IN (SELECT rowid FROM " + table +
 		" WHERE project_id = ? AND " + timeCol + " < ? LIMIT ?)"
 	var total int64
@@ -399,7 +400,7 @@ func (r *Repository) deleteOlderThanPerProjectLimited(ctx context.Context, table
 // reached). Between batches it releases the write lock and, when a yield is
 // configured, pauses so the WAL checkpoint and readers are not starved. It
 // returns the total rows deleted.
-func (r *Repository) batchedDelete(ctx context.Context, f Family, exec func(db *sql.DB) (int64, error)) (int64, error) {
+func (r *Repository) batchedDelete(ctx context.Context, f engine.Family, exec func(db *sql.DB) (int64, error)) (int64, error) {
 	label := batchLabel(f)
 	var total int64
 	for {

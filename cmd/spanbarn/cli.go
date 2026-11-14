@@ -13,12 +13,14 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 // openDB opens the SQLite database, runs migrations, and returns a Repository.
 func openDB(dbPath string) (*repository.Repository, *repository.Storage, error) {
 	store, err := repository.OpenStorage(context.Background(), dbPath, repository.StorageOptions{
-		CacheMB: repository.DefaultWriterCacheMB, MmapMB: repository.DefaultWriterMmapMB,
+		CacheMB: engine.DefaultWriterCacheMB, MmapMB: engine.DefaultWriterMmapMB,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)
@@ -127,7 +129,7 @@ func runUserCreate(cfg config.Config, args []string) error {
 	}
 	defer db.Close()
 
-	if err := repo.CreateUser(*username, hash); err != nil {
+	if err := service.NewUserService(repo).Create(*username, hash); err != nil {
 		return fmt.Errorf("create user: %w", err)
 	}
 
@@ -151,7 +153,7 @@ func runUserDelete(cfg config.Config, args []string) error {
 	}
 	defer db.Close()
 
-	if err := repo.DeleteUser(*username); err != nil {
+	if err := service.NewUserService(repo).Delete(*username); err != nil {
 		return fmt.Errorf("delete user: %w", err)
 	}
 
@@ -166,7 +168,7 @@ func runUserList(cfg config.Config) error {
 	}
 	defer db.Close()
 
-	users, err := repo.ListUsers()
+	users, err := service.NewUserService(repo).List()
 	if err != nil {
 		return fmt.Errorf("list users: %w", err)
 	}
@@ -223,7 +225,7 @@ func runProjectCreate(cfg config.Config, args []string) error {
 	}
 	defer db.Close()
 
-	if _, err := repo.CreateProject(*slug, *name); err != nil {
+	if _, err := service.NewProjectService(repo).Create(*slug, *name); err != nil {
 		return fmt.Errorf("create project: %w", err)
 	}
 
@@ -238,7 +240,7 @@ func runProjectList(cfg config.Config) error {
 	}
 	defer db.Close()
 
-	projects, err := repo.ListProjects()
+	projects, err := service.NewProjectService(repo).List()
 	if err != nil {
 		return fmt.Errorf("list projects: %w", err)
 	}
@@ -297,7 +299,7 @@ func runAPIKeyCreate(cfg config.Config, args []string) error {
 	}
 	defer db.Close()
 
-	proj, err := repo.GetProjectBySlug(*project)
+	proj, err := service.NewProjectService(repo).BySlug(*project)
 	if err != nil {
 		return fmt.Errorf("project %q not found: %w", *project, err)
 	}
@@ -307,7 +309,7 @@ func runAPIKeyCreate(cfg config.Config, args []string) error {
 		return err
 	}
 
-	if _, err := repo.CreateAPIKey(proj.ID, *name, keyHash, *scope); err != nil {
+	if _, err := service.NewProjectService(repo).IssueAPIKey(proj.ID, *name, keyHash, *scope); err != nil {
 		return fmt.Errorf("create API key: %w", err)
 	}
 
@@ -329,7 +331,7 @@ func runAPIKeyList(cfg config.Config, args []string) error {
 	}
 	defer db.Close()
 
-	projects, err := repo.ListProjects()
+	projects, err := service.NewProjectService(repo).List()
 	if err != nil {
 		return fmt.Errorf("list projects: %w", err)
 	}
@@ -349,11 +351,11 @@ func runAPIKeyList(cfg config.Config, args []string) error {
 	var keys []keyInfo
 
 	if *project != "" {
-		proj, lookupErr := repo.GetProjectBySlug(*project)
+		proj, lookupErr := service.NewProjectService(repo).BySlug(*project)
 		if lookupErr != nil {
 			return fmt.Errorf("project %q not found: %w", *project, lookupErr)
 		}
-		apiKeys, listErr := repo.ListAPIKeys(proj.ID)
+		apiKeys, listErr := service.NewProjectService(repo).APIKeys(proj.ID)
 		if listErr != nil {
 			return fmt.Errorf("list API keys: %w", listErr)
 		}
@@ -365,7 +367,7 @@ func runAPIKeyList(cfg config.Config, args []string) error {
 			keys = append(keys, keyInfo{k.ID, k.ProjectID, k.Name, k.Scope, lastUsed, k.CreatedAt.Format(time.RFC3339)})
 		}
 	} else {
-		apiKeys, listErr := repo.ListAllAPIKeys()
+		apiKeys, listErr := service.NewProjectService(repo).AllAPIKeys()
 		if listErr != nil {
 			return fmt.Errorf("list API keys: %w", listErr)
 		}
@@ -414,7 +416,7 @@ func runAPIKeyRevoke(cfg config.Config, args []string) error {
 	}
 	defer db.Close()
 
-	if err := repo.RevokeAPIKey(*id); err != nil {
+	if err := service.NewProjectService(repo).RevokeKey(*id); err != nil {
 		return fmt.Errorf("revoke API key: %w", err)
 	}
 

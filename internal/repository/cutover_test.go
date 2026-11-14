@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // legacyDatabase builds a single-file database with spans ids 1..4 (id 5 was
@@ -13,7 +15,7 @@ import (
 func legacyDatabase(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
-	legacy, err := NewDB(path)
+	legacy, err := engine.NewDB(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,7 @@ func assertSplitWithSpans(t *testing.T, store *Storage, path string) {
 	if !store.Split() {
 		t.Fatal("the cut-over did not switch to the split layout")
 	}
-	for _, table := range append([]string{spansVersionTable}, FamilySpans.Tables()...) {
+	for _, table := range append([]string{spansVersionTable}, engine.FamilySpans.Tables()...) {
 		if mainHasTable(t, store.Main.DB, table) {
 			t.Errorf("main still holds %s after the cut-over", table)
 		}
@@ -72,7 +74,7 @@ func assertSplitWithSpans(t *testing.T, store *Storage, path string) {
 	if err := store.Spans.QueryRow(`SELECT count(*) FROM main.trace_summaries`).Scan(&summaries); err != nil || summaries != 2 {
 		t.Errorf("trace summaries in the spans file = %d (%v), want 2", summaries, err)
 	}
-	res, err := store.Repository().writer(FamilySpans).Exec(`INSERT INTO spans (project_id, trace_id, span_id, name, service, start_time_us, duration_us)
+	res, err := store.Repository().writer(engine.FamilySpans).Exec(`INSERT INTO spans (project_id, trace_id, span_id, name, service, start_time_us, duration_us)
 		VALUES (1, 't6', 's6', 'GET /x', 'web', 1, 1)`)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +124,7 @@ func TestCutOverFinishesAfterDrop(t *testing.T) {
 	if _, err := copySpansFamily(context.Background(), path, cutoverPath(path), o); err != nil {
 		t.Fatal(err)
 	}
-	main, err := NewDB(path)
+	main, err := engine.NewDB(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +154,7 @@ func staleSpansFile(t *testing.T) string {
 	if err := os.Rename(cutoverPath(path), SpansPath(path)); err != nil {
 		t.Fatal(err)
 	}
-	main, err := NewDB(path)
+	main, err := engine.NewDB(path)
 	if err != nil {
 		t.Fatal(err)
 	}

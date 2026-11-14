@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // A chunk that fails reports the rows from it on, in key order, and the chunks
@@ -12,7 +14,7 @@ import (
 func TestUpsertAggregatesReportsUnwrittenRows(t *testing.T) {
 	repo := setupTestDB(t)
 	failOp := fmt.Sprintf("op%05d", aggregateChunk) // first key of the second chunk
-	if _, err := repo.writer(FamilySpans).Exec(`CREATE TRIGGER fail_second_chunk BEFORE INSERT ON aggregates
+	if _, err := repo.writer(engine.FamilySpans).Exec(`CREATE TRIGGER fail_second_chunk BEFORE INSERT ON aggregates
 		WHEN NEW.operation = '` + failOp + `' BEGIN SELECT RAISE(ABORT, 'chunk failed'); END`); err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +33,7 @@ func TestUpsertAggregatesReportsUnwrittenRows(t *testing.T) {
 		t.Errorf("%d unwritten rows from %s, want %d from %s", len(unwritten.Rows), unwritten.Rows[0].Operation, aggregateChunk+5, failOp)
 	}
 	var stored int
-	if err := repo.writer(FamilySpans).QueryRow(`SELECT count(*) FROM aggregates`).Scan(&stored); err != nil {
+	if err := repo.writer(engine.FamilySpans).QueryRow(`SELECT count(*) FROM aggregates`).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	if stored != aggregateChunk {

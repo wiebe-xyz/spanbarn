@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // setupTestWorker creates an in-memory SQLite DB with migrations, repository,
@@ -16,7 +17,7 @@ import (
 func setupTestWorker(t *testing.T, cfg Config) (*RetentionWorker, *repository.Repository) {
 	t.Helper()
 
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}

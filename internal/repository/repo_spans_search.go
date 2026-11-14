@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // TraceSummaryRow is the per-trace summary produced by SearchTraceSummaries.
@@ -157,7 +159,7 @@ func (r *Repository) attachPromptStats(order []string, byTrace map[string]*Trace
 	q := fmt.Sprintf(`SELECT trace_id, MIN(model), COUNT(*) FROM prompt_records WHERE trace_id IN (%s) GROUP BY trace_id`, placeholders)
 	ctx, cancel := r.queryContext()
 	defer cancel()
-	rows, err := r.reader(FamilyPrompts).QueryContext(ctx, q, args...)
+	rows, err := r.reader(engine.FamilyPrompts).QueryContext(ctx, q, args...)
 	if err != nil {
 		return
 	}

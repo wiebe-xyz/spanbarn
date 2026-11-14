@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // mainWithFreelist creates a split-layout database whose main is in
@@ -51,7 +53,7 @@ func pagesOf(t *testing.T, db *sql.DB) pageCounts {
 func TestOpenStorageCompactsMain(t *testing.T) {
 	path := mainWithFreelist(t)
 
-	plain, err := Open(path, OpenOptions{CacheMB: 2})
+	plain, err := engine.Open(path, engine.OpenOptions{CacheMB: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +114,7 @@ func TestCompactMainSkipsAboveLimit(t *testing.T) {
 
 func TestCompactMainIsANoOpOnIncrementalMain(t *testing.T) {
 	path := mainWithFreelist(t)
-	plain, err := Open(path, OpenOptions{CacheMB: 2})
+	plain, err := engine.Open(path, engine.OpenOptions{CacheMB: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,7 +3,7 @@ import React, { useEffect, useState, Fragment } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { TraceDetail, LogEntry } from '../api/types'
 import { SpanWaterfall } from '../components/SpanWaterfall'
-import { formatDuration } from '../utils/spanTree'
+import { formatDuration } from '../traces/spanTree'
 import { api } from '../api/client'
 
 function severityColor(n: number): string {

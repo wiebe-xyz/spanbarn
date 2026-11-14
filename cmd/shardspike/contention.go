@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // Production write rates the contention run replays. Spans flush every 125ms
@@ -228,7 +229,7 @@ func contReadLoop(ctx context.Context, repo *repository.Repository, queries []co
 // contWriters holds the writer connections of one layout: on L1 one shared
 // *DB for every table, as in production; on L2 one *DB per file.
 type contWriters struct {
-	dbs   []*repository.DB
+	dbs   []*engine.DB
 	paths [2]string // span writer file, heavy writer file
 	spans *repository.Repository
 	heavy *repository.Repository
@@ -238,25 +239,25 @@ func openContWriters(root, layout string) (*contWriters, error) {
 	dir := layoutDir(root, layout)
 	if layout == layoutSingle {
 		path := filepath.Join(dir, singleFile)
-		db, err := repository.NewDB(path)
+		db, err := engine.NewDB(path)
 		if err != nil {
 			return nil, err
 		}
 		repo := repository.NewRepository(db.DB)
-		return &contWriters{dbs: []*repository.DB{db}, paths: [2]string{path, path}, spans: repo, heavy: repo}, nil
+		return &contWriters{dbs: []*engine.DB{db}, paths: [2]string{path, path}, spans: repo, heavy: repo}, nil
 	}
 	spansPath, heavyPath := filepath.Join(dir, "spans.db"), filepath.Join(dir, "heavy.db")
-	sdb, err := repository.NewDB(spansPath)
+	sdb, err := engine.NewDB(spansPath)
 	if err != nil {
 		return nil, err
 	}
-	hdb, err := repository.NewDB(heavyPath)
+	hdb, err := engine.NewDB(heavyPath)
 	if err != nil {
 		_ = sdb.Close()
 		return nil, err
 	}
 	return &contWriters{
-		dbs: []*repository.DB{sdb, hdb}, paths: [2]string{spansPath, heavyPath},
+		dbs: []*engine.DB{sdb, hdb}, paths: [2]string{spansPath, heavyPath},
 		spans: repository.NewRepository(sdb.DB), heavy: repository.NewRepository(hdb.DB),
 	}, nil
 }

@@ -1,6 +1,6 @@
 import { type ReactElement } from 'react'
 import { ChevronLeft, ChevronRight, Clock } from 'lucide-react'
-import { DASHBOARD_RANGES } from '../../utils/dashboardWindow'
+import { DASHBOARD_RANGES } from '../../dashboard/window'
 
 type TimeRangePickerProps = {
   range: string

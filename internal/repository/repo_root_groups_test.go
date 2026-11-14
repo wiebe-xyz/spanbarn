@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
@@ -44,7 +45,7 @@ func TestQueryRootSpanGroupsFoldsInSQL(t *testing.T) {
 		dashSpan(t, repo, fmt.Sprintf("r%d", i), "", "GET /", "web", `{}`, int64(i)*1000, at)
 		dashSpan(t, repo, fmt.Sprintf("c%d", i), fmt.Sprintf("r%d", i), "db.query", "web", `{}`, 5, at)
 	}
-	if _, err := repo.writer(FamilySpans).Exec(`UPDATE spans SET sample_weight = 10 WHERE COALESCE(parent_span_id, '') = ''`); err != nil {
+	if _, err := repo.writer(engine.FamilySpans).Exec(`UPDATE spans SET sample_weight = 10 WHERE COALESCE(parent_span_id, '') = ''`); err != nil {
 		t.Fatal(err)
 	}
 	other := Span{ProjectID: 2, TraceID: "t-x", SpanID: "x", Name: "GET /", Service: "web", Kind: "server",

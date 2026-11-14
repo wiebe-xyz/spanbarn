@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // logLine is one JSON log line of the worker.
@@ -71,12 +71,12 @@ func mark(t *testing.T, set func(context.Context, int64, time.Time) error, step 
 // buckets at error level, on both ladders.
 func TestRetentionCycleReportsStalledTiers(t *testing.T) {
 	w, repo, buf := loggedWorker(t)
-	hour := rollup.TruncateBucket(time.Now().UTC(), rollup.StepHour)
-	day := rollup.TruncateBucket(time.Now().UTC(), rollup.StepDay)
-	mark(t, repo.SetMetricRollupWatermark, rollup.Step5m, hour.Add(-6*time.Hour))  // metric hourly: stalled
-	mark(t, repo.SetMetricRollupWatermark, rollup.StepHour, day.AddDate(0, 0, -4)) // metric daily: stalled
-	mark(t, repo.SetSpanRollupWatermark, rollup.Step5m, hour.Add(-6*time.Hour))    // span hourly: stalled
-	mark(t, repo.SetSpanRollupWatermark, rollup.StepHour, day)                     // span daily: current
+	hour := tier.TruncateBucket(time.Now().UTC(), tier.StepHour)
+	day := tier.TruncateBucket(time.Now().UTC(), tier.StepDay)
+	mark(t, repo.SetMetricRollupWatermark, tier.Step5m, hour.Add(-6*time.Hour))  // metric hourly: stalled
+	mark(t, repo.SetMetricRollupWatermark, tier.StepHour, day.AddDate(0, 0, -4)) // metric daily: stalled
+	mark(t, repo.SetSpanRollupWatermark, tier.Step5m, hour.Add(-6*time.Hour))    // span hourly: stalled
+	mark(t, repo.SetSpanRollupWatermark, tier.StepHour, day)                     // span daily: current
 
 	if err := w.RunOnce(context.Background()); err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -93,8 +93,8 @@ func TestRetentionCycleQuietWhileCompactionKeepsUp(t *testing.T) {
 	w, repo, buf := loggedWorker(t)
 	now := time.Now().UTC()
 	// One hour short of the newest closed hour, and the day before yesterday.
-	mark(t, repo.SetMetricRollupWatermark, rollup.Step5m, rollup.TruncateBucket(now.Add(-90*time.Minute), rollup.StepHour))
-	mark(t, repo.SetMetricRollupWatermark, rollup.StepHour, rollup.TruncateBucket(now.AddDate(0, 0, -1), rollup.StepDay))
+	mark(t, repo.SetMetricRollupWatermark, tier.Step5m, tier.TruncateBucket(now.Add(-90*time.Minute), tier.StepHour))
+	mark(t, repo.SetMetricRollupWatermark, tier.StepHour, tier.TruncateBucket(now.AddDate(0, 0, -1), tier.StepDay))
 
 	if err := w.RunOnce(context.Background()); err != nil {
 		t.Fatalf("RunOnce: %v", err)

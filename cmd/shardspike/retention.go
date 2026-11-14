@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // retentionWorkDir holds the copies the retention run works on, so the
@@ -134,7 +135,7 @@ func expireSingle(ctx context.Context, o options, ws *retWork) (retResult, []ret
 		return res, nil, err
 	}
 	res.sizeBefore = retFileSize(path)
-	db, err := repository.NewDB(path)
+	db, err := engine.NewDB(path)
 	if err != nil {
 		return res, nil, err
 	}
@@ -286,7 +287,7 @@ func expireShards(ctx context.Context, o options, ws *retWork) (retResult, error
 	if res.rowsRemoved, err = countAllRows(ctx, oldest); err != nil {
 		return res, err
 	}
-	db, err := repository.NewDB(newest)
+	db, err := engine.NewDB(newest)
 	if err != nil {
 		return res, err
 	}
@@ -331,7 +332,7 @@ func copyShards(o options, ws *retWork) ([]string, error) {
 
 // countAllRows sums the in-scope rows of one data file.
 func countAllRows(ctx context.Context, path string) (int64, error) {
-	db, err := repository.NewReadOnlyDB(path)
+	db, err := engine.NewReadOnlyDB(path)
 	if err != nil {
 		return 0, err
 	}

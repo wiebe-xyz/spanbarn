@@ -9,11 +9,12 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func boardService(t *testing.T) (*BoardService, int64) {
 	t.Helper()
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}

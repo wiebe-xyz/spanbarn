@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -60,7 +61,7 @@ func TestIngestInsertsReportRows(t *testing.T) {
 		store := openShardedStorage(t, filepath.Join(t.TempDir(), "spanbarn.db"), &clock)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		for _, f := range []Family{FamilyMetrics, FamilyLogs, FamilyPrompts} {
+		for _, f := range []engine.Family{engine.FamilyMetrics, engine.FamilyLogs, engine.FamilyPrompts} {
 			s := writescheduler.New()
 			store.Shards.SetScheduler(f, s)
 			go s.Run(ctx)

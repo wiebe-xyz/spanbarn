@@ -12,6 +12,8 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
+	"github.com/wiebe-xyz/spanbarn/internal/tracebuffer"
 )
 
 // ServerConfig holds configuration for the HTTP server.
@@ -59,9 +61,9 @@ type Server struct {
 	metricsIngest  *ingest.MetricsHandler
 	logsIngest     *ingest.LogsHandler
 	admission      *Admission
-	traceBuffer    *ingest.TraceBuffer
+	traceBuffer    *tracebuffer.TraceBuffer
 	querySvc       *service.QueryService
-	sessions       *SessionService
+	sessions       *session.Service
 	authorizer     *auth.Authorizer
 	repo           service.Store
 	dbPath         string
@@ -72,6 +74,8 @@ type Server struct {
 	oidc           *auth.OIDCClient
 	selfMetrics    *selfmetrics.Recorder
 	e2eEnabled     bool
+	login          *loginConfig
+	authMux        *http.ServeMux
 }
 
 // SetSelfMetricsRecorder wires the self-metrics recorder so the request
@@ -140,7 +144,7 @@ func WithCache(c *cache.Cache) ServerOption {
 	}
 }
 
-func WithTraceBuffer(tb *ingest.TraceBuffer) ServerOption {
+func WithTraceBuffer(tb *tracebuffer.TraceBuffer) ServerOption {
 	return func(s *Server) {
 		s.traceBuffer = tb
 	}
@@ -177,7 +181,7 @@ func NewServer(cfg ServerConfig, ingestHandler *ingest.Handler, logger *slog.Log
 // NewServerWithQuery creates a new HTTP server with query service support.
 // sessions may be nil, in which case no session-authenticated route is
 // registered (ingest-only deployments without a database).
-func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySvc *service.QueryService, sessions *SessionService, logger *slog.Logger, opts ...ServerOption) *Server {
+func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySvc *service.QueryService, sessions *session.Service, logger *slog.Logger, opts ...ServerOption) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -249,6 +253,12 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 	h = requestIDMiddleware(h)
 	h = recoveryMiddleware(logger, h)
 	s.handler = h
+	if s.authMux != nil {
+		// Login and logout answer outside the middleware chain, as they did when
+		// the binary mounted them in front of this handler.
+		s.authMux.Handle("/", h)
+		s.handler = s.authMux
+	}
 
 	return s
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // The trace-summary delete reads windows of a project's summaries in
@@ -74,13 +76,13 @@ func deleteTraceSummaryRowsSQL(deletable func(alias string) string) string {
 
 // traceSummaryDeleteLabel keeps the label the batched delete had, so slow
 // writes before and after the change group under one op.
-var traceSummaryDeleteLabel = "DeleteTraceSummariesOlderThan:" + FamilySpans.String()
+var traceSummaryDeleteLabel = "DeleteTraceSummariesOlderThan:" + engine.FamilySpans.String()
 
 // traceSummaryDelete deletes one project's summaries that deletable selects
 // and that were ingested before cutoff.
 func traceSummaryDelete(ctx context.Context, pid int64, deletable func(alias string) string, cutoff time.Time) windowDelete {
 	return windowDelete{
-		family: FamilySpans,
+		family: engine.FamilySpans,
 		label:  traceSummaryDeleteLabel,
 		scan: func(q rowQuerier, cur logTrimCursor) (logTrimWindow, error) {
 			return scanWindow(ctx, q, traceSummaryWindowSQL(deletable, cur.set),

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // A compactor that has stopped leaves its tiers' watermarks where they are.
@@ -25,7 +25,7 @@ const stallReportInterval = time.Hour
 // the tier below has caught up past it, so two buckets behind is one more than
 // a normal close leaves.
 func stallBuckets(step int64) int {
-	if step == rollup.StepHour {
+	if step == tier.StepHour {
 		return 3
 	}
 	return 2
@@ -51,13 +51,13 @@ type stallLadder struct {
 func (w *RetentionWorker) stallLadders() []stallLadder {
 	metric := stallLadder{name: "metric", watermark: w.repo.MetricRollupWatermark,
 		off: w.cfg.MetricCompactionOff, setting: "SPANBARN_ROLLUP_COMPACT_ENABLED=0"}
-	for _, t := range rollup.Ladder() {
+	for _, t := range tier.Ladder() {
 		metric.tiers = append(metric.tiers, stallTier{t.Step, t.Source, t.Label})
 	}
 	span := stallLadder{name: "span", watermark: w.repo.SpanRollupWatermark,
 		off: w.cfg.SpanCompactionOff, setting: "SPANBARN_SPAN_ROLLUPS=0", tiers: []stallTier{
-			{rollup.StepHour, rollup.Step5m, "hourly"},
-			{rollup.StepDay, rollup.StepHour, "daily"},
+			{tier.StepHour, tier.Step5m, "hourly"},
+			{tier.StepDay, tier.StepHour, "daily"},
 		}}
 	return []stallLadder{metric, span}
 }
@@ -73,9 +73,9 @@ type stallState struct {
 // bucketsBehind counts the closed target buckets of step after through, up to
 // limit. A bucket is closed once MetricRollupLateWrite has passed its end.
 func bucketsBehind(through time.Time, step int64, now time.Time, limit int) int {
-	closedEnd := rollup.TruncateBucket(now.Add(-repository.MetricRollupLateWrite), step)
+	closedEnd := tier.TruncateBucket(now.Add(-repository.MetricRollupLateWrite), step)
 	n := 0
-	for b := rollup.TruncateBucket(through, step); b.Before(closedEnd) && n < limit; b = rollup.NextBucket(b, step) {
+	for b := tier.TruncateBucket(through, step); b.Before(closedEnd) && n < limit; b = tier.NextBucket(b, step) {
 		n++
 	}
 	return n

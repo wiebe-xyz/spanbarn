@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // BucketCounter counts the buckets of a tier that hold rows.
@@ -34,7 +34,7 @@ type SpanArrivals interface {
 // after retention removed the raw spans.
 func Arrivals(rollups BucketCounter, raw SpanArrivals) SpanArrivals {
 	return arrivalsFunc(func(ctx context.Context, from, to time.Time) (bool, error) {
-		n, err := rollups.CountSpanRollupBuckets(ctx, rollup.Step5m, from, to)
+		n, err := rollups.CountSpanRollupBuckets(ctx, tier.Step5m, from, to)
 		if err != nil || n > 0 {
 			return n > 0, err
 		}
@@ -87,7 +87,7 @@ func segmentCovered(ctx context.Context, c BucketCounter, arrivals SpanArrivals,
 	if err != nil || got >= want {
 		return err == nil, err
 	}
-	if seg.Step != rollup.Step5m || arrivals == nil || want-got > maxQuietBuckets {
+	if seg.Step != tier.Step5m || arrivals == nil || want-got > maxQuietBuckets {
 		return false, nil
 	}
 	return emptyBucketsQuiet(ctx, c, arrivals, repository.SpanRollupSegment{Step: seg.Step, From: seg.From, To: end})
@@ -96,8 +96,8 @@ func segmentCovered(ctx context.Context, c BucketCounter, arrivals SpanArrivals,
 // emptyBucketsQuiet reports whether no span arrived in any bucket of seg that
 // holds no rows.
 func emptyBucketsQuiet(ctx context.Context, c BucketCounter, arrivals SpanArrivals, seg repository.SpanRollupSegment) (bool, error) {
-	for b := seg.From; b.Before(seg.To); b = rollup.NextBucket(b, seg.Step) {
-		next := rollup.NextBucket(b, seg.Step)
+	for b := seg.From; b.Before(seg.To); b = tier.NextBucket(b, seg.Step) {
+		next := tier.NextBucket(b, seg.Step)
 		n, err := c.CountSpanRollupBuckets(ctx, seg.Step, b, next)
 		if err != nil {
 			return false, err
@@ -116,9 +116,9 @@ func emptyBucketsQuiet(ctx context.Context, c BucketCounter, arrivals SpanArriva
 // the end of the last of them.
 func bucketsBefore(seg repository.SpanRollupSegment, open time.Time) (int, time.Time) {
 	n, end := 0, seg.From
-	for b := seg.From; b.Before(seg.To) && b.Before(open); b = rollup.NextBucket(b, seg.Step) {
+	for b := seg.From; b.Before(seg.To) && b.Before(open); b = tier.NextBucket(b, seg.Step) {
 		n++
-		end = rollup.NextBucket(b, seg.Step)
+		end = tier.NextBucket(b, seg.Step)
 	}
 	return n, end
 }

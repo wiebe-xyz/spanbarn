@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
 var testShardRetention = ShardRetention{
-	FamilyLogs:    24 * time.Hour,
-	FamilyMetrics: 7 * day,
-	FamilyPrompts: 30 * day,
+	engine.FamilyLogs:    24 * time.Hour,
+	engine.FamilyMetrics: 7 * day,
+	engine.FamilyPrompts: 30 * day,
 }
 
 // openShardedStorage opens a storage with shards on, its clock at *clock.
@@ -208,7 +209,7 @@ func TestShardCloseEndedThroughQueue(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s := writescheduler.New()
-	store.Shards.SetScheduler(FamilyLogs, s)
+	store.Shards.SetScheduler(engine.FamilyLogs, s)
 	go s.Run(ctx)
 
 	clock = mustTime(t, "2026-10-05T12:00:00Z")
@@ -232,7 +233,7 @@ func TestShardCloseEndedOutsideWriteSlot(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s := writescheduler.New()
-	store.Shards.SetScheduler(FamilyLogs, s)
+	store.Shards.SetScheduler(engine.FamilyLogs, s)
 	go s.Run(ctx)
 	entered, release := make(chan struct{}, 1), make(chan struct{})
 	store.Shards.beforeClose = func() {
@@ -313,7 +314,7 @@ func TestShardRowsMatchFilesAfterRestart(t *testing.T) {
 func TestShardsOff(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
 	store := openTestStorage(t, path)
-	if store.Shards != nil || store.Shards.Sharded(FamilyLogs) {
+	if store.Shards != nil || store.Shards.Sharded(engine.FamilyLogs) {
 		t.Fatal("shards on without Shards option")
 	}
 	if err := store.Repository().InsertLogs(context.Background(), []model.LogRecord{makeLogRecord(1, "t", "x", 9)}); err != nil {

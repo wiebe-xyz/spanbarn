@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // setupTestDB creates an in-memory SQLite database with migrations applied, or
@@ -24,7 +26,7 @@ func setupTestDB(t *testing.T) *Repository {
 // tests about the migrations themselves that hold in either layout.
 func setupCombinedTestDB(t *testing.T) *Repository {
 	t.Helper()
-	db, err := NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
@@ -650,7 +652,7 @@ func TestInsertAndQueryErrorSamples(t *testing.T) {
 func TestNewReadOnlyDB(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 
-	rw, err := NewDB(path)
+	rw, err := engine.NewDB(path)
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
@@ -659,7 +661,7 @@ func TestNewReadOnlyDB(t *testing.T) {
 	}
 	rw.Close()
 
-	ro, err := NewReadOnlyDB(path)
+	ro, err := engine.NewReadOnlyDB(path)
 	if err != nil {
 		t.Fatalf("NewReadOnlyDB: %v", err)
 	}
@@ -685,7 +687,7 @@ func TestProjectUsageStatsAll(t *testing.T) {
 	// row per (project, bucket) carrying the relevant count/error_count for the
 	// bucket window we want to test.
 	addAgg := func(projectID, count, errors int64, ago string) {
-		_, err := repo.writer(FamilySpans).Exec(
+		_, err := repo.writer(engine.FamilySpans).Exec(
 			`INSERT INTO aggregates (project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
 			 VALUES (?, 'svc', 'op', '', 'server', datetime('now', ?), ?, ?, 0, 0, 0, 0, 0)`,
 			projectID, ago, count, errors)
@@ -756,7 +758,7 @@ func insertBoringSpans(t *testing.T, repo *Repository, projectID int64, count in
 	if err := repo.InsertSpans(spans); err != nil {
 		t.Fatalf("InsertSpans: %v", err)
 	}
-	if _, err := repo.writer(FamilySpans).Exec("UPDATE spans SET ingested_at = ?", ingestedAt); err != nil {
+	if _, err := repo.writer(engine.FamilySpans).Exec("UPDATE spans SET ingested_at = ?", ingestedAt); err != nil {
 		t.Fatalf("backdate ingested_at: %v", err)
 	}
 }

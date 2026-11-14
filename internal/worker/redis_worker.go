@@ -11,6 +11,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 )
@@ -188,7 +189,7 @@ func (w *RedisWorker) insertWithRetry(ctx context.Context, spans []repository.Sp
 		if err == nil {
 			return nil, false
 		}
-		if repository.IsDiskFull(err) {
+		if engine.IsDiskFull(err) {
 			return err, true
 		}
 		w.logger.Info("redis worker: insert attempt failed",

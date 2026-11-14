@@ -67,16 +67,15 @@ means changing a committed file, which a reviewer sees in the diff. That is the
 only escape hatch.
 
 Blocking metrics:
-- **Coverage** — `internal/service` and `internal/repository` stay above their package floors, AND every individual source file in them stays above a per-file floor (no fully-uncovered file hiding behind well-covered siblings; migration DDL and test files excluded). Coverage floors are raised by hand from a CI measurement: the workstation and CI measure these packages several points apart, so `--update-baseline` deliberately leaves them alone.
+- **Coverage** — `internal/service` and `internal/repository` (the root package and `internal/repository/engine`, run with `-coverpkg` over the tree so engine files count the repository tests too) stay above their package floors, AND every individual source file in them stays above a per-file floor (no fully-uncovered file hiding behind well-covered siblings; migration DDL and test files excluded). Coverage floors are raised by hand from a CI measurement: the workstation and CI measure these packages several points apart, so `--update-baseline` deliberately leaves them alone.
 - **Cyclomatic complexity** — the count of functions over gocyclo 15, exactly.
 - **File length** — the count of files over 500 lines, exactly, and no file over the hard cap.
 - **Duplication** — the count of `dupl` clone groups, exactly.
 
-Soaks — they run, print a count against a committed baseline, and do not block.
-Flip `BOUNDARIES_MODE` / `INFRA_MODE` to `enforce` in the thresholds file to make
-them blocking; the exit criteria are written next to each one.
-- **Boundaries** (`scripts/boundarycheck`) — `internal/api` must reach persistence through `internal/service`, and neither `internal/service` nor `internal/repository` may depend on transport. Baseline: 14 files in `scripts/boundaries-baseline.txt`. Enforce at 5 or fewer; target 0.
-- **Infra** (`scripts/infracheck`) — every kustomize overlay renders, and the rendered workloads have resource requests and limits, readiness and liveness probes, non-floating image tags and no reference to a Secret nobody applies. An overlay that fails to render is a hard error, never a pass. Baseline: 6 findings in `scripts/infra-baseline.txt`. Enforce at 0.
+Structure checks — both run in `enforce` mode (`BOUNDARIES_MODE` and `INFRA_MODE`
+in the thresholds file) with empty baselines, so any finding fails the gate.
+- **Boundaries** (`scripts/boundarycheck`) — `internal/api` must reach persistence through `internal/service`, and neither `internal/service` nor `internal/repository` may depend on transport. Baseline: `scripts/boundaries-baseline.txt`, empty.
+- **Infra** (`scripts/infracheck`) — every kustomize overlay renders, and the rendered workloads have resource requests and limits, readiness and liveness probes, non-floating image tags and no reference to a Secret nobody applies. An overlay that fails to render is a hard error, never a pass. Baseline: `scripts/infra-baseline.txt`, empty.
 
 Layering is enforced by `depguard` in `.golangci.yml`, run by `make lint` and the
 `code` CI job (blocking, outside the ratchet counts). Rules: only `repository`

@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // seedSettingsAndTelemetry populates every settings table plus one telemetry
@@ -48,7 +50,7 @@ func TestSnapshotSettingsCopiesSettingsOnly(t *testing.T) {
 	ctx := context.Background()
 	srcPath := filepath.Join(t.TempDir(), "src.db")
 
-	db, err := NewDB(srcPath)
+	db, err := engine.NewDB(srcPath)
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
@@ -80,7 +82,7 @@ func TestSnapshotSettingsCopiesSettingsOnly(t *testing.T) {
 		}
 	}
 
-	destDB, err := NewDB(destPath)
+	destDB, err := engine.NewDB(destPath)
 	if err != nil {
 		t.Fatalf("open snapshot: %v", err)
 	}
@@ -94,7 +96,7 @@ func TestSnapshotSettingsCopiesSettingsOnly(t *testing.T) {
 		t.Fatalf("user missing from snapshot: %v", err)
 	}
 
-	for _, moved := range FamilySpans.Tables() {
+	for _, moved := range engine.FamilySpans.Tables() {
 		var n int
 		if err := destDB.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, moved).Scan(&n); err != nil {
 			t.Fatal(err)
@@ -121,7 +123,7 @@ func TestSnapshotSettingsOverwritesExisting(t *testing.T) {
 	ctx := context.Background()
 	srcPath := filepath.Join(t.TempDir(), "src.db")
 
-	db, err := NewDB(srcPath)
+	db, err := engine.NewDB(srcPath)
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}

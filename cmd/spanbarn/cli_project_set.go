@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/wiebe-xyz/spanbarn/internal/config"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
@@ -43,12 +43,12 @@ func runProjectSet(cfg config.Config, args []string) error {
 	}
 	defer db.Close()
 
-	p, err := repo.GetProjectBySlug(slug)
+	p, err := service.NewProjectService(repo).BySlug(slug)
 	if err != nil {
 		return fmt.Errorf("find project %q: %w", slug, err)
 	}
 	if *traceRatio >= 0 {
-		if err := setTraceRatio(repo, p.ID, *traceRatio); err != nil {
+		if err := setTraceRatio(service.NewSettingsService(repo), p.ID, *traceRatio); err != nil {
 			return err
 		}
 		if *traceRatio == 0 {
@@ -58,7 +58,7 @@ func runProjectSet(cfg config.Config, args []string) error {
 		}
 	}
 	if *logHours >= 0 {
-		if err := setLogRetention(repo, p.ID, *logHours); err != nil {
+		if err := setLogRetention(service.NewSettingsService(repo), p.ID, *logHours); err != nil {
 			return err
 		}
 		if *logHours == 0 {
@@ -72,12 +72,12 @@ func runProjectSet(cfg config.Config, args []string) error {
 
 // setLogRetention caps one project's log retention. The retention worker reads
 // the key each cycle; 0 removes the cap.
-func setLogRetention(repo *repository.Repository, projectID int64, hours int) error {
+func setLogRetention(settings *service.SettingsService, projectID int64, hours int) error {
 	key := fmt.Sprintf("retention.log_hours.project.%d", projectID)
 	if hours == 0 {
-		return repo.DeleteSetting(key)
+		return settings.Delete(key)
 	}
-	return repo.SetSetting(key, strconv.Itoa(hours))
+	return settings.Set(key, strconv.Itoa(hours))
 }
 
 // setTraceRatio writes both sampling stages. The trace buffer decides which
@@ -85,7 +85,7 @@ func setLogRetention(repo *repository.Repository, projectID int64, hours int) er
 // of an uneventful trace to store (boring.sample_ratio, which defaults to none).
 // Setting only the first would keep traces whose spans are then dropped.
 // A ratio of 0 removes both overrides.
-func setTraceRatio(repo *repository.Repository, projectID int64, ratio int) error {
+func setTraceRatio(settings *service.SettingsService, projectID int64, ratio int) error {
 	keys := []string{
 		fmt.Sprintf("ingest.sample_ratio.project.%d", projectID),
 		fmt.Sprintf("boring.sample_ratio.project.%d", projectID),
@@ -93,9 +93,9 @@ func setTraceRatio(repo *repository.Repository, projectID int64, ratio int) erro
 	for _, k := range keys {
 		var err error
 		if ratio == 0 {
-			err = repo.DeleteSetting(k)
+			err = settings.Delete(k)
 		} else {
-			err = repo.SetSetting(k, strconv.Itoa(ratio))
+			err = settings.Set(k, strconv.Itoa(ratio))
 		}
 		if err != nil {
 			return fmt.Errorf("write %s: %w", k, err)

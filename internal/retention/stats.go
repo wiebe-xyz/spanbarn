@@ -3,7 +3,7 @@ package retention
 import (
 	"sync"
 
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // Stats is what retention has measured and done since the process started. It
@@ -45,7 +45,7 @@ type statsState struct {
 	mu       sync.Mutex
 	measured bool
 	tier     Tier
-	space    repository.Space
+	space    engine.Space
 	deleted  map[string]int64
 	backlog  map[string]bool
 }
@@ -76,7 +76,7 @@ func (w *RetentionWorker) Stats() Stats {
 }
 
 // recordSpace stores the latest volume measurement and the tier it maps to.
-func (w *RetentionWorker) recordSpace(space repository.Space, tier Tier) {
+func (w *RetentionWorker) recordSpace(space engine.Space, tier Tier) {
 	s := &w.stats
 	s.mu.Lock()
 	s.measured, s.space, s.tier = true, space, tier

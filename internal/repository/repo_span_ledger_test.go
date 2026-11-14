@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func spanLedgerRepo(t *testing.T) *Repository {
 	t.Helper()
-	db, err := NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}

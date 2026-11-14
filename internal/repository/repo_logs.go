@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // LogRow is the repository-layer representation of a stored log entry.
@@ -58,8 +59,8 @@ func (r *Repository) InsertLogs(ctx context.Context, recs []model.LogRecord) err
 		return nil
 	}
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
-	ctx = WithoutSpanTracing(ctx)
-	return r.execIngest(FamilyLogs, int64(len(recs)), func(db *sql.DB) error {
+	ctx = engine.WithoutSpanTracing(ctx)
+	return r.execIngest(engine.FamilyLogs, int64(len(recs)), func(db *sql.DB) error {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
@@ -140,7 +141,7 @@ func (r *Repository) QueryLogs(ctx context.Context, f LogFilter) ([]LogRow, int,
 	}
 
 	var total int
-	db := r.reader(FamilyLogs)
+	db := r.reader(engine.FamilyLogs)
 	if err := db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT COUNT(*) FROM logs WHERE %s`, cond),
 		args...,
@@ -217,7 +218,7 @@ func (r *Repository) LogHistogram(ctx context.Context, f LogFilter, bucketSecs i
 	// Prepend bucketSecs twice: once for the division, once for the multiply.
 	qargs := append([]any{bucketSecs, bucketSecs}, args...)
 
-	rows, err := r.reader(FamilyLogs).QueryContext(ctx, fmt.Sprintf(`
+	rows, err := r.reader(engine.FamilyLogs).QueryContext(ctx, fmt.Sprintf(`
 		SELECT CAST(strftime('%%s', ingested_at) / ? AS INTEGER) * ? AS bucket_ts, COUNT(*)
 		FROM logs WHERE %s
 		GROUP BY bucket_ts ORDER BY bucket_ts`, cond), qargs...)
@@ -312,7 +313,7 @@ func (r *Repository) DeleteProjectLogsOlderThan(ctx context.Context, projectID i
 // in main, so they are read once and handed to each shard as a JSON list.
 func (r *Repository) deleteProjectLogsFromShards(ctx context.Context, projectID int64, cutoff time.Time) (int64, error) {
 	m := r.shards
-	if m == nil || !m.Sharded(FamilyLogs) {
+	if m == nil || !m.Sharded(engine.FamilyLogs) {
 		return 0, nil
 	}
 	rows, err := m.rows(ctx)
@@ -326,7 +327,7 @@ func (r *Repository) deleteProjectLogsFromShards(ctx context.Context, projectID 
 	var total int64
 	for _, row := range rows {
 		// A shard that starts after the cutoff holds nothing older than it.
-		if row.family != FamilyLogs || row.start.After(cutoff) {
+		if row.family != engine.FamilyLogs || row.start.After(cutoff) {
 			continue
 		}
 		for {
@@ -384,7 +385,7 @@ func (r *Repository) pinnedTraceIDsJSON(ctx context.Context, projectID int64) (s
 // --- Pinned Traces ---
 
 func (r *Repository) PinTrace(ctx context.Context, projectID int64, traceID, label string) error {
-	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+	return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		_, err := db.ExecContext(ctx,
 			`INSERT INTO pinned_traces (project_id, trace_id, label) VALUES (?, ?, ?)
 			 ON CONFLICT(project_id, trace_id) DO UPDATE SET label = excluded.label`,
@@ -395,7 +396,7 @@ func (r *Repository) PinTrace(ctx context.Context, projectID int64, traceID, lab
 }
 
 func (r *Repository) UnpinTrace(ctx context.Context, projectID int64, traceID string) error {
-	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+	return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		_, err := db.ExecContext(ctx,
 			`DELETE FROM pinned_traces WHERE project_id = ? AND trace_id = ?`,
 			projectID, traceID,

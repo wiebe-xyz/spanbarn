@@ -16,11 +16,13 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
-// sessionTestStack wires a SessionService to the fake IdP and returns the
+// sessionTestStack wires a session.Service to the fake IdP and returns the
 // middleware-wrapped probe handler used by the flow tests.
-func sessionTestStack(t *testing.T) (*fakeIdP, *SessionService, *repository.Repository, http.Handler) {
+func sessionTestStack(t *testing.T) (*fakeIdP, *session.Service, *repository.Repository, http.Handler) {
 	t.Helper()
 	idp := newFakeIdP(t)
 	svc, repo := newTestSessions(t)
@@ -111,7 +113,7 @@ func TestSessionRefreshInvalidGrant401AndRowDeleted(t *testing.T) {
 func TestSessionRefreshTransientFailureServesStaleUntilGrace(t *testing.T) {
 	idp := newFakeIdP(t)
 	repo := newTestRepo(t)
-	svc := NewSessionService(repo, 43200, 3600, slog.Default())
+	svc := session.NewService(repo, 43200, 3600, slog.Default())
 	oc := idp.client()
 	svc.SetOIDCProvider(func() *auth.OIDCClient { return oc })
 	handler := SessionMiddleware(svc)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -120,7 +122,7 @@ func TestSessionRefreshTransientFailureServesStaleUntilGrace(t *testing.T) {
 
 	now := time.Now()
 	clock := now
-	svc.now = func() time.Time { return clock }
+	svc.SetClock(func() time.Time { return clock })
 
 	idp.script(http.StatusInternalServerError, "", "", nil)
 	token := newOIDCSessionRow(t, svc, now.Add(-time.Minute), "rt-1")
@@ -172,7 +174,7 @@ func TestSessionAbsoluteCap(t *testing.T) {
 
 	token := newOIDCSessionRow(t, svc, time.Now().Add(10*time.Minute), "rt-1")
 	// Move the clock past the 1h TTL configured by newTestSessions.
-	svc.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	svc.SetClock(func() time.Time { return time.Now().Add(2 * time.Hour) })
 
 	if rec := doSession(handler, token); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 past absolute cap, got %d", rec.Code)
@@ -236,7 +238,7 @@ func TestSessionLocalNeverRefreshes(t *testing.T) {
 // so the SPA triggers the writer-routed refresh.
 func TestSessionReadOnlyStoreServesStaleWithRefreshDueHeader(t *testing.T) {
 	idp := newFakeIdP(t)
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
@@ -247,8 +249,8 @@ func TestSessionReadOnlyStoreServesStaleWithRefreshDueHeader(t *testing.T) {
 	rwRepo := repository.NewRepository(db.DB)
 	roRepo := repository.NewReadOnlyRepository(db.DB)
 
-	writerSvc := NewSessionService(rwRepo, 43200, 3600, nil)
-	readerSvc := NewSessionService(roRepo, 43200, 3600, nil)
+	writerSvc := session.NewService(rwRepo, 43200, 3600, nil)
+	readerSvc := session.NewService(roRepo, 43200, 3600, nil)
 	oc := idp.client()
 	readerSvc.SetOIDCProvider(func() *auth.OIDCClient { return oc })
 	handler := SessionMiddleware(readerSvc)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -269,7 +271,7 @@ func TestSessionReadOnlyStoreServesStaleWithRefreshDueHeader(t *testing.T) {
 	}
 
 	// Beyond access expiry + grace the reader rejects too.
-	readerSvc.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	readerSvc.SetClock(func() time.Time { return time.Now().Add(2 * time.Hour) })
 	if rec := doSession(handler, token); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 past reader grace, got %d", rec.Code)
 	}
@@ -315,7 +317,7 @@ func TestBackchannelLogoutBySidAndSub(t *testing.T) {
 
 	// Two sessions of sub-1 with different sids + one other subject.
 	tokA := newOIDCSessionRow(t, svc, time.Now().Add(10*time.Minute), "rt-a") // sid-1
-	tokB, _, err := svc.Create("Wiebe", "oidc", &OIDCSessionData{
+	tokB, _, err := svc.Create("Wiebe", "oidc", &session.OIDCData{
 		Claims:          auth.OIDCClaims{Subject: "sub-1", SessionID: "sid-2", Roles: []string{"owner"}},
 		AccessToken:     "at-b",
 		RefreshToken:    "rt-b",
@@ -324,7 +326,7 @@ func TestBackchannelLogoutBySidAndSub(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create session B: %v", err)
 	}
-	tokC, _, err := svc.Create("Other", "oidc", &OIDCSessionData{
+	tokC, _, err := svc.Create("Other", "oidc", &session.OIDCData{
 		Claims:          auth.OIDCClaims{Subject: "sub-2", SessionID: "sid-3", Roles: []string{"owner"}},
 		AccessToken:     "at-c",
 		RefreshToken:    "rt-c",

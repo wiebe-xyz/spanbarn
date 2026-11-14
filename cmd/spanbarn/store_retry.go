@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // A logs or metrics batch whose insert failed was finished after one attempt,
@@ -43,7 +43,7 @@ func storeWithRetry(ctx context.Context, logger *slog.Logger, name string, recor
 			return nil
 		}
 		wait := storeDiskFullWait
-		if repository.IsDiskFull(err) {
+		if engine.IsDiskFull(err) {
 			if !diskFull {
 				diskFull = true
 				logger.Error(name+" insert: disk full, holding the batch until retention frees space", "records", records, "error", err)

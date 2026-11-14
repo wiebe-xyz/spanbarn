@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // TestSampleWeightThroughStaging checks that a span's weight survives the
@@ -75,7 +77,7 @@ func TestAggregateWeightsUpsert(t *testing.T) {
 
 	// The same upsert without the weighted columns, the way the previous
 	// release writes it.
-	if _, err := repo.writer(FamilySpans).Exec(`INSERT INTO aggregates
+	if _, err := repo.writer(engine.FamilySpans).Exec(`INSERT INTO aggregates
 		(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
 		VALUES (1, 'api', 'GET /old', '', '', ?, 5, 0, 0, 0, 0, 0, 0)`, bucket); err != nil {
 		t.Fatalf("insert unweighted row: %v", err)

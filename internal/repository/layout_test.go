@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -65,7 +67,7 @@ func insertAndReadSpan(t *testing.T, store *Storage, path string) {
 	}
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	dashSpan(t, repo, "s1", "", "GET /x", "web", `{"http.response.status_code": 500}`, 10, at)
-	if _, err := repo.writer(FamilySpans).Exec(`UPDATE spans SET project_id = ?`, p.ID); err != nil {
+	if _, err := repo.writer(engine.FamilySpans).Exec(`UPDATE spans SET project_id = ?`, p.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.RefreshTraceStructure(context.Background(), []TraceKey{{ProjectID: p.ID, TraceID: "t-s1"}}); err != nil {
@@ -92,7 +94,7 @@ func TestOpenStorageNewInstallSplits(t *testing.T) {
 	if !store.Split() {
 		t.Fatal("new install did not get a spans file")
 	}
-	for _, table := range FamilySpans.Tables() {
+	for _, table := range engine.FamilySpans.Tables() {
 		if mainHasTable(t, store.Main.DB, table) {
 			t.Errorf("main still has %s", table)
 		}
@@ -125,7 +127,7 @@ func TestOpenStorageReopensSplit(t *testing.T) {
 
 func TestOpenStorageKeepsSingleFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
-	legacy, err := NewDB(path)
+	legacy, err := engine.NewDB(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +245,7 @@ func TestSnapshotRestoreStartsAndServes(t *testing.T) {
 // change to one of them belongs in spansMigrations or shardMigrations.
 func TestMainTrackLeavesSpanTablesAlone(t *testing.T) {
 	ctx := context.Background()
-	db, err := NewDB(filepath.Join(t.TempDir(), "head.db"))
+	db, err := engine.NewDB(filepath.Join(t.TempDir(), "head.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +253,7 @@ func TestMainTrackLeavesSpanTablesAlone(t *testing.T) {
 	if err := Migrate(db.DB); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range Families()[1:] {
+	for _, f := range engine.Families()[1:] {
 		baseline, err := familyBaselineDDL(ctx, f.Tables())
 		if err != nil {
 			t.Fatal(err)

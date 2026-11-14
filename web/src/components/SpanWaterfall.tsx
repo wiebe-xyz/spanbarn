@@ -8,7 +8,7 @@ import {
   formatDuration,
   kindClass,
   kindColor,
-} from '../utils/spanTree'
+} from '../traces/spanTree'
 import './SpanTimeline.css'
 
 type Props = {

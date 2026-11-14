@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/pressly/goose/v3"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // Every shard file has its own migration track, recorded in shardVersionTable
@@ -16,7 +17,7 @@ import (
 // change to a sharded table is a new entry in shardMigrations.
 const shardVersionTable = "goose_shard_version"
 
-func shardMigrations(f Family) []*goose.Migration {
+func shardMigrations(f engine.Family) []*goose.Migration {
 	return []*goose.Migration{
 		goose.NewGoMigration(1, &goose.GoFunc{RunTx: func(ctx context.Context, tx *sql.Tx) error {
 			return shardBaselineUp(ctx, tx, f)
@@ -32,7 +33,7 @@ func shardMigrations(f Family) []*goose.Migration {
 
 // MigrateShard runs f's shard migration track against db, a handle on one
 // shard file.
-func MigrateShard(ctx context.Context, db *sql.DB, f Family) error {
+func MigrateShard(ctx context.Context, db *sql.DB, f engine.Family) error {
 	p, err := goose.NewProvider(goose.DialectSQLite3, db, nil,
 		goose.WithDisableGlobalRegistry(true),
 		goose.WithTableName(shardVersionTable),
@@ -43,13 +44,13 @@ func MigrateShard(ctx context.Context, db *sql.DB, f Family) error {
 	}
 	// goose probes a new shard for its version table first, and "no such table"
 	// would read as an error span for every shard created.
-	_, err = p.Up(WithoutSpanTracing(ctx))
+	_, err = p.Up(engine.WithoutSpanTracing(ctx))
 	return err
 }
 
 // shardBaselineUp creates f's tables and indexes as main-track migrations 1 to
 // spansBaselineVersion leave them.
-func shardBaselineUp(ctx context.Context, tx *sql.Tx, f Family) error {
+func shardBaselineUp(ctx context.Context, tx *sql.Tx, f engine.Family) error {
 	ddl, err := cachedBaselineDDL(ctx, f)
 	if err != nil {
 		return err
@@ -64,13 +65,13 @@ func shardBaselineUp(ctx context.Context, tx *sql.Tx, f Family) error {
 
 var baselineCache struct {
 	sync.Mutex
-	ddl map[Family][]string
+	ddl map[engine.Family][]string
 }
 
 // cachedBaselineDDL is familyBaselineDDL for f's tables, built once per
 // process: a writer creates a shard per family every period, and the scratch
 // migration costs more than the shard does.
-func cachedBaselineDDL(ctx context.Context, f Family) ([]string, error) {
+func cachedBaselineDDL(ctx context.Context, f engine.Family) ([]string, error) {
 	baselineCache.Lock()
 	defer baselineCache.Unlock()
 	if ddl, ok := baselineCache.ddl[f]; ok {
@@ -81,7 +82,7 @@ func cachedBaselineDDL(ctx context.Context, f Family) ([]string, error) {
 		return nil, err
 	}
 	if baselineCache.ddl == nil {
-		baselineCache.ddl = map[Family][]string{}
+		baselineCache.ddl = map[engine.Family][]string{}
 	}
 	baselineCache.ddl[f] = ddl
 	return ddl, nil
