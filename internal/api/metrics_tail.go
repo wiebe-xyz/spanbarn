@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // fineTailWidth bounds the 5-minute read that an hour tier read takes its newest
@@ -37,7 +37,7 @@ func (h *metricsQueryHandlers) hourTierWithTail(ctx context.Context, f service.M
 			return nil, err
 		}
 		for i := range tail {
-			tail[i].StepSeconds = rollup.Step5m
+			tail[i].StepSeconds = tier.Step5m
 		}
 		if f.Limit > 0 && len(tail) >= f.Limit {
 			return tail, nil
@@ -52,12 +52,12 @@ func (h *metricsQueryHandlers) hourTierWithTail(ctx context.Context, f service.M
 			return tail, nil
 		}
 	}
-	hours, err := h.queryTier(ctx, rollup.StepHour, hf)
+	hours, err := h.queryTier(ctx, tier.StepHour, hf)
 	if err != nil {
 		return nil, err
 	}
 	for i := range hours {
-		hours[i].StepSeconds = rollup.StepHour
+		hours[i].StepSeconds = tier.StepHour
 	}
 	return append(hours, tail...), nil
 }
@@ -68,13 +68,13 @@ func (h *metricsQueryHandlers) hourTierWithTail(ctx context.Context, f service.M
 // than the bucket holding from.
 func tailStart(to, through time.Time, ok bool, from time.Time) time.Time {
 	start := to.Add(-fineTailWidth)
-	if hour := rollup.TruncateBucket(start, rollup.StepHour); hour.Before(start) {
-		start = rollup.NextBucket(hour, rollup.StepHour)
+	if hour := tier.TruncateBucket(start, tier.StepHour); hour.Before(start) {
+		start = tier.NextBucket(hour, tier.StepHour)
 	}
 	if ok && through.After(start) {
 		start = through
 	}
-	if first := rollup.TruncateBucket(from, rollup.Step5m); first.After(start) {
+	if first := tier.TruncateBucket(from, tier.Step5m); first.After(start) {
 		start = first
 	}
 	return start

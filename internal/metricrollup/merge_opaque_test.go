@@ -1,4 +1,4 @@
-package rollup
+package metricrollup
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // TestMergeOpaqueDistributionDifferences: the 5-minute rows of a cumulative
@@ -69,7 +70,7 @@ func TestLadderOpaqueDistributionKeepsObservations(t *testing.T) {
 
 		// The opening row has nothing before it, so its running total stays out.
 		want := total - rows[0].ObsCount
-		for _, step := range []int64{StepHour, StepDay} {
+		for _, step := range []int64{tier.StepHour, tier.StepDay} {
 			got, err := repo.QueryCoarseRollups(context.Background(), repository.CoarseRollupFilter{
 				ProjectID: 1, Name: "dur", StepSeconds: step, From: start, To: now,
 			})

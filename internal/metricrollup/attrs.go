@@ -1,9 +1,10 @@
-package rollup
+package metricrollup
 
 import (
 	"strings"
 
 	"github.com/wiebe-xyz/spanbarn/internal/metrics"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // DropPolicy lists the attribute keys removed when a tier is built. Keys ending
@@ -64,9 +65,9 @@ func DefaultDropPolicy() DropPolicy {
 // keysFor returns the keys dropped when building a tier of the given step.
 func (p DropPolicy) keysFor(step int64) []string {
 	switch {
-	case step >= StepDay:
+	case step >= tier.StepDay:
 		return append(append([]string(nil), p.Hourly...), p.Daily...)
-	case step >= StepHour:
+	case step >= tier.StepHour:
 		return p.Hourly
 	default:
 		return nil

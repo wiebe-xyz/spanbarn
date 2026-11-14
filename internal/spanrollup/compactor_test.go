@@ -158,9 +158,9 @@ func TestCompactBucketTwiceWritesTheSameRow(t *testing.T) {
 	}
 	now := h0.Add(3 * time.Hour)
 	c := newTestCompactor(repo, &now)
-	tier := Ladder()[0]
+	rung := Ladder()[0]
 	for range 2 {
-		if _, err := c.compactBucket(ctx, tier, h0, h0.Add(time.Hour)); err != nil {
+		if _, err := c.compactBucket(ctx, rung, h0, h0.Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 	}

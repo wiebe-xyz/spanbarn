@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // rollupTierWindow pairs a rollup tier with how long it is kept.
@@ -17,11 +17,11 @@ type rollupTierWindow struct {
 // rollupTierWindows lists the ladder newest-resolution first.
 func rollupTierWindows(cfg Config) []rollupTierWindow {
 	return []rollupTierWindow{
-		{step: rollup.Step5m, days: cfg.MetricRollupRetentionDays, label: "5m"},
-		{step: rollup.StepHour, days: cfg.HourlyRollupDays, label: "hourly"},
-		{step: rollup.StepDay, days: cfg.DailyRollupDays, label: "daily"},
-		{step: rollup.StepWeek, days: cfg.WeeklyRollupDays, label: "weekly"},
-		{step: rollup.StepMonth, days: cfg.MonthlyRollupDays, label: "monthly"},
+		{step: tier.Step5m, days: cfg.MetricRollupRetentionDays, label: "5m"},
+		{step: tier.StepHour, days: cfg.HourlyRollupDays, label: "hourly"},
+		{step: tier.StepDay, days: cfg.DailyRollupDays, label: "daily"},
+		{step: tier.StepWeek, days: cfg.WeeklyRollupDays, label: "weekly"},
+		{step: tier.StepMonth, days: cfg.MonthlyRollupDays, label: "monthly"},
 	}
 }
 
@@ -95,7 +95,7 @@ func (w *RetentionWorker) deleteRollupTiers(ctx context.Context, cfg Config, now
 // may be deleted. The coarsest tier is the exception: nothing compacts it
 // further, so its own window is the whole story.
 func (w *RetentionWorker) rollupCutoff(ctx context.Context, step int64, windowCutoff time.Time) (time.Time, bool, error) {
-	if step == rollup.StepMonth {
+	if step == tier.StepMonth {
 		return windowCutoff, true, nil
 	}
 	through, ok, err := w.repo.MetricRollupWatermark(ctx, step)
@@ -118,7 +118,7 @@ func (w *RetentionWorker) deleteRollupTier(ctx context.Context, step int64, cuto
 	if budget <= 0 {
 		return 0, true, nil
 	}
-	if step == rollup.Step5m {
+	if step == tier.Step5m {
 		return w.repo.DeleteMetricRollupsOlderThanLimited(ctx, cutoff, budget)
 	}
 	return w.repo.DeleteCoarseRollupsOlderThanLimited(ctx, step, cutoff, budget)

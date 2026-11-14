@@ -1,8 +1,10 @@
-package rollup
+package metricrollup
 
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // TestReduceMergesDeployScopedSeries is the saving this whole change rests on:
@@ -12,13 +14,13 @@ func TestReduceMergesDeployScopedSeries(t *testing.T) {
 	b := `{"service.name":"api","service.version":"def456","http.route":"/galleries"}`
 
 	p := DefaultDropPolicy()
-	_, fpA := p.Reduce(a, StepHour)
-	_, fpB := p.Reduce(b, StepHour)
+	_, fpA := p.Reduce(a, tier.StepHour)
+	_, fpB := p.Reduce(b, tier.StepHour)
 	if fpA != fpB {
 		t.Errorf("fingerprints differ (%s vs %s): service.version still splits the series", fpA, fpB)
 	}
 
-	attrs, _ := p.Reduce(a, StepHour)
+	attrs, _ := p.Reduce(a, tier.StepHour)
 	var m map[string]string
 	if err := json.Unmarshal([]byte(attrs), &m); err != nil {
 		t.Fatalf("attributes: %v", err)
@@ -43,24 +45,24 @@ func TestReduceByTier(t *testing.T) {
 	}{
 		{
 			name: "5m keeps everything",
-			step: Step5m,
+			step: tier.Step5m,
 			kept: []string{"service.name", "http.route", "path", "server.address", "telemetry.sdk.version"},
 		},
 		{
 			name: "hourly drops volatile keys",
-			step: StepHour,
+			step: tier.StepHour,
 			kept: []string{"service.name", "http.route", "path", "server.address"},
 			gone: []string{"telemetry.sdk.version"},
 		},
 		{
 			name: "daily also drops raw paths and hosts",
-			step: StepDay,
+			step: tier.StepDay,
 			kept: []string{"service.name", "http.route"},
 			gone: []string{"path", "server.address", "telemetry.sdk.version"},
 		},
 		{
 			name: "monthly reduces like daily",
-			step: StepMonth,
+			step: tier.StepMonth,
 			kept: []string{"service.name", "http.route"},
 			gone: []string{"path", "server.address"},
 		},
@@ -89,7 +91,7 @@ func TestReduceByTier(t *testing.T) {
 
 func TestReducePrefixWildcard(t *testing.T) {
 	p := DropPolicy{Hourly: []string{"telemetry.sdk.*"}}
-	out, _ := p.Reduce(`{"telemetry.sdk.name":"go","telemetry.sdk.version":"1","service.name":"api"}`, StepHour)
+	out, _ := p.Reduce(`{"telemetry.sdk.name":"go","telemetry.sdk.version":"1","service.name":"api"}`, tier.StepHour)
 
 	var m map[string]string
 	if err := json.Unmarshal([]byte(out), &m); err != nil {

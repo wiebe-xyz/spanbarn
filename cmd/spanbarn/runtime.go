@@ -8,9 +8,9 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/aggregation"
 	"github.com/wiebe-xyz/spanbarn/internal/api"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
+	"github.com/wiebe-xyz/spanbarn/internal/metricrollup"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/spanrollup"
 )
@@ -175,8 +175,8 @@ func retentionConfigFrom(cfg config.Config) retention.Config {
 // summarises each rollup tier into the coarser one, and retention may delete a
 // tier only as far as this has got. Without it nothing above the 5-minute tier
 // is ever written, and nothing below the coarsest is ever dropped.
-func newRollupCompactor(repo rollup.Repository, cfg config.Config, logger *slog.Logger) *rollup.Compactor {
-	return rollup.New(repo, rollup.Config{
+func newRollupCompactor(repo metricrollup.Repository, cfg config.Config, logger *slog.Logger) *metricrollup.Compactor {
+	return metricrollup.New(repo, metricrollup.Config{
 		DBPath:         cfg.DBPath,
 		BucketsPerPass: cfg.Retention.CompactBucketsPerPass,
 		Disabled:       !cfg.Retention.CompactEnabled,

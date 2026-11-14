@@ -1,4 +1,4 @@
-package rollup
+package tier
 
 import (
 	"testing"

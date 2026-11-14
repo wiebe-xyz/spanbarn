@@ -4,12 +4,12 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // coarseFirst lists the tiers a plan may read whole buckets from, coarsest
 // first. The 5-minute tier fills whatever they leave.
-var coarseFirst = []int64{rollup.StepDay, rollup.StepHour}
+var coarseFirst = []int64{tier.StepDay, tier.StepHour}
 
 // Plan picks the tier segments that cover [from, to): whole days and hours
 // where those tiers hold them, 5-minute buckets for the rest. The range
@@ -26,26 +26,26 @@ var coarseFirst = []int64{rollup.StepDay, rollup.StepHour}
 // every bucket of the plan holds rows. The caller then reads its other source for the whole range,
 // because two sources are never stitched into one result.
 func Plan(from, to time.Time, align int64, cov repository.SpanRollupCoverage) ([]repository.SpanRollupSegment, bool) {
-	if !to.After(from) || !aligned(align, rollup.Step5m) {
+	if !to.After(from) || !aligned(align, tier.Step5m) {
 		return nil, false
 	}
 	var segs []repository.SpanRollupSegment
-	cur := rollup.TruncateBucket(from, rollup.Step5m)
+	cur := tier.TruncateBucket(from, tier.Step5m)
 	for cur.Before(to) {
 		if seg, ok := coarseSegment(cur, to, align, cov); ok {
 			segs = append(segs, seg)
 			cur = seg.To
 			continue
 		}
-		oldest, ok := cov.Oldest[rollup.Step5m]
+		oldest, ok := cov.Oldest[tier.Step5m]
 		if !ok || cur.Before(oldest) {
 			return nil, false
 		}
-		next := rollup.NextBucket(cur, rollup.Step5m)
-		if n := len(segs); n > 0 && segs[n-1].Step == rollup.Step5m && segs[n-1].To.Equal(cur) {
+		next := tier.NextBucket(cur, tier.Step5m)
+		if n := len(segs); n > 0 && segs[n-1].Step == tier.Step5m && segs[n-1].To.Equal(cur) {
 			segs[n-1].To = next
 		} else {
-			segs = append(segs, repository.SpanRollupSegment{Step: rollup.Step5m, From: cur, To: next})
+			segs = append(segs, repository.SpanRollupSegment{Step: tier.Step5m, From: cur, To: next})
 		}
 		cur = next
 	}
@@ -56,7 +56,7 @@ func Plan(from, to time.Time, align int64, cov repository.SpanRollupCoverage) ([
 // that starts at cur, ends by to and is held by that tier.
 func coarseSegment(cur, to time.Time, align int64, cov repository.SpanRollupCoverage) (repository.SpanRollupSegment, bool) {
 	for _, step := range coarseFirst {
-		if !aligned(align, step) || !rollup.TruncateBucket(cur, step).Equal(cur) {
+		if !aligned(align, step) || !tier.TruncateBucket(cur, step).Equal(cur) {
 			continue
 		}
 		// The oldest bucket of a coarse tier can be partial: it was built
@@ -71,7 +71,7 @@ func coarseSegment(cur, to time.Time, align int64, cov repository.SpanRollupCove
 			continue
 		}
 		end := cur
-		for next := rollup.NextBucket(end, step); !next.After(to) && !next.After(through); next = rollup.NextBucket(end, step) {
+		for next := tier.NextBucket(end, step); !next.After(to) && !next.After(through); next = tier.NextBucket(end, step) {
 			end = next
 		}
 		if end.After(cur) {

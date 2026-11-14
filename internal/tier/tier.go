@@ -1,16 +1,10 @@
-// Package rollup compacts metric rollups into progressively coarser tiers.
-//
-// The 5-minute tier (table metric_rollups) is written by the ingest accumulator
-// and keyed by the full attribute set. Everything coarser lives in
-// metric_rollups_coarse, keyed additionally by step_seconds, and is produced
-// here: each tier is built from the tier below it, one closed bucket at a time,
-// oldest first.
-//
-// Two things make a tier smaller than its source: fewer buckets (twelve
-// 5-minute buckets become one hour) and fewer series (volatile attributes such
-// as service.version are dropped, so the deploy-scoped series merge into one).
-// On production data the second effect is the larger one.
-package rollup
+// Package tier is the calendar of metric rollup tiers: the step widths (5
+// minutes, hour, day, week, month), the compaction ladder that orders them, and
+// the bucket arithmetic (truncate, next, previous, closed) every consumer shares.
+// Weeks start on Monday and months are calendar months, so bucket math lives
+// here and nowhere else. The metric compactor, the span rollups, retention, the
+// services and the API all read it.
+package tier
 
 import "time"
 
@@ -98,18 +92,6 @@ func PrevBucket(start time.Time, step int64) time.Time {
 		}
 		return start.Add(-time.Duration(step) * time.Second)
 	}
-}
-
-// sourceWindow returns the source buckets [from, to) that make up the target
-// bucket of this tier starting at bucket.
-//
-// Every tier nests inside the one above it except weeks in months. A week that
-// straddles two months belongs to the month it ends in: the earlier month closes
-// before that week does, and waiting for the week would hold the month back for
-// up to six days. Each week so lands in exactly one month, and every week of a
-// month has closed by the time the month does.
-func sourceWindow(tier Tier, bucket time.Time) (from, to time.Time) {
-	return TruncateBucket(bucket, tier.Source), TruncateBucket(NextBucket(bucket, tier.Step), tier.Source)
 }
 
 // BucketClosed reports whether the bucket starting at start is complete as of

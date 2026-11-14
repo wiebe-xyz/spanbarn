@@ -1,4 +1,4 @@
-package rollup
+package metricrollup
 
 import (
 	"sort"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/metrics"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // TemporalityDelta marks a series whose stored value is already the change
@@ -55,7 +56,7 @@ func SourceTailKey(m repository.MetricRollup) string {
 // per reduced label set, which internal/metrics.Derive already rates correctly —
 // no reader changes, and no false dip on deploy day.
 func Merge(
-	tier Tier,
+	rung tier.Tier,
 	bucket time.Time,
 	projectID int64,
 	src []repository.MetricRollup,
@@ -68,12 +69,12 @@ func Merge(
 
 	accs := map[string]*targetAcc{}
 	var order []string
-	for _, c := range contributionsBySeries(src, carry, tier.Source) {
-		attrs, fp := policy.Reduce(c.row.Attributes, tier.Step)
+	for _, c := range contributionsBySeries(src, carry, rung.Source) {
+		attrs, fp := policy.Reduce(c.row.Attributes, rung.Step)
 		key := repository.CoarseSeriesKey(c.row.Name, fp)
 		acc := accs[key]
 		if acc == nil {
-			acc = newTargetAcc(c.row, projectID, attrs, fp, tier.Step, bucket)
+			acc = newTargetAcc(c.row, projectID, attrs, fp, rung.Step, bucket)
 			accs[key] = acc
 			order = append(order, key)
 		}
@@ -200,7 +201,7 @@ func seriesContribution(rows []repository.MetricRollup, prev repository.MetricRo
 	// temporality column still names the temporality of the series it came from.
 	// Differencing such a histogram again would keep only the step up between two
 	// buckets, and a counter would lose the first bucket after any gap.
-	cumulative := newest.Temporality != TemporalityDelta && source == Step5m
+	cumulative := newest.Temporality != TemporalityDelta && source == tier.Step5m
 
 	state := &cumulativeState{cumulative: cumulative}
 	if !prev.Bucket.IsZero() {

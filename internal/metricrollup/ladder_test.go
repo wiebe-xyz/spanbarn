@@ -1,4 +1,4 @@
-package rollup
+package metricrollup
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // ladderStart and ladderEnd span the two months whose boundaries a week
@@ -113,20 +114,20 @@ func TestLadderKeepsHistogramObservations(t *testing.T) {
 		},
 	}
 
-	for _, tier := range Ladder() {
-		got := ladderTier(t, repo, tier.Step)
+	for _, rung := range tier.Ladder() {
+		got := ladderTier(t, repo, rung.Step)
 		if got.rows == 0 {
-			t.Errorf("%s tier: no rows", tier.Label)
+			t.Errorf("%s tier: no rows", rung.Label)
 			continue
 		}
 		if got.obs != want.obs {
-			t.Errorf("%s tier obs_count = %d, want %d", tier.Label, got.obs, want.obs)
+			t.Errorf("%s tier obs_count = %d, want %d", rung.Label, got.obs, want.obs)
 		}
 		if got.sum != want.sum {
-			t.Errorf("%s tier sum = %v, want %v", tier.Label, got.sum, want.sum)
+			t.Errorf("%s tier sum = %v, want %v", rung.Label, got.sum, want.sum)
 		}
 		if got.counts != want.counts {
-			t.Errorf("%s tier buckets = %v, want %v", tier.Label, got.counts, want.counts)
+			t.Errorf("%s tier buckets = %v, want %v", rung.Label, got.counts, want.counts)
 		}
 	}
 }
@@ -139,7 +140,7 @@ func TestLadderCountsStraddlingWeeks(t *testing.T) {
 	samples := ladderSamples("sum")
 	runLadder(t, repo, samples)
 
-	week, month := ladderTier(t, repo, StepWeek), ladderTier(t, repo, StepMonth)
+	week, month := ladderTier(t, repo, tier.StepWeek), ladderTier(t, repo, tier.StepMonth)
 	if week.rows != 10 {
 		t.Errorf("weeks = %d, want 10", week.rows)
 	}
@@ -156,10 +157,10 @@ func TestLadderCountsStraddlingWeeks(t *testing.T) {
 
 func TestSourceWindow(t *testing.T) {
 	day := func(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 0, 0, 0, 0, time.UTC) }
-	month := Tier{Step: StepMonth, Source: StepWeek}
+	month := tier.Tier{Step: tier.StepMonth, Source: tier.StepWeek}
 	cases := []struct {
 		name     string
-		tier     Tier
+		tier     tier.Tier
 		bucket   time.Time
 		from, to time.Time
 	}{
@@ -167,7 +168,7 @@ func TestSourceWindow(t *testing.T) {
 		{"month after a straddling week", month, day(2026, 12, 1), day(2026, 11, 30), day(2026, 12, 28)},
 		{"month ending on a Sunday", month, day(2027, 1, 1), day(2026, 12, 28), day(2027, 2, 1)},
 		{"month starting on a Monday", month, day(2027, 2, 1), day(2027, 2, 1), day(2027, 3, 1)},
-		{"week", Tier{Step: StepWeek, Source: StepDay}, day(2026, 11, 30), day(2026, 11, 30), day(2026, 12, 7)},
+		{"week", tier.Tier{Step: tier.StepWeek, Source: tier.StepDay}, day(2026, 11, 30), day(2026, 11, 30), day(2026, 12, 7)},
 		{"hour", hourTier, testStart, testStart, testStart.Add(time.Hour)},
 	}
 	for _, tc := range cases {

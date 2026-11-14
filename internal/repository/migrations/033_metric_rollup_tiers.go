@@ -29,7 +29,7 @@ func init() {
 // run on a volume that is already 95% full. Creating empty tables and one
 // ALTER TABLE ADD COLUMN (O(1) in SQLite) costs nothing.
 //
-// No backfill here: internal/rollup's compactor fills the tiers forward, oldest
+// No backfill here: internal/metricrollup's compactor fills the tiers forward, oldest
 // bucket first, deleting each source window as it goes so that the operation
 // nets free space on a full disk. metric_rollup_compaction records how far each
 // tier has been compacted, which is what makes deleting the source tier safe:

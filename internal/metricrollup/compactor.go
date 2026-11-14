@@ -1,4 +1,17 @@
-package rollup
+// Package metricrollup compacts metric rollups into progressively coarser tiers.
+//
+// The 5-minute tier (table metric_rollups) is written by the ingest accumulator
+// and keyed by the full attribute set. Everything coarser lives in
+// metric_rollups_coarse, keyed additionally by step_seconds, and is produced
+// here: each tier is built from the tier below it, one closed bucket at a time,
+// oldest first.
+//
+// Two things make a tier smaller than its source: fewer buckets (twelve
+// 5-minute buckets become one hour) and fewer series (volatile attributes such
+// as service.version are dropped, so the deploy-scoped series merge into one).
+// On production data the second effect is the larger one. The step widths and
+// bucket arithmetic come from package tier.
+package metricrollup
 
 import (
 	"context"
@@ -6,6 +19,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // Repository is the data access the compactor needs.
@@ -133,17 +147,17 @@ func (c *Compactor) RunOnce(ctx context.Context) error {
 	policy := c.policy()
 
 	c.busy = false
-	for _, tier := range Ladder() {
+	for _, rung := range tier.Ladder() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		done, rows, err := c.compactTier(ctx, tier, policy)
+		done, rows, err := c.compactTier(ctx, rung, policy)
 		if err != nil {
 			return err
 		}
 		if done > 0 {
 			c.logger.Info("rollup compaction",
-				"tier", tier.Label, "buckets", done, "rows_written", rows)
+				"tier", rung.Label, "buckets", done, "rows_written", rows)
 		}
 		if done >= c.cfg.BucketsPerPass {
 			c.busy = true
@@ -154,13 +168,13 @@ func (c *Compactor) RunOnce(ctx context.Context) error {
 
 // compactTier advances one rung of the ladder, returning how many target buckets
 // it compacted and how many coarse rows it wrote.
-func (c *Compactor) compactTier(ctx context.Context, tier Tier, policy DropPolicy) (int, int, error) {
-	start, ok, err := c.tierStart(ctx, tier)
+func (c *Compactor) compactTier(ctx context.Context, rung tier.Tier, policy DropPolicy) (int, int, error) {
+	start, ok, err := c.tierStart(ctx, rung)
 	if err != nil || !ok {
 		return 0, 0, err
 	}
 
-	sourceThrough, sourceLimited, err := c.sourceThrough(ctx, tier)
+	sourceThrough, sourceLimited, err := c.sourceThrough(ctx, rung)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -174,20 +188,20 @@ func (c *Compactor) compactTier(ctx context.Context, tier Tier, policy DropPolic
 		// 5-minute bucket of an hour lands up to a flush interval after the hour
 		// closes, or later when a failed write is retried, and the watermark
 		// never comes back for it.
-		if !BucketClosed(start, tier.Step, c.now().Add(-repository.MetricRollupLateWrite)) {
+		if !tier.BucketClosed(start, rung.Step, c.now().Add(-repository.MetricRollupLateWrite)) {
 			break // still taking writes
 		}
 		// The watermark never comes back for a bucket, so one compacted before the
 		// tier below has caught up would miss those source rows for good.
-		if sourceLimited && sourceThrough.Before(TruncateBucket(NextBucket(start, tier.Step), tier.Source)) {
+		if sourceLimited && sourceThrough.Before(tier.TruncateBucket(tier.NextBucket(start, rung.Step), rung.Source)) {
 			break
 		}
-		n, err := c.compactBucket(ctx, tier, start, policy)
+		n, err := c.compactBucket(ctx, rung, start, policy)
 		if err != nil {
 			return buckets, rows, err
 		}
-		end := NextBucket(start, tier.Step)
-		if err := c.repo.SetMetricRollupWatermark(ctx, tier.Source, end); err != nil {
+		end := tier.NextBucket(start, rung.Step)
+		if err := c.repo.SetMetricRollupWatermark(ctx, rung.Source, end); err != nil {
 			return buckets, rows, err
 		}
 		rows += n
@@ -201,9 +215,9 @@ func (c *Compactor) compactTier(ctx context.Context, tier Tier, policy DropPolic
 // watermark of the rung that writes them. Ingest writes the 5-minute tier, so the
 // hourly tier has no such limit, and neither has a tier whose source was never
 // compacted, because nothing is on its way to that source.
-func (c *Compactor) sourceThrough(ctx context.Context, tier Tier) (time.Time, bool, error) {
-	for _, below := range Ladder() {
-		if below.Step == tier.Source {
+func (c *Compactor) sourceThrough(ctx context.Context, rung tier.Tier) (time.Time, bool, error) {
+	for _, below := range tier.Ladder() {
+		if below.Step == rung.Source {
 			return c.repo.MetricRollupWatermark(ctx, below.Source)
 		}
 	}
@@ -213,18 +227,18 @@ func (c *Compactor) sourceThrough(ctx context.Context, tier Tier) (time.Time, bo
 // tierStart is the first target bucket this tier still owes: the watermark where
 // one exists, otherwise the oldest source bucket. False means the source tier is
 // empty and there is nothing to do.
-func (c *Compactor) tierStart(ctx context.Context, tier Tier) (time.Time, bool, error) {
-	if through, ok, err := c.repo.MetricRollupWatermark(ctx, tier.Source); err != nil {
+func (c *Compactor) tierStart(ctx context.Context, rung tier.Tier) (time.Time, bool, error) {
+	if through, ok, err := c.repo.MetricRollupWatermark(ctx, rung.Source); err != nil {
 		return time.Time{}, false, err
 	} else if ok {
-		return TruncateBucket(through, tier.Step), true, nil
+		return tier.TruncateBucket(through, rung.Step), true, nil
 	}
 
-	oldest, ok, err := c.repo.OldestRollupBucket(ctx, tier.Source)
+	oldest, ok, err := c.repo.OldestRollupBucket(ctx, rung.Source)
 	if err != nil || !ok {
 		return time.Time{}, false, err
 	}
-	return TruncateBucket(oldest, tier.Step), true, nil
+	return tier.TruncateBucket(oldest, rung.Step), true, nil
 }
 
 // compactBucket builds one target bucket from its source rows and returns how
@@ -234,9 +248,9 @@ func (c *Compactor) tierStart(ctx context.Context, tier Tier) (time.Time, bool, 
 // 5-minute series needs to yield the increase inside the window; it takes part in
 // the arithmetic without contributing to the bucket itself. A coarse source holds
 // its own increases and ignores it.
-func (c *Compactor) compactBucket(ctx context.Context, tier Tier, bucket time.Time, policy DropPolicy) (int, error) {
-	from, to := sourceWindow(tier, bucket)
-	rows, err := c.repo.RollupWindow(ctx, tier.Source, PrevBucket(from, tier.Source), to, 0)
+func (c *Compactor) compactBucket(ctx context.Context, rung tier.Tier, bucket time.Time, policy DropPolicy) (int, error) {
+	from, to := sourceWindow(rung, bucket)
+	rows, err := c.repo.RollupWindow(ctx, rung.Source, tier.PrevBucket(from, rung.Source), to, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -247,11 +261,11 @@ func (c *Compactor) compactBucket(ctx context.Context, tier Tier, bucket time.Ti
 	tails, byProject := splitWindow(rows, from)
 	var written int
 	for _, pid := range byProject.order {
-		targetLast, err := c.repo.CoarseLastBySeries(ctx, pid, tier.Step, PrevBucket(bucket, tier.Step))
+		targetLast, err := c.repo.CoarseLastBySeries(ctx, pid, rung.Step, tier.PrevBucket(bucket, rung.Step))
 		if err != nil {
 			return written, err
 		}
-		merged := Merge(tier, bucket, pid, byProject.rows[pid], policy, Carry{
+		merged := Merge(rung, bucket, pid, byProject.rows[pid], policy, Carry{
 			SourceTail: tails,
 			TargetLast: targetLast,
 		})
@@ -335,4 +349,16 @@ func (c *Compactor) haveRoom(ctx context.Context) bool {
 		c.lowSpace = true
 	}
 	return false
+}
+
+// sourceWindow returns the source buckets [from, to) that make up the target
+// bucket of this tier starting at bucket.
+//
+// Every tier nests inside the one above it except weeks in months. A week that
+// straddles two months belongs to the month it ends in: the earlier month closes
+// before that week does, and waiting for the week would hold the month back for
+// up to six days. Each week so lands in exactly one month, and every week of a
+// month has closed by the time the month does.
+func sourceWindow(rung tier.Tier, bucket time.Time) (from, to time.Time) {
+	return tier.TruncateBucket(bucket, rung.Source), tier.TruncateBucket(tier.NextBucket(bucket, rung.Step), rung.Source)
 }

@@ -11,7 +11,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 var rangeTestBase = time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
@@ -25,12 +25,12 @@ func seedRangeRollups(t *testing.T, repo *repository.Repository, in5m, inHour bo
 		}
 	}
 	if in5m {
-		if err := repo.UpsertMetricRollups([]repository.MetricRollup{row(rollup.Step5m)}); err != nil {
+		if err := repo.UpsertMetricRollups([]repository.MetricRollup{row(tier.Step5m)}); err != nil {
 			t.Fatalf("UpsertMetricRollups: %v", err)
 		}
 	}
 	if inHour {
-		if err := repo.UpsertCoarseRollups(context.Background(), []repository.MetricRollup{row(rollup.StepHour)}); err != nil {
+		if err := repo.UpsertCoarseRollups(context.Background(), []repository.MetricRollup{row(tier.StepHour)}); err != nil {
 			t.Fatalf("UpsertCoarseRollups: %v", err)
 		}
 	}
@@ -64,10 +64,10 @@ func TestNarrowRangePastRawRetentionReadsRollups(t *testing.T) {
 		from, to     time.Time
 		wantStep     int64
 	}{
-		"5m tier still holds it": {true, true, rangeTestBase.Add(-time.Hour), rangeTestBase.Add(time.Hour), rollup.Step5m},
-		"only the hour tier":     {false, true, rangeTestBase.Add(-time.Hour), rangeTestBase.Add(time.Hour), rollup.StepHour},
+		"5m tier still holds it": {true, true, rangeTestBase.Add(-time.Hour), rangeTestBase.Add(time.Hour), tier.Step5m},
+		"only the hour tier":     {false, true, rangeTestBase.Add(-time.Hour), rangeTestBase.Add(time.Hour), tier.StepHour},
 		// The range starts after the hour bucket does and ends before the next one.
-		"narrower than a bucket": {false, true, rangeTestBase.Add(10 * time.Minute), rangeTestBase.Add(50 * time.Minute), rollup.StepHour},
+		"narrower than a bucket": {false, true, rangeTestBase.Add(10 * time.Minute), rangeTestBase.Add(50 * time.Minute), tier.StepHour},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv, sm, repo := setupMetricsQueryServer(t)
@@ -113,9 +113,9 @@ func TestFilteredReadTierFollowsTheRangeWidth(t *testing.T) {
 		labels   map[string]string
 		wantStep int64
 	}{
-		"filtered, a day":      {filteredFineTierWidth, filter, rollup.Step5m},
-		"filtered, two days":   {48 * time.Hour, filter, rollup.StepHour},
-		"unfiltered, two days": {48 * time.Hour, nil, rollup.Step5m},
+		"filtered, a day":      {filteredFineTierWidth, filter, tier.Step5m},
+		"filtered, two days":   {48 * time.Hour, filter, tier.StepHour},
+		"unfiltered, two days": {48 * time.Hour, nil, tier.Step5m},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv, sm, repo := setupMetricsQueryServer(t)
@@ -144,7 +144,7 @@ func seedTailRollups(t *testing.T, repo *repository.Repository, step int64, v fl
 		})
 	}
 	var err error
-	if step == rollup.Step5m {
+	if step == tier.Step5m {
 		err = repo.UpsertMetricRollups(rows)
 	} else {
 		err = repo.UpsertCoarseRollups(context.Background(), rows)
@@ -174,11 +174,11 @@ func pointTimes(t *testing.T, resp metricSeriesResponse) []time.Time {
 func TestWideFilteredReadKeepsTheNewestHour(t *testing.T) {
 	srv, sm, repo := setupMetricsQueryServer(t)
 	through := rangeTestBase
-	seedTailRollups(t, repo, rollup.StepHour, 1, through.Add(-2*time.Hour), through.Add(-time.Hour))
+	seedTailRollups(t, repo, tier.StepHour, 1, through.Add(-2*time.Hour), through.Add(-time.Hour))
 	// The 5-minute tier still holds a compacted bucket, which the hour tier
 	// already counts, and two the compactor has not reached.
-	seedTailRollups(t, repo, rollup.Step5m, 2, through.Add(-30*time.Minute), through, through.Add(5*time.Minute))
-	if err := repo.SetMetricRollupWatermark(context.Background(), rollup.Step5m, through); err != nil {
+	seedTailRollups(t, repo, tier.Step5m, 2, through.Add(-30*time.Minute), through, through.Add(5*time.Minute))
+	if err := repo.SetMetricRollupWatermark(context.Background(), tier.Step5m, through); err != nil {
 		t.Fatal(err)
 	}
 
@@ -193,7 +193,7 @@ func TestWideFilteredReadKeepsTheNewestHour(t *testing.T) {
 			t.Fatalf("points at %v, want %v", got, want)
 		}
 	}
-	if resp.Step != rollup.StepHour {
+	if resp.Step != tier.StepHour {
 		t.Errorf("step_seconds = %d, want the hour tier", resp.Step)
 	}
 }
@@ -202,8 +202,8 @@ func TestWideFilteredReadKeepsTheNewestHour(t *testing.T) {
 // filtered range while a narrower one showed it (#497).
 func TestWideFilteredReadShowsAYoungSeries(t *testing.T) {
 	srv, sm, repo := setupMetricsQueryServer(t)
-	seedTailRollups(t, repo, rollup.Step5m, 1, rangeTestBase, rangeTestBase.Add(5*time.Minute))
-	if err := repo.SetMetricRollupWatermark(context.Background(), rollup.Step5m, rangeTestBase.Add(-time.Hour)); err != nil {
+	seedTailRollups(t, repo, tier.Step5m, 1, rangeTestBase, rangeTestBase.Add(5*time.Minute))
+	if err := repo.SetMetricRollupWatermark(context.Background(), tier.Step5m, rangeTestBase.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	resp := readRange(t, srv, sm, rangeTestBase.Add(-47*time.Hour), rangeTestBase.Add(time.Hour), map[string]string{"svc": "a"})
@@ -219,8 +219,8 @@ func TestWideFilteredReadBoundsTheTail(t *testing.T) {
 	srv, sm, repo := setupMetricsQueryServer(t)
 	end := rangeTestBase
 	old, recent := end.Add(-fineTailWidth-time.Hour), end.Add(-time.Hour)
-	seedTailRollups(t, repo, rollup.Step5m, 1, old, recent)
-	if err := repo.SetMetricRollupWatermark(context.Background(), rollup.Step5m, end.Add(-30*time.Hour)); err != nil {
+	seedTailRollups(t, repo, tier.Step5m, 1, old, recent)
+	if err := repo.SetMetricRollupWatermark(context.Background(), tier.Step5m, end.Add(-30*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	resp := readRange(t, srv, sm, end.Add(-48*time.Hour), end, map[string]string{"svc": "a"})

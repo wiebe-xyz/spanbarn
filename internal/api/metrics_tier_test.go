@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // TestRollupTierStepsPicksResolutionForRange: each range reads the finest tier
@@ -18,13 +18,13 @@ func TestRollupTierStepsPicksResolutionForRange(t *testing.T) {
 		wantHead int64
 		wantLen  int
 	}{
-		{"just past the raw threshold", 7 * time.Hour, rollup.Step5m, 3},
-		{"two days", 48 * time.Hour, rollup.Step5m, 3},
-		{"a week", 7 * 24 * time.Hour, rollup.StepHour, 3},
-		{"thirty days", 30 * 24 * time.Hour, rollup.StepHour, 3},
-		{"three months", 90 * 24 * time.Hour, rollup.StepDay, 3},
-		{"a year", 365 * 24 * time.Hour, rollup.StepDay, 3},
-		{"three years", 3 * 365 * 24 * time.Hour, rollup.StepWeek, 2},
+		{"just past the raw threshold", 7 * time.Hour, tier.Step5m, 3},
+		{"two days", 48 * time.Hour, tier.Step5m, 3},
+		{"a week", 7 * 24 * time.Hour, tier.StepHour, 3},
+		{"thirty days", 30 * 24 * time.Hour, tier.StepHour, 3},
+		{"three months", 90 * 24 * time.Hour, tier.StepDay, 3},
+		{"a year", 365 * 24 * time.Hour, tier.StepDay, 3},
+		{"three years", 3 * 365 * 24 * time.Hour, tier.StepWeek, 2},
 	}
 
 	for _, tc := range tests {

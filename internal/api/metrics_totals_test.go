@@ -11,7 +11,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 func TestMetricTotalsPerSession(t *testing.T) {
@@ -162,7 +162,7 @@ func seedDeltaTotals(t *testing.T, repo *repository.Repository, step int64, v fl
 		})
 	}
 	var err error
-	if step == rollup.Step5m {
+	if step == tier.Step5m {
 		err = repo.UpsertMetricRollups(rows)
 	} else {
 		err = repo.UpsertCoarseRollups(context.Background(), rows)
@@ -180,13 +180,13 @@ func TestWideTotalsReadTheHourTier(t *testing.T) {
 	srv, sm, repo := setupMetricsQueryServer(t)
 	through := rangeTestBase
 	hours := []time.Time{through.Add(-3 * time.Hour), through.Add(-2 * time.Hour), through.Add(-time.Hour)}
-	seedDeltaTotals(t, repo, rollup.StepHour, 10, hours...)
+	seedDeltaTotals(t, repo, tier.StepHour, 10, hours...)
 	var fine []time.Time
 	for b := through.Add(-3 * time.Hour); !b.After(through.Add(5 * time.Minute)); b = b.Add(5 * time.Minute) {
 		fine = append(fine, b)
 	}
-	seedDeltaTotals(t, repo, rollup.Step5m, 1, fine...)
-	if err := repo.SetMetricRollupWatermark(context.Background(), rollup.Step5m, through); err != nil {
+	seedDeltaTotals(t, repo, tier.Step5m, 1, fine...)
+	if err := repo.SetMetricRollupWatermark(context.Background(), tier.Step5m, through); err != nil {
 		t.Fatal(err)
 	}
 

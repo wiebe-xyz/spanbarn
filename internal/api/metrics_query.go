@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/metrics"
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // metricsQueryHandlers holds session-authenticated metrics query handlers.
@@ -347,13 +347,13 @@ func (h *metricsQueryHandlers) rawInput(ctx context.Context, projectID int64, na
 func rollupTierSteps(width time.Duration) []int64 {
 	switch {
 	case width <= 48*time.Hour:
-		return []int64{rollup.Step5m, rollup.StepHour, rollup.StepDay}
+		return []int64{tier.Step5m, tier.StepHour, tier.StepDay}
 	case width <= 30*24*time.Hour:
-		return []int64{rollup.StepHour, rollup.StepDay, rollup.StepWeek}
+		return []int64{tier.StepHour, tier.StepDay, tier.StepWeek}
 	case width <= 365*24*time.Hour:
-		return []int64{rollup.StepDay, rollup.StepWeek, rollup.StepMonth}
+		return []int64{tier.StepDay, tier.StepWeek, tier.StepMonth}
 	default:
-		return []int64{rollup.StepWeek, rollup.StepMonth}
+		return []int64{tier.StepWeek, tier.StepMonth}
 	}
 }
 
@@ -372,7 +372,7 @@ func tierStepsForRead(width time.Duration, labels map[string]string, totals bool
 	if totals && width >= filteredFineTierWidth {
 		wide = true
 	}
-	if wide && steps[0] == rollup.Step5m {
+	if wide && steps[0] == tier.Step5m {
 		return steps[1:]
 	}
 	return steps
@@ -390,17 +390,17 @@ func (h *metricsQueryHandlers) rollupInput(ctx context.Context, projectID int64,
 	}
 	fineRead := false
 	for _, step := range tierStepsForRead(to.Sub(from), labels, totals) {
-		filter.From = rollup.TruncateBucket(from, step)
+		filter.From = tier.TruncateBucket(from, step)
 		var rows []service.MetricRollup
 		var err error
 		// A read that has tried the 5-minute tier and found nothing has no
 		// tail to add.
-		if step == rollup.StepHour && !fineRead {
+		if step == tier.StepHour && !fineRead {
 			rows, err = h.hourTierWithTail(ctx, filter, from)
 		} else {
 			rows, err = h.queryTier(ctx, step, filter)
 		}
-		fineRead = fineRead || step == rollup.Step5m
+		fineRead = fineRead || step == tier.Step5m
 		if err != nil {
 			return "", "", nil, 0, err
 		}
