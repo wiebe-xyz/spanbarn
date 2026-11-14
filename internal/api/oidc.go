@@ -11,6 +11,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 // safeNextPath returns next only if it is a root-relative local path, otherwise
@@ -168,7 +169,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "access denied: user is not a member of the required group", "")
 		return
 	}
-	token, expires, err := s.sessions.Create(oidcUsername(claims), "oidc", &OIDCSessionData{
+	token, expires, err := s.sessions.Create(oidcUsername(claims), "oidc", &session.OIDCData{
 		Claims:          claims,
 		IDToken:         exchanged.IDToken,
 		AccessToken:     exchanged.AccessToken,
@@ -286,7 +287,7 @@ func (s *Server) handleSessionRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	ws, err := s.sessions.RefreshNow(r.Context(), token, "")
 	if err != nil {
-		if errors.Is(err, errRefreshUnavailable) {
+		if errors.Is(err, session.ErrRefreshUnavailable) {
 			// Read-only replica or transient IdP failure: nothing persisted,
 			// session still (stale-)servable. 503 signals "try again".
 			writeError(w, http.StatusServiceUnavailable, "refresh unavailable", "")

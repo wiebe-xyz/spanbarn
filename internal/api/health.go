@@ -2,9 +2,36 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 )
+
+// WriterProbes serves the writer pod's liveness and readiness probes, which
+// answer before the API is wired.
+type WriterProbes struct {
+	ready atomic.Bool
+}
+
+// Register mounts /api/v1/health (always 200) and /api/v1/ready (503 until
+// SetReady(true)) on mux.
+func (p *WriterProbes) Register(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","mode":"writer"}`)
+	})
+	mux.HandleFunc("/api/v1/ready", func(w http.ResponseWriter, _ *http.Request) {
+		if !p.ready.Load() {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+// SetReady flips the readiness answer.
+func (p *WriterProbes) SetReady(ready bool) { p.ready.Store(ready) }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

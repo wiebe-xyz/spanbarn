@@ -278,7 +278,7 @@ func TestSessionMiddlewareExpired(t *testing.T) {
 	// Mint a session, then move the service clock past its absolute cap.
 	svc, _ := newTestSessions(t)
 	expiredToken := mintSession(t, svc, "admin")
-	svc.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	svc.SetClock(func() time.Time { return time.Now().Add(2 * time.Hour) })
 
 	handler := SessionMiddleware(svc)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("handler should not be called")

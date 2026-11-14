@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -53,22 +52,12 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 
 	// Step 1: health endpoint up immediately so startup probes pass during migrations.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","mode":"writer"}`)
-	})
 	// Readiness turns true once the API is wired (step 4). Startup can take
 	// minutes (migrations, the one-time spans cut-over), and a Ready pod before
 	// then would let a rollout finish while every API route still 404s. It
 	// turns false again when shutdown starts.
-	var apiReady atomic.Bool
-	mux.HandleFunc("/api/v1/ready", func(w http.ResponseWriter, _ *http.Request) {
-		if !apiReady.Load() {
-			http.Error(w, "not ready", http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
+	var probes api.WriterProbes
+	probes.Register(mux)
 
 	httpServer := newHTTPServer(cfg, mux)
 	httpErrCh := listenAsync(httpServer, logger, "writer listening")
@@ -114,6 +103,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// No ingest handler — OTLP goes to the reader pod per ingress rules.
 	apiServer := api.NewServerWithQuery(serverCfg, nil, querySvc, sessions, logger,
 		api.WithRepository(repo),
+		api.WithLogin(userAuth, cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute),
 		api.WithAuthorizer(authorizer),
 		api.WithPaths(cfg.DBPath, cfg.SpoolDir),
 		api.WithCache(querySvc.Cache()),
@@ -121,9 +111,8 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	if oidcClient := buildOIDCClient(cfg, logger); oidcClient != nil {
 		apiServer.SetOIDCClient(oidcClient)
 	}
-	registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
 	mux.Handle("/", apiServer.Handler())
-	apiReady.Store(true)
+	probes.SetReady(true)
 	logger.Info("writer API ready")
 
 	// Self-metrics recorder wired to the API server now; gauges and reporter are
@@ -269,7 +258,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// The listener stays up through the drain: the kubelet probes readiness
 	// until the container exits, and a closed port reads as connection refused
 	// on every rollout. Readiness answers 503 meanwhile.
-	apiReady.Store(false)
+	probes.SetReady(false)
 
 	drainStart := time.Now()
 	alertCancel()

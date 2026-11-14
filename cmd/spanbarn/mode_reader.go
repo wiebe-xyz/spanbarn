@@ -21,6 +21,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 	"github.com/wiebe-xyz/spanbarn/internal/tracebuffer"
@@ -83,7 +84,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		roRepo     *repository.Repository
 		keyLookup  auth.KeyLookup
 		querySvc   *service.QueryService
-		sessions   *api.SessionService
+		sessions   *session.Service
 		userAuth   *auth.UserAuthenticator
 		queryCache *cache.Cache
 	)
@@ -129,7 +130,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer), api.WithMetricsHandler(readerMetricsHandler), api.WithLogsHandler(readerLogsHandler)}
 	if roRepo != nil {
-		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache),
+		opts = append(opts, api.WithLogin(userAuth, cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache),
 			api.WithAdmission(newAdmission(roRepo, cfg, logger)))
 	}
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessions, logger, opts...)
@@ -158,9 +159,6 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	mux := http.NewServeMux()
-	if sessions != nil && userAuth != nil {
-		registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
-	}
 	mux.Handle("/", apiServer.Handler())
 
 	httpServer := newHTTPServer(cfg, mux)

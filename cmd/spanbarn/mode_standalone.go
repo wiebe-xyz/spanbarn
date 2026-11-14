@@ -26,18 +26,6 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/worker"
 )
 
-// registerAuthRoutes wires the login route (rate-limited with a per-account
-// throttle and a post-login cache warm) and the logout route onto mux. Shared
-// by every serving mode.
-func registerAuthRoutes(mux *http.ServeMux, cfg config.Config, userAuth *auth.UserAuthenticator, sessions *api.SessionService, querySvc *service.QueryService, logger *slog.Logger) {
-	loginLimiter := api.NewRateLimiter(cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute)
-	loginRL := api.RateLimitMiddleware(loginLimiter, "login")
-	mux.Handle("/api/v1/login", loginRL(api.HandleLogin(userAuth, sessions, loginLimiter, func() {
-		api.WarmLoginCaches(context.Background(), querySvc, logger)
-	})))
-	mux.Handle("/api/v1/logout", api.HandleLogout(sessions))
-}
-
 // runStandalone is the all-in-one single-node mode (docker-compose, small
 // self-hosted installs). No Redis queue required. Reads go to a dedicated
 // read-only DB connection so the writer goroutines are never starved by
@@ -185,6 +173,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	// Mutations (trace exclusions, alerts CRUD) still use the write repo.
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessions, logger,
 		api.WithRepository(repo),
+		api.WithLogin(userAuth, cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute),
 		api.WithAuthorizer(authorizer),
 		api.WithTraceBuffer(standaloneBuffer),
 		api.WithPaths(cfg.DBPath, cfg.SpoolDir),
@@ -216,7 +205,6 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	api.WarmDashboardLoop(ctx, querySvc, logger)
 
 	mux := http.NewServeMux()
-	registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
 	mux.Handle("/", apiServer.Handler())
 
 	httpServer := newHTTPServer(cfg, mux)

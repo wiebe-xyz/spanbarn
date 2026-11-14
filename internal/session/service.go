@@ -1,4 +1,9 @@
-package api
+// Package session owns token-bound server-side web sessions: minting rows at
+// login, validating and refreshing them per request, and destroying them at
+// logout or IdP revocation. It sits below internal/api, which keeps cookie
+// handling and the middleware. It imports auth (leaf, so auth cannot hold it)
+// and service (for the WebSession type, so service cannot hold it).
+package session
 
 import (
 	"context"
@@ -13,9 +18,9 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
-// WebSessionStore is the persistence surface SessionService needs. It is
+// Store is the persistence surface Service needs. It is
 // implemented by *repository.Repository (repo_sessions.go).
-type WebSessionStore interface {
+type Store interface {
 	CreateWebSession(ws service.WebSession) error
 	GetWebSessionByIDHash(idHash string) (service.WebSession, error)
 	UpdateWebSessionTokens(idHash, idToken, accessToken, refreshToken string, accessExpiresAt int64, claimsJSON string, lastRefreshAt int64) error
@@ -26,15 +31,15 @@ type WebSessionStore interface {
 	ReadOnly() bool
 }
 
-// errSessionInvalid is the single unauthenticated outcome: unknown handle,
+// ErrInvalid is the single unauthenticated outcome: unknown handle,
 // absolute expiry, dead refresh token, or grace exhausted. Callers answer 401
 // without distinguishing — the fix is always a fresh login.
-var errSessionInvalid = errors.New("session invalid")
+var ErrInvalid = errors.New("session invalid")
 
-// errRefreshUnavailable reports a refresh that could not be performed right
+// ErrRefreshUnavailable reports a refresh that could not be performed right
 // now (transient IdP failure, or a read-only replica that must not spend the
 // single-use refresh token). The session itself may still be servable.
-var errRefreshUnavailable = errors.New("session refresh unavailable")
+var ErrRefreshUnavailable = errors.New("session refresh unavailable")
 
 // accessTokenSkew refreshes slightly BEFORE the access token's expiry so an
 // outbound call started right at the boundary doesn't race a dying token.
@@ -45,9 +50,9 @@ const accessTokenSkew = 30 * time.Second
 // "refresh on every request").
 const accessTokenFallbackTTL = 15 * time.Minute
 
-// OIDCSessionData carries the IdP artifacts persisted onto an OIDC session
+// OIDCData carries the IdP artifacts persisted onto an OIDC session
 // row at login time.
-type OIDCSessionData struct {
+type OIDCData struct {
 	Claims          auth.OIDCClaims
 	IDToken         string
 	AccessToken     string
@@ -66,12 +71,12 @@ type AuthResult struct {
 	RefreshDue bool
 }
 
-// SessionService owns token-bound server-side sessions: minting rows at
+// Service owns token-bound server-side sessions: minting rows at
 // login, validating + refreshing them per request, and destroying them at
 // logout/revocation. The browser cookie is an opaque handle; all state —
 // including the IamBarn token set for OIDC sessions — lives in web_sessions.
-type SessionService struct {
-	store  WebSessionStore
+type Service struct {
+	store  Store
 	ttl    time.Duration // absolute session cap (SPANBARN_SESSION_TTL_SECONDS)
 	grace  time.Duration // stale-serve ceiling on transient refresh failure
 	oidc   func() *auth.OIDCClient
@@ -85,9 +90,9 @@ type SessionService struct {
 	refresh singleflight.Group
 }
 
-// NewSessionService wires a session service over the given store.
+// NewService wires a session service over the given store.
 // ttlSeconds <= 0 defaults to 12h, graceSeconds <= 0 to 1h.
-func NewSessionService(store WebSessionStore, ttlSeconds, graceSeconds int, logger *slog.Logger) *SessionService {
+func NewService(store Store, ttlSeconds, graceSeconds int, logger *slog.Logger) *Service {
 	ttl := time.Duration(ttlSeconds) * time.Second
 	if ttl <= 0 {
 		ttl = 12 * time.Hour
@@ -99,7 +104,7 @@ func NewSessionService(store WebSessionStore, ttlSeconds, graceSeconds int, logg
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &SessionService{
+	return &Service{
 		store:  store,
 		ttl:    ttl,
 		grace:  grace,
@@ -111,18 +116,22 @@ func NewSessionService(store WebSessionStore, ttlSeconds, graceSeconds int, logg
 
 // SetOIDCProvider wires the request-time OIDC client getter (the client is
 // attached to the server after construction).
-func (s *SessionService) SetOIDCProvider(fn func() *auth.OIDCClient) {
+func (s *Service) SetOIDCProvider(fn func() *auth.OIDCClient) {
 	if fn != nil {
 		s.oidc = fn
 	}
 }
 
+// SetClock replaces the time source. Tests in other packages use it to move
+// the session across expiry and grace boundaries.
+func (s *Service) SetClock(now func() time.Time) { s.now = now }
+
 // TTL returns the absolute session cap.
-func (s *SessionService) TTL() time.Duration { return s.ttl }
+func (s *Service) TTL() time.Duration { return s.ttl }
 
 // Create mints an opaque session token and persists its row. method is one of
 // "oidc", "local", "e2e"; oidcData must be non-nil exactly for "oidc".
-func (s *SessionService) Create(username, method string, oidcData *OIDCSessionData) (token string, expires time.Time, err error) {
+func (s *Service) Create(username, method string, oidcData *OIDCData) (token string, expires time.Time, err error) {
 	token = auth.NewSessionToken()
 	now := s.now()
 	expires = now.Add(s.ttl)
@@ -159,8 +168,8 @@ func (s *SessionService) Create(username, method string, oidcData *OIDCSessionDa
 // Authenticate validates an opaque session token: row lookup by hash,
 // absolute-cap enforcement, and — for OIDC sessions past their access-token
 // validity — the refresh_token grant (grace-bounded on transient failure).
-// Returns errSessionInvalid for every unauthenticated outcome.
-func (s *SessionService) Authenticate(ctx context.Context, token string) (AuthResult, error) {
+// Returns ErrInvalid for every unauthenticated outcome.
+func (s *Service) Authenticate(ctx context.Context, token string) (AuthResult, error) {
 	ws, err := s.load(token)
 	if err != nil {
 		return AuthResult{}, err
@@ -177,7 +186,7 @@ func (s *SessionService) Authenticate(ctx context.Context, token string) (AuthRe
 	if err == nil {
 		return AuthResult{Session: refreshed}, nil
 	}
-	if errors.Is(err, errRefreshUnavailable) {
+	if errors.Is(err, ErrRefreshUnavailable) {
 		// Transient IdP failure: serve stale until the grace ceiling,
 		// measured from the FIRST failure.
 		failingSince := refreshed.RefreshFailingSince
@@ -188,32 +197,32 @@ func (s *SessionService) Authenticate(ctx context.Context, token string) (AuthRe
 			return AuthResult{Session: refreshed}, nil
 		}
 		s.logger.Warn("session: refresh grace exhausted", "user", refreshed.Username)
-		return AuthResult{}, errSessionInvalid
+		return AuthResult{}, ErrInvalid
 	}
 	return AuthResult{}, err
 }
 
 // load resolves a token to its row and enforces the absolute cap.
-func (s *SessionService) load(token string) (service.WebSession, error) {
+func (s *Service) load(token string) (service.WebSession, error) {
 	if token == "" || s.store == nil {
-		return service.WebSession{}, errSessionInvalid
+		return service.WebSession{}, ErrInvalid
 	}
 	ws, err := s.store.GetWebSessionByIDHash(auth.HashSessionToken(token))
 	if err != nil {
-		return service.WebSession{}, errSessionInvalid
+		return service.WebSession{}, ErrInvalid
 	}
 	if s.now().Unix() >= ws.AbsoluteExpiresAt {
 		if !s.store.ReadOnly() {
 			_ = s.store.DeleteWebSession(ws.IDHash)
 		}
-		return service.WebSession{}, errSessionInvalid
+		return service.WebSession{}, ErrInvalid
 	}
 	return ws, nil
 }
 
 // accessExpired reports whether an OIDC session's access token is past (or
 // within accessTokenSkew of) its expiry.
-func (s *SessionService) accessExpired(ws service.WebSession) bool {
+func (s *Service) accessExpired(ws service.WebSession) bool {
 	if ws.AccessExpiresAt == 0 {
 		return false
 	}
@@ -226,18 +235,18 @@ func (s *SessionService) accessExpired(ws service.WebSession) bool {
 // burning the single-use token and replay-revoking the family on the next
 // writer-side refresh. So the session is served stale within the grace
 // window, flagged RefreshDue so the SPA fires the writer-routed refresh.
-func (s *SessionService) serveStaleReadOnly(ws service.WebSession) (AuthResult, error) {
+func (s *Service) serveStaleReadOnly(ws service.WebSession) (AuthResult, error) {
 	if s.now().Unix() <= ws.AccessExpiresAt+int64(s.grace.Seconds()) {
 		return AuthResult{Session: ws, RefreshDue: true}, nil
 	}
-	return AuthResult{}, errSessionInvalid
+	return AuthResult{}, ErrInvalid
 }
 
 // RefreshNow forces a refresh for the given session token regardless of local
 // expiry bookkeeping — used by POST /api/v1/session/refresh and by the IAM
 // proxy when the upstream rejects a stored access token with 401 before its
 // bookkept expiry (central revocation, clock drift).
-func (s *SessionService) RefreshNow(ctx context.Context, token, staleAccessToken string) (service.WebSession, error) {
+func (s *Service) RefreshNow(ctx context.Context, token, staleAccessToken string) (service.WebSession, error) {
 	ws, err := s.load(token)
 	if err != nil {
 		return service.WebSession{}, err
@@ -246,7 +255,7 @@ func (s *SessionService) RefreshNow(ctx context.Context, token, staleAccessToken
 		return ws, nil
 	}
 	if s.store.ReadOnly() {
-		return ws, errRefreshUnavailable
+		return ws, ErrRefreshUnavailable
 	}
 	if staleAccessToken == "" {
 		staleAccessToken = ws.AccessToken
@@ -265,15 +274,15 @@ func (s *SessionService) RefreshNow(ctx context.Context, token, staleAccessToken
 //
 // Returns:
 //   - (fresh row, nil) on success or when already refreshed elsewhere;
-//   - (stale row, errRefreshUnavailable) on transient IdP failure — the row
+//   - (stale row, ErrRefreshUnavailable) on transient IdP failure — the row
 //     carries refresh_failing_since so the caller can apply grace;
-//   - (zero, errSessionInvalid) when the refresh token is dead
+//   - (zero, ErrInvalid) when the refresh token is dead
 //     (invalid_grant) or the session vanished — the row is deleted.
-func (s *SessionService) refreshSession(ctx context.Context, idHash, staleAccessToken string) (service.WebSession, error) {
+func (s *Service) refreshSession(ctx context.Context, idHash, staleAccessToken string) (service.WebSession, error) {
 	v, err, _ := s.refresh.Do(idHash, func() (any, error) {
 		cur, gerr := s.store.GetWebSessionByIDHash(idHash)
 		if gerr != nil {
-			return nil, errSessionInvalid
+			return nil, ErrInvalid
 		}
 		if cur.AccessToken != staleAccessToken {
 			// Rotated by a concurrent request while we waited on the flight
@@ -293,12 +302,12 @@ func (s *SessionService) refreshSession(ctx context.Context, idHash, staleAccess
 
 // performRefresh executes one refresh grant and persists the outcome. Runs
 // inside the singleflight; never called concurrently for one session.
-func (s *SessionService) performRefresh(ctx context.Context, cur service.WebSession) (any, error) {
+func (s *Service) performRefresh(ctx context.Context, cur service.WebSession) (any, error) {
 	if cur.RefreshToken == "" {
 		// Nothing to renew with (offline_access not granted): the session's
 		// validity IS the access token's validity.
 		_ = s.store.DeleteWebSession(cur.IDHash)
-		return nil, errSessionInvalid
+		return nil, ErrInvalid
 	}
 	oc := s.oidc()
 	if oc == nil {
@@ -314,7 +323,7 @@ func (s *SessionService) performRefresh(ctx context.Context, cur service.WebSess
 			s.logger.Info("session: refresh token invalid, revoking session",
 				"user", cur.Username, "sub", cur.IdpSub)
 			_ = s.store.DeleteWebSession(cur.IDHash)
-			return nil, errSessionInvalid
+			return nil, ErrInvalid
 		}
 		s.logger.Warn("session: transient refresh failure", "user", cur.Username, "error", rerr)
 		return s.markRefreshFailing(cur)
@@ -332,7 +341,7 @@ func (s *SessionService) performRefresh(ctx context.Context, cur service.WebSess
 			s.logger.Info("session: refreshed claims no longer authorized, revoking session",
 				"user", cur.Username, "sub", cur.IdpSub)
 			_ = s.store.DeleteWebSession(cur.IDHash)
-			return nil, errSessionInvalid
+			return nil, ErrInvalid
 		}
 		if b, merr := json.Marshal(refreshed.Claims); merr == nil {
 			claimsJSON = string(b)
@@ -346,7 +355,7 @@ func (s *SessionService) performRefresh(ctx context.Context, cur service.WebSess
 		// the write failed; treat the session as gone rather than serving
 		// tokens that were never persisted.
 		s.logger.Warn("session: persisting refreshed tokens failed", "error", uerr)
-		return nil, errSessionInvalid
+		return nil, ErrInvalid
 	}
 	cur.IDToken = firstNonEmpty(idToken, cur.IDToken)
 	cur.AccessToken = refreshed.AccessToken
@@ -361,21 +370,21 @@ func (s *SessionService) performRefresh(ctx context.Context, cur service.WebSess
 }
 
 // markRefreshFailing stamps the first-failure time (if not already set) and
-// returns the stale row with errRefreshUnavailable for grace handling.
-func (s *SessionService) markRefreshFailing(cur service.WebSession) (any, error) {
+// returns the stale row with ErrRefreshUnavailable for grace handling.
+func (s *Service) markRefreshFailing(cur service.WebSession) (any, error) {
 	now := s.now().Unix()
 	_ = s.store.MarkWebSessionRefreshFailing(cur.IDHash, now)
 	if cur.RefreshFailingSince == 0 {
 		cur.RefreshFailingSince = now
 	}
-	return cur, errRefreshUnavailable
+	return cur, ErrRefreshUnavailable
 }
 
 // Logout destroys the session behind token: best-effort refresh-token
 // revocation at the issuer, row deletion, and — for OIDC sessions — the
 // RP-initiated end-session URL the browser should be sent to so the IdP
 // session dies too. Unknown/dead tokens are a silent no-op.
-func (s *SessionService) Logout(ctx context.Context, token string) (logoutURL string) {
+func (s *Service) Logout(ctx context.Context, token string) (logoutURL string) {
 	if token == "" || s.store == nil {
 		return ""
 	}
@@ -406,13 +415,13 @@ func (s *SessionService) Logout(ctx context.Context, token string) (logoutURL st
 
 // RevokeByIdpSid deletes every session bound to one IdP session id
 // (back-channel logout with sid).
-func (s *SessionService) RevokeByIdpSid(sid string) (int64, error) {
+func (s *Service) RevokeByIdpSid(sid string) (int64, error) {
 	return s.store.DeleteWebSessionsByIdpSid(sid)
 }
 
 // RevokeByIdpSub deletes every session of one IdP subject (back-channel
 // logout without sid).
-func (s *SessionService) RevokeByIdpSub(sub string) (int64, error) {
+func (s *Service) RevokeByIdpSub(sub string) (int64, error) {
 	return s.store.DeleteWebSessionsByIdpSub(sub)
 }
 

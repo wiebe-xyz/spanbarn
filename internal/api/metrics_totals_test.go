@@ -12,6 +12,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 func TestMetricTotalsPerSession(t *testing.T) {
@@ -64,7 +65,7 @@ func TestMetricTotalsRequiresName(t *testing.T) {
 
 // totalsServerWithCache is setupMetricsQueryServer with a read cache, as in
 // production.
-func totalsServerWithCache(t *testing.T) (*Server, *SessionService, *repository.Repository) {
+func totalsServerWithCache(t *testing.T) (*Server, *session.Service, *repository.Repository) {
 	t.Helper()
 	_, sm, repo := setupMetricsQueryServer(t)
 	srv := NewServerWithQuery(ServerConfig{APIKey: "test-key", Version: "test"}, nil, nil, sm, nil,
@@ -72,7 +73,7 @@ func totalsServerWithCache(t *testing.T) (*Server, *SessionService, *repository.
 	return srv, sm, repo
 }
 
-func totalsFor(t *testing.T, srv *Server, sm *SessionService, url string) metricTotalsResponse {
+func totalsFor(t *testing.T, srv *Server, sm *session.Service, url string) metricTotalsResponse {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 	req.AddCookie(sessionCookie(t, sm))
