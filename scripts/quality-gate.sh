@@ -92,15 +92,22 @@ cover_profile=$(mktemp)
 repo_profile=$(mktemp)
 trap 'rm -f "$cover_profile" "$repo_profile"' EXIT
 cov_out=$(go test -cover -coverprofile="$cover_profile" ./internal/service/... 2>/dev/null)
-go test -cover -coverpkg=./internal/repository/... -coverprofile="$repo_profile" ./internal/repository/... >/dev/null 2>&1 || true
+# No "|| true": under set -e a failing repository test fails the gate, as it did
+# when this was one go test run.
+go test -cover -coverpkg=./internal/repository/... -coverprofile="$repo_profile" ./internal/repository/... >/dev/null 2>&1
 svc_cov=$(echo "$cov_out" | grep -E 'internal/service[[:space:]]' | grep -oE '[0-9.]+% of statements' | grep -oE '[0-9.]+' | head -1)
+# With -coverpkg each test binary writes its own line for a block, so a block can
+# appear more than once. Count each block ($1) once: covered if any line ran it.
 repo_cov=$(awk '
   NR>1 {
     split($1, a, ":"); f=a[1];
     if (index(f, "/migrations/") > 0) next;
-    total+=$2; if ($3>0) covered+=$2;
+    stmts[$1]=$2; if ($3>0) hit[$1]=1;
   }
-  END { if (total>0) printf "%.1f", 100*covered/total }' "$repo_profile")
+  END {
+    for (b in stmts) { total+=stmts[b]; if (b in hit) covered+=stmts[b] }
+    if (total>0) printf "%.1f", 100*covered/total
+  }' "$repo_profile")
 : "${svc_cov:=0}"; : "${repo_cov:=0}"
 # One profile for the per-file floor: the service profile plus the repository
 # tree's, without the second "mode:" header.
@@ -113,9 +120,10 @@ per_file=$(awk '
     split($1, a, ":"); f=a[1];
     if (index(f, "/migrations/") > 0) next;
     if (f ~ /_test\.go$/) next;
-    total[f]+=$2; if ($3>0) covered[f]+=$2;
+    stmts[$1]=$2; file[$1]=f; if ($3>0) hit[$1]=1;
   }
   END {
+    for (b in stmts) { f=file[b]; total[f]+=stmts[b]; if (b in hit) covered[f]+=stmts[b] }
     for (f in total) {
       pct = total[f]>0 ? 100*covered[f]/total[f] : 100;
       printf "%.1f %s\n", pct, f;
