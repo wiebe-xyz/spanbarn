@@ -58,15 +58,14 @@ func (r *Repository) SearchTraceSummaries(f SpanFilter, minSpans int) ([]TraceSu
 	if limit <= 0 {
 		limit = 50
 	}
-	orderBy := "ingested_at DESC"
-	if f.SortErrorsFirst {
-		orderBy = "has_error DESC, ingested_at DESC"
-	}
-
-	q := fmt.Sprintf(`SELECT trace_id, start_time_us, span_count, has_error, root_name, root_service, root_duration_us, has_root, orphan_count
+	q := fmt.Sprintf(`SELECT %s
 		FROM trace_summaries%s
-		ORDER BY %s
-		LIMIT %d OFFSET %d`, whereSQL, orderBy, limit, f.Offset)
+		ORDER BY ingested_at DESC
+		LIMIT %d OFFSET %d`, traceSummaryColumns, whereSQL, limit, f.Offset)
+	if f.SortErrorsFirst {
+		q = errorsFirstSummaryQuery(whereSQL, limit, f.Offset)
+		args = append(args, args...)
+	}
 
 	ctx, cancel := r.queryContext()
 	defer cancel()
