@@ -62,7 +62,7 @@ One SQLite file made every heavy write contend with every read, and expiring a d
 
 ## Non-Functional Requirements
 
-- **NFR-001**: Heavy insert p99 under write load falls from 1458 ms to 101 ms with the split, and expiring a day of data takes 0.18 s with whole-file deletion. Source: the spike results comment on [#235](https://github.com/wiebe-xyz/spanbarn/issues/235), produced by `cmd/shardspike`. The run shared a loaded host, so differences under 30% are unconfirmed.
+- **NFR-001**: Heavy insert p99 under write load falls from 1458 ms to 101 ms with the split, and expiring a day of data takes 0.18 s with whole-file deletion. Source: the spike results comment on [#235](https://github.com/wiebe-xyz/spanbarn/issues/235), produced by `cmd/shardspike` (PR #241, since removed). The run shared a loaded host, so differences under 30% are unconfirmed.
 - **NFR-002**: A shard family attaches at most 9 files per read pool, because the SQLite driver refuses the 11th `ATTACH`. Source: [design.md](./design.md), "Cross-shard queries". [inferred]
 - **NFR-003**: The cut-over needs free space at least the size of main, otherwise it is postponed with a warning. Source: [design.md](./design.md), "Migration path". [inferred]
 

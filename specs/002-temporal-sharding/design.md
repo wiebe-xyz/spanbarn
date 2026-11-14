@@ -1,6 +1,6 @@
 # Design: split and time-shard the SQLite database
 
-Issue: #235. Measurements: the results comment on #235, produced by `cmd/shardspike` (PR #241).
+Issue: #235. Measurements: the results comment on #235, produced by `cmd/shardspike` (PR #241, removed once the layout shipped; it stays in git history).
 
 ## Decision
 
