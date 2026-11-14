@@ -21,7 +21,9 @@ type ProjectRepository interface {
 	DeleteProject(id int64) error
 	SetProjectE2E(id int64, enabled bool) error
 	ProjectUsageStatsAll(hours int) ([]repository.ProjectUsageStats, error)
+	CreateProject(slug, name string) (repository.Project, error)
 	ListAPIKeys(projectID int64) ([]repository.APIKey, error)
+	ListAllAPIKeys() ([]repository.APIKey, error)
 	CreateAPIKey(projectID int64, name, keyHash, scope string) (int64, error)
 	RevokeAPIKey(id int64) error
 	UpsertE2EUser(username string, expiresAt time.Time) (repository.User, error)
@@ -73,3 +75,24 @@ func (s *ProjectService) APIKeys(projectID int64) ([]repository.APIKey, error) {
 func (s *ProjectService) UpsertE2EUser(username string, expiresAt time.Time) (repository.User, error) {
 	return s.repo.UpsertE2EUser(username, expiresAt)
 }
+
+// The CLI manages projects and keys without the API's validation: it mints
+// full-scope keys and revokes by key id alone.
+
+// Create registers an approved project.
+func (s *ProjectService) Create(slug, name string) (repository.Project, error) {
+	return s.repo.CreateProject(slug, name)
+}
+
+// AllAPIKeys lists the keys of every project.
+func (s *ProjectService) AllAPIKeys() ([]repository.APIKey, error) {
+	return s.repo.ListAllAPIKeys()
+}
+
+// IssueAPIKey stores a key hash for projectID with any scope and no checks.
+func (s *ProjectService) IssueAPIKey(projectID int64, name, keyHash, scope string) (int64, error) {
+	return s.repo.CreateAPIKey(projectID, name, keyHash, scope)
+}
+
+// RevokeKey deletes a key by id, whatever project owns it.
+func (s *ProjectService) RevokeKey(keyID int64) error { return s.repo.RevokeAPIKey(keyID) }
