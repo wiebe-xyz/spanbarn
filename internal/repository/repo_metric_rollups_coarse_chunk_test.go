@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func coarseBatch(n int, bucket time.Time) []MetricRollup {
@@ -29,7 +31,7 @@ func TestCoarseRollupChunksAreBoundedAndSorted(t *testing.T) {
 func TestUpsertCoarseRollupsStoppedPassRedoneGivesSameRows(t *testing.T) {
 	repo := setupTestDB(t)
 	ctx := context.Background()
-	db := repo.writer(FamilyCore)
+	db := repo.writer(engine.FamilyCore)
 	failKey := fmt.Sprintf("fp%05d", coarseRollupChunk+1) // first key of the second chunk
 	if _, err := db.Exec(`CREATE TRIGGER fail_second_chunk BEFORE INSERT ON metric_rollups_coarse
 		WHEN NEW.attr_fingerprint = '` + failKey + `' BEGIN SELECT RAISE(ABORT, 'chunk failed'); END`); err != nil {

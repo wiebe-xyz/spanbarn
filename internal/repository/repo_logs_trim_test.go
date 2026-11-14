@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // Protected rows that sort before the deletable ones, more of them than one
@@ -111,7 +112,7 @@ func TestTrimLogsBatchBoundsTheScan(t *testing.T) {
 		t.Fatalf("InsertLogs: %v", err)
 	}
 
-	db := repo.writer(TableFamily("logs"))
+	db := repo.writer(engine.TableFamily("logs"))
 	var cur logTrimCursor
 	for i, wantMore := range []bool{true, true, false} {
 		n, more, err := trimLogsBatch(ctx, db, "logs", 1, now.Add(time.Hour), now.Add(-30*24*time.Hour), &cur, 10)
@@ -155,7 +156,7 @@ func TestDeleteLogsOlderThanResumesFromLastPass(t *testing.T) {
 	pass(1)
 
 	insert("late")
-	if err := repo.execLow(TableFamily("logs"), func(db *sql.DB) error {
+	if err := repo.execLow(engine.TableFamily("logs"), func(db *sql.DB) error {
 		_, err := db.Exec(`UPDATE logs SET ingested_at = ? WHERE body = 'late'`, now.Add(-24*time.Hour))
 		return err
 	}); err != nil {

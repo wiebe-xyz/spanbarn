@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // readProject is the project that holds ~86% of the spans.
@@ -419,7 +420,7 @@ func printPlan(ctx context.Context, out io.Writer, o options, layout, q string, 
 // openShards opens an L3 reader over the first n daily files.
 func openShards(ctx context.Context, root string, n int) (*sql.DB, error) {
 	dir := layoutDir(root, layoutShards)
-	db, err := repository.NewReadOnlyDB(filepath.Join(dir, configFile))
+	db, err := engine.NewReadOnlyDB(filepath.Join(dir, configFile))
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +455,7 @@ func timeOpen(runs int, open func() (*sql.DB, error)) (timings, error) {
 // refuses, and returns how many attaches succeeded.
 func attachLimit(ctx context.Context, root string) (int, error) {
 	path := filepath.Join(layoutDir(root, layoutShards), configFile)
-	db, err := repository.NewReadOnlyDB(path)
+	db, err := engine.NewReadOnlyDB(path)
 	if err != nil {
 		return 0, err
 	}

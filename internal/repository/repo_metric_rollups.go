@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -115,11 +116,11 @@ func (e *UnwrittenRollupsError) Unwrap() error { return e.Err }
 // chunks before it stay written.
 func (r *Repository) UpsertMetricRollups(rollups []MetricRollup) error {
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
-	ctx := WithoutSpanTracing(context.Background())
+	ctx := engine.WithoutSpanTracing(context.Background())
 	chunks := metricRollupChunks(rollups)
 	for i, chunk := range chunks {
 		r.warmMetricRollups(ctx, chunk)
-		_, err := r.submitRows(FamilyCore, writescheduler.Low, "UpsertMetricRollups", func(db *sql.DB) (int64, error) {
+		_, err := r.submitRows(engine.FamilyCore, writescheduler.Low, "UpsertMetricRollups", func(db *sql.DB) (int64, error) {
 			return int64(len(chunk)), upsertMetricRollupChunk(ctx, db, chunk)
 		})
 		if err != nil {

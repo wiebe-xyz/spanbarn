@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // insertAgedPromptRecords inserts n prompt records for a project and backdates
@@ -31,7 +33,7 @@ func insertAgedPromptRecords(t *testing.T, repo *Repository, projectID int64, n 
 		return
 	}
 	// Only the rows just inserted still carry the current timestamp.
-	if _, err := repo.writer(FamilyPrompts).Exec(
+	if _, err := repo.writer(engine.FamilyPrompts).Exec(
 		"UPDATE prompt_records SET ingested_at = ? WHERE project_id = ? AND ingested_at > ?",
 		time.Now().UTC().Add(-age), projectID, time.Now().UTC().Add(-time.Minute),
 	); err != nil {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 const (
@@ -27,9 +28,9 @@ func needsReclaim(used float64, w Watermarks) bool {
 }
 
 // ballast returns the worker's reserved-space handle, creating it on first use.
-func (w *RetentionWorker) ballastFor(cfg Config) *repository.Ballast {
+func (w *RetentionWorker) ballastFor(cfg Config) *engine.Ballast {
 	w.ballastOnce.Do(func() {
-		w.ballast = repository.NewBallast(cfg.DBPath, cfg.BallastBytes)
+		w.ballast = engine.NewBallast(cfg.DBPath, cfg.BallastBytes)
 	})
 	return w.ballast
 }
@@ -101,7 +102,7 @@ func startWindowMinutes(cfg Config) int {
 
 // releaseBallast hands the reserve back to the filesystem so the DELETEs below
 // have room to commit even on a volume at 100%.
-func (w *RetentionWorker) releaseBallast(ballast *repository.Ballast) {
+func (w *RetentionWorker) releaseBallast(ballast *engine.Ballast) {
 	freed, err := ballast.Release()
 	if err != nil {
 		w.logger.Warn("retention: could not release ballast", "error", err)

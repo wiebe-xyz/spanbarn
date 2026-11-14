@@ -340,7 +340,7 @@ func Load() Config {
 		},
 		GRPCAddr:   getenv("SPANBARN_GRPC_ADDR", ":4317"),
 		E2EEnabled: getenvBool("SPANBARN_E2E_ENABLED", false),
-		// Defaults match internal/repository.DefaultWriterCacheMB etc — kept as
+		// Defaults match internal/engine.DefaultWriterCacheMB etc — kept as
 		// literals here rather than importing internal/repository, which config
 		// otherwise has zero dependencies on.
 		SQLiteCacheMB:   getenvInt("SPANBARN_SQLITE_CACHE_MB", 256),

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // TestSpaceAccountingTreatsFreelistAsAvailable pins the distinction that the
@@ -72,7 +74,7 @@ func TestDBSpaceOnRealDatabase(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "spanbarn.db")
 
-	db, err := NewDB(path)
+	db, err := engine.NewDB(path)
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}

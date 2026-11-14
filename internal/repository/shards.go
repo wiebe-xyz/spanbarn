@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -35,21 +36,21 @@ const endedCloseDelay = 10 * time.Minute
 
 // ShardRetention is the retention window of each sharded family. A family
 // with a zero window keeps writing to main.
-type ShardRetention map[Family]time.Duration
+type ShardRetention map[engine.Family]time.Duration
 
 // shardedFamilies lists the families that can be time-sharded, and whether
 // their period counts in ISO weeks.
 var shardedFamilies = []struct {
-	family Family
+	family engine.Family
 	weekly bool
 }{
-	{FamilyLogs, false},
-	{FamilyMetrics, false},
-	{FamilyPrompts, true},
+	{engine.FamilyLogs, false},
+	{engine.FamilyMetrics, false},
+	{engine.FamilyPrompts, true},
 }
 
 type shardKey struct {
-	family Family
+	family engine.Family
 	start  time.Time
 }
 
@@ -60,14 +61,14 @@ type shardKey struct {
 type ShardManager struct {
 	dir    string
 	main   *sql.DB
-	open   OpenOptions
-	specs  map[Family]shardSpec
+	open   engine.OpenOptions
+	specs  map[engine.Family]shardSpec
 	logger *slog.Logger
 	now    func() time.Time
 
 	mu         sync.Mutex
-	handles    map[shardKey]*DB
-	schedulers [numFamilies]*writescheduler.Scheduler
+	handles    map[shardKey]*engine.DB
+	schedulers [engine.NumFamilies]*writescheduler.Scheduler
 
 	// closing counts the goroutines closing ended shards, and closeMu runs
 	// those closes one at a time.
@@ -90,11 +91,11 @@ func openShardManager(ctx context.Context, main *sql.DB, dbPath string, retentio
 	m := &ShardManager{
 		dir:     ShardsDir(dbPath),
 		main:    main,
-		open:    OpenOptions{CacheMB: o.AttachCacheMB, MmapMB: o.AttachMmapMB},
-		specs:   map[Family]shardSpec{},
+		open:    engine.OpenOptions{CacheMB: o.AttachCacheMB, MmapMB: o.AttachMmapMB},
+		specs:   map[engine.Family]shardSpec{},
 		logger:  o.logger(),
 		now:     time.Now,
-		handles: map[shardKey]*DB{},
+		handles: map[shardKey]*engine.DB{},
 	}
 	if o.Now != nil {
 		m.now = o.Now
@@ -118,8 +119,8 @@ func openShardManager(ctx context.Context, main *sql.DB, dbPath string, retentio
 }
 
 // Families returns the families this manager shards, in family order.
-func (m *ShardManager) Families() []Family {
-	out := make([]Family, 0, len(m.specs))
+func (m *ShardManager) Families() []engine.Family {
+	out := make([]engine.Family, 0, len(m.specs))
 	for f := range m.specs {
 		out = append(out, f)
 	}
@@ -128,7 +129,7 @@ func (m *ShardManager) Families() []Family {
 }
 
 // Sharded reports whether f's writes go to shard files.
-func (m *ShardManager) Sharded(f Family) bool {
+func (m *ShardManager) Sharded(f engine.Family) bool {
 	if m == nil {
 		return false
 	}
@@ -139,7 +140,7 @@ func (m *ShardManager) Sharded(f Family) bool {
 // SetScheduler names the write queue of f's shard inserts. A close of an
 // ended shard goes through it too, so it never runs while a write holds the
 // handle.
-func (m *ShardManager) SetScheduler(f Family, s *writescheduler.Scheduler) {
+func (m *ShardManager) SetScheduler(f engine.Family, s *writescheduler.Scheduler) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.schedulers[f] = s
@@ -148,7 +149,7 @@ func (m *ShardManager) SetScheduler(f Family, s *writescheduler.Scheduler) {
 // submit runs fn on f's queue against the shard that holds rows ingested at
 // the time fn runs. The shard is picked inside the queued write, so a write
 // queued before midnight and run after it lands in the new day.
-func (m *ShardManager) submit(f Family, label string, fn func(db *sql.DB) (int64, error)) error {
+func (m *ShardManager) submit(f engine.Family, label string, fn func(db *sql.DB) (int64, error)) error {
 	return m.onQueueRows(f, label, func() (int64, error) {
 		spec := m.specs[f]
 		h, err := m.shard(context.Background(), spec, spec.start(m.now()))
@@ -161,7 +162,7 @@ func (m *ShardManager) submit(f Family, label string, fn func(db *sql.DB) (int64
 
 // shard returns the open handle of the period of spec that starts at start,
 // creating and recording the file if needed.
-func (m *ShardManager) shard(ctx context.Context, spec shardSpec, start time.Time) (*DB, error) {
+func (m *ShardManager) shard(ctx context.Context, spec shardSpec, start time.Time) (*engine.DB, error) {
 	key := shardKey{spec.family, start}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -195,8 +196,8 @@ func (m *ShardManager) record(ctx context.Context, spec shardSpec, start time.Ti
 
 // openShard opens and migrates the shard file named file, whose period starts
 // at start, and seeds its id sequences.
-func (m *ShardManager) openShard(ctx context.Context, f Family, start time.Time, file string) (*DB, error) {
-	h, err := Open(filepath.Join(m.dir, file), m.open)
+func (m *ShardManager) openShard(ctx context.Context, f engine.Family, start time.Time, file string) (*engine.DB, error) {
+	h, err := engine.Open(filepath.Join(m.dir, file), m.open)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +223,7 @@ func (m *ShardManager) openShard(ctx context.Context, f Family, start time.Time,
 // shardIDBase(start). Every shard would otherwise count from 1, and the read
 // views union the shards, so two rows would share an id. A sequence that
 // already has a row (the shard holds or held rows) is left alone.
-func seedShardIDs(ctx context.Context, db *sql.DB, f Family, start time.Time) error {
+func seedShardIDs(ctx context.Context, db *sql.DB, f engine.Family, start time.Time) error {
 	for _, table := range f.Tables() {
 		if _, err := db.ExecContext(ctx, `INSERT INTO sqlite_sequence (name, seq)
 			SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = ?)`,
@@ -254,13 +255,13 @@ func (m *ShardManager) Maintain(ctx context.Context) error {
 	}
 	m.closeEnded(now)
 	m.mu.Lock()
-	open := make([]*DB, 0, len(m.handles))
+	open := make([]*engine.DB, 0, len(m.handles))
 	for _, h := range m.handles {
 		open = append(open, h)
 	}
 	m.mu.Unlock()
 	for _, h := range open {
-		h.periodicCheckpoint(ctx, 0, m.logger)
+		h.PeriodicCheckpoint(ctx, 0, m.logger)
 	}
 	return nil
 }
@@ -304,7 +305,7 @@ func (m *ShardManager) ensure(ctx context.Context, t time.Time) error {
 // waited behind it (#379).
 func (m *ShardManager) closeEnded(now time.Time) {
 	m.mu.Lock()
-	var ended, inline []*DB
+	var ended, inline []*engine.DB
 	var queues []*writescheduler.Scheduler
 	for key, h := range m.handles {
 		if now.Before(key.start.Add(m.specs[key.family].length() + endedCloseDelay)) {
@@ -331,7 +332,7 @@ func (m *ShardManager) closeEnded(now time.Time) {
 
 // closeAfterQueues closes each of ended once the writes queued on its family's
 // queue have run.
-func (m *ShardManager) closeAfterQueues(ended []*DB, queues []*writescheduler.Scheduler) {
+func (m *ShardManager) closeAfterQueues(ended []*engine.DB, queues []*writescheduler.Scheduler) {
 	defer m.closing.Done()
 	m.closeMu.Lock()
 	defer m.closeMu.Unlock()
@@ -358,8 +359,8 @@ func (m *ShardManager) awaitIdle(q *writescheduler.Scheduler) {
 
 // closeShard checkpoints and closes an ended shard's handle. The close no
 // longer reports through a write job, so its errors log at error level here.
-func (m *ShardManager) closeShard(h *DB) {
-	file := filepath.Base(h.path)
+func (m *ShardManager) closeShard(h *engine.DB) {
+	file := filepath.Base(h.Path())
 	m.finalCheckpoint(h, file)
 	if err := h.Close(); err != nil {
 		m.logger.Error("close ended shard", "file", file, "error", err)

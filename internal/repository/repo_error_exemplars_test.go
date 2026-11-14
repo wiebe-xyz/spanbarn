@@ -6,12 +6,14 @@ import (
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func exemplarTraces(t *testing.T, repo *Repository) []string {
 	t.Helper()
 	var out []string
-	err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+	err := repo.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		rows, err := db.Query(`SELECT trace_id FROM error_exemplars ORDER BY trace_id`)
 		if err != nil {
 			return err
@@ -98,7 +100,7 @@ func TestErrorExemplarOutlivesErrorCutoff(t *testing.T) {
 	if err := repo.InsertErrorSamples(spans); err != nil {
 		t.Fatalf("insert error samples: %v", err)
 	}
-	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+	if err := repo.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		_, err := db.Exec(`UPDATE error_samples SET sampled_at = ?`, start)
 		return err
 	}); err != nil {
@@ -164,7 +166,7 @@ func TestDeleteErrorSamplesOlderThanCoversEveryProject(t *testing.T) {
 	if err := repo.InsertErrorSamples(spans); err != nil {
 		t.Fatalf("insert error samples: %v", err)
 	}
-	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+	if err := repo.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		if _, err := db.Exec(`DELETE FROM error_exemplars`); err != nil {
 			return err
 		}
@@ -182,7 +184,7 @@ func TestDeleteErrorSamplesOlderThanCoversEveryProject(t *testing.T) {
 		t.Errorf("deleted %d samples, want 2", n)
 	}
 	var left []string
-	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+	if err := repo.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		rows, err := db.Query(`SELECT trace_id FROM error_samples ORDER BY trace_id`)
 		if err != nil {
 			return err

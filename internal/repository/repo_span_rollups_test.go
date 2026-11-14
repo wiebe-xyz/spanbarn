@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
@@ -234,7 +235,7 @@ func TestMigrateSpansAddsSpanRollupsOnce(t *testing.T) {
 	if n != 2 {
 		t.Errorf("found %d of the 2 span rollup tables", n)
 	}
-	if TableFamily("span_rollups") != FamilySpans || TableFamily("span_rollup_compaction") != FamilySpans {
+	if engine.TableFamily("span_rollups") != engine.FamilySpans || engine.TableFamily("span_rollup_compaction") != engine.FamilySpans {
 		t.Error("span rollup tables must belong to the spans family")
 	}
 }

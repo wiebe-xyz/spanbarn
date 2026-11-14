@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // Rollup5mStep is the width of the tier the ingest accumulator writes. Rows of
@@ -205,8 +207,8 @@ func (r *Repository) MetricRollupWatermark(ctx context.Context, step int64) (tim
 // forward: a pass that re-ran over an earlier window must not hand retention a
 // licence to delete less than it already could.
 func (r *Repository) SetMetricRollupWatermark(ctx context.Context, step int64, through time.Time) error {
-	ctx = WithoutSpanTracing(ctx)
-	return r.execLow(FamilyCore, func(db *sql.DB) error {
+	ctx = engine.WithoutSpanTracing(ctx)
+	return r.execLow(engine.FamilyCore, func(db *sql.DB) error {
 		_, err := db.ExecContext(ctx,
 			`INSERT INTO metric_rollup_compaction (step_seconds, compacted_through, updated_at)
 			 VALUES (?, ?, CURRENT_TIMESTAMP)

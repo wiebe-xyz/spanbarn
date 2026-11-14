@@ -3,6 +3,8 @@ package repository
 import (
 	"database/sql"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // Release marks when a version went live. Boards draw it on time series panels.
@@ -15,7 +17,7 @@ type Release struct {
 
 func (r *Repository) CreateRelease(projectID int64, version string, at time.Time) (int64, error) {
 	var id int64
-	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+	err := r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		res, e := db.Exec(
 			`INSERT INTO releases (project_id, version, released_at) VALUES (?, ?, ?)`,
 			projectID, version, at.UTC(),

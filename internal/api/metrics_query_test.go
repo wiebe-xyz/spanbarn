@@ -11,6 +11,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	_ "github.com/wiebe-xyz/spanbarn/internal/repository/migrations"
 )
 
@@ -18,7 +19,7 @@ import (
 func setupMetricsQueryServer(t *testing.T) (*Server, *SessionService, *repository.Repository) {
 	t.Helper()
 
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}

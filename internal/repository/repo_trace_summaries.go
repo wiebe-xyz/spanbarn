@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // traceSummaryAgg is the per-trace rollup upserted into trace_summaries. It is
@@ -172,7 +174,7 @@ func upsertTraceSummaryRowsTx(ctx context.Context, tx *sql.Tx, sums []traceSumma
 // backlog never holds the write connection for long.
 func (r *Repository) DeleteExpiredTraceSummaries(ctx context.Context, now time.Time) (int64, error) {
 	n := now.UTC()
-	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
+	return r.batchedDelete(ctx, engine.FamilySpans, func(db *sql.DB) (int64, error) {
 		res, e := db.ExecContext(ctx,
 			`DELETE FROM trace_summaries WHERE rowid IN (
 				SELECT rowid FROM trace_summaries WHERE expires_at IS NOT NULL AND expires_at < ? LIMIT ?)`,

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -250,7 +251,7 @@ func (r *Repository) SetLogTrimReads(db *sql.DB) { r.logTrimReads = db }
 func (r *Repository) trimLogsWindow(
 	ctx context.Context, table string, pid int64, cutoff, errorLogCutoff time.Time, cur *logTrimCursor,
 ) (int64, bool, error) {
-	f := TableFamily(table)
+	f := engine.TableFamily(table)
 	label := "deleteLogsFrom:" + f.String()
 	var n int64
 	if r.logTrimReads == nil {

@@ -15,12 +15,13 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // newTestRepo returns a repository over a migrated in-memory SQLite DB.
 func newTestRepo(t *testing.T) *repository.Repository {
 	t.Helper()
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}

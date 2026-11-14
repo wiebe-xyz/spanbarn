@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // heavyFamily reports whether f is a family whose tables main stops holding
 // once shards take its inserts.
-func heavyFamily(f Family) bool {
-	return f == FamilyLogs || f == FamilyMetrics || f == FamilyPrompts
+func heavyFamily(f engine.Family) bool {
+	return f == engine.FamilyLogs || f == engine.FamilyMetrics || f == engine.FamilyPrompts
 }
 
 // retireMainTables drops the heavy tables main still holds from before the
@@ -38,7 +40,7 @@ func (r *Repository) retireMainTables(ctx context.Context, now time.Time) (int, 
 
 // retireMainTable takes table one step towards its drop and reports whether
 // it dropped it.
-func (r *Repository) retireMainTable(ctx context.Context, f Family, table string, now time.Time) (bool, error) {
+func (r *Repository) retireMainTable(ctx context.Context, f engine.Family, table string, now time.Time) (bool, error) {
 	dropped := false
 	err := r.execLow(f, func(db *sql.DB) error {
 		if has, err := hasTable(ctx, db, table); err != nil || !has {
@@ -119,7 +121,7 @@ func mainHolds(ctx context.Context, db *sql.DB, table string) (bool, error) {
 // with SPANBARN_SHARDS off inserts into main again. The shard files keep the
 // rows written while shards were on.
 func restoreMainTables(ctx context.Context, db *sql.DB, sharded ShardRetention) error {
-	for _, f := range Families() {
+	for _, f := range engine.Families() {
 		if _, ok := sharded[f]; ok || !heavyFamily(f) {
 			continue
 		}

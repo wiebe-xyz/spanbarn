@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/pressly/goose/v3"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // The prompts list's group query reads index pages only, with or without a
 // service or model filter, on a single file and on a prompts shard (#457).
 func TestPromptGroupsQueryUsesCoveringIndex(t *testing.T) {
 	ctx := context.Background()
-	single, err := NewDB(filepath.Join(t.TempDir(), "main.db"))
+	single, err := engine.NewDB(filepath.Join(t.TempDir(), "main.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,12 +24,12 @@ func TestPromptGroupsQueryUsesCoveringIndex(t *testing.T) {
 	if err := MigrateSingleFile(ctx, single.DB); err != nil {
 		t.Fatal(err)
 	}
-	shard, err := NewDB(filepath.Join(t.TempDir(), "prompts.db"))
+	shard, err := engine.NewDB(filepath.Join(t.TempDir(), "prompts.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer shard.Close()
-	if err := MigrateShard(ctx, shard.DB, FamilyPrompts); err != nil {
+	if err := MigrateShard(ctx, shard.DB, engine.FamilyPrompts); err != nil {
 		t.Fatal(err)
 	}
 
@@ -57,12 +58,12 @@ func TestPromptGroupsQueryUsesCoveringIndex(t *testing.T) {
 // An empty prompts shard created before the index gets it on the next startup.
 func TestMigrateShardAddsPromptGroupIndex(t *testing.T) {
 	ctx := context.Background()
-	h, err := NewDB(filepath.Join(t.TempDir(), "prompts.db"))
+	h, err := engine.NewDB(filepath.Join(t.TempDir(), "prompts.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer h.Close()
-	if err := MigrateShard(ctx, h.DB, FamilyPrompts); err != nil {
+	if err := MigrateShard(ctx, h.DB, engine.FamilyPrompts); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.DB.ExecContext(ctx, `DROP INDEX idx_prompt_records_groups`); err != nil {
@@ -71,7 +72,7 @@ func TestMigrateShardAddsPromptGroupIndex(t *testing.T) {
 	if _, err := h.DB.ExecContext(ctx, `DELETE FROM `+shardVersionTable+` WHERE version_id = 3`); err != nil {
 		t.Fatal(err)
 	}
-	if err := MigrateShard(ctx, h.DB, FamilyPrompts); err != nil {
+	if err := MigrateShard(ctx, h.DB, engine.FamilyPrompts); err != nil {
 		t.Fatal(err)
 	}
 	var n int
@@ -86,7 +87,7 @@ func TestMigrateShardAddsPromptGroupIndex(t *testing.T) {
 // group query still answers correctly there from the table.
 func TestMigrateShardSkipsPromptGroupIndexOnRows(t *testing.T) {
 	ctx := context.Background()
-	h, err := NewDB(filepath.Join(t.TempDir(), "prompts.db"))
+	h, err := engine.NewDB(filepath.Join(t.TempDir(), "prompts.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestMigrateShardSkipsPromptGroupIndexOnRows(t *testing.T) {
 	p, err := goose.NewProvider(goose.DialectSQLite3, h.DB, nil,
 		goose.WithDisableGlobalRegistry(true),
 		goose.WithTableName(shardVersionTable),
-		goose.WithGoMigrations(shardMigrations(FamilyPrompts)...),
+		goose.WithGoMigrations(shardMigrations(engine.FamilyPrompts)...),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +124,7 @@ func TestMigrateShardSkipsPromptGroupIndexOnRows(t *testing.T) {
 		}
 	}
 
-	if err := MigrateShard(ctx, h.DB, FamilyPrompts); err != nil {
+	if err := MigrateShard(ctx, h.DB, engine.FamilyPrompts); err != nil {
 		t.Fatal(err)
 	}
 	var n int

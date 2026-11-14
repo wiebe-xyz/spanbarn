@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // ShardCutoffs are the retention cutoffs of the sharded families. ErrorLogs
@@ -15,13 +17,13 @@ type ShardCutoffs struct {
 	ErrorLogs time.Time
 }
 
-func (c ShardCutoffs) of(f Family) time.Time {
+func (c ShardCutoffs) of(f engine.Family) time.Time {
 	switch f {
-	case FamilyLogs:
+	case engine.FamilyLogs:
 		return c.Logs
-	case FamilyMetrics:
+	case engine.FamilyMetrics:
 		return c.Metrics
-	case FamilyPrompts:
+	case engine.FamilyPrompts:
 		return c.Prompts
 	}
 	return time.Time{}
@@ -141,7 +143,7 @@ func (r *Repository) RetiringShardBytes(ctx context.Context) (int64, error) {
 }
 
 func (r *Repository) retireShard(ctx context.Context, row shardRow, now, errorLogCutoff time.Time) error {
-	if row.family == FamilyLogs {
+	if row.family == engine.FamilyLogs {
 		if err := r.keepLogs(ctx, row, row.end, errorLogCutoff); err != nil {
 			return err
 		}
@@ -153,7 +155,7 @@ func (r *Repository) retireShard(ctx context.Context, row shardRow, now, errorLo
 // project and in batches along its (project_id, ingested_at) index, then
 // returns the freed pages to the volume.
 func (r *Repository) trimShard(ctx context.Context, row shardRow, cutoff, errorLogCutoff time.Time) (int64, error) {
-	if row.family == FamilyLogs {
+	if row.family == engine.FamilyLogs {
 		if err := r.keepLogs(ctx, row, cutoff, errorLogCutoff); err != nil {
 			return 0, err
 		}

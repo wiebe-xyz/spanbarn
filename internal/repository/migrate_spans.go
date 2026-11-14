@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/pressly/goose/v3"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // The spans family has its own migration track, recorded in spansVersionTable
@@ -63,7 +64,7 @@ func migrateSpans(ctx context.Context, db *sql.DB) ([]*goose.MigrationResult, er
 // NOT EXISTS, so on a single-file database, where those migrations already
 // created them, it changes nothing.
 func spansBaselineUp(ctx context.Context, tx *sql.Tx) error {
-	ddl, err := familyBaselineDDL(ctx, FamilySpans.Tables())
+	ddl, err := familyBaselineDDL(ctx, engine.FamilySpans.Tables())
 	if err != nil {
 		return err
 	}

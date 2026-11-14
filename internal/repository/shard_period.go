@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // maxShardFiles is the most shard files one family may need at once: the
@@ -21,7 +23,7 @@ var mondayEpoch = time.Date(1970, 1, 5, 0, 0, 0, 0, time.UTC)
 // shardSpec says how one family's rows are cut into files: periods of n days,
 // or of n ISO weeks, aligned in UTC.
 type shardSpec struct {
-	family Family
+	family engine.Family
 	weekly bool
 	n      int
 }
@@ -29,7 +31,7 @@ type shardSpec struct {
 // newShardSpec picks the shortest period, in whole units of a day or an ISO
 // week, at which retention plus the current period fits in maxShardFiles
 // files: n = ceil(units / (maxShardFiles - 1)).
-func newShardSpec(f Family, weekly bool, retention time.Duration) shardSpec {
+func newShardSpec(f engine.Family, weekly bool, retention time.Duration) shardSpec {
 	unit := day
 	if weekly {
 		unit = 7 * day

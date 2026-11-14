@@ -70,7 +70,7 @@ One SQLite file made every heavy write contend with every read, and expiring a d
 
 - **Storage family**: main, spans, and one per heavy table family. Owned by `internal/repository`.
 - **Shard**: one file per family and period, listed in the `shards` table in main with state `active` or `retiring`.
-- **Ballast**: a reserved file the reclaim step releases under disk pressure (`internal/repository/ballast.go`).
+- **Ballast**: a reserved file the reclaim step releases under disk pressure (`internal/repository/engine/ballast.go`).
 
 ## Non-Goals
 
@@ -98,5 +98,5 @@ One SQLite file made every heavy write contend with every read, and expiring a d
 ## Sources
 
 - [design.md](./design.md) and the results comment on [#235](https://github.com/wiebe-xyz/spanbarn/issues/235)
-- `internal/repository/{cutover,shards,shard_read,shards_expire,main_retire,space,ballast}.go`, `internal/retention/`
+- `internal/repository/{cutover,shards,shard_read,shards_expire,main_retire,space}.go`, `internal/repository/engine/ballast.go`, `internal/retention/`
 - `deploy/docs/compact-main.md`, `deploy/docs/disaster-recovery.md`, `deploy/k8s/base/configmap.yaml`

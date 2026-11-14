@@ -1,4 +1,4 @@
-package repository
+package engine
 
 import (
 	"context"
@@ -30,6 +30,10 @@ type DB struct {
 	ckptDB   *sql.DB
 	ckptErr  error
 }
+
+// Path returns the file a writable handle opened, "" for a read-only or
+// in-memory handle.
+func (d *DB) Path() string { return d.path }
 
 // sqliteSpanName names a span after the statement's first keyword. It splits
 // on any whitespace: a query starting "SELECT\n" became "sqlite.select\n\t(select".
@@ -272,12 +276,12 @@ func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, 
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			d.periodicCheckpoint(ctx, retryInterval, log)
+			d.PeriodicCheckpoint(ctx, retryInterval, log)
 		}
 	}
 }
 
-// periodicCheckpoint is checkpoint with a backfill before every TRUNCATE
+// PeriodicCheckpoint is checkpoint with a backfill before every TRUNCATE
 // attempt.
 //
 // A checkpoint ends in fsync of the WAL and the database file. Run as TRUNCATE
@@ -293,19 +297,19 @@ func (d *DB) RunPeriodicCheckpoint(ctx context.Context, interval time.Duration, 
 // 283 MB in 22 minutes (#368, reverted in #369). The backfill moves the bulk of
 // the copy, and its fsync, off the writer, so the TRUNCATE has only the frames
 // written during the backfill left to copy.
-func (d *DB) periodicCheckpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) int {
-	frames, times := d.checkpointWith(ctx, retryInterval, log, func() { d.backfill(ctx, log) })
+func (d *DB) PeriodicCheckpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) int {
+	frames, times := d.checkpointWith(ctx, retryInterval, log, func() { d.Backfill(ctx, log) })
 	times.log(log, d.path, frames)
 	return frames
 }
 
-// backfill runs one PASSIVE checkpoint on the handle's checkpoint connection
+// Backfill runs one PASSIVE checkpoint on the handle's checkpoint connection
 // and returns the WAL frames it could not copy, or -1 if it did not run.
 // PASSIVE takes no write lock, so writes go on beside it. That keeps it clear
 // of SPA-27, where a TRUNCATE on a second connection took the write lock and a
 // deferred write transaction on the writer got SQLITE_BUSY at once. A handle
 // without a file (in-memory, read-only) has nothing to backfill.
-func (d *DB) backfill(ctx context.Context, log *slog.Logger) int {
+func (d *DB) Backfill(ctx context.Context, log *slog.Logger) int {
 	ckpt, err := d.checkpointer()
 	if ckpt == nil || err != nil {
 		if err != nil {
@@ -355,16 +359,16 @@ func (d *DB) checkpointer() (*sql.DB, error) {
 func (d *DB) FinalCheckpoint(log *slog.Logger) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return d.checkpoint(ctx, 0, log)
+	return d.Checkpoint(ctx, 0, log)
 }
 
-// checkpoint runs one wal_checkpoint(TRUNCATE) on the handle's own file. Both
+// Checkpoint runs one wal_checkpoint(TRUNCATE) on the handle's own file. Both
 // pragmas name main: unqualified, wal_checkpoint would also try every attached
 // file, and those are attached read-only and checkpointed by their own writer.
 // It returns the WAL size in frames after the attempt (the pragma's `log` column), or -1 if it errored.
 // It retries on busy=1 (reader snapshot blocking backfill) so the WAL is
 // actually reset once the reader releases.
-func (d *DB) checkpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) int {
+func (d *DB) Checkpoint(ctx context.Context, retryInterval time.Duration, log *slog.Logger) int {
 	frames, _ := d.checkpointWith(ctx, retryInterval, log, func() {})
 	return frames
 }

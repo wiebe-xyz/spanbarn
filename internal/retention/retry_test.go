@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // failingWorker returns a worker whose database is closed, so every cycle
 // fails, and the buffer its log lines go to.
 func failingWorker(t *testing.T) (*RetentionWorker, *bytes.Buffer) {
 	t.Helper()
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

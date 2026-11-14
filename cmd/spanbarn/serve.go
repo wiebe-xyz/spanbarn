@@ -17,6 +17,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
@@ -202,9 +203,9 @@ func shardRetention(cfg config.Config) repository.ShardRetention {
 		return nil
 	}
 	return repository.ShardRetention{
-		repository.FamilyLogs:    time.Duration(cfg.Retention.LogHours) * time.Hour,
-		repository.FamilyMetrics: time.Duration(cfg.Retention.MetricsDays) * 24 * time.Hour,
-		repository.FamilyPrompts: time.Duration(cfg.Retention.PromptDays) * 24 * time.Hour,
+		engine.FamilyLogs:    time.Duration(cfg.Retention.LogHours) * time.Hour,
+		engine.FamilyMetrics: time.Duration(cfg.Retention.MetricsDays) * 24 * time.Hour,
+		engine.FamilyPrompts: time.Duration(cfg.Retention.PromptDays) * 24 * time.Hour,
 	}
 }
 
@@ -272,7 +273,7 @@ func startWriteSchedulers(ctx context.Context, wg *sync.WaitGroup, store *reposi
 	if store.Spans != nil {
 		spans := writescheduler.New()
 		spans.SetLogger(logger)
-		repo.SetFamilyWriter(repository.FamilySpans, store.Spans.DB, spans)
+		repo.SetFamilyWriter(engine.FamilySpans, store.Spans.DB, spans)
 		safeGo("write-scheduler-spans", wg, func() { spans.Run(ctx) })
 	}
 	if store.Shards != nil {
@@ -286,12 +287,12 @@ func startWriteSchedulers(ctx context.Context, wg *sync.WaitGroup, store *reposi
 }
 
 // openReadDB opens the read-only handle dashboard reads use.
-func openReadDB(cfg config.Config) (*repository.DB, error) {
+func openReadDB(cfg config.Config) (*engine.DB, error) {
 	return repository.OpenReadDB(cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
 }
 
 // openQueryRepo opens the read-only DB used for dashboard reads.
-func openQueryRepo(cfg config.Config) (*repository.DB, *repository.Repository, error) {
+func openQueryRepo(cfg config.Config) (*engine.DB, *repository.Repository, error) {
 	roDB, err := openReadDB(cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open read-only database: %w", err)
@@ -305,7 +306,7 @@ func openQueryRepo(cfg config.Config) (*repository.DB, *repository.Repository, e
 // from the shards table so new shards show up within the interval. A family
 // without shards keeps reading through db. Close the result after the
 // goroutines in wg have stopped.
-func startShardReaders(ctx context.Context, wg *sync.WaitGroup, cfg config.Config, db *repository.DB, repo *repository.Repository, logger *slog.Logger) *repository.ShardReaders {
+func startShardReaders(ctx context.Context, wg *sync.WaitGroup, cfg config.Config, db *engine.DB, repo *repository.Repository, logger *slog.Logger) *repository.ShardReaders {
 	rs := repository.NewShardReaders(db.DB, cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB, logger)
 	repo.SetShardReaders(rs)
 	safeGo("shard-readers", wg, func() { rs.Run(ctx, 30*time.Second) })

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func TestContentionWritesToTheRightFiles(t *testing.T) {
@@ -63,7 +63,7 @@ func mustCounts(t *testing.T, dir, layout string) map[string]int64 {
 // reader's name resolution, so a count proves which file holds the rows.
 func fileCounts(t *testing.T, path string, tables []string) map[string]int64 {
 	t.Helper()
-	db, err := repository.NewReadOnlyDB(path)
+	db, err := engine.NewReadOnlyDB(path)
 	if err != nil {
 		t.Fatal(err)
 	}

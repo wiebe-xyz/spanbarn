@@ -16,6 +16,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // sessionTestStack wires a SessionService to the fake IdP and returns the
@@ -236,7 +237,7 @@ func TestSessionLocalNeverRefreshes(t *testing.T) {
 // so the SPA triggers the writer-routed refresh.
 func TestSessionReadOnlyStoreServesStaleWithRefreshDueHeader(t *testing.T) {
 	idp := newFakeIdP(t)
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
