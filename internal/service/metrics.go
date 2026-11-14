@@ -6,7 +6,6 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
-	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // MetricsRepository is the storage MetricsService needs.
@@ -46,13 +45,6 @@ func (s *MetricsService) Series(ctx context.Context, f MetricFilter) ([]MetricRo
 // Rollups returns the 5-minute tier rollups matching f.
 func (s *MetricsService) Rollups(ctx context.Context, f MetricRollupFilter) ([]MetricRollup, error) {
 	return s.repo.QueryMetricRollups(ctx, f)
-}
-
-// HourTierThrough reports how far the 5-minute tier has been compacted into the
-// hour tier: hour buckets before it are complete, and the 5-minute buckets from
-// it on are not in the hour tier yet. ok is false before the first compaction.
-func (s *MetricsService) HourTierThrough(ctx context.Context) (time.Time, bool, error) {
-	return s.repo.MetricRollupWatermark(ctx, tier.Step5m)
 }
 
 // CoarseRollups returns the 1h, 1d, 1w and 1mo tier rollups matching f.

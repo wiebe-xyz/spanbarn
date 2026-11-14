@@ -11,6 +11,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
@@ -113,7 +114,7 @@ func TestFilteredReadTierFollowsTheRangeWidth(t *testing.T) {
 		labels   map[string]string
 		wantStep int64
 	}{
-		"filtered, a day":      {filteredFineTierWidth, filter, tier.Step5m},
+		"filtered, a day":      {service.FilteredFineTierWidth, filter, tier.Step5m},
 		"filtered, two days":   {48 * time.Hour, filter, tier.StepHour},
 		"unfiltered, two days": {48 * time.Hour, nil, tier.Step5m},
 	} {
@@ -213,12 +214,12 @@ func TestWideFilteredReadShowsAYoungSeries(t *testing.T) {
 }
 
 // The tail stays bounded: a watermark far behind the end of the range reads at
-// most fineTailWidth of 5-minute buckets, so a stalled compactor cannot turn a
+// most service.FineTailWidth of 5-minute buckets, so a stalled compactor cannot turn a
 // filtered read back into the scan that timed out.
 func TestWideFilteredReadBoundsTheTail(t *testing.T) {
 	srv, sm, repo := setupMetricsQueryServer(t)
 	end := rangeTestBase
-	old, recent := end.Add(-fineTailWidth-time.Hour), end.Add(-time.Hour)
+	old, recent := end.Add(-service.FineTailWidth-time.Hour), end.Add(-time.Hour)
 	seedTailRollups(t, repo, tier.Step5m, 1, old, recent)
 	if err := repo.SetMetricRollupWatermark(context.Background(), tier.Step5m, end.Add(-30*time.Hour)); err != nil {
 		t.Fatal(err)
