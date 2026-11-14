@@ -91,10 +91,13 @@ echo "== quality gate =="
 cover_profile=$(mktemp)
 repo_profile=$(mktemp)
 trap 'rm -f "$cover_profile" "$repo_profile"' EXIT
-cov_out=$(go test -cover -coverprofile="$cover_profile" ./internal/service/... 2>/dev/null)
-# No "|| true": under set -e a failing repository test fails the gate, as it did
-# when this was one go test run.
-go test -cover -coverpkg=./internal/repository/... -coverprofile="$repo_profile" ./internal/repository/... >/dev/null 2>&1
+# A failing test fails the gate and prints the go test output.
+if ! cov_out=$(go test -cover -coverprofile="$cover_profile" ./internal/service/... 2>&1); then
+  echo "service tests failed:"; printf '%s\n' "$cov_out" | tail -80; exit 1
+fi
+if ! repo_out=$(go test -cover -coverpkg=./internal/repository/... -coverprofile="$repo_profile" ./internal/repository/... 2>&1); then
+  echo "repository tests failed:"; printf '%s\n' "$repo_out" | tail -80; exit 1
+fi
 svc_cov=$(echo "$cov_out" | grep -E 'internal/service[[:space:]]' | grep -oE '[0-9.]+% of statements' | grep -oE '[0-9.]+' | head -1)
 # With -coverpkg each test binary writes its own line for a block, so a block can
 # appear more than once. Count each block ($1) once: covered if any line ran it.
