@@ -156,8 +156,9 @@ func TestReadInputNarrowRangeFallsBackToRollups(t *testing.T) {
 func TestReadInputWalksTheLadderAndSetsDeltaIntervals(t *testing.T) {
 	delta := MetricRollup{Name: "c", Type: "sum", Temporality: "delta", Bucket: readBase, Sum: 7, Count: 1}
 	repo := &readRepo{coarse: map[int64][]MetricRollup{tier.StepHour: {delta}}}
+	from := readBase.Add(-10 * time.Hour)
 	got, err := NewMetricsService(repo).ReadInput(context.Background(), MetricInputRequest{
-		Name: "c", From: readBase.Add(-10 * time.Hour), To: readBase, Totals: true,
+		Name: "c", From: from, To: readBase,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -168,8 +169,13 @@ func TestReadInputWalksTheLadderAndSetsDeltaIntervals(t *testing.T) {
 	if p := got.Points[0]; !p.Delta || p.Value != 7 || p.IntervalNano != int64(time.Hour) {
 		t.Errorf("point = %+v, want delta 7 over an hour", p)
 	}
-	if len(repo.fineReads) != 0 {
-		t.Error("a totals read from a day on read the 5-minute tier first")
+	// The empty 5-minute tier is read over the whole range before the walk
+	// reaches the hour tier, whose own tail read comes after it.
+	if len(repo.fineReads) == 0 || !repo.fineReads[0].From.Equal(from) {
+		t.Errorf("fine reads = %+v, want the 5-minute tier read from %s first", repo.fineReads, from)
+	}
+	if len(repo.coarseReads) == 0 || repo.coarseReads[0].StepSeconds != tier.StepHour {
+		t.Errorf("coarse reads = %+v, want the hour tier", repo.coarseReads)
 	}
 }
 

@@ -93,10 +93,10 @@ repo_profile=$(mktemp)
 trap 'rm -f "$cover_profile" "$repo_profile"' EXIT
 # A failing test fails the gate and prints the go test output.
 if ! cov_out=$(go test -cover -coverprofile="$cover_profile" ./internal/service/... 2>&1); then
-  echo "service tests failed:"; printf '%s\n' "$cov_out" | tail -80; exit 1
+  echo "service tests failed:"; printf '%s\n' "$cov_out" | grep -vE 'goose|  OK  ' | tail -80; exit 1
 fi
 if ! repo_out=$(go test -cover -coverpkg=./internal/repository/... -coverprofile="$repo_profile" ./internal/repository/... 2>&1); then
-  echo "repository tests failed:"; printf '%s\n' "$repo_out" | tail -80; exit 1
+  echo "repository tests failed:"; printf '%s\n' "$repo_out" | grep -vE 'goose|  OK  ' | tail -80; exit 1
 fi
 svc_cov=$(echo "$cov_out" | grep -E 'internal/service[[:space:]]' | grep -oE '[0-9.]+% of statements' | grep -oE '[0-9.]+' | head -1)
 # With -coverpkg each test binary writes its own line for a block, so a block can
