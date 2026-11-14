@@ -10,6 +10,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
+	"github.com/wiebe-xyz/spanbarn/internal/tracebuffer"
 )
 
 // The shutdown order the serving modes use: a trace the buffer still holds
@@ -23,7 +24,7 @@ func TestShutdownMovesBufferedTracesToTheSpool(t *testing.T) {
 	defer sp.Close()
 	handler := ingest.NewHandler(ingest.NewQueue(16), sp, time.Millisecond, logger)
 	handler.Start(t.Context())
-	buf := ingest.NewTraceBuffer(time.Hour, ingest.NewStaticRatioLookup(1), logger)
+	buf := tracebuffer.NewTraceBuffer(time.Hour, tracebuffer.NewStaticRatioLookup(1), logger)
 	buf.SetRootGrace(10 * time.Millisecond) // the drain waits the grace for the trace's root
 	var wg sync.WaitGroup
 	drained := drainTraceBuffer(&wg, buf, handler)

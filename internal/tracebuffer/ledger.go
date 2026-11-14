@@ -1,4 +1,4 @@
-package ingest
+package tracebuffer
 
 import (
 	"github.com/wiebe-xyz/spanbarn/internal/spanledger"

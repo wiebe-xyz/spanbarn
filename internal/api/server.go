@@ -12,6 +12,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/tracebuffer"
 )
 
 // ServerConfig holds configuration for the HTTP server.
@@ -59,7 +60,7 @@ type Server struct {
 	metricsIngest  *ingest.MetricsHandler
 	logsIngest     *ingest.LogsHandler
 	admission      *Admission
-	traceBuffer    *ingest.TraceBuffer
+	traceBuffer    *tracebuffer.TraceBuffer
 	querySvc       *service.QueryService
 	sessions       *SessionService
 	authorizer     *auth.Authorizer
@@ -140,7 +141,7 @@ func WithCache(c *cache.Cache) ServerOption {
 	}
 }
 
-func WithTraceBuffer(tb *ingest.TraceBuffer) ServerOption {
+func WithTraceBuffer(tb *tracebuffer.TraceBuffer) ServerOption {
 	return func(s *Server) {
 		s.traceBuffer = tb
 	}
