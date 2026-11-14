@@ -1,4 +1,4 @@
-package rollup
+package metricrollup
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 func tierRows(t *testing.T, repo *repository.Repository, step int64, from, to time.Time) []repository.MetricRollup {
@@ -48,7 +49,7 @@ func TestCompactorDrainsBacklogTierByTier(t *testing.T) {
 		}
 	}
 
-	days := tierRows(t, repo, StepDay, monday, end)
+	days := tierRows(t, repo, tier.StepDay, monday, end)
 	if len(days) != 14 {
 		t.Fatalf("days = %d, want 14", len(days))
 	}
@@ -57,7 +58,7 @@ func TestCompactorDrainsBacklogTierByTier(t *testing.T) {
 			t.Errorf("day %s increase = %v, want 288", d.Bucket.Format("01-02"), d.Sum)
 		}
 	}
-	weeks := tierRows(t, repo, StepWeek, monday, end)
+	weeks := tierRows(t, repo, tier.StepWeek, monday, end)
 	if len(weeks) != 2 {
 		t.Fatalf("weeks = %d, want 2", len(weeks))
 	}
@@ -87,10 +88,10 @@ func TestCompactorWaitsForSourceTier(t *testing.T) {
 	if err := c.RunOnce(ctx); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
-	if got := tierRows(t, repo, StepDay, day, now); len(got) != 0 {
+	if got := tierRows(t, repo, tier.StepDay, day, now); len(got) != 0 {
 		t.Errorf("day rows after half the hours = %d, want 0", len(got))
 	}
-	if _, ok, err := repo.MetricRollupWatermark(ctx, StepHour); err != nil || ok {
+	if _, ok, err := repo.MetricRollupWatermark(ctx, tier.StepHour); err != nil || ok {
 		t.Errorf("day tier watermark set = %v (err %v), want unset", ok, err)
 	}
 }
@@ -103,7 +104,7 @@ func TestCompactorRunsWithoutSourceWatermark(t *testing.T) {
 	day := time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)
 
 	hour := counterRow(day.Add(time.Hour), "v1", 40)
-	hour.Sum, hour.StepSeconds = 40, StepHour
+	hour.Sum, hour.StepSeconds = 40, tier.StepHour
 	if err := repo.UpsertCoarseRollups(context.Background(), []repository.MetricRollup{hour}); err != nil {
 		t.Fatalf("UpsertCoarseRollups: %v", err)
 	}
@@ -112,7 +113,7 @@ func TestCompactorRunsWithoutSourceWatermark(t *testing.T) {
 	if err := newTestCompactor(t, repo, now).RunOnce(context.Background()); err != nil {
 		t.Fatalf("RunOnce: %v", err)
 	}
-	if got := tierRows(t, repo, StepDay, day, now); len(got) != 1 {
+	if got := tierRows(t, repo, tier.StepDay, day, now); len(got) != 1 {
 		t.Errorf("day rows = %d, want 1", len(got))
 	}
 }

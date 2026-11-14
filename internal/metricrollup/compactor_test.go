@@ -1,4 +1,4 @@
-package rollup
+package metricrollup
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 func testRepo(t *testing.T) *repository.Repository {
@@ -67,7 +68,7 @@ func TestCompactorBuildsHourlyTier(t *testing.T) {
 	}
 
 	got, err := repo.QueryCoarseRollups(ctx, repository.CoarseRollupFilter{
-		ProjectID: 1, Name: "reqs", StepSeconds: StepHour,
+		ProjectID: 1, Name: "reqs", StepSeconds: tier.StepHour,
 		From: h1.Add(-time.Hour), To: h2.Add(time.Hour),
 	})
 	if err != nil {
@@ -92,7 +93,7 @@ func TestCompactorBuildsHourlyTier(t *testing.T) {
 		t.Error("the two builds should reduce to one series once service.version is dropped")
 	}
 
-	through, ok, err := repo.MetricRollupWatermark(ctx, Step5m)
+	through, ok, err := repo.MetricRollupWatermark(ctx, tier.Step5m)
 	if err != nil || !ok {
 		t.Fatalf("watermark: ok=%v err=%v", ok, err)
 	}
@@ -119,7 +120,7 @@ func TestCompactorLeavesOpenBucketAlone(t *testing.T) {
 	}
 
 	got, err := repo.QueryCoarseRollups(ctx, repository.CoarseRollupFilter{
-		ProjectID: 1, Name: "reqs", StepSeconds: StepHour,
+		ProjectID: 1, Name: "reqs", StepSeconds: tier.StepHour,
 		From: h1.Add(-time.Hour), To: h1.Add(time.Hour),
 	})
 	if err != nil {
@@ -156,7 +157,7 @@ func TestCompactorWaitsForALateLastBucket(t *testing.T) {
 	}
 
 	got, err := repo.QueryCoarseRollups(ctx, repository.CoarseRollupFilter{
-		ProjectID: 1, Name: "reqs", StepSeconds: StepHour,
+		ProjectID: 1, Name: "reqs", StepSeconds: tier.StepHour,
 		From: h1, To: closed,
 	})
 	if err != nil {
@@ -186,21 +187,21 @@ func TestCompactorIsIdempotent(t *testing.T) {
 		t.Fatalf("first pass: %v", err)
 	}
 	first, err := repo.QueryCoarseRollups(ctx, repository.CoarseRollupFilter{
-		ProjectID: 1, Name: "reqs", StepSeconds: StepHour, From: h1, To: now,
+		ProjectID: 1, Name: "reqs", StepSeconds: tier.StepHour, From: h1, To: now,
 	})
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
 
 	// A fresh compactor with no watermark redoes the same window.
-	if err := repo.SetMetricRollupWatermark(ctx, Step5m, h1); err != nil {
+	if err := repo.SetMetricRollupWatermark(ctx, tier.Step5m, h1); err != nil {
 		t.Fatalf("reset watermark: %v", err)
 	}
 	if err := newTestCompactor(t, repo, now).RunOnce(ctx); err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
 	second, err := repo.QueryCoarseRollups(ctx, repository.CoarseRollupFilter{
-		ProjectID: 1, Name: "reqs", StepSeconds: StepHour, From: h1, To: now,
+		ProjectID: 1, Name: "reqs", StepSeconds: tier.StepHour, From: h1, To: now,
 	})
 	if err != nil {
 		t.Fatalf("query: %v", err)
@@ -241,7 +242,7 @@ func TestCompactorDisabledStopsImmediately(t *testing.T) {
 	}
 
 	got, err := repo.QueryCoarseRollups(ctx, repository.CoarseRollupFilter{
-		ProjectID: 1, Name: "reqs", StepSeconds: StepHour, From: h1, To: h1.Add(3 * time.Hour),
+		ProjectID: 1, Name: "reqs", StepSeconds: tier.StepHour, From: h1, To: h1.Add(3 * time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("QueryCoarseRollups: %v", err)
@@ -251,7 +252,7 @@ func TestCompactorDisabledStopsImmediately(t *testing.T) {
 	}
 
 	// The watermark must stay put, so retention keeps every tier intact.
-	if _, ok, err := repo.MetricRollupWatermark(ctx, Step5m); err != nil {
+	if _, ok, err := repo.MetricRollupWatermark(ctx, tier.Step5m); err != nil {
 		t.Fatalf("watermark: %v", err)
 	} else if ok {
 		t.Error("watermark advanced while compaction was disabled, which would let retention delete un-compacted data")

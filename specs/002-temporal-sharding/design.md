@@ -132,7 +132,7 @@ Deletion is two-phase so no reader holds a deleted inode, which kept space alloc
 
 Retention expires shards by period (`Repository.ExpireShards`, called from the housekeeping step of the cycle): a shard whose whole period is older than its family's cutoff is retired, and a retiring shard older than `shardDeleteDelay` is deleted. When the disk ladder cuts a window below one period (logs to a few hours), the shard that straddles the cutoff also loses its older rows per project in batches, followed by `PRAGMA incremental_vacuum`. Shard files are created with `auto_vacuum=INCREMENTAL` for this.
 
-`DBSpace` (`repository/space.go`) sums `FileBytes` and `WALBytes` over main, `spans.db` and every shard listed in `shards`, and adds each shard's pages in main's page size. Shard freelists are left out, because incremental vacuum returns their freed pages to the volume. The ingest disk-headroom check (`cmd/spanbarn/runtime.go`), the retention worker and the rollup compactor (`internal/rollup/compactor.go`) all read this sum.
+`DBSpace` (`repository/space.go`) sums `FileBytes` and `WALBytes` over main, `spans.db` and every shard listed in `shards`, and adds each shard's pages in main's page size. Shard freelists are left out, because incremental vacuum returns their freed pages to the volume. The ingest disk-headroom check (`cmd/spanbarn/runtime.go`), the retention worker and the rollup compactor (`internal/metricrollup/compactor.go`) all read this sum.
 
 ### Backups
 

@@ -26,7 +26,7 @@ type RetentionConfig struct {
 	PromptDays         int // SPANBARN_PROMPT_RETENTION_DAYS — how long to keep LLM prompt records (default 30)
 	DeleteBatchYieldMS int // SPANBARN_RETENTION_DELETE_BATCH_YIELD_MS — pause between batched retention deletes so the WAL checkpoint and reads aren't starved (default 200)
 	// Rollup tier windows. Metric rollups are compacted 5m → 1h → 1d → 1w → 1mo
-	// by internal/rollup, and each tier keeps its own window. Storage is bounded
+	// by internal/metricrollup, and each tier keeps its own window. Storage is bounded
 	// by resolution rather than by a single cutoff: a year of history costs a
 	// few thousand monthly rows, while the 5-minute tier — which is where
 	// cardinality actually bites — is held to days. A tier is only ever deleted

@@ -1,4 +1,4 @@
-package rollup
+package metricrollup
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // TestCompactorKeepsCarryWithinProject: three projects hold one metric name and
@@ -37,7 +38,7 @@ func TestCompactorKeepsCarryWithinProject(t *testing.T) {
 
 	for project, want := range map[int64]float64{1: 10, 2: 100, 3: 0} {
 		got, err := repo.QueryCoarseRollups(ctx, repository.CoarseRollupFilter{
-			ProjectID: project, Name: "reqs", StepSeconds: StepHour, From: h, To: now,
+			ProjectID: project, Name: "reqs", StepSeconds: tier.StepHour, From: h, To: now,
 		})
 		if err != nil {
 			t.Fatalf("QueryCoarseRollups: %v", err)

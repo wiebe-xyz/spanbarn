@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // spanRollupTierWindows lists the span_rollups tiers finest first, with how
@@ -19,9 +19,9 @@ func spanRollupTierWindows(cfg Config) []struct {
 		window time.Duration
 		label  string
 	}{
-		{rollup.Step5m, time.Duration(cfg.SpanRollup5mHours) * time.Hour, "span 5m"},
-		{rollup.StepHour, time.Duration(cfg.SpanRollupHourlyDays) * 24 * time.Hour, "span hourly"},
-		{rollup.StepDay, time.Duration(cfg.SpanRollupDailyDays) * 24 * time.Hour, "span daily"},
+		{tier.Step5m, time.Duration(cfg.SpanRollup5mHours) * time.Hour, "span 5m"},
+		{tier.StepHour, time.Duration(cfg.SpanRollupHourlyDays) * 24 * time.Hour, "span hourly"},
+		{tier.StepDay, time.Duration(cfg.SpanRollupDailyDays) * 24 * time.Hour, "span daily"},
 	}
 }
 
@@ -76,7 +76,7 @@ func (w *RetentionWorker) deleteSpanRollupTiers(ctx context.Context, cfg Config,
 // spanTierCutoff caps a tier's window cutoff at its compaction watermark. ok
 // is false for a tier below the top that was never compacted.
 func (w *RetentionWorker) spanTierCutoff(ctx context.Context, step int64, cutoff time.Time) (time.Time, bool, error) {
-	if step == rollup.StepDay {
+	if step == tier.StepDay {
 		return cutoff, true, nil
 	}
 	through, ok, err := w.repo.SpanRollupWatermark(ctx, step)

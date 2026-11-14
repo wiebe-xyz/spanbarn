@@ -1,4 +1,4 @@
-package rollup
+package metricrollup
 
 import (
 	"encoding/json"
@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // repoRow keeps the table-heavy tests readable.
 type repoRow = repository.MetricRollup
 
 var (
-	hourTier  = Tier{Step: StepHour, Source: Step5m, Label: "hourly"}
+	hourTier  = tier.Tier{Step: tier.StepHour, Source: tier.Step5m, Label: "hourly"}
 	testStart = time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
 )
 
@@ -93,7 +94,7 @@ func TestMergeCounterContinuesRunningTotal(t *testing.T) {
 		src("reqs", "v1", "sum", testStart, withLast(10)),
 		src("reqs", "v1", "sum", testStart.Add(5*time.Minute), withLast(25)),
 	}
-	_, fp := DefaultDropPolicy().Reduce(rows[0].Attributes, StepHour)
+	_, fp := DefaultDropPolicy().Reduce(rows[0].Attributes, tier.StepHour)
 	carry := Carry{
 		SourceTail: map[string]repoRow{"7\x00reqs\x00v1": src("reqs", "v1", "sum", testStart.Add(-5*time.Minute), withLast(10))},
 		TargetLast: map[string]float64{repository.CoarseSeriesKey("reqs", fp): 1000},
@@ -120,7 +121,7 @@ func TestMergeKeepsMetricNamesApart(t *testing.T) {
 		src("errs", "v1", "sum", testStart, withLast(1)),
 		src("errs", "v1", "sum", testStart.Add(5*time.Minute), withLast(3)),
 	}
-	_, fp := DefaultDropPolicy().Reduce(rows[0].Attributes, StepHour)
+	_, fp := DefaultDropPolicy().Reduce(rows[0].Attributes, tier.StepHour)
 	tail := testStart.Add(-5 * time.Minute)
 	carry := Carry{
 		SourceTail: map[string]repoRow{
@@ -258,7 +259,7 @@ func TestMergeCoarseHistogramRowsAdd(t *testing.T) {
 		"dur\x00v1": src("dur", "v1", "histogram", testStart.Add(-time.Hour), withHist(50, 5, 1, 2, 2)),
 	}}
 
-	dayTier := Tier{Step: StepDay, Source: StepHour, Label: "daily"}
+	dayTier := tier.Tier{Step: tier.StepDay, Source: tier.StepHour, Label: "daily"}
 	out := Merge(dayTier, testStart.Truncate(24*time.Hour), 7, rows, DefaultDropPolicy(), carry)
 	if len(out) != 1 {
 		t.Fatalf("got %d rows, want 1", len(out))
@@ -288,8 +289,8 @@ func TestMergeCoarseCounterKeepsFirstBucket(t *testing.T) {
 		src("reqs", "v1", "sum", testStart, withLast(30), withSum(30)),
 		src("reqs", "v1", "sum", testStart.Add(time.Hour), withLast(50), withSum(20)),
 	}
-	dayTier := Tier{Step: StepDay, Source: StepHour, Label: "daily"}
-	_, fp := DefaultDropPolicy().Reduce(rows[0].Attributes, StepDay)
+	dayTier := tier.Tier{Step: tier.StepDay, Source: tier.StepHour, Label: "daily"}
+	_, fp := DefaultDropPolicy().Reduce(rows[0].Attributes, tier.StepDay)
 	out := Merge(dayTier, testStart.Truncate(24*time.Hour), 7, rows, DefaultDropPolicy(), Carry{
 		TargetLast: map[string]float64{repository.CoarseSeriesKey("reqs", fp): 100},
 	})
