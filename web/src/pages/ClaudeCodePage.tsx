@@ -6,7 +6,7 @@ import { TimeRangeSelector } from '../components/TimeRangeSelector'
 import { getTimeRange } from '../utils/timeRange'
 import { useTimeRange } from '../contexts/useTimeRange'
 import { ToolSpanTable } from '../components/ToolSpanTable'
-import { CLAUDE_METRICS, GROUP_KEYS, joinTotals, sessionTracesUrl, toolSpanStats, type ToolSpanStat } from '../utils/claudeCode'
+import { CLAUDE_METRICS, GROUP_KEYS, joinTotals, sessionTracesUrl, toolSpanStats, type ToolSpanStat } from '../prompts/claudeCode'
 
 const CLAUDE_PROJECT_SLUG = 'claude-code'
 

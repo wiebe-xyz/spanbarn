@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react'
 import { api } from '../api/client'
 import type { VersionSummary } from '../api/types'
 import { getTimeRange } from '../utils/timeRange'
-import { p95Change } from '../utils/versions'
+import { p95Change } from './versions'
 import { formatDuration, formatErrorRate, errorRateColor, formatCount } from '../utils/format'
 
 /**

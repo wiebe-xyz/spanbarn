@@ -11,14 +11,14 @@ import { SeriesChart } from '../components/dashboard/SeriesChart'
 import { TimeRangePicker } from '../components/dashboard/TimeRangePicker'
 import { useDashboardParams, COUNTS_GROUPS } from '../components/dashboard/useDashboardParams'
 import { useDashboardQuery } from '../components/dashboard/useDashboardQuery'
-import { pivotSeries } from '../utils/dashboardData'
+import { pivotSeries } from '../dashboard/data'
 import {
   DEFAULT_DASHBOARD_RANGE,
   customWindow,
   getDashboardWindow,
   parseCustomWindow,
   zoomOutWindow,
-} from '../utils/dashboardWindow'
+} from '../dashboard/window'
 import { formatCount, formatDuration } from '../utils/format'
 
 const PERCENTILES = [

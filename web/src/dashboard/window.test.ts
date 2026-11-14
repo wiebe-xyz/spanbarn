@@ -6,7 +6,7 @@ import {
   getDashboardWindow,
   parseCustomWindow,
   zoomOutWindow,
-} from './dashboardWindow'
+} from './window'
 
 const NOW = new Date('2026-10-01T12:00:00Z')
 

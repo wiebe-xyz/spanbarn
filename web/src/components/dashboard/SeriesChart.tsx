@@ -1,7 +1,7 @@
 import { type ReactElement } from 'react'
 import { CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useBrush, xRange } from './useBrush'
-import { formatAxisTime, seriesColor, statusColor, statusDash, type PivotedSeries } from '../../utils/dashboardData'
+import { formatAxisTime, seriesColor, statusColor, statusDash, type PivotedSeries } from '../../dashboard/data'
 
 type SeriesChartProps = {
   series: PivotedSeries

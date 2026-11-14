@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { LogEntry } from '../api/types'
-import { eventName, sessionTracesUrl, toolCounts } from '../utils/claudeCode'
+import { eventName, sessionTracesUrl, toolCounts } from '../prompts/claudeCode'
 
 const SHOWN_ATTRS = ['prompt', 'tool_name', 'model', 'cost_usd', 'duration_ms', 'success', 'input_tokens', 'output_tokens']
 

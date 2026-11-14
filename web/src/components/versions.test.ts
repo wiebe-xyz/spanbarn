@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { p95Change } from '../utils/versions'
+import { p95Change } from './versions'
 import type { VersionSummary } from '../api/types'
 
 const v = (p95Us: number): VersionSummary => ({

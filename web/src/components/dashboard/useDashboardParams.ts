@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { CountsGroup } from '../../api/dashboardTypes'
-import { DEFAULT_DASHBOARD_RANGE, findDashboardRange } from '../../utils/dashboardWindow'
+import { DEFAULT_DASHBOARD_RANGE, findDashboardRange } from '../../dashboard/window'
 import type { DashboardFilterValues } from './DashboardFilters'
 
 /** Dimensions the counts card can group by and filter on. */

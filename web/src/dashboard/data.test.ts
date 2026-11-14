@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { heatOpacity, layoutHeatmap, pivotSeries, seriesColor, statusColor, statusDash } from './dashboardData'
+import { heatOpacity, layoutHeatmap, pivotSeries, seriesColor, statusColor, statusDash } from './data'
 
 const t = (min: number) => new Date(Date.UTC(2026, 9, 1, 12, min)).toISOString()
 
