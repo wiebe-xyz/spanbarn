@@ -9,9 +9,10 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
-func querySeries(t *testing.T, srv *Server, sm *SessionService, name string, from, to time.Time) metricSeriesResponse {
+func querySeries(t *testing.T, srv *Server, sm *session.Service, name string, from, to time.Time) metricSeriesResponse {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/v1/metrics/series?project_id=1&name="+name+"&from="+from.Format(time.RFC3339)+"&to="+to.Format(time.RFC3339), nil)

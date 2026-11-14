@@ -11,11 +11,12 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 
 	_ "github.com/wiebe-xyz/spanbarn/internal/repository/migrations"
 )
 
-func setupLogsQueryServer(t *testing.T) (*Server, *SessionService, *repository.Repository) {
+func setupLogsQueryServer(t *testing.T) (*Server, *session.Service, *repository.Repository) {
 	t.Helper()
 
 	db, err := repository.NewDB(":memory:")
@@ -29,7 +30,7 @@ func setupLogsQueryServer(t *testing.T) (*Server, *SessionService, *repository.R
 	}
 
 	repo := repository.NewRepository(db.DB)
-	sm := NewSessionService(repo, 3600, 3600, nil)
+	sm := session.NewService(repo, 3600, 3600, nil)
 
 	srv := NewServerWithQuery(ServerConfig{
 		APIKey:  "test-key",

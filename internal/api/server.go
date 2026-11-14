@@ -12,6 +12,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 // ServerConfig holds configuration for the HTTP server.
@@ -61,7 +62,7 @@ type Server struct {
 	admission      *Admission
 	traceBuffer    *ingest.TraceBuffer
 	querySvc       *service.QueryService
-	sessions       *SessionService
+	sessions       *session.Service
 	authorizer     *auth.Authorizer
 	repo           service.Store
 	dbPath         string
@@ -179,7 +180,7 @@ func NewServer(cfg ServerConfig, ingestHandler *ingest.Handler, logger *slog.Log
 // NewServerWithQuery creates a new HTTP server with query service support.
 // sessions may be nil, in which case no session-authenticated route is
 // registered (ingest-only deployments without a database).
-func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySvc *service.QueryService, sessions *SessionService, logger *slog.Logger, opts ...ServerOption) *Server {
+func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySvc *service.QueryService, sessions *session.Service, logger *slog.Logger, opts ...ServerOption) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}

@@ -12,12 +12,13 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
 
 // newExtSessionService builds a SessionService over an in-memory repository
 // for tests living outside the api package.
-func newExtSessionService(t *testing.T) *api.SessionService {
+func newExtSessionService(t *testing.T) *session.Service {
 	t.Helper()
 	db, err := repository.NewDB(":memory:")
 	if err != nil {
@@ -27,7 +28,7 @@ func newExtSessionService(t *testing.T) *api.SessionService {
 	if err := repository.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	return api.NewSessionService(repository.NewRepository(db.DB), 3600, 3600, nil)
+	return session.NewService(repository.NewRepository(db.DB), 3600, 3600, nil)
 }
 
 func TestHealthEndpoint(t *testing.T) {
@@ -234,7 +235,7 @@ func TestMeEndpoint(t *testing.T) {
 	}
 }
 
-func newServerWithSession(t *testing.T, sessions *api.SessionService) *api.Server {
+func newServerWithSession(t *testing.T, sessions *session.Service) *api.Server {
 	t.Helper()
 	q := ingest.NewQueue(1024)
 	sp, err := spool.NewSpool(t.TempDir(), 0)

@@ -21,6 +21,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
 )
@@ -82,7 +83,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 		roRepo     *repository.Repository
 		keyLookup  auth.KeyLookup
 		querySvc   *service.QueryService
-		sessions   *api.SessionService
+		sessions   *session.Service
 		userAuth   *auth.UserAuthenticator
 		queryCache *cache.Cache
 	)

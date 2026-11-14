@@ -15,6 +15,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 // newTestRepo returns a repository over a migrated in-memory SQLite DB.
@@ -31,15 +32,15 @@ func newTestRepo(t *testing.T) *repository.Repository {
 	return repository.NewRepository(db.DB)
 }
 
-// newTestSessions returns a SessionService over a fresh in-memory repository.
-func newTestSessions(t *testing.T) (*SessionService, *repository.Repository) {
+// newTestSessions returns a session.Service over a fresh in-memory repository.
+func newTestSessions(t *testing.T) (*session.Service, *repository.Repository) {
 	t.Helper()
 	repo := newTestRepo(t)
-	return NewSessionService(repo, 3600, 3600, nil), repo
+	return session.NewService(repo, 3600, 3600, nil), repo
 }
 
 // mintSession creates a local session row and returns its opaque token.
-func mintSession(t *testing.T, svc *SessionService, username string) string {
+func mintSession(t *testing.T, svc *session.Service, username string) string {
 	t.Helper()
 	token, _, err := svc.Create(username, "local", nil)
 	if err != nil {
@@ -239,9 +240,9 @@ func (f *fakeIdP) client() *auth.OIDCClient {
 // newOIDCSessionRow creates an OIDC session directly in the store (as the
 // callback would) and returns its opaque token. accessExpiresAt controls when
 // the middleware must refresh.
-func newOIDCSessionRow(t *testing.T, svc *SessionService, accessExpiresAt time.Time, refreshToken string) string {
+func newOIDCSessionRow(t *testing.T, svc *session.Service, accessExpiresAt time.Time, refreshToken string) string {
 	t.Helper()
-	token, _, err := svc.Create("Wiebe", "oidc", &OIDCSessionData{
+	token, _, err := svc.Create("Wiebe", "oidc", &session.OIDCData{
 		Claims: auth.OIDCClaims{
 			Subject:   "sub-1",
 			SessionID: "sid-1",

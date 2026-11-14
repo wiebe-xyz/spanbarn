@@ -12,6 +12,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 var rangeTestBase = time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
@@ -36,7 +37,7 @@ func seedRangeRollups(t *testing.T, repo *repository.Repository, in5m, inHour bo
 	}
 }
 
-func readRange(t *testing.T, srv *Server, sm *SessionService, from, to time.Time, labels map[string]string) metricSeriesResponse {
+func readRange(t *testing.T, srv *Server, sm *session.Service, from, to time.Time, labels map[string]string) metricSeriesResponse {
 	t.Helper()
 	q := url.Values{"project_id": {"1"}, "name": {"g"}, "from": {from.Format(time.RFC3339)}, "to": {to.Format(time.RFC3339)}}
 	for k, v := range labels {

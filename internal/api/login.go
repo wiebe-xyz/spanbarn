@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 // loginConfig holds what the local login route needs beyond the session
@@ -45,7 +46,7 @@ type loginResponse struct {
 // accountLimiter (may be nil) throttles attempts per-username under the "login"
 // category, so a distributed brute-force spread across many source IPs is still
 // bounded per account — the per-IP RateLimitMiddleware only limits a single IP.
-func HandleLogin(userAuth *auth.UserAuthenticator, sessions *SessionService, accountLimiter *RateLimiter, onLoginSuccess func()) http.HandlerFunc {
+func HandleLogin(userAuth *auth.UserAuthenticator, sessions *session.Service, accountLimiter *RateLimiter, onLoginSuccess func()) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_, span := apiTracer.Start(r.Context(), "api.login")
 		defer span.End()
@@ -110,7 +111,7 @@ func HandleLogin(userAuth *auth.UserAuthenticator, sessions *SessionService, acc
 // the issuer's end-session URL with id_token_hint — that the SPA should
 // navigate to so the IamBarn session dies too (never a front-end-only
 // logout).
-func HandleLogout(sessions *SessionService) http.HandlerFunc {
+func HandleLogout(sessions *session.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")

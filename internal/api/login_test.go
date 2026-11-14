@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 // testUserLookup implements auth.UserLookup for testing.
@@ -23,7 +24,7 @@ func (m *testUserLookup) GetUserByUsername(username string) (auth.UserRecord, er
 	return auth.UserRecord{}, auth.ErrInvalidCredentials
 }
 
-func setupLoginTest(t *testing.T) (*auth.UserAuthenticator, *SessionService) {
+func setupLoginTest(t *testing.T) (*auth.UserAuthenticator, *session.Service) {
 	t.Helper()
 
 	hash, err := auth.HashPassword("correct-pass")
