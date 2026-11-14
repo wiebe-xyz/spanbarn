@@ -23,6 +23,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
+	"github.com/wiebe-xyz/spanbarn/internal/tracebuffer"
 )
 
 // runReaderMode accepts OTLP spans, serves the read-only dashboard API, and
@@ -101,7 +102,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 
 			sessions = newSessionService(roRepo, cfg, logger)
 			userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
-			querySvc = service.NewQueryService(roRepo, logger, ingest.NewCachedRatioLookup(roRepo, time.Minute))
+			querySvc = service.NewQueryService(roRepo, logger, tracebuffer.NewCachedRatioLookup(roRepo, time.Minute))
 			applySpanRollupReads(querySvc, cfg)
 
 			queryCache = newQueryCache(cfg, logger, false)
@@ -117,9 +118,9 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	serverCfg := serverConfigFrom(cfg)
 	// Trace buffer: holds spans for up to 10 min then applies ratio-based
 	// sampling per (project, operation). Error traces always pass intact.
-	var ratioLookup ingest.SampleRatioLookup
+	var ratioLookup tracebuffer.SampleRatioLookup
 	if roRepo != nil {
-		ratioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
+		ratioLookup = tracebuffer.NewCachedRatioLookup(roRepo, time.Minute)
 	}
 	traceBuffer := newTraceBuffer(cfg, ratioLookup, logger)
 	traceBuffer.SetLedger(ledger)

@@ -17,7 +17,6 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/api"
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/config"
-	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/queue"
 	"github.com/wiebe-xyz/spanbarn/internal/releasemark"
@@ -26,6 +25,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/spanledger"
+	"github.com/wiebe-xyz/spanbarn/internal/tracebuffer"
 	"github.com/wiebe-xyz/spanbarn/internal/worker"
 )
 
@@ -102,7 +102,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	userAuth := auth.NewUserAuthenticator(&userLookupAdapter{repo: repo}, logger)
 	sessions := newSessionService(repo, cfg, logger)
 
-	writerRatioLookup := ingest.NewCachedRatioLookup(queryRepo, time.Minute)
+	writerRatioLookup := tracebuffer.NewCachedRatioLookup(queryRepo, time.Minute)
 	querySvc := service.NewQueryService(queryRepo, logger, writerRatioLookup)
 	applySpanRollupReads(querySvc, cfg)
 	queryCache := newQueryCache(cfg, logger, false)

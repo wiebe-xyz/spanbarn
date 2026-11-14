@@ -62,7 +62,7 @@ type QueryRepository interface {
 
 // SampleRatioLookup returns the configured 1-in-N sampling ratio for a project.
 // A ratio of 1 means keep every span; 1000 means keep 1 in 1000.
-// Satisfied by *ingest.CachedRatioLookup and *ingest.StaticRatioLookup.
+// Satisfied by *tracebuffer.CachedRatioLookup and *tracebuffer.StaticRatioLookup.
 type SampleRatioLookup interface {
 	Ratio(ctx context.Context, projectID int64, operation string) int
 }

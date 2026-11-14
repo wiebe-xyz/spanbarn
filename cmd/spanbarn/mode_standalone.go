@@ -22,6 +22,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
+	"github.com/wiebe-xyz/spanbarn/internal/tracebuffer"
 	"github.com/wiebe-xyz/spanbarn/internal/worker"
 )
 
@@ -144,7 +145,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	spanCompactor := newSpanRollupCompactor(bgRepo, cfg, logger)
 	safeGo("span-rollup-compactor", &wg, func() { spanCompactor.Run(retentionCtx) })
 
-	ratioLookup := ingest.NewCachedRatioLookup(queryRepo, time.Minute)
+	ratioLookup := tracebuffer.NewCachedRatioLookup(queryRepo, time.Minute)
 
 	alertNotifier := alert.NewDefaultNotifier(alert.NotifierConfig{}, logger)
 	// Alert reads (ListAlerts/QueryAggregates/QueryMetricRollups, every interval)
@@ -179,7 +180,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	// Trace buffer: same tail-based sampling the reader applies. Without it,
 	// single-node installs silently ingest everything unsampled and every
 	// ingest.sample_ratio.* setting reads back fine while doing nothing.
-	standaloneBuffer := newTraceBuffer(cfg, ingest.NewCachedRatioLookup(queryRepo, time.Minute), logger)
+	standaloneBuffer := newTraceBuffer(cfg, tracebuffer.NewCachedRatioLookup(queryRepo, time.Minute), logger)
 	traceDrained := drainTraceBuffer(&wg, standaloneBuffer, ingestHandler)
 	// Mutations (trace exclusions, alerts CRUD) still use the write repo.
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessions, logger,
