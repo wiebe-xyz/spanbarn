@@ -106,7 +106,7 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 
 	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer)}
 	if roRepo != nil {
-		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache),
+		opts = append(opts, api.WithLogin(userAuth, cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache),
 			api.WithAdmission(newAdmission(roRepo, cfg, logger)))
 	}
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessions, logger, opts...)
@@ -119,9 +119,6 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	mux := http.NewServeMux()
-	if sessions != nil && userAuth != nil {
-		registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
-	}
 	mux.Handle("/", apiServer.Handler())
 
 	httpServer := newHTTPServer(cfg, mux)

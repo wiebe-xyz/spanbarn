@@ -72,6 +72,8 @@ type Server struct {
 	oidc           *auth.OIDCClient
 	selfMetrics    *selfmetrics.Recorder
 	e2eEnabled     bool
+	login          *loginConfig
+	authMux        *http.ServeMux
 }
 
 // SetSelfMetricsRecorder wires the self-metrics recorder so the request
@@ -249,6 +251,12 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 	h = requestIDMiddleware(h)
 	h = recoveryMiddleware(logger, h)
 	s.handler = h
+	if s.authMux != nil {
+		// Login and logout answer outside the middleware chain, as they did when
+		// the binary mounted them in front of this handler.
+		s.authMux.Handle("/", h)
+		s.handler = s.authMux
+	}
 
 	return s
 }

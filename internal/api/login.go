@@ -9,6 +9,23 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 )
 
+// loginConfig holds what the local login route needs beyond the session
+// service: the authenticator and the three per-minute rates of the login
+// limiter.
+type loginConfig struct {
+	userAuth                       *auth.UserAuthenticator
+	loginRate, ingestRate, apiRate int
+}
+
+// WithLogin enables the /api/v1/login and /api/v1/logout routes. The rates
+// size the limiter that guards login, per IP and per account. Without this
+// option, or without a session service, neither route is served.
+func WithLogin(userAuth *auth.UserAuthenticator, loginRate, ingestRate, apiRate int) ServerOption {
+	return func(s *Server) {
+		s.login = &loginConfig{userAuth: userAuth, loginRate: loginRate, ingestRate: ingestRate, apiRate: apiRate}
+	}
+}
+
 type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
