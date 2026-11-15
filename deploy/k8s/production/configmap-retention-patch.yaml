@@ -1,0 +1,10 @@
+# Production keeps raw logs 3 days (owner decision 2026-11-14, #296). The base
+# leaves SPANBARN_LOG_RETENTION_HOURS unset, so staging and testing keep the
+# 24 hour default. The writer reads it at start; the version patch rolls the
+# pods on every tag.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spanbarn-config
+data:
+  SPANBARN_LOG_RETENTION_HOURS: "72"
