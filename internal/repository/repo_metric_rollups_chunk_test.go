@@ -72,8 +72,8 @@ func TestUpsertMetricRollupsWarmsOnTheReadPoolFirst(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
 	store := openTestStorage(t, path)
 	ctx := context.Background()
-	repo := store.Repository()
-	ro, err := OpenReadDB(path, 2, 0)
+	repo := ForStorage(store)
+	ro, err := engine.OpenReadDB(path, 2, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -32,7 +32,7 @@ func setupCombinedTestDB(t *testing.T) *Repository {
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	return NewRepository(db.DB)
@@ -656,7 +656,7 @@ func TestNewReadOnlyDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
-	if err := Migrate(rw.DB); err != nil {
+	if err := engine.Migrate(rw.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	rw.Close()

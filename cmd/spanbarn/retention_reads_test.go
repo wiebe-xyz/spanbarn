@@ -8,6 +8,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/retention"
 )
 
@@ -22,12 +23,12 @@ import (
 func TestRetentionReadsLeaveTheWritersFree(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
-	store, err := repository.OpenStorage(ctx, path, repository.StorageOptions{CacheMB: 2, AttachCacheMB: 2})
+	store, err := engine.OpenStorage(ctx, path, engine.StorageOptions{CacheMB: 2, AttachCacheMB: 2})
 	if err != nil {
 		t.Fatalf("open storage: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	repo := store.Repository()
+	repo := repository.ForStorage(store)
 	if err := repo.SetSetting("retention_interesting_hours", "168"); err != nil {
 		t.Fatalf("SetSetting: %v", err)
 	}
@@ -35,7 +36,7 @@ func TestRetentionReadsLeaveTheWritersFree(t *testing.T) {
 		t.Fatalf("InsertLogs: %v", err)
 	}
 
-	ro, err := repository.OpenReadDB(path, 2, 0)
+	ro, err := engine.OpenReadDB(path, 2, 0)
 	if err != nil {
 		t.Fatalf("open read db: %v", err)
 	}

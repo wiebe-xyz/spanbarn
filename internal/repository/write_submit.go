@@ -39,7 +39,7 @@ func (r *Repository) execIngest(f engine.Family, rows int64, fn func(db *sql.DB)
 		return rows, nil
 	}
 	if r.shards.Sharded(f) {
-		return r.shards.submit(f, writeOpLabel(), rowsFn)
+		return r.shards.Submit(f, writeOpLabel(), rowsFn)
 	}
 	_, err := r.submitRows(f, writescheduler.Low, writeOpLabel(), rowsFn)
 	return err

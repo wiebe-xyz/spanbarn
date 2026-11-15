@@ -16,7 +16,7 @@ func spanLedgerRepo(t *testing.T) *Repository {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return NewRepository(db.DB)

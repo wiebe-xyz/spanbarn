@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // errorTraceGroupsMax caps how many error traces one grouping reads. The
@@ -202,7 +204,7 @@ func errorSpanQuery(n int, project, pinned bool) string {
 		return table
 	}
 	part := `SELECT trace_id, name, service FROM %s
-		WHERE trace_id IN (` + placeholderList(n) + `) AND ` + errorStatusSQL + cond
+		WHERE trace_id IN (` + placeholderList(n) + `) AND ` + engine.ErrorStatusSQL + cond
 	return fmt.Sprintf(part, from("spans", "idx_spans_error_trace")) + " UNION " +
 		fmt.Sprintf(part, from("error_samples", "idx_error_samples_error_trace"))
 }

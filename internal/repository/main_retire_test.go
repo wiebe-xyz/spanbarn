@@ -11,7 +11,7 @@ import (
 
 var heavyTables = []string{"logs", "metrics", "prompt_records"}
 
-func retiredTables(t *testing.T, store *Storage) int {
+func retiredTables(t *testing.T, store *engine.Storage) int {
 	t.Helper()
 	var n int
 	if err := store.Main.QueryRow(`SELECT count(*) FROM retired_tables`).Scan(&n); err != nil {
@@ -20,11 +20,11 @@ func retiredTables(t *testing.T, store *Storage) int {
 	return n
 }
 
-func mainHasTables(t *testing.T, store *Storage) map[string]bool {
+func mainHasTables(t *testing.T, store *engine.Storage) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
 	for _, table := range heavyTables {
-		has, err := hasTable(context.Background(), store.Main.DB, table)
+		has, err := engine.HasTable(context.Background(), store.Main.DB, table)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -36,7 +36,7 @@ func mainHasTables(t *testing.T, store *Storage) map[string]bool {
 func TestMainDropsEmptiedHeavyTables(t *testing.T) {
 	_, store, reader, rs, clock := shardedReadFixture(t)
 	ctx := context.Background()
-	repo := store.Repository()
+	repo := ForStorage(store)
 	expire := func() ShardExpiry {
 		t.Helper()
 		res, err := repo.ExpireShards(ctx, *clock, ShardCutoffs{})
@@ -75,7 +75,7 @@ func TestMainDropsEmptiedHeavyTables(t *testing.T) {
 	if n := countLogs(); n != 2 {
 		t.Fatalf("logs after retiring main's table: %d, want 2", n)
 	}
-	if p := rs.pool(engine.FamilyLogs); p.mainHas {
+	if p := rs.Pool(engine.FamilyLogs); p.MainHas {
 		t.Fatal("the logs pool still reads main's retiring table")
 	}
 
@@ -124,17 +124,17 @@ func TestMainRestoresHeavyTablesWithShardsOff(t *testing.T) {
 		}
 	}
 	for range 2 {
-		if _, err := store.Repository().ExpireShards(ctx, *clock, ShardCutoffs{}); err != nil {
+		if _, err := ForStorage(store).ExpireShards(ctx, *clock, ShardCutoffs{}); err != nil {
 			t.Fatal(err)
 		}
-		*clock = clock.Add(shardDeleteDelay)
+		*clock = clock.Add(engine.ShardDeleteDelay)
 	}
 	if mainHasTables(t, store)["logs"] {
 		t.Fatal("main kept its logs table")
 	}
 	store.Close()
 
-	plain, err := OpenStorage(ctx, path, testStorageOptions)
+	plain, err := engine.OpenStorage(ctx, path, testStorageOptions)
 	if err != nil {
 		t.Fatalf("open without shards: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestMainRestoresHeavyTablesWithShardsOff(t *testing.T) {
 			t.Errorf("main has no %s with shards off", table)
 		}
 	}
-	if err := plain.Repository().InsertLogs(ctx, []model.LogRecord{makeLogRecord(1, "trace-y", "log", 9)}); err != nil {
+	if err := ForStorage(plain).InsertLogs(ctx, []model.LogRecord{makeLogRecord(1, "trace-y", "log", 9)}); err != nil {
 		t.Fatalf("insert with shards off: %v", err)
 	}
 }

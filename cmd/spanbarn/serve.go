@@ -175,8 +175,8 @@ func applyQueryTimeout(repo *repository.Repository, cfg config.Config) {
 
 // openWriteRepo opens the write handles (one single-connection handle per
 // file), runs migrations and returns the repository on top of them.
-func openWriteRepo(cfg config.Config, logger *slog.Logger) (*repository.Storage, *repository.Repository, error) {
-	store, err := repository.OpenStorage(context.Background(), cfg.DBPath, repository.StorageOptions{
+func openWriteRepo(cfg config.Config, logger *slog.Logger) (*engine.Storage, *repository.Repository, error) {
+	store, err := engine.OpenStorage(context.Background(), cfg.DBPath, engine.StorageOptions{
 		CacheMB:       cfg.SQLiteCacheMB,
 		MmapMB:        cfg.SQLiteMmapMB,
 		AttachCacheMB: cfg.SQLiteROCacheMB,
@@ -192,18 +192,18 @@ func openWriteRepo(cfg config.Config, logger *slog.Logger) (*repository.Storage,
 		return nil, nil, fmt.Errorf("open database: %w", err)
 	}
 	logger.Info("storage", "path", cfg.DBPath, "spans_file", store.Split())
-	repo := store.Repository()
+	repo := repository.ForStorage(store)
 	applyQueryTimeout(repo, cfg)
 	return store, repo, nil
 }
 
 // shardRetention returns the retention window of each family the writer
 // shards, or nil when SPANBARN_SHARDS is off.
-func shardRetention(cfg config.Config) repository.ShardRetention {
+func shardRetention(cfg config.Config) engine.ShardRetention {
 	if !cfg.Shards {
 		return nil
 	}
-	return repository.ShardRetention{
+	return engine.ShardRetention{
 		engine.FamilyLogs:    time.Duration(cfg.Retention.LogHours) * time.Hour,
 		engine.FamilyMetrics: time.Duration(cfg.Retention.MetricsDays) * 24 * time.Hour,
 		engine.FamilyPrompts: time.Duration(cfg.Retention.PromptDays) * 24 * time.Hour,
@@ -220,7 +220,7 @@ const checkpointInterval = 30 * time.Second
 // every loop on the same tick their fsyncs queue behind each other: 61% of the
 // production writer's slow writes over 30 hours on 2026-10-29 and 10-30 started
 // in the same 3s of the 30s period, whatever their op or row count (#431, #370).
-func startCheckpoints(ctx context.Context, wg *sync.WaitGroup, store *repository.Storage, logger *slog.Logger) {
+func startCheckpoints(ctx context.Context, wg *sync.WaitGroup, store *engine.Storage, logger *slog.Logger) {
 	handles := store.Handles()
 	loops := len(handles)
 	if store.Shards != nil {
@@ -266,7 +266,7 @@ func waitOffset(ctx context.Context, offset time.Duration) bool {
 
 // startWriteSchedulers gives every file of store its own write scheduler:
 // writes to different files do not wait on each other.
-func startWriteSchedulers(ctx context.Context, wg *sync.WaitGroup, store *repository.Storage, repo *repository.Repository, logger *slog.Logger) {
+func startWriteSchedulers(ctx context.Context, wg *sync.WaitGroup, store *engine.Storage, repo *repository.Repository, logger *slog.Logger) {
 	main := writescheduler.New()
 	main.SetLogger(logger)
 	repo.SetWriteScheduler(main)
@@ -289,7 +289,7 @@ func startWriteSchedulers(ctx context.Context, wg *sync.WaitGroup, store *reposi
 
 // openReadDB opens the read-only handle dashboard reads use.
 func openReadDB(cfg config.Config) (*engine.DB, error) {
-	return repository.OpenReadDB(cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
+	return engine.OpenReadDB(cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB)
 }
 
 // openQueryRepo opens the read-only DB used for dashboard reads.
@@ -307,8 +307,8 @@ func openQueryRepo(cfg config.Config) (*engine.DB, *repository.Repository, error
 // from the shards table so new shards show up within the interval. A family
 // without shards keeps reading through db. Close the result after the
 // goroutines in wg have stopped.
-func startShardReaders(ctx context.Context, wg *sync.WaitGroup, cfg config.Config, db *engine.DB, repo *repository.Repository, logger *slog.Logger) *repository.ShardReaders {
-	rs := repository.NewShardReaders(db.DB, cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB, logger)
+func startShardReaders(ctx context.Context, wg *sync.WaitGroup, cfg config.Config, db *engine.DB, repo *repository.Repository, logger *slog.Logger) *engine.ShardReaders {
+	rs := engine.NewShardReaders(db.DB, cfg.DBPath, cfg.SQLiteROCacheMB, cfg.SQLiteROMmapMB, logger)
 	repo.SetShardReaders(rs)
 	safeGo("shard-readers", wg, func() { rs.Run(ctx, 30*time.Second) })
 	return rs

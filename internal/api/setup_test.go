@@ -13,6 +13,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // TestHandleSetupRejectsOtherMethods: only GET (read) and POST (create) are
@@ -218,7 +219,7 @@ func TestMigrationRevokesTheProbeSetupKey(t *testing.T) {
 	if _, err := repo.DB().ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id >= 45`); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.MigrateSingleFile(ctx, repo.DB()); err != nil {
+	if err := engine.MigrateSingleFile(ctx, repo.DB()); err != nil {
 		t.Fatal(err)
 	}
 	if keys, _ := repo.ListAPIKeys(probe.ID); len(keys) != 0 {

@@ -316,7 +316,7 @@ func (r *Repository) deleteProjectLogsFromShards(ctx context.Context, projectID 
 	if m == nil || !m.Sharded(engine.FamilyLogs) {
 		return 0, nil
 	}
-	rows, err := m.rows(ctx)
+	rows, err := m.Rows(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -327,7 +327,7 @@ func (r *Repository) deleteProjectLogsFromShards(ctx context.Context, projectID 
 	var total int64
 	for _, row := range rows {
 		// A shard that starts after the cutoff holds nothing older than it.
-		if row.family != engine.FamilyLogs || row.start.After(cutoff) {
+		if row.Family != engine.FamilyLogs || row.Start.After(cutoff) {
 			continue
 		}
 		for {
@@ -335,7 +335,7 @@ func (r *Repository) deleteProjectLogsFromShards(ctx context.Context, projectID 
 				return total, err
 			}
 			var n int64
-			if err := m.onShard(row.family, row.start, "projectLogCap", func(db *sql.DB) error {
+			if err := m.OnShard(row.Family, row.Start, "projectLogCap", func(db *sql.DB) error {
 				res, e := db.ExecContext(ctx, `
 					DELETE FROM logs WHERE rowid IN (
 					    SELECT rowid FROM logs

@@ -117,8 +117,8 @@ func TestDeleteErrorSamplesWalksPastProtectedWindows(t *testing.T) {
 			repo := setupTestDB(t)
 			if readPool {
 				path := filepath.Join(t.TempDir(), "spanbarn.db")
-				repo = openTestStorage(t, path).Repository()
-				ro, err := OpenReadDB(path, 2, 0)
+				repo = ForStorage(openTestStorage(t, path))
+				ro, err := engine.OpenReadDB(path, 2, 0)
 				if err != nil {
 					t.Fatalf("open read db: %v", err)
 				}

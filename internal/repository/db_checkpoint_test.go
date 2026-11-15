@@ -26,7 +26,7 @@ func TestCheckpoint(t *testing.T) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	repo := NewRepository(db.DB)
@@ -73,7 +73,7 @@ func TestCheckpointFrameCount(t *testing.T) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	repo := NewRepository(db.DB)
@@ -104,7 +104,7 @@ func TestCheckpointDoesNotWaitForReader(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 	ctx := context.Background()
-	if err := MigrateSingleFile(ctx, db.DB); err != nil {
+	if err := engine.MigrateSingleFile(ctx, db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	repo := NewRepository(db.DB)
@@ -175,7 +175,7 @@ func TestBackfillLeavesTheWriterFree(t *testing.T) {
 	}
 	t.Cleanup(func() { db.Close() })
 	ctx := context.Background()
-	if err := MigrateSingleFile(ctx, db.DB); err != nil {
+	if err := engine.MigrateSingleFile(ctx, db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	repo := NewRepository(db.DB)
@@ -222,7 +222,7 @@ func TestPeriodicCheckpointBoundsTheWALUnderAScanningReader(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
-	if err := MigrateSingleFile(ctx, db.DB); err != nil {
+	if err := engine.MigrateSingleFile(ctx, db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	repo := NewRepository(db.DB)

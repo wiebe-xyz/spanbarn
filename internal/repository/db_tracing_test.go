@@ -56,7 +56,7 @@ func TestMigrateShardEmitsNoSpans(t *testing.T) {
 	defer h.Close()
 	before := len(sqliteSpanNames(spanNames()))
 
-	if err := MigrateShard(context.Background(), h.DB, engine.FamilyLogs); err != nil {
+	if err := engine.MigrateShard(context.Background(), h.DB, engine.FamilyLogs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -142,6 +142,6 @@ func TestReadsAreStillTraced(t *testing.T) {
 	}
 
 	if got := sqliteSpanNames(spanNames()); len(got) == 0 {
-		t.Fatal("no sqlite spans recorded for reads — suppression is too broad, DB observability is lost")
+		t.Fatal("no sqlite spans recorded for reads — suppression is too broad, engine.DB observability is lost")
 	}
 }

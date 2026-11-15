@@ -26,7 +26,7 @@ func setupMetricsQueryServer(t *testing.T) (*Server, *session.Service, *reposito
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if err := repository.MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 

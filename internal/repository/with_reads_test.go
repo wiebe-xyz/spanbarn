@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -21,12 +22,12 @@ func TestWithReadsLeavesTheWriterFreeWhileAReadIsOpen(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	repo := store.Repository()
+	repo := ForStorage(store)
 	s := writescheduler.New()
 	repo.SetWriteScheduler(s)
 	go s.Run(ctx)
 
-	ro, err := OpenReadDB(path, 2, 0)
+	ro, err := engine.OpenReadDB(path, 2, 0)
 	if err != nil {
 		t.Fatalf("open read db: %v", err)
 	}

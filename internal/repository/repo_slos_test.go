@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pressly/goose/v3"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func sloFixture(t *testing.T) (*Repository, int64, int64) {
@@ -248,7 +249,7 @@ func TestSLOMigrationDownReverses(t *testing.T) {
 	if n := sloTableCount(t, repo); n != 0 {
 		t.Fatalf("tables after down = %d", n)
 	}
-	if err := Migrate(repo.db); err != nil {
+	if err := engine.Migrate(repo.db); err != nil {
 		t.Fatalf("up again: %v", err)
 	}
 	if n := sloTableCount(t, repo); n != 3 {

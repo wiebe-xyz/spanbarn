@@ -52,7 +52,7 @@ func buildCombinedTemplate() ([]byte, error) {
 		return nil, err
 	}
 	defer db.Close()
-	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	var buf []byte

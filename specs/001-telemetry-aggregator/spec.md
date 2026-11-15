@@ -218,7 +218,7 @@ Each requirement names the issue that asked for it and the test that proves it. 
 
 | Claim | Source | Tree |
 |---|---|---|
-| Litestream integration backs SQLite up to S3 (US-9). | Original spec, [#19](https://github.com/wiebe-xyz/spanbarn/issues/19) | No Go code uses Litestream. Disaster recovery is an hourly settings-only snapshot (`spanbarn db snapshot-settings`, `internal/repository/dr.go`). `deploy/docs/disaster-recovery.md` says so. |
+| Litestream integration backs SQLite up to S3 (US-9). | Original spec, [#19](https://github.com/wiebe-xyz/spanbarn/issues/19) | No Go code uses Litestream. Disaster recovery is an hourly settings-only snapshot (`spanbarn db snapshot-settings`, `internal/repository/engine/dr.go`). `deploy/docs/disaster-recovery.md` says so. |
 | Full spans are kept for 72 hours by default. | Original spec, US-4 | `SPANBARN_RETENTION_FULL_HOURS` defaults to 0; interesting spans are kept 48 hours and boring spans 30 minutes (`internal/config/config.go`). |
 | Errors are kept for `RETENTION_ERROR_DAYS`. | Original spec, US-4 | The variable is `SPANBARN_RETENTION_ERROR_DAYS` and defaults to 90; an error exemplar per operation lives `SPANBARN_RETENTION_ERROR_EXEMPLAR_DAYS` (30). |
 | Session tokens are HMAC-signed. | Original spec, US-10 | Sessions are opaque cookies backed by a `web_sessions` row (`internal/repository/repo_sessions_test.go`); CLAUDE.md says the same. |

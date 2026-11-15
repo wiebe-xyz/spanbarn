@@ -86,7 +86,7 @@ func (r *Repository) QueryPromptRecords(f PromptFilter) ([]PromptRecord, error) 
 	if limit <= 0 {
 		limit = 100
 	}
-	if p := r.shardReaders.pool(engine.FamilyPrompts); p != nil {
+	if p := r.shardReaders.Pool(engine.FamilyPrompts); p != nil {
 		return r.promptRecordsBySegment(p, query, args, limit, f.Offset)
 	}
 	q := query("prompt_records") + fmt.Sprintf(" LIMIT %d", limit)
@@ -123,11 +123,11 @@ func (f PromptFilter) where() ([]string, []any) {
 // row of every shard, bodies included. Instead each shard, and main, returns
 // its own newest offset+limit rows along its ingested_at index, and the
 // segments are merged here.
-func (r *Repository) promptRecordsBySegment(p *familyPool, query func(table string) string, args []any, limit, offset int) ([]PromptRecord, error) {
+func (r *Repository) promptRecordsBySegment(p *engine.FamilyPool, query func(table string) string, args []any, limit, offset int) ([]PromptRecord, error) {
 	need := limit + offset
 	var all []PromptRecord
-	for _, schema := range p.segments {
-		recs, err := r.scanPromptRecords(p.db.DB, query(schema+".prompt_records")+fmt.Sprintf(" LIMIT %d", need), args...)
+	for _, schema := range p.Segments {
+		recs, err := r.scanPromptRecords(p.DB.DB, query(schema+".prompt_records")+fmt.Sprintf(" LIMIT %d", need), args...)
 		if err != nil {
 			return nil, err
 		}

@@ -27,9 +27,9 @@ func TestLogTrimReadsTheWindowBeforeItTakesTheWriter(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
 	store := openTestStorage(t, path)
 	ctx := context.Background()
-	repo := store.Repository()
+	repo := ForStorage(store)
 
-	ro, err := OpenReadDB(path, 2, 0)
+	ro, err := engine.OpenReadDB(path, 2, 0)
 	if err != nil {
 		t.Fatalf("open read db: %v", err)
 	}
