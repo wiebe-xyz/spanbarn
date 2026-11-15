@@ -65,3 +65,4 @@ var/
 docker-compose.override.yml
 
 .tools/
+!web/vendor/*.tgz

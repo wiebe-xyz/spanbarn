@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, type ReactElement } from 'react'
 import { CheckCircle, XCircle, ExternalLink, Zap, HardDrive, MemoryStick } from 'lucide-react'
 import { fetchJSON } from '../api/client'
+import { trackConversion } from '../funnelbarn'
 import { ProjectAPIKeys } from '../components/ProjectAPIKeys'
 import { SetupGuideNotice, type SetupResult } from '../components/SetupGuideNotice'
 
@@ -611,6 +612,7 @@ export function SettingsPage(): ReactElement {
     try {
       const res = await fetch(`/api/v1/setup/${encodeURIComponent(slug)}`, { method: 'POST', credentials: 'same-origin' })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (res.status === 201) trackConversion('project_created', { slug })
       setSetupResult({ slug, created: res.status === 201, guide: await res.text() })
       setSetupSlug('')
       await fetchProjects()
