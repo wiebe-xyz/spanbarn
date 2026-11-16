@@ -76,13 +76,14 @@ type RetentionConfig struct {
 // ClientID, ClientSecret and RedirectURL are all set, OIDC login is offered
 // alongside local auth.
 type OIDCConfig struct {
-	Issuer            string   // SPANBARN_OIDC_ISSUER
-	ClientID          string   // SPANBARN_OIDC_CLIENT_ID
-	ClientSecret      string   // SPANBARN_OIDC_CLIENT_SECRET
-	RedirectURL       string   // SPANBARN_OIDC_REDIRECT_URL
-	OrganizationID    string   // SPANBARN_OIDC_ORGANIZATION_ID — unset refuses every OIDC sign-in
-	ResourceAudiences []string // SPANBARN_OIDC_RESOURCE_AUDIENCES — CSV of audiences accepted on IamBarn access tokens (sb CLI)
-	CLIClientID       string   // SPANBARN_OIDC_CLI_CLIENT_ID — public IamBarn client the sb device-code flow uses
+	Issuer               string   // SPANBARN_OIDC_ISSUER
+	ClientID             string   // SPANBARN_OIDC_CLIENT_ID
+	ClientSecret         string   // SPANBARN_OIDC_CLIENT_SECRET
+	RedirectURL          string   // SPANBARN_OIDC_REDIRECT_URL
+	OrganizationID       string   // SPANBARN_OIDC_ORGANIZATION_ID — unset refuses every OIDC sign-in
+	ExtraOrganizationIDs string   // SPANBARN_OIDC_EXTRA_ORGANIZATION_IDS — more organization ids, comma separated (the e2e organization)
+	ResourceAudiences    []string // SPANBARN_OIDC_RESOURCE_AUDIENCES — CSV of audiences accepted on IamBarn access tokens (sb CLI)
+	CLIClientID          string   // SPANBARN_OIDC_CLI_CLIENT_ID — public IamBarn client the sb device-code flow uses
 	// PostLogoutRedirectURI is where IamBarn sends the browser back after an
 	// RP-initiated /oauth2/end-session logout. It must be registered on the
 	// client's post-logout allowlist. SPANBARN_OIDC_POST_LOGOUT_REDIRECT_URI;
@@ -93,6 +94,18 @@ type OIDCConfig struct {
 	// (network error / 5xx). invalid_grant never gets grace — it kills the
 	// session immediately. SPANBARN_OIDC_REFRESH_GRACE_SECONDS, default 3600.
 	RefreshGraceSeconds int
+}
+
+// AllowedOrganizations is the comma separated list of organizations that may
+// sign in: the owner's organization plus the extra ones. Empty when neither is set.
+func (o OIDCConfig) AllowedOrganizations() string {
+	var ids []string
+	for _, v := range []string{o.OrganizationID, o.ExtraOrganizationIDs} {
+		if v = strings.TrimSpace(v); v != "" {
+			ids = append(ids, v)
+		}
+	}
+	return strings.Join(ids, ",")
 }
 
 // SelfConfig groups self-instrumentation (SpanBarn reporting to itself/BugBarn).
@@ -350,6 +363,7 @@ func Load() Config {
 			ClientSecret:          os.Getenv("SPANBARN_OIDC_CLIENT_SECRET"),
 			RedirectURL:           os.Getenv("SPANBARN_OIDC_REDIRECT_URL"),
 			OrganizationID:        os.Getenv("SPANBARN_OIDC_ORGANIZATION_ID"),
+			ExtraOrganizationIDs:  os.Getenv("SPANBARN_OIDC_EXTRA_ORGANIZATION_IDS"),
 			CLIClientID:           os.Getenv("SPANBARN_OIDC_CLI_CLIENT_ID"),
 			PostLogoutRedirectURI: os.Getenv("SPANBARN_OIDC_POST_LOGOUT_REDIRECT_URI"),
 			RefreshGraceSeconds:   getenvInt("SPANBARN_OIDC_REFRESH_GRACE_SECONDS", 3600),

@@ -35,6 +35,7 @@ patches:
   - path: patch-resources-ingest.yaml
   - path: configmap-retention-patch.yaml
   - path: configmap-brandtrace-patch.yaml
+  - path: configmap-oidc-patch.yaml
 
 # Image tags are injected by the deploy workflow (sed-replaces __SHA__).
 # This avoids the ":latest" tag being applied — that tag isn't published.
