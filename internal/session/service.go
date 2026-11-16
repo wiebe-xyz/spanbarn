@@ -333,16 +333,15 @@ func (s *Service) performRefresh(ctx context.Context, cur service.WebSession) (a
 	if accessExp.IsZero() {
 		accessExp = s.now().Add(accessTokenFallbackTTL)
 	}
+	if !refreshAllowed(oc, cur, refreshed) {
+		s.logger.Info("session: claims no longer authorized, revoking session",
+			"user", cur.Username, "sub", cur.IdpSub)
+		_ = s.store.DeleteWebSession(cur.IDHash)
+		return nil, ErrInvalid
+	}
 	var idToken, claimsJSON string
 	if refreshed.Claims != nil {
-		// Fresh claims snapshot: central group/role changes propagate here.
-		// A user dropped from the required group loses the session outright.
-		if !oc.Allowed(*refreshed.Claims) {
-			s.logger.Info("session: refreshed claims no longer authorized, revoking session",
-				"user", cur.Username, "sub", cur.IdpSub)
-			_ = s.store.DeleteWebSession(cur.IDHash)
-			return nil, ErrInvalid
-		}
+		// Fresh claims snapshot: central role changes propagate here.
 		if b, merr := json.Marshal(refreshed.Claims); merr == nil {
 			claimsJSON = string(b)
 		}
@@ -367,6 +366,21 @@ func (s *Service) performRefresh(ctx context.Context, cur service.WebSession) (a
 	cur.LastRefreshAt = now.Unix()
 	cur.RefreshFailingSince = 0
 	return cur, nil
+}
+
+// refreshAllowed runs the access check on a refresh. IamBarn's refresh response
+// carries no id_token, so most refreshes check the snapshot stored at sign-in. A
+// snapshot from before a policy change does not pass, and that session signs in
+// again.
+func refreshAllowed(oc *auth.OIDCClient, cur service.WebSession, refreshed auth.RefreshedTokens) bool {
+	if refreshed.Claims != nil {
+		return oc.Allowed(*refreshed.Claims)
+	}
+	var snapshot auth.OIDCClaims
+	if err := json.Unmarshal([]byte(cur.ClaimsJSON), &snapshot); err != nil {
+		return false
+	}
+	return oc.Allowed(snapshot)
 }
 
 // markRefreshFailing stamps the first-failure time (if not already set) and

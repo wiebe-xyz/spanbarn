@@ -44,7 +44,7 @@ func newTestOIDC(t *testing.T, audiences ...string) (*auth.OIDCClient, func(map[
 		}}})
 	})
 
-	oc := auth.NewOIDCClient(auth.OIDCConfig{Issuer: issuer, ClientID: "spanbarn-web", ResourceAudiences: audiences})
+	oc := auth.NewOIDCClient(auth.OIDCConfig{Issuer: issuer, ClientID: "spanbarn-web", RequiredOrganizationID: testOrgHome, ResourceAudiences: audiences})
 
 	sign := func(claims map[string]any) string {
 		signer, err := jose.NewSigner(
@@ -80,7 +80,7 @@ func TestSessionOrReadKey_IamBarnJWT(t *testing.T) {
 			"iss": issuer, "sub": "u1", "aud": []string{"spanbarn-cli"},
 			"exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
 			"token_use": "access_token", "roles": []string{"operator"},
-			"preferred_username": "wiebe",
+			"preferred_username": "wiebe", "organization_id": testOrgHome,
 		}
 	}
 
