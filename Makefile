@@ -24,7 +24,7 @@ help:
 		'  quality-gate enforce coverage/complexity/file-length/duplication baselines' \
 		'  quality-gate-update  refresh the count baselines in scripts/quality-thresholds.conf' \
 		'  quality-gate-test    run the gate scripts own tests' \
-		'  secret-scan          scan git history for secrets (gitleaks, report-only until 2026-10-31)' \
+		'  secret-scan          scan git history for secrets (gitleaks, blocking)' \
 		'  build        run available build checks' \
 		'  dev          start the local compose stack if available' \
 		'  docker-build build placeholder images when Dockerfiles exist' \
@@ -169,7 +169,7 @@ quality-gate-test:
 	go test ./scripts/...
 
 secret-scan:
-	@bash scripts/secret-scan.sh history
+	@SECRET_SCAN_MODE=enforce SECRET_SCAN_MIN_COMMITS=350 bash scripts/secret-scan.sh history
 
 build:
 	@set -eu; \
