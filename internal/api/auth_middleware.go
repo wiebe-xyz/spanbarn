@@ -88,6 +88,7 @@ func APIKeyMiddleware(authorizer *auth.Authorizer) func(http.Handler) http.Handl
 				return
 			}
 
+			recordCaller(r, authKindAPIKey, "")
 			ctx := SetProjectID(r.Context(), projectID)
 			ctx = SetScope(ctx, scope)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -139,6 +140,7 @@ func SessionOrReadKey(sessions *session.Service, authorizer *auth.Authorizer, oi
 							writeError(w, http.StatusForbidden, "token is read-only", "")
 							return
 						}
+						recordCaller(r, authKindCLIToken, claims.OrganizationID)
 						ctx := SetUsername(r.Context(), claims.PreferredName())
 						next.ServeHTTP(w, r.WithContext(ctx))
 						return
@@ -173,6 +175,7 @@ func serveAPIKey(w http.ResponseWriter, r *http.Request, next http.Handler, auth
 	// per-project key) overrides any client-supplied project_id so a key cannot
 	// read another project's data. The static/full key has project ID 0 (all
 	// projects); leave the query param untouched so it can target a project.
+	recordCaller(r, authKindAPIKey, "")
 	ctx := SetScope(r.Context(), scope)
 	if projectID != 0 {
 		ctx = SetProjectID(ctx, projectID)
@@ -221,6 +224,7 @@ func SessionMiddleware(sessions *session.Service) func(http.Handler) http.Handle
 				w.Header().Set("X-Session-Refresh-Due", "1")
 			}
 
+			recordCaller(r, sessionAuthKind(res.Session.AuthMethod), sessionOrganization(res.Session.ClaimsJSON))
 			ctx := SetUsername(r.Context(), res.Session.Username)
 			ctx = SetWebSession(ctx, res.Session)
 			next.ServeHTTP(w, r.WithContext(ctx))

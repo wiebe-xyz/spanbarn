@@ -39,12 +39,14 @@ func getRequestID(r *http.Request) string {
 }
 
 // loggingMiddleware logs every request with method, path, status, duration, and
-// request ID, and hands each finished request to record.
+// request ID, and hands each finished request to record. An authenticated request
+// also logs how it authenticated and its organization.
 func loggingMiddleware(logger *slog.Logger, record func(r *http.Request, status int, elapsed time.Duration), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(sw, r)
+		ctx, caller := withCaller(r.Context())
+		next.ServeHTTP(sw, r.WithContext(ctx))
 		elapsed := time.Since(start)
 		record(r, sw.status, elapsed)
 		attrs := []any{
@@ -55,6 +57,12 @@ func loggingMiddleware(logger *slog.Logger, record func(r *http.Request, status 
 		}
 		if id := getRequestID(r); id != "" {
 			attrs = append(attrs, "request_id", id)
+		}
+		if caller.kind != "" {
+			attrs = append(attrs, "auth_kind", caller.kind)
+			if caller.org != "" {
+				attrs = append(attrs, "org_id", caller.org)
+			}
 		}
 		logger.Info("http", attrs...)
 	})
