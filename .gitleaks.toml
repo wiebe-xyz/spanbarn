@@ -4,12 +4,27 @@
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "SOPS/age-encrypted secret stores (ciphertext, not plaintext credentials)"
 paths = [
   '''deploy/k8s/[a-z]+/secret\.yaml$''',
   '''deploy/ci-secrets\.yaml$''',
   '''deploy/k8s/testing/e2e-credentials\.secret\.yaml$''',
+]
+
+# Test fixtures from two commits, each with a made-up key used against an in-memory
+# store or a temp file. Both the commit and the file must match, so the same file
+# is scanned again in every later commit and a real secret added there is found.
+[[allowlists]]
+description = "Made-up keys in two test fixtures (triaged 2026-11-16)"
+condition = "AND"
+commits = [
+  "44ddc69527b036182ae66c8f9658868b28a5f826",
+  "ccf9c5db276c54d0f101891917832e9462ff9805",
+]
+paths = [
+  '''internal/api/rejected_auth_test\.go$''',
+  '''scripts/test_drop_secret_keys\.py$''',
 ]
 
 # The bundled rules match token shapes. Credentials written into documentation as
