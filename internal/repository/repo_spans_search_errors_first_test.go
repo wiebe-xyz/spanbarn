@@ -6,13 +6,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // seedMixedSummaries stores 120 summaries over two projects, every fifth with
 // an error, ingested a minute apart, so error and other rows interleave.
 func seedMixedSummaries(t *testing.T, repo *Repository, base time.Time) {
 	t.Helper()
-	if err := repo.execLow(FamilySpans, func(db *sql.DB) error {
+	if err := repo.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		for i := 0; i < 120; i++ {
 			if _, err := db.Exec(`INSERT INTO trace_summaries (project_id, trace_id, ingested_at, has_error, root_service)
 				VALUES (?, ?, ?, ?, ?)`, 1+i%2, fmt.Sprintf("t%03d", i), base.Add(time.Duration(i)*time.Minute), i%5 == 0, "svc"); err != nil {
