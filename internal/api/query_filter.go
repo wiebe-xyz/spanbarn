@@ -18,7 +18,7 @@ func parseFilterParam(w http.ResponseWriter, r *http.Request) (*filter.Expr, boo
 		writeError(w, http.StatusBadRequest, "invalid filter", err.Error())
 		return nil, false
 	}
-	return expr, true
+	return withEnvironment(w, r, expr)
 }
 
 // writeFilterQueryError maps a filter validation error to 400 and anything else

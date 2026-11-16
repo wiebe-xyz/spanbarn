@@ -357,6 +357,7 @@ func runAPIKeyList(cfg config.Config, args []string) error {
 		scope     string
 		lastUsed  string
 		created   string
+		env       string
 	}
 	var keys []keyInfo
 
@@ -374,7 +375,7 @@ func runAPIKeyList(cfg config.Config, args []string) error {
 			if k.LastUsedAt.Valid {
 				lastUsed = k.LastUsedAt.Time.Format(time.RFC3339)
 			}
-			keys = append(keys, keyInfo{k.ID, k.ProjectID, k.Name, k.Scope, lastUsed, k.CreatedAt.Format(time.RFC3339)})
+			keys = append(keys, keyInfo{k.ID, k.ProjectID, k.Name, k.Scope, lastUsed, k.CreatedAt.Format(time.RFC3339), displayEnvironment(k.Environment)})
 		}
 	} else {
 		apiKeys, listErr := service.NewProjectService(repo).AllAPIKeys()
@@ -386,11 +387,11 @@ func runAPIKeyList(cfg config.Config, args []string) error {
 			if k.LastUsedAt.Valid {
 				lastUsed = k.LastUsedAt.Time.Format(time.RFC3339)
 			}
-			keys = append(keys, keyInfo{k.ID, k.ProjectID, k.Name, k.Scope, lastUsed, k.CreatedAt.Format(time.RFC3339)})
+			keys = append(keys, keyInfo{k.ID, k.ProjectID, k.Name, k.Scope, lastUsed, k.CreatedAt.Format(time.RFC3339), displayEnvironment(k.Environment)})
 		}
 	}
 
-	headers := []string{"ID", "Project", "Name", "Scope", "Last Used", "Created"}
+	headers := []string{"ID", "Project", "Name", "Scope", "Last Used", "Created", "Environment"}
 	tableRows := make([][]string, len(keys))
 	for i, k := range keys {
 		projSlug := projectSlugs[k.projectID]
@@ -404,10 +405,20 @@ func runAPIKeyList(cfg config.Config, args []string) error {
 			k.scope,
 			k.lastUsed,
 			k.created,
+			k.env,
 		}
 	}
 	printTable(headers, tableRows)
 	return nil
+}
+
+// displayEnvironment shows "-" for a key that stamps no environment, so the
+// column keeps a value for tools that split the table on whitespace.
+func displayEnvironment(env string) string {
+	if env == "" {
+		return "-"
+	}
+	return env
 }
 
 func runAPIKeyRevoke(cfg config.Config, args []string) error {

@@ -1,4 +1,5 @@
 import type {
+  EnvironmentSummary,
   ServiceSummary,
   OperationSummary,
   VersionSummary,
@@ -48,6 +49,7 @@ import type {
   LogsParams,
 } from './types'
 import type { FilterExpr } from '../filters/model'
+import { withEnvironment } from '../environment'
 import type {
   DashboardFilter,
   DashboardCounts,
@@ -147,9 +149,10 @@ export async function fetchJSON<T>(
   onHeaders?: (headers: Headers) => void,
 ): Promise<T> {
   const isRead = !init?.method || init.method.toUpperCase() === 'GET'
+  const target = isRead ? withEnvironment(url) : url
   for (let attempt = 0; ; attempt++) {
     try {
-      return await fetchJSONOnce<T>(url, init, onHeaders)
+      return await fetchJSONOnce<T>(target, init, onHeaders)
     } catch (err) {
       if (!isRead || !isQueryTimeout(err) || attempt >= QUERY_TIMEOUT_RETRIES || init?.signal?.aborted) {
         throw err
@@ -302,6 +305,9 @@ export const api = {
 
   getServices: (from: string, to: string, serverOnly = true) =>
     fetchJSON<ServiceSummary[]>(`/api/v1/services${qs({ from, to, server_only: serverOnly ? 'true' : undefined })}`),
+
+  getEnvironments: (from: string, to: string) =>
+    fetchJSON<EnvironmentSummary[]>(`/api/v1/environments${qs({ from, to })}`),
 
   getServiceVersions: (service: string, from: string, to: string) =>
     fetchJSON<VersionSummary[]>(

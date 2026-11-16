@@ -234,6 +234,7 @@ func (s *Server) registerTraceQueryRoutes(env *routeEnv) {
 	s.mux.Handle("/api/v1/attributes", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAttributes)))))
 	s.mux.Handle("/api/v1/attributes/compare", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAttributeCompare)))))
 	s.mux.Handle("/api/v1/heatmap", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleHeatmap)))))
+	s.mux.Handle("/api/v1/environments", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleEnvironments)))))
 	s.mux.Handle("/api/v1/analyze", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAnalyze)))))
 	s.mux.Handle("/api/v1/analyze/series", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleAnalyzeSeries)))))
 	s.mux.Handle("/api/v1/dependencies", apiRL(readAuth(cache60(http.HandlerFunc(qh.handleDependencies)))))
