@@ -101,23 +101,21 @@ func TestShardCloseRetriesFinalCheckpoint(t *testing.T) {
 // names the cause and where the time went.
 func TestShardCloseFinalCheckpointFailsAfterRetry(t *testing.T) {
 	store, _, log, _ := heldEndedShard(t)
-	retries := 0
-	store.Shards.beforeCheckpointRetry = func() { retries++ }
 
 	if err := store.Shards.Maintain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if retries != 1 {
-		t.Errorf("retries: got %d, want 1", retries)
-	}
-	if got := log.lines("level=WARN", "final checkpoint failed, retrying", "cause=timeout", "attempt=1"); len(got) != 1 {
+	// The other ended shards run under the same 200 ms budget and can time
+	// out on a loaded host too, so every line is read for the held shard only.
+	const file = "file=logs-20261004.db"
+	if got := log.lines("level=WARN", "final checkpoint failed, retrying", file, "cause=timeout", "attempt=1"); len(got) != 1 {
 		t.Errorf("want one warning before the retry, got %q", got)
 	}
-	got := log.lines("level=ERROR")
+	got := log.lines("level=ERROR", file)
 	if len(got) != 1 {
 		t.Fatalf("want one error line, got %q", got)
 	}
-	for _, part := range []string{checkpointFailed, "file=logs-20261004.db", "cause=timeout", "attempt=2", "conn_wait_ms=", "truncate_ms=", "wal_frames=-1"} {
+	for _, part := range []string{checkpointFailed, file, "cause=timeout", "attempt=2", "conn_wait_ms=", "truncate_ms=", "wal_frames=-1"} {
 		if !strings.Contains(got[0], part) {
 			t.Errorf("error line %q lacks %s", got[0], part)
 		}
