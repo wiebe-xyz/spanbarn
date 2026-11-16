@@ -27,6 +27,7 @@ func (s *Server) handleOTLPMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectID := GetProjectID(r.Context())
+	stampMetricEnvironment(&req, GetEnvironment(r.Context()))
 	records := otlpToMetricRecords(&req, projectID)
 	// Same guardrail as the trace path, and deliberately without a
 	// self-instrument exemption: SPANBARN_SELF_API_KEY falls back to the global

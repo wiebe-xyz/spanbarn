@@ -14,10 +14,11 @@ import (
 type contextKey string
 
 const (
-	ctxProjectID  contextKey = "projectID"
-	ctxScope      contextKey = "scope"
-	ctxUsername   contextKey = "username"
-	ctxWebSession contextKey = "webSession"
+	ctxProjectID   contextKey = "projectID"
+	ctxScope       contextKey = "scope"
+	ctxEnvironment contextKey = "environment"
+	ctxUsername    contextKey = "username"
+	ctxWebSession  contextKey = "webSession"
 )
 
 // SetProjectID stores a project ID in the request context.
@@ -41,6 +42,20 @@ func SetScope(ctx context.Context, scope string) context.Context {
 // GetScope retrieves the API key scope from the request context.
 func GetScope(ctx context.Context) string {
 	if v, ok := ctx.Value(ctxScope).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// SetEnvironment stores the environment of the authenticating API key in the
+// request context. Ingest stamps it on records that carry none of their own.
+func SetEnvironment(ctx context.Context, env string) context.Context {
+	return context.WithValue(ctx, ctxEnvironment, env)
+}
+
+// GetEnvironment retrieves the key environment from the request context.
+func GetEnvironment(ctx context.Context) string {
+	if v, ok := ctx.Value(ctxEnvironment).(string); ok {
 		return v
 	}
 	return ""
@@ -82,15 +97,16 @@ func APIKeyMiddleware(authorizer *auth.Authorizer) func(http.Handler) http.Handl
 				return
 			}
 
-			projectID, scope, err := authorizer.Authorize(key)
+			ident, err := authorizer.AuthorizeIdentity(key)
 			if err != nil {
 				writeError(w, http.StatusUnauthorized, "invalid API key", "")
 				return
 			}
 
 			recordCaller(r, authKindAPIKey, "")
-			ctx := SetProjectID(r.Context(), projectID)
-			ctx = SetScope(ctx, scope)
+			ctx := SetProjectID(r.Context(), ident.ProjectID)
+			ctx = SetScope(ctx, ident.Scope)
+			ctx = SetEnvironment(ctx, ident.Environment)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

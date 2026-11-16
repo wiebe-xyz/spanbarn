@@ -63,6 +63,7 @@ func (s *Server) handleOTLP(w http.ResponseWriter, r *http.Request) {
 	// telemetry into project 0 — 911k unattributed spans in production, invisible
 	// precisely because this warning skipped them. Set SPANBARN_SELF_API_KEY to a
 	// project-scoped key.
+	stampTraceEnvironment(&req, GetEnvironment(r.Context()))
 	records := otlpToSpanRecords(&req, projectID)
 
 	if projectID == 0 {

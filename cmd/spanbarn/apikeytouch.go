@@ -19,9 +19,10 @@ func (a *keyLookupAdapter) GetAPIKeyByHash(keyHash string) (auth.APIKeyRecord, e
 		return auth.APIKeyRecord{}, err
 	}
 	return auth.APIKeyRecord{
-		ID:        k.ID,
-		ProjectID: k.ProjectID,
-		Scope:     k.Scope,
+		ID:          k.ID,
+		ProjectID:   k.ProjectID,
+		Scope:       k.Scope,
+		Environment: k.Environment,
 	}, nil
 }
 

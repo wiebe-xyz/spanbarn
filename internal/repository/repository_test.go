@@ -906,3 +906,31 @@ func TestEnsureAPIKeyIsIdempotent(t *testing.T) {
 		t.Errorf("got %d keys after rotation, want 2", len(keys))
 	}
 }
+
+// A key's environment defaults to empty, is set and cleared by id, comes back
+// from the hash lookup, and a missing id reports sql.ErrNoRows (#558).
+func TestAPIKeyEnvironment(t *testing.T) {
+	repo := setupTestDB(t)
+	p, _ := repo.CreateProject("proj", "Proj")
+	id, _ := repo.CreateAPIKey(p.ID, "k", "env-hash", "ingest")
+
+	k, err := repo.GetAPIKeyByHash("env-hash")
+	if err != nil || k.Environment != "" {
+		t.Fatalf("new key = %+v, %v; want empty environment", k, err)
+	}
+	if err := repo.SetAPIKeyEnvironment(id, "staging"); err != nil {
+		t.Fatalf("SetAPIKeyEnvironment: %v", err)
+	}
+	if k, _ = repo.GetAPIKeyByHash("env-hash"); k.Environment != "staging" {
+		t.Errorf("environment = %q, want staging", k.Environment)
+	}
+	if err := repo.SetAPIKeyEnvironment(id, ""); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if k, _ = repo.GetAPIKeyByHash("env-hash"); k.Environment != "" {
+		t.Errorf("environment after clear = %q", k.Environment)
+	}
+	if err := repo.SetAPIKeyEnvironment(9999, "staging"); err != sql.ErrNoRows {
+		t.Errorf("missing id = %v, want sql.ErrNoRows", err)
+	}
+}
