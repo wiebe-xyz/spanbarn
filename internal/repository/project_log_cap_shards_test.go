@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // With logs sharded, main's logs table is dropped once empty. The per-project
@@ -17,12 +19,12 @@ func TestDeleteProjectLogsOlderThanOnShardedLogs(t *testing.T) {
 	// The shard holds the rows; two expiry passes retire and then drop main's
 	// emptied table, like production did.
 	cut := ShardCutoffs{Logs: clock.Add(-30 * 24 * time.Hour), ErrorLogs: errorLogsSince}
-	for _, at := range []time.Time{*clock, clock.Add(shardDeleteDelay + time.Hour)} {
+	for _, at := range []time.Time{*clock, clock.Add(engine.ShardDeleteDelay + time.Hour)} {
 		if _, err := repo.ExpireShards(ctx, at, cut); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if has, err := hasTable(ctx, store.Main.DB, "logs"); err != nil || has {
+	if has, err := engine.HasTable(ctx, store.Main.DB, "logs"); err != nil || has {
 		t.Fatalf("main still has logs (has=%v err=%v), the fixture does not reproduce the sharded layout", has, err)
 	}
 

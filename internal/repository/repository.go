@@ -82,9 +82,9 @@ type Repository struct {
 	schedulers       [engine.NumFamilies]*writescheduler.Scheduler
 	deleteBatchYield time.Duration
 	// shards, when set, takes the inserts of the families it shards.
-	shards *ShardManager
+	shards *engine.ShardManager
 	// shardReaders, when set, serves the reads of every family with shards.
-	shardReaders *ShardReaders
+	shardReaders *engine.ShardReaders
 	// logTrim carries the log trim's cursors between retention passes.
 	logTrim *logTrimCursors
 	// errorSampleTrim carries the error-sample delete's cursors.
@@ -172,16 +172,16 @@ func (r *Repository) SetFamilyWriter(f engine.Family, db *sql.DB, s *writeschedu
 // SetShards routes the inserts of every family m shards to m's shard files.
 // Everything else those families write (retention deletes) stays on main,
 // which still holds their older rows.
-func (r *Repository) SetShards(m *ShardManager) { r.shards = m }
+func (r *Repository) SetShards(m *engine.ShardManager) { r.shards = m }
 
 // SetShardReaders reads every sharded family through its pool in rs.
-func (r *Repository) SetShardReaders(rs *ShardReaders) { r.shardReaders = rs }
+func (r *Repository) SetShardReaders(rs *engine.ShardReaders) { r.shardReaders = rs }
 
 // reader returns the handle f's reads run on: f's shard pool when f has
 // shards, otherwise db.
 func (r *Repository) reader(f engine.Family) *sql.DB {
-	if p := r.shardReaders.pool(f); p != nil {
-		return p.db.DB
+	if p := r.shardReaders.Pool(f); p != nil {
+		return p.DB.DB
 	}
 	return r.db
 }
@@ -247,7 +247,7 @@ func (r *Repository) readsHaveTable(ctx context.Context, table string) (bool, er
 // and — unlike reading the projects table — also covers rows of deleted
 // projects. table is a trusted internal constant, never user input.
 func (r *Repository) distinctProjectIDs(ctx context.Context, table string) ([]int64, error) {
-	if heavyFamily(engine.TableFamily(table)) {
+	if engine.HeavyFamily(engine.TableFamily(table)) {
 		// Main drops a sharded family's table once it is empty.
 		if has, err := r.readsHaveTable(ctx, table); err != nil || !has {
 			return nil, err

@@ -225,7 +225,7 @@ func TestSpanHistMergeKeepsTheSideThatDecodes(t *testing.T) {
 
 func TestMigrateSpansAddsSpanRollupsOnce(t *testing.T) {
 	repo := setupCombinedTestDB(t)
-	if err := MigrateSpans(context.Background(), repo.db); err != nil {
+	if err := engine.MigrateSpans(context.Background(), repo.db); err != nil {
 		t.Fatalf("second spans migration run: %v", err)
 	}
 	var n int

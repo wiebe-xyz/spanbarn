@@ -8,6 +8,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 
 	_ "modernc.org/sqlite"
 )
@@ -19,7 +20,7 @@ func testRepo(t *testing.T) (*repository.Repository, *sql.DB) {
 	if err != nil {
 		t.Fatalf("open in-memory sqlite: %v", err)
 	}
-	if err := repository.MigrateSingleFile(context.Background(), db); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db); err != nil {
 		db.Close()
 		t.Fatalf("migrate: %v", err)
 	}

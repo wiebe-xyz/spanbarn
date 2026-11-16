@@ -55,14 +55,14 @@ func TestSnapshotSettingsCopiesSettingsOnly(t *testing.T) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	defer db.Close()
-	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	repo := NewRepository(db.DB)
 	seedSettingsAndTelemetry(t, repo)
 
 	destPath := filepath.Join(t.TempDir(), "settings.db")
-	counts, err := SnapshotSettings(ctx, srcPath, destPath)
+	counts, err := engine.SnapshotSettings(ctx, srcPath, destPath)
 	if err != nil {
 		t.Fatalf("SnapshotSettings: %v", err)
 	}
@@ -128,20 +128,20 @@ func TestSnapshotSettingsOverwritesExisting(t *testing.T) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	defer db.Close()
-	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	repo := NewRepository(db.DB)
 	seedSettingsAndTelemetry(t, repo)
 
 	destPath := filepath.Join(t.TempDir(), "settings.db")
-	if _, err := SnapshotSettings(ctx, srcPath, destPath); err != nil {
+	if _, err := engine.SnapshotSettings(ctx, srcPath, destPath); err != nil {
 		t.Fatalf("first SnapshotSettings: %v", err)
 	}
 	if _, err := repo.CreateProject("beta", "Beta"); err != nil {
 		t.Fatalf("CreateProject beta: %v", err)
 	}
-	counts, err := SnapshotSettings(ctx, srcPath, destPath)
+	counts, err := engine.SnapshotSettings(ctx, srcPath, destPath)
 	if err != nil {
 		t.Fatalf("second SnapshotSettings: %v", err)
 	}

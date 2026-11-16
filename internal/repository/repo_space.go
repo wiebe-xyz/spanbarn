@@ -22,7 +22,7 @@ import (
 func (r *Repository) DBSpace(ctx context.Context, dbPath string) (engine.Space, error) {
 	var addShards func(context.Context, *engine.Space) error
 	if r.shards != nil {
-		addShards = r.shards.addSpace
+		addShards = r.shards.AddSpace
 	}
 	return engine.MeasureSpace(ctx, r.db, dbPath, addShards)
 }

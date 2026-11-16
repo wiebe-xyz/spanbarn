@@ -34,9 +34,9 @@ Main-track migrations MUST NOT touch span-family tables. Heavy-table queries
 MUST NOT use `INDEXED BY`, because the shard views reject it.
 
 Sources:
-- `internal/repository/layout_test.go::TestMainTrackLeavesSpanTablesAlone`
-- `internal/repository/shard_read_indexed_test.go::TestNoIndexedByOnShardedFamilies`
-- `internal/repository/cutover_test.go::TestCutOverMovesSpansFamily`, `::TestCutOverFailureKeepsSingleFile`
+- `internal/repository/engine/layout_test.go::TestMainTrackLeavesSpanTablesAlone`
+- `internal/repository/engine/shard_read_indexed_test.go::TestNoIndexedByOnShardedFamilies`
+- `internal/repository/engine/cutover_test.go::TestCutOverMovesSpansFamily`, `::TestCutOverFailureKeepsSingleFile`
 - CI: the `code` job in `.github/workflows/ci.yml` runs the repository tests a second time with `SPANBARN_TEST_LAYOUT=split`
 - [specs/002-temporal-sharding/design.md](../../specs/002-temporal-sharding/design.md); issues #235, #248
 

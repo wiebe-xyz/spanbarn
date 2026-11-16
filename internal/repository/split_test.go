@@ -98,7 +98,7 @@ func createFamilyFile(path string, f engine.Family) error {
 		return err
 	}
 	defer db.Close()
-	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	tables, err := userTables(db.DB)

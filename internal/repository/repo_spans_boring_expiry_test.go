@@ -70,8 +70,8 @@ func TestDeleteBoringRowsChecksEachRowAgain(t *testing.T) {
 // with its last span and refreshes the summary of a trace that keeps spans.
 func TestDeleteExpiredBoringSpansWithReadPool(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
-	repo := openTestStorage(t, path).Repository()
-	ro, err := OpenReadDB(path, 2, 0)
+	repo := ForStorage(openTestStorage(t, path))
+	ro, err := engine.OpenReadDB(path, 2, 0)
 	if err != nil {
 		t.Fatalf("open read db: %v", err)
 	}

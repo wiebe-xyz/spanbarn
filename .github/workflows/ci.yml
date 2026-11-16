@@ -76,9 +76,12 @@ jobs:
               cat "${RUNNER_TEMP}/module.profile" >> "${RUNNER_TEMP}/coverage.profile"
               # Repository tests again with every table family in its own file
               # (internal/repository/split_test.go), so a write routed to the
-              # wrong file fails here.
+              # wrong file fails here. -coverpkg makes the root package's tests
+              # count toward internal/repository/engine, whose statements they
+              # run; the plain profile above credits engine with its own tests only.
               if [ -d "$dir/internal/repository" ]; then
-                (cd "$dir" && SPANBARN_TEST_LAYOUT=split go test ./internal/repository/...)
+                (cd "$dir" && SPANBARN_TEST_LAYOUT=split go test -coverpkg=./internal/repository/... -coverprofile="${RUNNER_TEMP}/repository.profile" ./internal/repository/...)
+                cat "${RUNNER_TEMP}/repository.profile" >> "${RUNNER_TEMP}/coverage.profile"
               fi
               (cd "$dir" && go vet ./...)
               # Same pinned staticcheck as quality-backend in build-and-test.yml,

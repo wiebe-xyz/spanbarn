@@ -67,7 +67,7 @@ func TestIngestInsertsReportRows(t *testing.T) {
 			go s.Run(ctx)
 		}
 
-		insertTelemetry(t, store.Repository())
+		insertTelemetry(t, ForStorage(store))
 		checkIngestRows(t, jobRows())
 	})
 }

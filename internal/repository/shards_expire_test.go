@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,12 +16,12 @@ import (
 // expiryFixture writes logs of an error-sampled, a pinned and a plain trace
 // into the 4 October logs shard, and returns the storage, its repository and
 // the clock.
-func expiryFixture(t *testing.T) (string, *Storage, *Repository, *time.Time) {
+func expiryFixture(t *testing.T) (string, *engine.Storage, *Repository, *time.Time) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
 	clock := mustTime(t, "2026-10-04T10:00:00Z")
 	store := openShardedStorage(t, path, &clock)
-	repo := store.Repository()
+	repo := ForStorage(store)
 	ctx := context.Background()
 	var recs []model.LogRecord
 	for _, trace := range []string{"err", "pin", "plain"} {
@@ -29,7 +30,7 @@ func expiryFixture(t *testing.T) (string, *Storage, *Repository, *time.Time) {
 	if err := repo.InsertLogs(ctx, recs); err != nil {
 		t.Fatal(err)
 	}
-	stampFile(t, filepath.Join(ShardsDir(path), "logs-20261004.db"), "logs", "2026-10-04 10:00:00")
+	stampFile(t, filepath.Join(engine.ShardsDir(path), "logs-20261004.db"), "logs", "2026-10-04 10:00:00")
 	if err := repo.InsertErrorSamples([]Span{{ProjectID: 1, TraceID: "err", SpanID: "s1", Name: "op", Status: "error", Attributes: "{}", Events: "[]"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +42,7 @@ func expiryFixture(t *testing.T) (string, *Storage, *Repository, *time.Time) {
 
 var errorLogsSince = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 
-func keptTraces(t *testing.T, store *Storage) []string {
+func keptTraces(t *testing.T, store *engine.Storage) []string {
 	t.Helper()
 	rows, err := store.Main.Query(`SELECT trace_id FROM kept_logs ORDER BY trace_id`)
 	if err != nil {
@@ -59,7 +60,7 @@ func keptTraces(t *testing.T, store *Storage) []string {
 	return out
 }
 
-func shardState(t *testing.T, store *Storage, file string) string {
+func shardState(t *testing.T, store *engine.Storage, file string) string {
 	t.Helper()
 	var state string
 	err := store.Main.QueryRow(`SELECT state FROM shards WHERE file = ?`, file).Scan(&state)
@@ -89,24 +90,24 @@ func TestShardExpiryKeepsErrorAndPinnedLogs(t *testing.T) {
 	if got := keptTraces(t, store); !slices.Equal(got, []string{"err", "pin"}) {
 		t.Fatalf("kept logs of %v, want [err pin]", got)
 	}
-	if s := shardState(t, store, file); s != shardRetiring {
+	if s := shardState(t, store, file); s != engine.ShardRetiring {
 		t.Fatalf("%s is %s, want retiring", file, s)
 	}
 
 	// Readers drop the retiring shard and read the kept logs instead.
-	ro, err := OpenReadDB(path, 2, 0)
+	ro, err := engine.OpenReadDB(path, 2, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ro.Close()
 	reader := NewReadOnlyRepository(ro.DB)
-	rs := NewShardReaders(ro.DB, path, 2, 0, nil)
+	rs := engine.NewShardReaders(ro.DB, path, 2, 0, nil)
 	defer rs.Close()
 	reader.SetShardReaders(rs)
 	if err := rs.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if p := rs.pool(engine.FamilyLogs); p == nil || slices.Contains(p.files, file) {
+	if p := rs.Pool(engine.FamilyLogs); p == nil || slices.Contains(p.Files, file) {
 		t.Fatalf("logs pool after retiring: %+v", p)
 	}
 	for trace, want := range map[string]int{"err": 1, "pin": 1, "plain": 0} {
@@ -124,7 +125,7 @@ func TestShardExpiryKeepsErrorAndPinnedLogs(t *testing.T) {
 	if res, err = repo.ExpireShards(ctx, *clock, cut); err != nil || res.Deleted != 0 {
 		t.Fatalf("expiry four minutes in: %+v, %v", res, err)
 	}
-	if _, err := os.Stat(filepath.Join(ShardsDir(path), file)); err != nil {
+	if _, err := os.Stat(filepath.Join(engine.ShardsDir(path), file)); err != nil {
 		t.Fatalf("file deleted before the delay: %v", err)
 	}
 	if got := keptTraces(t, store); len(got) != 2 {
@@ -136,7 +137,7 @@ func TestShardExpiryKeepsErrorAndPinnedLogs(t *testing.T) {
 		t.Fatalf("expiry six minutes in: %+v, %v", res, err)
 	}
 	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if _, err := os.Stat(filepath.Join(ShardsDir(path), file+suffix)); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(engine.ShardsDir(path), file+suffix)); !os.IsNotExist(err) {
 			t.Errorf("%s%s still on disk: %v", file, suffix, err)
 		}
 	}
@@ -157,7 +158,7 @@ func TestShardExpiryNeverRetiresTheCurrentShard(t *testing.T) {
 	if res.Retired != 0 {
 		t.Fatalf("retired %d shards that inserts still reach", res.Retired)
 	}
-	if s := shardState(t, store, "logs-20261004.db"); s != shardActive {
+	if s := shardState(t, store, "logs-20261004.db"); s != engine.ShardActive {
 		t.Fatalf("current shard is %s", s)
 	}
 }
@@ -166,12 +167,14 @@ func TestShardExpiryTrimsInsideTheShardForShortWindows(t *testing.T) {
 	path, store, repo, clock := expiryFixture(t)
 	ctx := context.Background()
 	const file = "logs-20261004.db"
-	stampFile(t, filepath.Join(ShardsDir(path), file), "logs", "2026-10-04 08:00:00")
+	stampFile(t, filepath.Join(engine.ShardsDir(path), file), "logs", "2026-10-04 08:00:00")
 	if err := repo.InsertLogs(ctx, []model.LogRecord{makeLogRecord(1, "late", "log late", 9)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Shards.handles[shardKey{engine.FamilyLogs, mustTime(t, "2026-10-04T00:00:00Z")}].Exec(
-		`UPDATE logs SET ingested_at = '2026-10-04 20:00:00' WHERE trace_id = 'late'`); err != nil {
+	if err := store.Shards.OnShard(engine.FamilyLogs, mustTime(t, "2026-10-04T00:00:00Z"), "test", func(db *sql.DB) error {
+		_, err := db.Exec(`UPDATE logs SET ingested_at = '2026-10-04 20:00:00' WHERE trace_id = 'late'`)
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -225,10 +228,10 @@ func TestRetireOldestShardAcrossFamilies(t *testing.T) {
 		if freed <= 0 {
 			t.Fatalf("retired a shard that frees %d bytes", freed)
 		}
-		rows, _ := store.Shards.rows(ctx)
+		rows, _ := store.Shards.Rows(ctx)
 		for _, r := range rows {
-			if r.state == shardRetiring && !slices.Contains(retired, r.file) {
-				retired = append(retired, r.file)
+			if r.State == engine.ShardRetiring && !slices.Contains(retired, r.File) {
+				retired = append(retired, r.File)
 			}
 		}
 	}
