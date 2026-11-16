@@ -98,6 +98,12 @@ func (s *Server) handleClientConfig(w http.ResponseWriter, _ *http.Request) {
 			"project":  s.funnelBarn.Project,
 		}
 	}
+	if s.brandTrace.SiteKey != "" {
+		resp["brandtrace"] = map[string]string{
+			"site_key": s.brandTrace.SiteKey,
+			"sdk_url":  s.brandTrace.SDKURL,
+		}
+	}
 	if s.oidc != nil {
 		oc := s.oidc.Config()
 		issuer := strings.TrimRight(oc.Issuer, "/")

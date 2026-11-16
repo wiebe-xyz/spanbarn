@@ -33,6 +33,10 @@ type ServerConfig struct {
 	FunnelBarnEndpoint string
 	FunnelBarnAPIKey   string
 	FunnelBarnProject  string
+	// BrandTraceSiteKey is the public site key of the BrandTrace page tracker;
+	// empty leaves it out of the client config. BrandTraceSDKURL is the hosted SDK.
+	BrandTraceSiteKey string
+	BrandTraceSDKURL  string
 	// ReadBudget bounds every API GET (SPANBARN_READ_BUDGET_SECONDS); 0 turns
 	// the bound off.
 	ReadBudget time.Duration
@@ -55,6 +59,7 @@ type Server struct {
 	metricsToken   string
 	publicURL      string
 	funnelBarn     funnelBarnConfig
+	brandTrace     brandTraceConfig
 	rateLimiter    *RateLimiter
 	metrics        *Metrics
 	ingest         *ingest.Handler
@@ -110,6 +115,13 @@ type funnelBarnConfig struct {
 	Endpoint string
 	APIKey   string
 	Project  string
+}
+
+// brandTraceConfig captures the public bits of the BrandTrace page tracker.
+// An empty SiteKey keeps the tracker out of the client config.
+type brandTraceConfig struct {
+	SiteKey string
+	SDKURL  string
 }
 
 // ServerOption configures optional Server dependencies.
@@ -204,6 +216,10 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 			Endpoint: cfg.FunnelBarnEndpoint,
 			APIKey:   cfg.FunnelBarnAPIKey,
 			Project:  cfg.FunnelBarnProject,
+		},
+		brandTrace: brandTraceConfig{
+			SiteKey: cfg.BrandTraceSiteKey,
+			SDKURL:  cfg.BrandTraceSDKURL,
 		},
 		rateLimiter: NewRateLimiter(defaultRate(cfg.LoginRate, 10), defaultRate(cfg.IngestRate, 600), defaultRate(cfg.APIRate, 120)),
 		metrics:     NewMetrics(),

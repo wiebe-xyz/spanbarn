@@ -116,6 +116,17 @@ type FunnelBarnConfig struct {
 	Project  string // SPANBARN_FUNNELBARN_PROJECT
 }
 
+// BrandTraceConfig groups the public site key of the BrandTrace page tracker.
+// The key is public (allow-listed per origin); an empty key leaves the tracker
+// off.
+type BrandTraceConfig struct {
+	SiteKey string // SPANBARN_BRANDTRACE_SITE_KEY
+	SDKURL  string // SPANBARN_BRANDTRACE_SDK_URL
+}
+
+// DefaultBrandTraceSDKURL is where the hosted BrandTrace SDK is served.
+const DefaultBrandTraceSDKURL = "https://brandtrace.net/sdk.js"
+
 // DefaultMaxBodyBytes is the default SPANBARN_MAX_BODY_BYTES: 4 MiB, applied to
 // the wire and the decompressed size of an ingest request on both OTLP
 // transports. The OTLP spec recommends 64 MiB, but a request this size holds
@@ -183,6 +194,7 @@ type Config struct {
 	Self                         SelfConfig
 	BugBarn                      BugBarnConfig
 	FunnelBarn                   FunnelBarnConfig
+	BrandTrace                   BrandTraceConfig
 	Environment                  string
 	LoginRatePerMinute           int
 	IngestRatePerMinute          int
@@ -315,6 +327,10 @@ func Load() Config {
 			Endpoint: os.Getenv("SPANBARN_FUNNELBARN_ENDPOINT"),
 			APIKey:   os.Getenv("SPANBARN_FUNNELBARN_API_KEY"),
 			Project:  getenv("SPANBARN_FUNNELBARN_PROJECT", "spanbarn"),
+		},
+		BrandTrace: BrandTraceConfig{
+			SiteKey: os.Getenv("SPANBARN_BRANDTRACE_SITE_KEY"),
+			SDKURL:  getenv("SPANBARN_BRANDTRACE_SDK_URL", DefaultBrandTraceSDKURL),
 		},
 		Environment:         getenv("SPANBARN_ENVIRONMENT", "development"),
 		LoginRatePerMinute:  getenvInt("SPANBARN_LOGIN_RATE_PER_MINUTE", 10),

@@ -1,0 +1,10 @@
+# Public BrandTrace site key of spanbarn.wiebe.xyz (barn-coverage, #547). The
+# key is allow-listed per origin by BrandTrace and posted in brandtrace#2121,
+# so it is plain config here. The dashboard loads the tracker only when the
+# key is set, so staging and testing send nothing.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spanbarn-config
+data:
+  SPANBARN_BRANDTRACE_SITE_KEY: "3281d5b49dd940448144a434ed4cb529"

@@ -37,6 +37,8 @@ func serverConfigFrom(cfg config.Config) api.ServerConfig {
 		FunnelBarnEndpoint: cfg.FunnelBarn.Endpoint,
 		FunnelBarnAPIKey:   cfg.FunnelBarn.APIKey,
 		FunnelBarnProject:  cfg.FunnelBarn.Project,
+		BrandTraceSiteKey:  cfg.BrandTrace.SiteKey,
+		BrandTraceSDKURL:   cfg.BrandTrace.SDKURL,
 		E2EEnabled:         cfg.E2EEnabled,
 		ReadBudget:         time.Duration(cfg.ReadBudgetSeconds) * time.Second,
 	}

@@ -310,6 +310,8 @@ project automatically.
 | `SPANBARN_FUNNELBARN_ENDPOINT` | | FunnelBarn endpoint for analytics forwarding |
 | `SPANBARN_FUNNELBARN_API_KEY` | | FunnelBarn API key |
 | `SPANBARN_FUNNELBARN_PROJECT` | | FunnelBarn project slug |
+| `SPANBARN_BRANDTRACE_SITE_KEY` | | Public BrandTrace site key; empty leaves the page tracker off |
+| `SPANBARN_BRANDTRACE_SDK_URL` | `https://brandtrace.net/sdk.js` | Hosted BrandTrace SDK |
 
 ### Rollup tiers
 
