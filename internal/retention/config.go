@@ -18,7 +18,7 @@ type Config struct {
 	Interval                  time.Duration // how often to run (default 5m)
 
 	// Rollup tier windows. Each tier is deleted only up to the point the
-	// compactor has rolled it into the tier above (internal/rollup writes that
+	// compactor has rolled it into the tier above (internal/metricrollup writes that
 	// watermark), so shortening a window never destroys history that has not
 	// been summarised yet.
 	MetricRollupRetentionDays int // days to keep 5-minute rollups (default 2)

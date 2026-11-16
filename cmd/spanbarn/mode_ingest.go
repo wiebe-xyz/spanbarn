@@ -19,7 +19,9 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/ingest"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 	"github.com/wiebe-xyz/spanbarn/internal/spool"
+	"github.com/wiebe-xyz/spanbarn/internal/tracebuffer"
 )
 
 // runIngestMode starts the binary in ingest-only mode: accepts spans, buffers
@@ -78,14 +80,14 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 
 	var (
 		querySvc   *service.QueryService
-		sessions   *api.SessionService
+		sessions   *session.Service
 		userAuth   *auth.UserAuthenticator
 		queryCache *cache.Cache
 	)
 	if roRepo != nil {
 		sessions = newSessionService(roRepo, cfg, logger)
 		userAuth = auth.NewUserAuthenticator(&userLookupAdapter{repo: roRepo}, logger)
-		querySvc = service.NewQueryService(roRepo, logger, ingest.NewCachedRatioLookup(roRepo, time.Minute))
+		querySvc = service.NewQueryService(roRepo, logger, tracebuffer.NewCachedRatioLookup(roRepo, time.Minute))
 		applySpanRollupReads(querySvc, cfg)
 		queryCache = newQueryCache(cfg, logger, false)
 		querySvc.SetCache(queryCache)
@@ -97,16 +99,16 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	// mode silently ingests everything unsampled, ignoring every
 	// ingest.sample_ratio.* setting — the mode is documented in the README, so
 	// it must not quietly behave differently from reader mode.
-	var ingestRatioLookup ingest.SampleRatioLookup
+	var ingestRatioLookup tracebuffer.SampleRatioLookup
 	if roRepo != nil {
-		ingestRatioLookup = ingest.NewCachedRatioLookup(roRepo, time.Minute)
+		ingestRatioLookup = tracebuffer.NewCachedRatioLookup(roRepo, time.Minute)
 	}
 	traceBuffer := newTraceBuffer(cfg, ingestRatioLookup, logger)
 	traceDrained := drainTraceBuffer(&wg, traceBuffer, ingestHandler)
 
 	opts := []api.ServerOption{api.WithAuthorizer(authorizer), api.WithTraceBuffer(traceBuffer)}
 	if roRepo != nil {
-		opts = append(opts, api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache),
+		opts = append(opts, api.WithLogin(userAuth, cfg.LoginRatePerMinute, cfg.IngestRatePerMinute, cfg.APIRatePerMinute), api.WithRepository(roRepo), api.WithPaths(cfg.DBPath, cfg.SpoolDir), api.WithCache(queryCache),
 			api.WithAdmission(newAdmission(roRepo, cfg, logger)))
 	}
 	apiServer := api.NewServerWithQuery(serverCfg, ingestHandler, querySvc, sessions, logger, opts...)
@@ -119,9 +121,6 @@ func runIngestMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	mux := http.NewServeMux()
-	if sessions != nil && userAuth != nil {
-		registerAuthRoutes(mux, cfg, userAuth, sessions, querySvc, logger)
-	}
 	mux.Handle("/", apiServer.Handler())
 
 	httpServer := newHTTPServer(cfg, mux)

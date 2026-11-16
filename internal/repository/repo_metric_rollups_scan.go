@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// rollupStep5m is the step of the metric_rollups table (rollup.Step5m, which
+// rollupStep5m is the step of the metric_rollups table (tier.Step5m, which
 // this package cannot import). ScanProjectRollups reads any other step from
 // metric_rollups_coarse.
 const rollupStep5m = 300

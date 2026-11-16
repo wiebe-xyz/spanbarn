@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/wiebe-xyz/spanbarn/internal/rollup"
+	"github.com/wiebe-xyz/spanbarn/internal/tier"
 )
 
 // repairInterval is how often the compactor looks for coarse buckets that an
@@ -16,7 +16,7 @@ type tierTable struct {
 	count    BucketCounter
 	arrivals SpanArrivals
 	oldest   func(ctx context.Context, step int64) (time.Time, bool, error)
-	build    func(ctx context.Context, tier Tier, start, end time.Time) (int, error)
+	build    func(ctx context.Context, rung Tier, start, end time.Time) (int, error)
 }
 
 func (c *Compactor) tables() []tierTable {
@@ -35,13 +35,13 @@ func (c *Compactor) repairIfDue(ctx context.Context) error {
 		return nil
 	}
 	c.repaired = now
-	for _, tier := range Ladder() {
-		buckets, rows, err := c.repairTier(ctx, tier)
+	for _, rung := range Ladder() {
+		buckets, rows, err := c.repairTier(ctx, rung)
 		if err != nil {
 			return err
 		}
 		if buckets > 0 {
-			c.logger.Info("span rollup compaction repaired left-out buckets", "tier", tier.Label,
+			c.logger.Info("span rollup compaction repaired left-out buckets", "tier", rung.Label,
 				"buckets", buckets, "rows_written", rows)
 		}
 	}
@@ -53,14 +53,14 @@ func (c *Compactor) repairIfDue(ctx context.Context) error {
 // window held an empty source bucket; a binary from before quiet buckets
 // counted as covered did that for the hour of every deploy. Only windows
 // below the source watermark are repaired: the pass owns the ones above it.
-func (c *Compactor) repairTier(ctx context.Context, tier Tier) (int, int, error) {
-	through, ok, err := c.repo.SpanRollupWatermark(ctx, tier.Source)
+func (c *Compactor) repairTier(ctx context.Context, rung Tier) (int, int, error) {
+	through, ok, err := c.repo.SpanRollupWatermark(ctx, rung.Source)
 	if err != nil || !ok {
 		return 0, 0, err
 	}
 	var buckets, rows int
 	for _, t := range c.tables() {
-		b, r, err := c.repairTable(ctx, tier, t, through)
+		b, r, err := c.repairTable(ctx, rung, t, through)
 		buckets, rows = buckets+b, rows+r
 		if err != nil {
 			return buckets, rows, err
@@ -72,21 +72,21 @@ func (c *Compactor) repairTier(ctx context.Context, tier Tier) (int, int, error)
 // repairTable walks the windows of one table that its source tier still holds
 // whole. A window that starts before the oldest source bucket is skipped:
 // retention cut into it, or the table began inside it.
-func (c *Compactor) repairTable(ctx context.Context, tier Tier, t tierTable, through time.Time) (int, int, error) {
-	oldest, ok, err := t.oldest(ctx, tier.Source)
+func (c *Compactor) repairTable(ctx context.Context, rung Tier, t tierTable, through time.Time) (int, int, error) {
+	oldest, ok, err := t.oldest(ctx, rung.Source)
 	if err != nil || !ok {
 		return 0, 0, err
 	}
-	start := rollup.TruncateBucket(oldest, tier.Step)
+	start := tier.TruncateBucket(oldest, rung.Step)
 	if start.Before(oldest) {
-		start = rollup.NextBucket(start, tier.Step)
+		start = tier.NextBucket(start, rung.Step)
 	}
 	var buckets, rows int
-	for end := rollup.NextBucket(start, tier.Step); !end.After(through); start, end = end, rollup.NextBucket(end, tier.Step) {
+	for end := tier.NextBucket(start, rung.Step); !end.After(through); start, end = end, tier.NextBucket(end, rung.Step) {
 		if err := ctx.Err(); err != nil {
 			return buckets, rows, err
 		}
-		n, err := c.repairBucket(ctx, tier, t, start, end)
+		n, err := c.repairBucket(ctx, rung, t, start, end)
 		if err != nil {
 			return buckets, rows, err
 		}
@@ -100,13 +100,13 @@ func (c *Compactor) repairTable(ctx context.Context, tier Tier, t tierTable, thr
 
 // repairBucket builds one coarse bucket of t that holds no rows, when its
 // source window is complete. It returns the rows written.
-func (c *Compactor) repairBucket(ctx context.Context, tier Tier, t tierTable, start, end time.Time) (int, error) {
-	have, err := t.count.CountSpanRollupBuckets(ctx, tier.Step, start, end)
+func (c *Compactor) repairBucket(ctx context.Context, rung Tier, t tierTable, start, end time.Time) (int, error) {
+	have, err := t.count.CountSpanRollupBuckets(ctx, rung.Step, start, end)
 	if err != nil || have > 0 {
 		return 0, err
 	}
-	if ok, err := windowComplete(ctx, t.count, t.arrivals, tier.Source, start, end); err != nil || !ok {
+	if ok, err := windowComplete(ctx, t.count, t.arrivals, rung.Source, start, end); err != nil || !ok {
 		return 0, err
 	}
-	return t.build(ctx, tier, start, end)
+	return t.build(ctx, rung, start, end)
 }

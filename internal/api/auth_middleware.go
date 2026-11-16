@@ -8,15 +8,17 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 type contextKey string
 
 const (
-	ctxProjectID  contextKey = "projectID"
-	ctxScope      contextKey = "scope"
-	ctxUsername   contextKey = "username"
-	ctxWebSession contextKey = "webSession"
+	ctxProjectID   contextKey = "projectID"
+	ctxScope       contextKey = "scope"
+	ctxEnvironment contextKey = "environment"
+	ctxUsername    contextKey = "username"
+	ctxWebSession  contextKey = "webSession"
 )
 
 // SetProjectID stores a project ID in the request context.
@@ -40,6 +42,20 @@ func SetScope(ctx context.Context, scope string) context.Context {
 // GetScope retrieves the API key scope from the request context.
 func GetScope(ctx context.Context) string {
 	if v, ok := ctx.Value(ctxScope).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// SetEnvironment stores the environment of the authenticating API key in the
+// request context. Ingest stamps it on records that carry none of their own.
+func SetEnvironment(ctx context.Context, env string) context.Context {
+	return context.WithValue(ctx, ctxEnvironment, env)
+}
+
+// GetEnvironment retrieves the key environment from the request context.
+func GetEnvironment(ctx context.Context) string {
+	if v, ok := ctx.Value(ctxEnvironment).(string); ok {
 		return v
 	}
 	return ""
@@ -81,14 +97,16 @@ func APIKeyMiddleware(authorizer *auth.Authorizer) func(http.Handler) http.Handl
 				return
 			}
 
-			projectID, scope, err := authorizer.Authorize(key)
+			ident, err := authorizer.AuthorizeIdentity(key)
 			if err != nil {
 				writeError(w, http.StatusUnauthorized, "invalid API key", "")
 				return
 			}
 
-			ctx := SetProjectID(r.Context(), projectID)
-			ctx = SetScope(ctx, scope)
+			recordCaller(r, authKindAPIKey, "")
+			ctx := SetProjectID(r.Context(), ident.ProjectID)
+			ctx = SetScope(ctx, ident.Scope)
+			ctx = SetEnvironment(ctx, ident.Environment)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -105,7 +123,7 @@ func APIKeyMiddleware(authorizer *auth.Authorizer) func(http.Handler) http.Handl
 // with 403. oidcFn is resolved at request time because the OIDC client is wired
 // after routes are registered; it may return nil. When authorizer is nil,
 // behaviour falls back to JWT/session.
-func SessionOrReadKey(sessions *SessionService, authorizer *auth.Authorizer, oidcFn func() *auth.OIDCClient) func(http.Handler) http.Handler {
+func SessionOrReadKey(sessions *session.Service, authorizer *auth.Authorizer, oidcFn func() *auth.OIDCClient) func(http.Handler) http.Handler {
 	sessionMW := SessionMiddleware(sessions)
 	return func(next http.Handler) http.Handler {
 		session := sessionMW(next)
@@ -126,18 +144,19 @@ func SessionOrReadKey(sessions *SessionService, authorizer *auth.Authorizer, oid
 							return
 						}
 						if !oc.Allowed(claims) {
-							writeError(w, http.StatusForbidden, "not authorized for SpanBarn", "")
+							writeError(w, http.StatusForbidden, oidcAccessDenied, "")
 							return
 						}
 						// OIDC access-token users are read-only, exactly like
 						// read-scoped API keys (serveAPIKey below). Without this
-						// gate a token authorized only for the read group could
+						// gate an authorized token could
 						// reach the mutating project routes mounted on this same
 						// middleware (DELETE/approve/e2e/verbose).
 						if r.Method != http.MethodGet && r.Method != http.MethodHead {
 							writeError(w, http.StatusForbidden, "token is read-only", "")
 							return
 						}
+						recordCaller(r, authKindCLIToken, claims.OrganizationID)
 						ctx := SetUsername(r.Context(), claims.PreferredName())
 						next.ServeHTTP(w, r.WithContext(ctx))
 						return
@@ -172,6 +191,7 @@ func serveAPIKey(w http.ResponseWriter, r *http.Request, next http.Handler, auth
 	// per-project key) overrides any client-supplied project_id so a key cannot
 	// read another project's data. The static/full key has project ID 0 (all
 	// projects); leave the query param untouched so it can target a project.
+	recordCaller(r, authKindAPIKey, "")
 	ctx := SetScope(r.Context(), scope)
 	if projectID != 0 {
 		ctx = SetProjectID(ctx, projectID)
@@ -196,7 +216,7 @@ func bearerToken(r *http.Request) string {
 // the refresh_token grant first (singleflighted per session), so a request
 // only proceeds while the IamBarn session is still alive — central revocation
 // bites at the next refresh, worst-case one access-token lifetime (~15m).
-func SessionMiddleware(sessions *SessionService) func(http.Handler) http.Handler {
+func SessionMiddleware(sessions *session.Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := sessionToken(r)
@@ -220,6 +240,7 @@ func SessionMiddleware(sessions *SessionService) func(http.Handler) http.Handler
 				w.Header().Set("X-Session-Refresh-Due", "1")
 			}
 
+			recordCaller(r, sessionAuthKind(res.Session.AuthMethod), sessionOrganization(res.Session.ClaimsJSON))
 			ctx := SetUsername(r.Context(), res.Session.Username)
 			ctx = SetWebSession(ctx, res.Session)
 			next.ServeHTTP(w, r.WithContext(ctx))

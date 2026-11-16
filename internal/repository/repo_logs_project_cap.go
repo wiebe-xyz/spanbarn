@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -44,7 +45,7 @@ func deleteProjectLogRowsSQL(table string) string {
 // the cutoff, projectLogCapChunk per write job, with each chunk read off the
 // write slot.
 func (r *Repository) deleteProjectLogsFromTable(ctx context.Context, table string, projectID int64, cutoff time.Time) (int64, error) {
-	f := TableFamily(table)
+	f := engine.TableFamily(table)
 	label := "DeleteProjectLogsOlderThan:" + f.String()
 	query := deleteProjectLogRowsSQL(table)
 	var total int64

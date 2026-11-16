@@ -11,6 +11,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/observability"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -21,14 +22,14 @@ import (
 // not crash the process.
 func buildOIDCClient(cfg config.Config, logger *slog.Logger) *auth.OIDCClient {
 	oc := auth.OIDCConfig{
-		Issuer:                cfg.OIDC.Issuer,
-		ClientID:              cfg.OIDC.ClientID,
-		ClientSecret:          cfg.OIDC.ClientSecret,
-		RedirectURL:           cfg.OIDC.RedirectURL,
-		RequiredGroup:         cfg.OIDC.RequiredGroup,
-		ResourceAudiences:     cfg.OIDC.ResourceAudiences,
-		CLIClientID:           cfg.OIDC.CLIClientID,
-		PostLogoutRedirectURI: cfg.OIDC.PostLogoutRedirectURI,
+		Issuer:                 cfg.OIDC.Issuer,
+		ClientID:               cfg.OIDC.ClientID,
+		ClientSecret:           cfg.OIDC.ClientSecret,
+		RedirectURL:            cfg.OIDC.RedirectURL,
+		RequiredOrganizationID: cfg.OIDC.AllowedOrganizations(),
+		ResourceAudiences:      cfg.OIDC.ResourceAudiences,
+		CLIClientID:            cfg.OIDC.CLIClientID,
+		PostLogoutRedirectURI:  cfg.OIDC.PostLogoutRedirectURI,
 	}
 	// The sb CLI's device-code tokens carry the CLI client id as their
 	// audience, so accept it as a resource audience automatically.
@@ -38,7 +39,10 @@ func buildOIDCClient(cfg config.Config, logger *slog.Logger) *auth.OIDCClient {
 	if !oc.Enabled() {
 		return nil
 	}
-	logger.Info("oidc: enabled", "issuer", oc.Issuer, "client_id", oc.ClientID, "required_group", oc.RequiredGroup, "resource_audiences", oc.ResourceAudiences)
+	if oc.RequiredOrganizationID == "" {
+		logger.Error("oidc: SPANBARN_OIDC_ORGANIZATION_ID is unset, every OIDC sign-in will be refused")
+	}
+	logger.Info("oidc: enabled", "issuer", oc.Issuer, "client_id", oc.ClientID, "resource_audiences", oc.ResourceAudiences)
 	return auth.NewOIDCClient(oc)
 }
 
@@ -157,7 +161,7 @@ func (a *userLookupAdapter) GetUserByUsername(username string) (auth.UserRecord,
 // the write scheduler: on 2026-10-20 at 13:13Z GetSpansForAggregation held it
 // while TouchAPIKey waited 30s and the watchdog reported a wedge (#360). Call
 // after the write schedulers are set.
-func retentionReads(repo *repository.Repository, roDB *repository.DB) *repository.Repository {
+func retentionReads(repo *repository.Repository, roDB *engine.DB) *repository.Repository {
 	r := repo.WithReads(roDB.DB)
 	r.SetLogTrimReads(roDB.DB)
 	return r

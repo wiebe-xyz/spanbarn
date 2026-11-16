@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // stagingCols is the column list shared by staging reads/writes (matches spans,
@@ -33,8 +35,8 @@ func (r *Repository) InsertSpansStaging(ctx context.Context, spans []Span) error
 		return nil
 	}
 	// Writing spans must not emit spans. See WithoutSpanTracing.
-	ctx = WithoutSpanTracing(ctx)
-	return r.execLow(FamilySpans, func(db *sql.DB) error {
+	ctx = engine.WithoutSpanTracing(ctx)
+	return r.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
@@ -134,7 +136,7 @@ func (r *Repository) CommitStagingFlush(ctx context.Context, traceIDs []string, 
 	if len(traceIDs) == 0 {
 		return nil
 	}
-	_, err := r.execLowRows(FamilySpans, func(db *sql.DB) (int64, error) {
+	_, err := r.execLowRows(engine.FamilySpans, func(db *sql.DB) (int64, error) {
 		n := int64(len(interesting))
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
@@ -184,7 +186,7 @@ func (r *Repository) CommitStagingTracePart(ctx context.Context, key TraceKey, s
 	if err != nil {
 		return err
 	}
-	_, err = r.execLowRows(FamilySpans, func(db *sql.DB) (int64, error) {
+	_, err = r.execLowRows(engine.FamilySpans, func(db *sql.DB) (int64, error) {
 		n := int64(len(interesting))
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
@@ -257,7 +259,7 @@ func (r *Repository) DeleteStagingOlderThan(ctx context.Context, cutoff time.Tim
 	// (monotonic rowid), so each LIMIT batch's scan hits the oldest rows first and
 	// returns fast even without a standalone ingested_at index on staging.
 	c := cutoff.UTC()
-	return r.batchedDelete(ctx, FamilySpans, func(db *sql.DB) (int64, error) {
+	return r.batchedDelete(ctx, engine.FamilySpans, func(db *sql.DB) (int64, error) {
 		res, e := db.ExecContext(ctx,
 			`DELETE FROM spans_staging WHERE rowid IN (SELECT rowid FROM spans_staging WHERE ingested_at < ? LIMIT ?)`,
 			c, retentionDeleteBatch)

@@ -9,40 +9,41 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // shardedReadFixture writes one batch of logs, metrics and prompts to main
 // before shards were on, one at 23:59:30 on 4 October and one at 00:00:30 on
 // 5 October, so every family has rows in main and in two shards. It returns
 // the writer storage, a read repository with shard readers, and the clock.
-func shardedReadFixture(t *testing.T) (string, *Storage, *Repository, *ShardReaders, *time.Time) {
+func shardedReadFixture(t *testing.T) (string, *engine.Storage, *Repository, *engine.ShardReaders, *time.Time) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
 
 	plain := openTestStorage(t, path)
-	insertReadBatch(t, plain.Repository(), "main")
+	insertReadBatch(t, ForStorage(plain), "main")
 	stampFile(t, path, "logs", "2026-10-04 12:00:00")
 	stampFile(t, path, "prompt_records", "2026-10-04 12:00:00")
 	plain.Close()
 
 	clock := mustTime(t, "2026-10-04T23:59:30Z")
 	store := openShardedStorage(t, path, &clock)
-	repo := store.Repository()
+	repo := ForStorage(store)
 	insertReadBatch(t, repo, "day1")
-	stampFile(t, filepath.Join(ShardsDir(path), "logs-20261004.db"), "logs", "2026-10-04 23:59:30")
-	stampFile(t, filepath.Join(ShardsDir(path), "prompts-2026w40.db"), "prompt_records", "2026-10-04 23:59:30")
+	stampFile(t, filepath.Join(engine.ShardsDir(path), "logs-20261004.db"), "logs", "2026-10-04 23:59:30")
+	stampFile(t, filepath.Join(engine.ShardsDir(path), "prompts-2026w40.db"), "prompt_records", "2026-10-04 23:59:30")
 	clock = mustTime(t, "2026-10-05T00:00:30Z")
 	insertReadBatch(t, repo, "day2")
-	stampFile(t, filepath.Join(ShardsDir(path), "logs-20261005.db"), "logs", "2026-10-05 00:00:30")
-	stampFile(t, filepath.Join(ShardsDir(path), "prompts-2026w41.db"), "prompt_records", "2026-10-05 00:00:30")
+	stampFile(t, filepath.Join(engine.ShardsDir(path), "logs-20261005.db"), "logs", "2026-10-05 00:00:30")
+	stampFile(t, filepath.Join(engine.ShardsDir(path), "prompts-2026w41.db"), "prompt_records", "2026-10-05 00:00:30")
 
-	ro, err := OpenReadDB(path, 2, 0)
+	ro, err := engine.OpenReadDB(path, 2, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ro.Close() })
 	readRepo := NewReadOnlyRepository(ro.DB)
-	rs := NewShardReaders(ro.DB, path, 2, 0, nil)
+	rs := engine.NewShardReaders(ro.DB, path, 2, 0, nil)
 	t.Cleanup(rs.Close)
 	readRepo.SetShardReaders(rs)
 	if err := rs.Refresh(context.Background()); err != nil {
@@ -239,10 +240,10 @@ func TestShardReadersPickUpNewShard(t *testing.T) {
 	if err := store.Shards.Maintain(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Repository().InsertLogs(ctx, []model.LogRecord{makeLogRecord(1, "trace-x", "log day3", 9)}); err != nil {
+	if err := ForStorage(store).InsertLogs(ctx, []model.LogRecord{makeLogRecord(1, "trace-x", "log day3", 9)}); err != nil {
 		t.Fatal(err)
 	}
-	stampFile(t, filepath.Join(ShardsDir(path), "logs-20261006.db"), "logs", "2026-10-06 00:00:30")
+	stampFile(t, filepath.Join(engine.ShardsDir(path), "logs-20261006.db"), "logs", "2026-10-06 00:00:30")
 	count := func() int {
 		_, total, err := repo.QueryLogs(ctx, LogFilter{ProjectID: 1, TraceID: "trace-x", From: logsFrom, To: logsTo, Limit: 10})
 		if err != nil {
@@ -264,21 +265,21 @@ func TestShardReadersPickUpNewShard(t *testing.T) {
 func TestShardReadersWithoutShards(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
 	store := openTestStorage(t, path)
-	insertReadBatch(t, store.Repository(), "main")
+	insertReadBatch(t, ForStorage(store), "main")
 
-	ro, err := OpenReadDB(path, 2, 0)
+	ro, err := engine.OpenReadDB(path, 2, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ro.Close()
 	repo := NewReadOnlyRepository(ro.DB)
-	rs := NewShardReaders(ro.DB, path, 2, 0, nil)
+	rs := engine.NewShardReaders(ro.DB, path, 2, 0, nil)
 	defer rs.Close()
 	repo.SetShardReaders(rs)
 	if err := rs.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if p := rs.pool(FamilyLogs); p != nil {
+	if p := rs.Pool(engine.FamilyLogs); p != nil {
 		t.Fatal("a database without shards has a logs pool")
 	}
 	recs, err := repo.QueryPromptRecords(PromptFilter{ProjectID: 1, Limit: 10})
@@ -289,7 +290,7 @@ func TestShardReadersWithoutShards(t *testing.T) {
 
 func TestShardIDsStartAtPeriodBase(t *testing.T) {
 	path, _, _, _, _ := shardedReadFixture(t)
-	db, err := sql.Open("sqlite", filepath.Join(ShardsDir(path), "logs-20261005.db")+"?mode=ro")
+	db, err := sql.Open("sqlite", filepath.Join(engine.ShardsDir(path), "logs-20261005.db")+"?mode=ro")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +299,7 @@ func TestShardIDsStartAtPeriodBase(t *testing.T) {
 	if err := db.QueryRow(`SELECT id FROM logs`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	base := shardIDBase(mustTime(t, "2026-10-05T00:00:00Z"))
+	base := engine.ShardIDBase(mustTime(t, "2026-10-05T00:00:00Z"))
 	if id != base+1 {
 		t.Fatalf("first id of the 5 October shard is %d, want %d", id, base+1)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/calcfield"
 	"github.com/wiebe-xyz/spanbarn/internal/calcresolve"
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // ErrDuplicateField reports a calculated field name the project already uses.
@@ -45,7 +46,7 @@ func duplicateField(err error) error {
 // CreateCalculatedField stores a field. The caller validates it.
 func (r *Repository) CreateCalculatedField(f CalculatedField) (int64, error) {
 	var id int64
-	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+	err := r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		res, e := db.Exec(
 			`INSERT INTO calculated_fields (project_id, name, expression) VALUES (?, ?, ?)`,
 			f.ProjectID, f.Name, f.Expression,
@@ -61,7 +62,7 @@ func (r *Repository) CreateCalculatedField(f CalculatedField) (int64, error) {
 
 // UpdateCalculatedField replaces the name and expression of a field.
 func (r *Repository) UpdateCalculatedField(id int64, name, expression string) error {
-	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+	err := r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		res, e := db.Exec(
 			`UPDATE calculated_fields SET name = ?, expression = ?, updated_at = datetime('now') WHERE id = ?`,
 			name, expression, id,
@@ -73,7 +74,7 @@ func (r *Repository) UpdateCalculatedField(id int64, name, expression string) er
 
 // DeleteCalculatedField removes a field.
 func (r *Repository) DeleteCalculatedField(id int64) error {
-	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+	return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		res, err := db.Exec(`DELETE FROM calculated_fields WHERE id = ?`, id)
 		return expectRow(res, err)
 	})

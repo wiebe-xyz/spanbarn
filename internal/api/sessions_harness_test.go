@@ -15,31 +15,33 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 // newTestRepo returns a repository over a migrated in-memory SQLite DB.
 func newTestRepo(t *testing.T) *repository.Repository {
 	t.Helper()
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := repository.MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	return repository.NewRepository(db.DB)
 }
 
-// newTestSessions returns a SessionService over a fresh in-memory repository.
-func newTestSessions(t *testing.T) (*SessionService, *repository.Repository) {
+// newTestSessions returns a session.Service over a fresh in-memory repository.
+func newTestSessions(t *testing.T) (*session.Service, *repository.Repository) {
 	t.Helper()
 	repo := newTestRepo(t)
-	return NewSessionService(repo, 3600, 3600, nil), repo
+	return session.NewService(repo, 3600, 3600, nil), repo
 }
 
 // mintSession creates a local session row and returns its opaque token.
-func mintSession(t *testing.T, svc *SessionService, username string) string {
+func mintSession(t *testing.T, svc *session.Service, username string) string {
 	t.Helper()
 	token, _, err := svc.Create(username, "local", nil)
 	if err != nil {
@@ -47,6 +49,9 @@ func mintSession(t *testing.T, svc *SessionService, username string) string {
 	}
 	return token
 }
+
+// testOrgHome is the organization the test IdP and client agree on.
+const testOrgHome = "org_home"
 
 // fakeIdP is an in-process iambarn stand-in: discovery, an Ed25519 JWKS, and
 // a scriptable token endpoint that serves both the authorization_code and
@@ -65,6 +70,7 @@ type fakeIdP struct {
 	refreshToken  string
 	expiresIn     int
 	idClaims      map[string]any // extra claims merged into the id_token
+	omitIDToken   bool           // leave the id_token out, as IamBarn's refresh grant does
 	tokenCalls    int
 	lastTokenForm map[string][]string
 	// meAccess is the access token /api/v1/me currently accepts. A
@@ -138,6 +144,8 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 			"name":  "Wiebe",
 			"email": "wiebe@wiebe.xyz",
 			"roles": []string{"owner"},
+
+			"organization_id": testOrgHome,
 		}
 		if nonce := r.PostForm.Get("nonce"); nonce != "" {
 			claims["nonce"] = nonce
@@ -146,13 +154,16 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 			claims[k] = v
 		}
 		f.meAccess = f.accessToken
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		resp := map[string]any{
 			"access_token":  f.accessToken,
 			"refresh_token": f.refreshToken,
-			"id_token":      f.signLocked(t, claims),
 			"token_type":    "Bearer",
 			"expires_in":    f.expiresIn,
-		})
+		}
+		if !f.omitIDToken {
+			resp["id_token"] = f.signLocked(t, claims)
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 	mux.HandleFunc("/oauth2/revoke", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -233,21 +244,25 @@ func (f *fakeIdP) client() *auth.OIDCClient {
 		ClientSecret:          "sek",
 		RedirectURL:           "https://spanbarn.example.com/api/v1/oidc/callback",
 		PostLogoutRedirectURI: "https://spanbarn.example.com/api/v1/oidc/logout-complete",
+
+		RequiredOrganizationID: testOrgHome,
 	})
 }
 
 // newOIDCSessionRow creates an OIDC session directly in the store (as the
 // callback would) and returns its opaque token. accessExpiresAt controls when
 // the middleware must refresh.
-func newOIDCSessionRow(t *testing.T, svc *SessionService, accessExpiresAt time.Time, refreshToken string) string {
+func newOIDCSessionRow(t *testing.T, svc *session.Service, accessExpiresAt time.Time, refreshToken string) string {
 	t.Helper()
-	token, _, err := svc.Create("Wiebe", "oidc", &OIDCSessionData{
+	token, _, err := svc.Create("Wiebe", "oidc", &session.OIDCData{
 		Claims: auth.OIDCClaims{
 			Subject:   "sub-1",
 			SessionID: "sid-1",
 			Name:      "Wiebe",
 			Email:     "wiebe@wiebe.xyz",
 			Roles:     []string{"owner"},
+
+			OrganizationID: testOrgHome,
 		},
 		IDToken:         "idtok-login",
 		AccessToken:     "at-login",

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // setupTestDB creates an in-memory SQLite database with migrations applied, or
@@ -24,13 +26,13 @@ func setupTestDB(t *testing.T) *Repository {
 // tests about the migrations themselves that hold in either layout.
 func setupCombinedTestDB(t *testing.T) *Repository {
 	t.Helper()
-	db, err := NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	return NewRepository(db.DB)
@@ -650,16 +652,16 @@ func TestInsertAndQueryErrorSamples(t *testing.T) {
 func TestNewReadOnlyDB(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 
-	rw, err := NewDB(path)
+	rw, err := engine.NewDB(path)
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
-	if err := Migrate(rw.DB); err != nil {
+	if err := engine.Migrate(rw.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	rw.Close()
 
-	ro, err := NewReadOnlyDB(path)
+	ro, err := engine.NewReadOnlyDB(path)
 	if err != nil {
 		t.Fatalf("NewReadOnlyDB: %v", err)
 	}
@@ -685,7 +687,7 @@ func TestProjectUsageStatsAll(t *testing.T) {
 	// row per (project, bucket) carrying the relevant count/error_count for the
 	// bucket window we want to test.
 	addAgg := func(projectID, count, errors int64, ago string) {
-		_, err := repo.writer(FamilySpans).Exec(
+		_, err := repo.writer(engine.FamilySpans).Exec(
 			`INSERT INTO aggregates (project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us)
 			 VALUES (?, 'svc', 'op', '', 'server', datetime('now', ?), ?, ?, 0, 0, 0, 0, 0)`,
 			projectID, ago, count, errors)
@@ -756,7 +758,7 @@ func insertBoringSpans(t *testing.T, repo *Repository, projectID int64, count in
 	if err := repo.InsertSpans(spans); err != nil {
 		t.Fatalf("InsertSpans: %v", err)
 	}
-	if _, err := repo.writer(FamilySpans).Exec("UPDATE spans SET ingested_at = ?", ingestedAt); err != nil {
+	if _, err := repo.writer(engine.FamilySpans).Exec("UPDATE spans SET ingested_at = ?", ingestedAt); err != nil {
 		t.Fatalf("backdate ingested_at: %v", err)
 	}
 }
@@ -902,5 +904,33 @@ func TestEnsureAPIKeyIsIdempotent(t *testing.T) {
 	}
 	if len(keys) != 2 {
 		t.Errorf("got %d keys after rotation, want 2", len(keys))
+	}
+}
+
+// A key's environment defaults to empty, is set and cleared by id, comes back
+// from the hash lookup, and a missing id reports sql.ErrNoRows (#558).
+func TestAPIKeyEnvironment(t *testing.T) {
+	repo := setupTestDB(t)
+	p, _ := repo.CreateProject("proj", "Proj")
+	id, _ := repo.CreateAPIKey(p.ID, "k", "env-hash", "ingest")
+
+	k, err := repo.GetAPIKeyByHash("env-hash")
+	if err != nil || k.Environment != "" {
+		t.Fatalf("new key = %+v, %v; want empty environment", k, err)
+	}
+	if err := repo.SetAPIKeyEnvironment(id, "staging"); err != nil {
+		t.Fatalf("SetAPIKeyEnvironment: %v", err)
+	}
+	if k, _ = repo.GetAPIKeyByHash("env-hash"); k.Environment != "staging" {
+		t.Errorf("environment = %q, want staging", k.Environment)
+	}
+	if err := repo.SetAPIKeyEnvironment(id, ""); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if k, _ = repo.GetAPIKeyByHash("env-hash"); k.Environment != "" {
+		t.Errorf("environment after clear = %q", k.Environment)
+	}
+	if err := repo.SetAPIKeyEnvironment(9999, "staging"); err != sql.ErrNoRows {
+		t.Errorf("missing id = %v, want sql.ErrNoRows", err)
 	}
 }

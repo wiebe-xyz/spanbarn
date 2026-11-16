@@ -9,6 +9,7 @@ import (
 
 	"modernc.org/sqlite"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -24,10 +25,10 @@ func TestBatchedDeleteLabelNamesMethodAndFamily(t *testing.T) {
 	repo.SetWriteScheduler(s)
 	go s.Run(ctx)
 
-	want := "TestBatchedDeleteLabelNamesMethodAndFamily:" + FamilyLogs.String()
+	want := "TestBatchedDeleteLabelNamesMethodAndFamily:" + engine.FamilyLogs.String()
 
 	var seen string
-	if _, err := repo.batchedDelete(ctx, FamilyLogs, func(*sql.DB) (int64, error) {
+	if _, err := repo.batchedDelete(ctx, engine.FamilyLogs, func(*sql.DB) (int64, error) {
 		seen = s.InFlight()
 		return 0, nil
 	}); err != nil {
@@ -38,7 +39,7 @@ func TestBatchedDeleteLabelNamesMethodAndFamily(t *testing.T) {
 	}
 
 	seen = ""
-	if _, _, err := repo.batchedDeleteLimited(ctx, FamilyLogs, 10, func(*sql.DB, int64) (int64, error) {
+	if _, _, err := repo.batchedDeleteLimited(ctx, engine.FamilyLogs, 10, func(*sql.DB, int64) (int64, error) {
 		seen = s.InFlight()
 		return 0, nil
 	}); err != nil {
@@ -81,10 +82,10 @@ func TestExecLowAffectingLabelNamesMethodAndFamily(t *testing.T) {
 	if _, err := repo.DB().Exec(`CREATE TABLE label_probe (label TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.execLowAffecting(FamilyCore, `INSERT INTO label_probe VALUES (write_label())`); err != nil {
+	if _, err := repo.execLowAffecting(engine.FamilyCore, `INSERT INTO label_probe VALUES (write_label())`); err != nil {
 		t.Fatal(err)
 	}
-	want := "TestExecLowAffectingLabelNamesMethodAndFamily:" + FamilyCore.String()
+	want := "TestExecLowAffectingLabelNamesMethodAndFamily:" + engine.FamilyCore.String()
 	var got string
 	if err := repo.DB().QueryRow(`SELECT label FROM label_probe`).Scan(&got); err != nil {
 		t.Fatal(err)
@@ -109,7 +110,7 @@ func TestDeleteSpansByMaxIDLabel(t *testing.T) {
 	if err := repo.InsertSpans([]Span{tsSpan("t", "a", "", "op", "web", "ok", 1, 10)}); err != nil {
 		t.Fatal(err)
 	}
-	db := repo.writer(FamilySpans)
+	db := repo.writer(engine.FamilySpans)
 	if _, err := db.Exec(`CREATE TABLE label_probe (label TEXT)`); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +125,7 @@ func TestDeleteSpansByMaxIDLabel(t *testing.T) {
 	if err := db.QueryRow(`SELECT label FROM label_probe`).Scan(&got); err != nil {
 		t.Fatal(err)
 	}
-	if want := "DeleteSpansByMaxID:" + FamilySpans.String(); got != want {
+	if want := "DeleteSpansByMaxID:" + engine.FamilySpans.String(); got != want {
 		t.Errorf("span delete label %q, want %q", got, want)
 	}
 }

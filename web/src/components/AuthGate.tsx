@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactElement, type ReactNode } from 'react'
 import { api } from '../api/client'
+import { trackConversionOnce } from '../funnelbarn'
 
 type Check = 'pending' | 'ok' | 'signed-out'
 
@@ -17,7 +18,11 @@ export function AuthGate({ children }: { children: ReactNode }): ReactElement | 
     let cancelled = false
     api
       .getMe()
-      .then(() => !cancelled && setCheck('ok'))
+      .then(() => {
+        if (cancelled) return
+        trackConversionOnce('signup')
+        setCheck('ok')
+      })
       .catch((err: unknown) => {
         if (cancelled) return
         setCheck((err as { status?: number })?.status === 401 ? 'signed-out' : 'ok')

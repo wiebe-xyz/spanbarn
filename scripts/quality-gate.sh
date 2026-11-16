@@ -79,25 +79,54 @@ is_stale() { note "$1" "STALE"; stale=1; }
 echo "== quality gate =="
 
 # --- 1. Coverage (per-package aggregate + per-file floor) -------------------
-# The trailing whitespace class ([[:space:]]) matches the package line
-# (".../internal/repository<TAB>...") without matching the ".../repository/migrations" line.
+# internal/repository is a package tree: the query layer in the root package and
+# the SQLite engine in internal/repository/engine. Most engine statements run
+# under the root package's tests (every repository test opens an engine.DB), so
+# the repository run uses -coverpkg over the whole tree. Without it the engine
+# files would only count their own few tests, and moving code into engine would
+# read as lost coverage. The service run keeps go test's own per-package number.
+# The repository aggregate is computed from the profile (migration DDL excluded)
+# over the root and engine packages together, the same set of statements the
+# root package held before the engine moved out.
 cover_profile=$(mktemp)
-trap 'rm -f "$cover_profile"' EXIT
-cov_out=$(go test -cover -coverprofile="$cover_profile" ./internal/service/... ./internal/repository/... 2>/dev/null)
+repo_profile=$(mktemp)
+trap 'rm -f "$cover_profile" "$repo_profile"' EXIT
+# A failing test fails the gate and prints the go test output.
+if ! cov_out=$(go test -cover -coverprofile="$cover_profile" ./internal/service/... 2>&1); then
+  echo "service tests failed:"; printf '%s\n' "$cov_out" | grep -vE 'goose|  OK  ' | tail -80; exit 1
+fi
+if ! repo_out=$(go test -cover -coverpkg=./internal/repository/... -coverprofile="$repo_profile" ./internal/repository/... 2>&1); then
+  echo "repository tests failed:"; printf '%s\n' "$repo_out" | grep -vE 'goose|  OK  ' | tail -80; exit 1
+fi
 svc_cov=$(echo "$cov_out" | grep -E 'internal/service[[:space:]]' | grep -oE '[0-9.]+% of statements' | grep -oE '[0-9.]+' | head -1)
-repo_cov=$(echo "$cov_out" | grep -E 'internal/repository[[:space:]]' | grep -oE '[0-9.]+% of statements' | grep -oE '[0-9.]+' | head -1)
+# With -coverpkg each test binary writes its own line for a block, so a block can
+# appear more than once. Count each block ($1) once: covered if any line ran it.
+repo_cov=$(awk '
+  NR>1 {
+    split($1, a, ":"); f=a[1];
+    if (index(f, "/migrations/") > 0) next;
+    stmts[$1]=$2; if ($3>0) hit[$1]=1;
+  }
+  END {
+    for (b in stmts) { total+=stmts[b]; if (b in hit) covered+=stmts[b] }
+    if (total>0) printf "%.1f", 100*covered/total
+  }' "$repo_profile")
 : "${svc_cov:=0}"; : "${repo_cov:=0}"
+# One profile for the per-file floor: the service profile plus the repository
+# tree's, without the second "mode:" header.
+tail -n +2 "$repo_profile" >> "$cover_profile"
 
 # Per-file floor — aggregate the profile per file (excluding migration DDL and
-# test files). min_file_cov is the lowest of them.
+# test files). min_file_cov is the lowest of them. Engine files are in it.
 per_file=$(awk '
   NR>1 {
     split($1, a, ":"); f=a[1];
     if (index(f, "/migrations/") > 0) next;
     if (f ~ /_test\.go$/) next;
-    total[f]+=$2; if ($3>0) covered[f]+=$2;
+    stmts[$1]=$2; file[$1]=f; if ($3>0) hit[$1]=1;
   }
   END {
+    for (b in stmts) { f=file[b]; total[f]+=stmts[b]; if (b in hit) covered[f]+=stmts[b] }
     for (f in total) {
       pct = total[f]>0 ? 100*covered[f]/total[f] : 100;
       printf "%.1f %s\n", pct, f;

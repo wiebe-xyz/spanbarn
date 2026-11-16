@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -25,18 +26,18 @@ func keepLogsSelectSQL(resume bool) string {
 // can be a migration ahead of or behind kept_logs after a rollback, and a plain
 // SELECT * would then fail and hold the shard back from expiring.
 func keepLogsInsertSQL(ctx context.Context, conn *sql.Conn) (string, error) {
-	kept, err := columnsOf(ctx, conn, "main", "kept_logs")
+	kept, err := engine.ColumnsOf(ctx, conn, "main", "kept_logs")
 	if err != nil {
 		return "", err
 	}
-	shard, err := columnsOf(ctx, conn, "expiring", "logs")
+	shard, err := engine.ColumnsOf(ctx, conn, "expiring", "logs")
 	if err != nil {
 		return "", err
 	}
 	var shared []string
 	for _, col := range kept {
 		if slices.Contains(shard, col) {
-			shared = append(shared, quoteColumn(col))
+			shared = append(shared, engine.QuoteColumn(col))
 		}
 	}
 	cols := strings.Join(shared, ", ")
@@ -60,8 +61,8 @@ const keepLogsWindowRows = 250
 // log trim deletes. As one statement it held main's write slot for 37s on
 // 2026-10-24, when the disk ladder cut the log window from 12h to 6h and the
 // next trim copied six hours of a shard at once (#375).
-func (r *Repository) keepLogs(ctx context.Context, row shardRow, before, errorLogCutoff time.Time) error {
-	path := filepath.Join(r.shards.dir, row.file)
+func (r *Repository) keepLogs(ctx context.Context, row engine.ShardRow, before, errorLogCutoff time.Time) error {
+	path := filepath.Join(r.shards.Dir(), row.File)
 	var pids []int64
 	_, err := r.onExpiringShard(ctx, path, func(conn *sql.Conn) (int64, error) {
 		var err error
@@ -69,11 +70,11 @@ func (r *Repository) keepLogs(ctx context.Context, row shardRow, before, errorLo
 		return writescheduler.NoRows, err
 	})
 	if err != nil {
-		return fmt.Errorf("keep logs of %s: %w", row.file, err)
+		return fmt.Errorf("keep logs of %s: %w", row.File, err)
 	}
 	for _, pid := range pids {
 		if err := r.keepProjectLogs(ctx, path, pid, before, errorLogCutoff); err != nil {
-			return fmt.Errorf("keep logs of %s: %w", row.file, err)
+			return fmt.Errorf("keep logs of %s: %w", row.File, err)
 		}
 	}
 	return nil
@@ -138,7 +139,7 @@ func (r *Repository) keepLogsWindow(
 // connection with the logs shard at path attached read-only as expiring. The
 // job reports the rows fn returns as write.rows.
 func (r *Repository) onExpiringShard(ctx context.Context, path string, fn func(conn *sql.Conn) (int64, error)) (int64, error) {
-	return r.submitRows(FamilyCore, writescheduler.Low, "keepLogs", func(db *sql.DB) (int64, error) {
+	return r.submitRows(engine.FamilyCore, writescheduler.Low, "keepLogs", func(db *sql.DB) (int64, error) {
 		conn, err := db.Conn(ctx)
 		if err != nil {
 			return 0, err

@@ -23,7 +23,7 @@ import {
   formatDuration,
   statusColor,
   truncateId,
-} from '../utils/spanTree'
+} from '../traces/spanTree'
 
 const PAGE_SIZE = 50
 

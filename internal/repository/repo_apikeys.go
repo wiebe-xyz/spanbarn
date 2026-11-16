@@ -1,10 +1,14 @@
 package repository
 
-import "database/sql"
+import (
+	"database/sql"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
+)
 
 func (r *Repository) CreateAPIKey(projectID int64, name, keyHash, scope string) (int64, error) {
 	var id int64
-	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+	err := r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		res, e := db.Exec(
 			"INSERT INTO api_keys (project_id, name, key_hash, scope) VALUES (?, ?, ?, ?)",
 			projectID, name, keyHash, scope,
@@ -26,7 +30,7 @@ func (r *Repository) CreateAPIKey(projectID int64, name, keyHash, scope string) 
 // previous key keeps working until it is explicitly revoked, so a rotation
 // cannot lock out a client that has not picked up the new value yet.
 func (r *Repository) EnsureAPIKey(projectID int64, name, keyHash, scope string) (inserted bool, err error) {
-	err = r.execHigh(FamilyCore, func(db *sql.DB) error {
+	err = r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		res, e := db.Exec(
 			"INSERT OR IGNORE INTO api_keys (project_id, name, key_hash, scope) VALUES (?, ?, ?, ?)",
 			projectID, name, keyHash, scope,
@@ -44,14 +48,14 @@ func (r *Repository) EnsureAPIKey(projectID int64, name, keyHash, scope string) 
 func (r *Repository) GetAPIKeyByHash(keyHash string) (APIKey, error) {
 	var k APIKey
 	err := r.db.QueryRow(
-		"SELECT id, project_id, name, key_hash, scope FROM api_keys WHERE key_hash = ?",
+		"SELECT id, project_id, name, key_hash, scope, environment FROM api_keys WHERE key_hash = ?",
 		keyHash,
-	).Scan(&k.ID, &k.ProjectID, &k.Name, &k.KeyHash, &k.Scope)
+	).Scan(&k.ID, &k.ProjectID, &k.Name, &k.KeyHash, &k.Scope, &k.Environment)
 	return k, err
 }
 
 func (r *Repository) TouchAPIKey(id int64) error {
-	return r.execLow(FamilyCore, func(db *sql.DB) error {
+	return r.execLow(engine.FamilyCore, func(db *sql.DB) error {
 		_, err := db.Exec("UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?", id)
 		return err
 	})
@@ -59,7 +63,7 @@ func (r *Repository) TouchAPIKey(id int64) error {
 
 func (r *Repository) ListAPIKeys(projectID int64) ([]APIKey, error) {
 	rows, err := r.db.Query(
-		"SELECT id, project_id, name, key_hash, scope, last_used_at, created_at FROM api_keys WHERE project_id = ? ORDER BY id",
+		"SELECT id, project_id, name, key_hash, scope, environment, last_used_at, created_at FROM api_keys WHERE project_id = ? ORDER BY id",
 		projectID,
 	)
 	if err != nil {
@@ -69,7 +73,7 @@ func (r *Repository) ListAPIKeys(projectID int64) ([]APIKey, error) {
 	var out []APIKey
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.ID, &k.ProjectID, &k.Name, &k.KeyHash, &k.Scope, &k.LastUsedAt, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.ProjectID, &k.Name, &k.KeyHash, &k.Scope, &k.Environment, &k.LastUsedAt, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, k)
@@ -79,7 +83,7 @@ func (r *Repository) ListAPIKeys(projectID int64) ([]APIKey, error) {
 
 func (r *Repository) ListAllAPIKeys() ([]APIKey, error) {
 	rows, err := r.db.Query(
-		"SELECT id, project_id, name, key_hash, scope, last_used_at, created_at FROM api_keys ORDER BY id",
+		"SELECT id, project_id, name, key_hash, scope, environment, last_used_at, created_at FROM api_keys ORDER BY id",
 	)
 	if err != nil {
 		return nil, err
@@ -88,7 +92,7 @@ func (r *Repository) ListAllAPIKeys() ([]APIKey, error) {
 	var out []APIKey
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.ID, &k.ProjectID, &k.Name, &k.KeyHash, &k.Scope, &k.LastUsedAt, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.ProjectID, &k.Name, &k.KeyHash, &k.Scope, &k.Environment, &k.LastUsedAt, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, k)
@@ -97,5 +101,12 @@ func (r *Repository) ListAllAPIKeys() ([]APIKey, error) {
 }
 
 func (r *Repository) RevokeAPIKey(id int64) error {
-	return r.execHighExpectingRows(FamilyCore, "DELETE FROM api_keys WHERE id = ?", id)
+	return r.execHighExpectingRows(engine.FamilyCore, "DELETE FROM api_keys WHERE id = ?", id)
+}
+
+// SetAPIKeyEnvironment sets the environment stamped on records that arrive
+// without one. An empty value clears it. It reports ErrNoRows-free: a missing
+// id changes nothing and returns sql.ErrNoRows.
+func (r *Repository) SetAPIKeyEnvironment(id int64, environment string) error {
+	return r.execHighExpectingRows(engine.FamilyCore, "UPDATE api_keys SET environment = ? WHERE id = ?", environment, id)
 }

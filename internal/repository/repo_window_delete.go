@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -14,7 +15,7 @@ import (
 // holds only the DELETE; without one both run in the slot. The error-sample
 // delete and the trace-summary delete use it.
 type windowDelete struct {
-	family Family
+	family engine.Family
 	label  string
 	// scan reads one window starting after cur.
 	scan func(q rowQuerier, cur logTrimCursor) (logTrimWindow, error)

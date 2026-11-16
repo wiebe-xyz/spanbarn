@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -31,6 +32,7 @@ func (s *Server) registerRoutes() {
 	env.ingestAuth, env.otlpAuth = s.ingestAuthMiddleware()
 
 	s.registerPublicRoutes(env)
+	s.registerAuthRoutes()
 	s.registerIngestRoutes(env)
 	s.registerQueryRoutes(env)
 	s.registerManagementRoutes(env)
@@ -104,6 +106,24 @@ func (s *Server) registerPublicRoutes(env *routeEnv) {
 	if s.repo != nil {
 		s.mux.Handle("/api/v1/setup/{slug}", env.apiRL(env.sessionAuth(http.HandlerFunc(s.handleSetup))))
 	}
+}
+
+// registerAuthRoutes mounts the local login (rate-limited per IP, throttled per
+// account, followed by a cache warm) and logout routes. They need a session
+// service and the user authenticator from WithLogin; a server without either
+// serves neither. The routes live on authMux, which NewServerWithQuery puts in
+// front of the middleware chain.
+func (s *Server) registerAuthRoutes() {
+	if s.sessions == nil || s.login == nil {
+		return
+	}
+	loginLimiter := NewRateLimiter(s.login.loginRate, s.login.ingestRate, s.login.apiRate)
+	loginRL := RateLimitMiddleware(loginLimiter, "login")
+	s.authMux = http.NewServeMux()
+	s.authMux.Handle("/api/v1/login", loginRL(HandleLogin(s.login.userAuth, s.sessions, loginLimiter, func() {
+		WarmLoginCaches(context.Background(), s.querySvc, s.logger)
+	})))
+	s.authMux.Handle("/api/v1/logout", HandleLogout(s.sessions))
 }
 
 // registerOIDCRoutes mounts the OIDC login flow and session refresh.

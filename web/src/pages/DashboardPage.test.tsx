@@ -184,13 +184,18 @@ describe('DashboardPage', () => {
   })
 
   it('resets to the live window when the range changes', async () => {
+    // Freeze Date only: a loaded CI host can put the render and the assertion
+    // seconds apart, which made "now minus window end" a wall-clock race.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-04T12:00:00Z'))
+    onTestFinished(() => { vi.useRealTimers() })
     renderPage('/?offset=3')
     await waitFor(() => expect(counts).toHaveBeenCalled())
     fireEvent.change(screen.getByRole('combobox', { name: 'Time range' }), { target: { value: '1h' } })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Next window' })).toBeDisabled())
     const filter = counts.mock.calls.at(-1)![0]
     expect(Date.parse(filter.to) - Date.parse(filter.from)).toBe(3600_000)
-    expect(Date.now() - Date.parse(filter.to)).toBeLessThan(5000)
+    expect(Date.now() - Date.parse(filter.to)).toBe(0)
   })
 
   it('shows an error on the failing card and keeps the others', async () => {

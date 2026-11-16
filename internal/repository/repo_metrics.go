@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // MetricRow is the repository-layer representation of a stored metric data point.
@@ -58,8 +59,8 @@ func (r *Repository) InsertMetrics(ctx context.Context, recs []model.MetricRecor
 		return nil
 	}
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
-	ctx = WithoutSpanTracing(ctx)
-	return r.execIngest(FamilyMetrics, int64(len(recs)), func(db *sql.DB) error {
+	ctx = engine.WithoutSpanTracing(ctx)
+	return r.execIngest(engine.FamilyMetrics, int64(len(recs)), func(db *sql.DB) error {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
@@ -105,7 +106,7 @@ func (r *Repository) ListMetricNames(ctx context.Context, projectID int64, from,
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	rows, err := r.reader(FamilyMetrics).QueryContext(ctx,
+	rows, err := r.reader(engine.FamilyMetrics).QueryContext(ctx,
 		`SELECT DISTINCT name FROM metrics
 		 WHERE project_id = ? AND ingested_at >= ? AND ingested_at <= ?
 		 ORDER BY name LIMIT 1000`,
@@ -142,7 +143,7 @@ func (r *Repository) ListMetricCatalog(ctx context.Context, projectID int64, fro
 	ctx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	rows, err := r.reader(FamilyMetrics).QueryContext(ctx,
+	rows, err := r.reader(engine.FamilyMetrics).QueryContext(ctx,
 		`SELECT name, type, unit, COUNT(DISTINCT attributes) AS series
 		 FROM metrics
 		 WHERE project_id = ? AND ingested_at >= ? AND ingested_at <= ?
@@ -190,7 +191,7 @@ func (r *Repository) QueryMetricSeries(ctx context.Context, f MetricFilter) ([]M
 		FROM metrics WHERE %s ORDER BY time_unix_nano ASC LIMIT ?`,
 		strings.Join(where, " AND "))
 
-	rows, err := r.reader(FamilyMetrics).QueryContext(ctx, q, args...)
+	rows, err := r.reader(engine.FamilyMetrics).QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

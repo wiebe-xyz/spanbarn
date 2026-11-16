@@ -27,13 +27,14 @@ type User struct {
 }
 
 type APIKey struct {
-	ID         int64        `json:"id"`
-	ProjectID  int64        `json:"projectId"`
-	Name       string       `json:"name"`
-	KeyHash    string       `json:"-"`
-	Scope      string       `json:"scope"`
-	LastUsedAt sql.NullTime `json:"lastUsedAt"`
-	CreatedAt  time.Time    `json:"createdAt"`
+	ID          int64        `json:"id"`
+	ProjectID   int64        `json:"projectId"`
+	Name        string       `json:"name"`
+	KeyHash     string       `json:"-"`
+	Scope       string       `json:"scope"`
+	Environment string       `json:"environment"`
+	LastUsedAt  sql.NullTime `json:"lastUsedAt"`
+	CreatedAt   time.Time    `json:"createdAt"`
 }
 
 type Span struct {

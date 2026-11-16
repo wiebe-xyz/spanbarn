@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactElement } from 'react'
-import { formatCount, formatMicros, type ToolSpanStat } from '../utils/claudeCode'
+import { formatCount, formatMicros, type ToolSpanStat } from '../prompts/claudeCode'
 
 const cell: CSSProperties = { padding: '0.5rem 0.75rem', textAlign: 'right', whiteSpace: 'nowrap' }
 

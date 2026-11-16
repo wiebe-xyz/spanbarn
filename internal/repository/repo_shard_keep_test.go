@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -16,12 +17,12 @@ import (
 // project 1 than two windows of retentionDeleteBatch hold, more error-sampled
 // rows of project 2 than one such window holds, and plain rows of both, all
 // with one ingest time.
-func keepFixture(t *testing.T) (string, *Storage, *Repository, *time.Time) {
+func keepFixture(t *testing.T) (string, *engine.Storage, *Repository, *time.Time) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
 	clock := mustTime(t, "2026-10-04T10:00:00Z")
 	store := openShardedStorage(t, path, &clock)
-	repo := store.Repository()
+	repo := ForStorage(store)
 	ctx := context.Background()
 	insert := func(pid int64, trace string, n int) {
 		recs := make([]model.LogRecord, n)
@@ -36,7 +37,7 @@ func keepFixture(t *testing.T) (string, *Storage, *Repository, *time.Time) {
 	insert(1, "plain", 300)
 	insert(2, "err", retentionDeleteBatch+10)
 	insert(2, "", 200)
-	stampFile(t, filepath.Join(ShardsDir(path), "logs-20261004.db"), "logs", "2026-10-04 10:00:00")
+	stampFile(t, filepath.Join(engine.ShardsDir(path), "logs-20261004.db"), "logs", "2026-10-04 10:00:00")
 	if err := repo.InsertErrorSamples([]Span{{ProjectID: 2, TraceID: "err", SpanID: "s1", Name: "op", Status: "error", Attributes: "{}", Events: "[]"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +47,7 @@ func keepFixture(t *testing.T) (string, *Storage, *Repository, *time.Time) {
 	return path, store, repo, &clock
 }
 
-func keptCount(t *testing.T, store *Storage, trace string) int {
+func keptCount(t *testing.T, store *engine.Storage, trace string) int {
 	t.Helper()
 	var n int
 	if err := store.Main.QueryRow(`SELECT count(*) FROM kept_logs WHERE trace_id IS ?`, trace).Scan(&n); err != nil {
@@ -88,7 +89,7 @@ func TestKeepLogsCopiesEveryProtectedRowAcrossWindows(t *testing.T) {
 func TestKeepLogsWindowIsBoundedByRowsScanned(t *testing.T) {
 	path, _, repo, _ := keepFixture(t)
 	ctx := context.Background()
-	shard := filepath.Join(ShardsDir(path), "logs-20261004.db")
+	shard := filepath.Join(engine.ShardsDir(path), "logs-20261004.db")
 	before := mustTime(t, "2026-10-05T00:00:00Z")
 
 	var cur logTrimCursor
@@ -124,7 +125,7 @@ func TestKeepLogsJobsReportRowsCopied(t *testing.T) {
 	s := writescheduler.New()
 	repo.SetWriteScheduler(s)
 	go s.Run(ctx)
-	shard := filepath.Join(ShardsDir(path), "logs-20261004.db")
+	shard := filepath.Join(engine.ShardsDir(path), "logs-20261004.db")
 
 	var cur logTrimCursor
 	var copied []int64
@@ -151,7 +152,7 @@ func TestKeepLogsSelectPlanSeeksProjectIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	shard := filepath.Join(ShardsDir(path), "logs-20261004.db")
+	shard := filepath.Join(engine.ShardsDir(path), "logs-20261004.db")
 	if _, err := conn.ExecContext(ctx, `ATTACH DATABASE ? AS expiring`, "file:"+shard+"?mode=ro"); err != nil {
 		t.Fatal(err)
 	}

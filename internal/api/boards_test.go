@@ -11,6 +11,7 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 type boardJSON struct {
@@ -34,7 +35,7 @@ type boardJSON struct {
 }
 
 // boardServer is the query test server with a repository attached and project 1.
-func boardServer(t *testing.T) (*Server, *SessionService, *repository.Repository) {
+func boardServer(t *testing.T) (*Server, *session.Service, *repository.Repository) {
 	t.Helper()
 	_, sm, repo := setupQueryTestServer(t)
 	if _, err := repo.CreateProject("p1", "P1"); err != nil {

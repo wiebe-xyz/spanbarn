@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // combinedTemplate is one migrated in-memory database per test process,
@@ -30,7 +32,7 @@ func setupCombinedTemplateDB(t *testing.T) *Repository {
 	if combinedTemplate.err != nil {
 		t.Fatalf("combined template: %v", combinedTemplate.err)
 	}
-	db, err := NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
@@ -45,12 +47,12 @@ func setupCombinedTemplateDB(t *testing.T) *Repository {
 }
 
 func buildCombinedTemplate() ([]byte, error) {
-	db, err := NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
-	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	var buf []byte

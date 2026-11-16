@@ -133,3 +133,25 @@ func TestTraceBufferMinPerHour(t *testing.T) {
 		}
 	}
 }
+
+func TestOIDCAllowedOrganizations(t *testing.T) {
+	cases := []struct {
+		name        string
+		home, extra string
+		want        string
+	}{
+		{"neither", "", "", ""},
+		{"home only", "org_a", "", "org_a"},
+		{"extra only", "", "org_b", "org_b"},
+		{"both", "org_a", "org_b,org_c", "org_a,org_b,org_c"},
+		{"spaces", " org_a ", " org_b ", "org_a,org_b"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := OIDCConfig{OrganizationID: tc.home, ExtraOrganizationIDs: tc.extra}.AllowedOrganizations()
+			if got != tc.want {
+				t.Fatalf("AllowedOrganizations = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // The log trim reads its window before it needs the writer, and the DELETE
@@ -26,9 +27,9 @@ func TestLogTrimReadsTheWindowBeforeItTakesTheWriter(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
 	store := openTestStorage(t, path)
 	ctx := context.Background()
-	repo := store.Repository()
+	repo := ForStorage(store)
 
-	ro, err := OpenReadDB(path, 2, 0)
+	ro, err := engine.OpenReadDB(path, 2, 0)
 	if err != nil {
 		t.Fatalf("open read db: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestLogTrimReadsTheWindowBeforeItTakesTheWriter(t *testing.T) {
 	now := time.Now().UTC()
 	cutoff, errCutoff := now.Add(time.Hour), now.Add(-30*24*time.Hour)
 
-	writer := repo.writer(TableFamily("logs"))
+	writer := repo.writer(engine.TableFamily("logs"))
 	conn, err := writer.Conn(ctx)
 	if err != nil {
 		t.Fatalf("hold the writer: %v", err)

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // BenchmarkErrorTraceIndexWriteCost measures what the partial error-trace
@@ -38,12 +40,12 @@ func BenchmarkErrorTraceIndexWriteCost(b *testing.B) {
 
 func errorIndexBenchRepo(b *testing.B, withIndexes bool) *Repository {
 	b.Helper()
-	db, err := NewDB(filepath.Join(b.TempDir(), "bench.db"))
+	db, err := engine.NewDB(filepath.Join(b.TempDir(), "bench.db"))
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { db.Close() })
-	if err := MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		b.Fatal(err)
 	}
 	if !withIndexes {

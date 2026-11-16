@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // ShardCutoffs are the retention cutoffs of the sharded families. ErrorLogs
@@ -15,13 +17,13 @@ type ShardCutoffs struct {
 	ErrorLogs time.Time
 }
 
-func (c ShardCutoffs) of(f Family) time.Time {
+func (c ShardCutoffs) of(f engine.Family) time.Time {
 	switch f {
-	case FamilyLogs:
+	case engine.FamilyLogs:
 		return c.Logs
-	case FamilyMetrics:
+	case engine.FamilyMetrics:
 		return c.Metrics
-	case FamilyPrompts:
+	case engine.FamilyPrompts:
 		return c.Prompts
 	}
 	return time.Time{}
@@ -40,7 +42,7 @@ type ShardExpiry struct {
 // ExpireShards applies retention to the shard files. A shard whose whole
 // period is older than its family's cutoff is marked retiring, after its
 // error-trace and pinned logs are copied to kept_logs; a shard retiring for
-// shardDeleteDelay is deleted. A window shorter than one period (the disk
+// engine.ShardDeleteDelay is deleted. A window shorter than one period (the disk
 // ladder cut it) also deletes the rows older than the cutoff inside the shard
 // that straddles it. Main's copy of a sharded family's table is dropped once
 // it is empty. Without shards it does nothing.
@@ -50,7 +52,7 @@ func (r *Repository) ExpireShards(ctx context.Context, now time.Time, c ShardCut
 	if m == nil {
 		return out, nil
 	}
-	rows, err := m.rows(ctx)
+	rows, err := m.Rows(ctx)
 	if err != nil {
 		return out, err
 	}
@@ -67,25 +69,25 @@ func (r *Repository) ExpireShards(ctx context.Context, now time.Time, c ShardCut
 }
 
 // expireShard applies retention to one shard and counts what it did in out.
-func (r *Repository) expireShard(ctx context.Context, row shardRow, now time.Time, c ShardCutoffs, out *ShardExpiry) error {
+func (r *Repository) expireShard(ctx context.Context, row engine.ShardRow, now time.Time, c ShardCutoffs, out *ShardExpiry) error {
 	m := r.shards
-	cutoff := c.of(row.family)
+	cutoff := c.of(row.Family)
 	switch {
-	case row.state == shardRetiring:
-		if now.Sub(row.retiringAt) < shardDeleteDelay {
+	case row.State == engine.ShardRetiring:
+		if now.Sub(row.RetiringAt) < engine.ShardDeleteDelay {
 			return nil
 		}
-		if err := m.remove(ctx, row); err != nil {
+		if err := m.Remove(ctx, row); err != nil {
 			return err
 		}
 		out.Deleted++
 	case cutoff.IsZero():
-	case !row.end.After(cutoff) && !m.writable(row, now):
+	case !row.End.After(cutoff) && !m.Writable(row, now):
 		if err := r.retireShard(ctx, row, now, c.ErrorLogs); err != nil {
 			return err
 		}
 		out.Retired++
-	case now.Sub(cutoff) < m.specs[row.family].length() && row.start.Before(cutoff) && cutoff.Before(row.end):
+	case now.Sub(cutoff) < m.PeriodLength(row.Family) && row.Start.Before(cutoff) && cutoff.Before(row.End):
 		n, err := r.trimShard(ctx, row, cutoff, c.ErrorLogs)
 		out.RowsTrimmed += n
 		return err
@@ -102,66 +104,66 @@ func (r *Repository) RetireOldestShard(ctx context.Context, now, errorLogCutoff 
 	if m == nil {
 		return 0, false, nil
 	}
-	rows, err := m.rows(ctx)
+	rows, err := m.Rows(ctx)
 	if err != nil {
 		return 0, false, err
 	}
 	for _, row := range rows {
-		if row.state != shardActive || m.writable(row, now) {
+		if row.State != engine.ShardActive || m.Writable(row, now) {
 			continue
 		}
 		if err := r.retireShard(ctx, row, now, errorLogCutoff); err != nil {
 			return 0, false, err
 		}
-		db, wal := m.fileBytes(row.file)
+		db, wal := m.FileBytes(row.File)
 		return db + wal, true, nil
 	}
 	return 0, false, nil
 }
 
 // RetiringShardBytes returns the bytes of the shards waiting for deletion:
-// space the volume gets back within shardDeleteDelay.
+// space the volume gets back within engine.ShardDeleteDelay.
 func (r *Repository) RetiringShardBytes(ctx context.Context) (int64, error) {
 	m := r.shards
 	if m == nil {
 		return 0, nil
 	}
-	rows, err := m.rows(ctx)
+	rows, err := m.Rows(ctx)
 	if err != nil {
 		return 0, err
 	}
 	var total int64
 	for _, row := range rows {
-		if row.state == shardRetiring {
-			db, wal := m.fileBytes(row.file)
+		if row.State == engine.ShardRetiring {
+			db, wal := m.FileBytes(row.File)
 			total += db + wal
 		}
 	}
 	return total, nil
 }
 
-func (r *Repository) retireShard(ctx context.Context, row shardRow, now, errorLogCutoff time.Time) error {
-	if row.family == FamilyLogs {
-		if err := r.keepLogs(ctx, row, row.end, errorLogCutoff); err != nil {
+func (r *Repository) retireShard(ctx context.Context, row engine.ShardRow, now, errorLogCutoff time.Time) error {
+	if row.Family == engine.FamilyLogs {
+		if err := r.keepLogs(ctx, row, row.End, errorLogCutoff); err != nil {
 			return err
 		}
 	}
-	return r.shards.markRetiring(ctx, row, now)
+	return r.shards.MarkRetiring(ctx, row, now)
 }
 
 // trimShard deletes the rows ingested before cutoff from one shard, per
 // project and in batches along its (project_id, ingested_at) index, then
 // returns the freed pages to the volume.
-func (r *Repository) trimShard(ctx context.Context, row shardRow, cutoff, errorLogCutoff time.Time) (int64, error) {
-	if row.family == FamilyLogs {
+func (r *Repository) trimShard(ctx context.Context, row engine.ShardRow, cutoff, errorLogCutoff time.Time) (int64, error) {
+	if row.Family == engine.FamilyLogs {
 		if err := r.keepLogs(ctx, row, cutoff, errorLogCutoff); err != nil {
 			return 0, err
 		}
 	}
-	table := row.family.Tables()[0]
+	table := row.Family.Tables()[0]
 	m := r.shards
 	var pids []int64
-	if err := m.onShard(row.family, row.start, "trimShard", func(db *sql.DB) error {
+	if err := m.OnShard(row.Family, row.Start, "trimShard", func(db *sql.DB) error {
 		var err error
 		pids, err = projectIDs(ctx, db, table)
 		return err
@@ -174,7 +176,7 @@ func (r *Repository) trimShard(ctx context.Context, row shardRow, cutoff, errorL
 	for _, pid := range pids {
 		for {
 			var n int64
-			if err := m.onShard(row.family, row.start, "trimShard", func(db *sql.DB) error {
+			if err := m.OnShard(row.Family, row.Start, "trimShard", func(db *sql.DB) error {
 				res, err := db.ExecContext(ctx, q, pid, cutoff.UTC(), retentionDeleteBatch)
 				if err != nil {
 					return err
@@ -190,7 +192,7 @@ func (r *Repository) trimShard(ctx context.Context, row shardRow, cutoff, errorL
 			}
 		}
 	}
-	err := m.onShard(row.family, row.start, "trimShard", func(db *sql.DB) error {
+	err := m.OnShard(row.Family, row.Start, "trimShard", func(db *sql.DB) error {
 		_, err := db.ExecContext(ctx, `PRAGMA incremental_vacuum`)
 		return err
 	})

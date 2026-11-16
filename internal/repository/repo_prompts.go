@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
@@ -14,8 +16,8 @@ func (r *Repository) InsertPromptRecords(records []PromptRecord) error {
 		return nil
 	}
 	// Writing telemetry must not emit telemetry. See WithoutSpanTracing.
-	ctx := WithoutSpanTracing(context.Background())
-	return r.execIngest(FamilyPrompts, int64(len(records)), func(db *sql.DB) error {
+	ctx := engine.WithoutSpanTracing(context.Background())
+	return r.execIngest(engine.FamilyPrompts, int64(len(records)), func(db *sql.DB) error {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
@@ -84,7 +86,7 @@ func (r *Repository) QueryPromptRecords(f PromptFilter) ([]PromptRecord, error) 
 	if limit <= 0 {
 		limit = 100
 	}
-	if p := r.shardReaders.pool(FamilyPrompts); p != nil {
+	if p := r.shardReaders.Pool(engine.FamilyPrompts); p != nil {
 		return r.promptRecordsBySegment(p, query, args, limit, f.Offset)
 	}
 	q := query("prompt_records") + fmt.Sprintf(" LIMIT %d", limit)
@@ -121,11 +123,11 @@ func (f PromptFilter) where() ([]string, []any) {
 // row of every shard, bodies included. Instead each shard, and main, returns
 // its own newest offset+limit rows along its ingested_at index, and the
 // segments are merged here.
-func (r *Repository) promptRecordsBySegment(p *familyPool, query func(table string) string, args []any, limit, offset int) ([]PromptRecord, error) {
+func (r *Repository) promptRecordsBySegment(p *engine.FamilyPool, query func(table string) string, args []any, limit, offset int) ([]PromptRecord, error) {
 	need := limit + offset
 	var all []PromptRecord
-	for _, schema := range p.segments {
-		recs, err := r.scanPromptRecords(p.db.DB, query(schema+".prompt_records")+fmt.Sprintf(" LIMIT %d", need), args...)
+	for _, schema := range p.Segments {
+		recs, err := r.scanPromptRecords(p.DB.DB, query(schema+".prompt_records")+fmt.Sprintf(" LIMIT %d", need), args...)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +151,7 @@ const promptRecordColumns = `SELECT id, project_id, trace_id, span_id, COALESCE(
 		feature_flag_key, feature_flag_variant, start_time_us, ingested_at`
 
 func (r *Repository) GetPromptRecordsByTraceID(traceID string) ([]PromptRecord, error) {
-	return r.scanPromptRecords(r.reader(FamilyPrompts),
+	return r.scanPromptRecords(r.reader(engine.FamilyPrompts),
 		promptRecordColumns+` FROM prompt_records WHERE trace_id = ? ORDER BY start_time_us`,
 		traceID,
 	)

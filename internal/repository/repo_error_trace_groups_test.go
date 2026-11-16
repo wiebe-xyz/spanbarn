@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // A trace whose error is in a child span groups under its ok root, and a trace
@@ -119,7 +121,7 @@ func TestErrorSpanQueryReadsOnlyTheErrorIndexes(t *testing.T) {
 // still answers, through the trace_id indexes.
 func TestErrorSpanLookupWithoutTheErrorIndexes(t *testing.T) {
 	repo := setupTestDB(t)
-	w := repo.writers[FamilySpans]
+	w := repo.writers[engine.FamilySpans]
 	if w == nil {
 		w = repo.db
 	}

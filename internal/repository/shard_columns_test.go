@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func addProbeColumn(t *testing.T, db *sql.DB, table string) {
@@ -32,14 +34,14 @@ func addProbeColumnToFile(t *testing.T, path, table string) {
 // restart.
 func TestShardViewsReadShardsWithDifferentColumns(t *testing.T) {
 	for _, tc := range []struct {
-		family        Family
+		family        engine.Family
 		table         string
 		older, newest string
 		rows          int
 	}{
-		{FamilyLogs, "logs", "logs-20261004.db", "logs-20261005.db", 3},
-		{FamilyMetrics, "metrics", "metrics-20261004.db", "metrics-20261005.db", 3},
-		{FamilyPrompts, "prompt_records", "prompts-2026w40.db", "prompts-2026w41.db", 3},
+		{engine.FamilyLogs, "logs", "logs-20261004.db", "logs-20261005.db", 3},
+		{engine.FamilyMetrics, "metrics", "metrics-20261004.db", "metrics-20261005.db", 3},
+		{engine.FamilyPrompts, "prompt_records", "prompts-2026w40.db", "prompts-2026w41.db", 3},
 	} {
 		t.Run(tc.table, func(t *testing.T) {
 			path, _, _, rs, _ := shardedReadFixture(t)
@@ -50,18 +52,18 @@ func TestShardViewsReadShardsWithDifferentColumns(t *testing.T) {
 					t.Fatalf("refresh: %v", err)
 				}
 				q := `SELECT count(*), count(rollback_probe) FROM ` + tc.table
-				if err := rs.pool(tc.family).db.QueryRow(q).Scan(&rows, &probed); err != nil {
+				if err := rs.Pool(tc.family).DB.QueryRow(q).Scan(&rows, &probed); err != nil {
 					t.Fatalf("read %s: %v", tc.table, err)
 				}
 				return rows, probed
 			}
 
-			addProbeColumnToFile(t, filepath.Join(ShardsDir(path), tc.older), tc.table)
+			addProbeColumnToFile(t, filepath.Join(engine.ShardsDir(path), tc.older), tc.table)
 			if rows, probed := read(); rows != tc.rows || probed != 1 {
 				t.Errorf("one shard ahead: %d rows, %d with the column, want %d and 1", rows, probed, tc.rows)
 			}
 
-			addProbeColumnToFile(t, filepath.Join(ShardsDir(path), tc.newest), tc.table)
+			addProbeColumnToFile(t, filepath.Join(engine.ShardsDir(path), tc.newest), tc.table)
 			if rows, probed := read(); rows != tc.rows || probed != 2 {
 				t.Errorf("short shard migrated: %d rows, %d with the column, want %d and 2", rows, probed, tc.rows)
 			}
@@ -74,7 +76,7 @@ func TestShardViewsReadShardsWithDifferentColumns(t *testing.T) {
 func TestShardReadsWorkWithAShardBehind(t *testing.T) {
 	path, _, repo, rs, _ := shardedReadFixture(t)
 	ctx := context.Background()
-	shards := ShardsDir(path)
+	shards := engine.ShardsDir(path)
 	addProbeColumnToFile(t, filepath.Join(shards, "logs-20261004.db"), "logs")
 	addProbeColumnToFile(t, filepath.Join(shards, "prompts-2026w40.db"), "prompt_records")
 	if err := rs.Refresh(ctx); err != nil {
@@ -98,7 +100,7 @@ func TestLogsViewReadsKeptLogsWithDifferentColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	var rows int
-	if err := rs.pool(FamilyLogs).db.QueryRow(`SELECT count(*) FROM logs WHERE rollback_probe IS NULL`).Scan(&rows); err != nil {
+	if err := rs.Pool(engine.FamilyLogs).DB.QueryRow(`SELECT count(*) FROM logs WHERE rollback_probe IS NULL`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows != 3 {
@@ -111,15 +113,15 @@ func TestLogsViewReadsKeptLogsWithDifferentColumns(t *testing.T) {
 func TestKeepLogsCopiesAcrossDifferentColumns(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		alter func(t *testing.T, shard string, store *Storage)
+		alter func(t *testing.T, shard string, store *engine.Storage)
 	}{
-		{"shard ahead", func(t *testing.T, shard string, _ *Storage) { addProbeColumnToFile(t, shard, "logs") }},
-		{"shard behind", func(t *testing.T, _ string, store *Storage) { addProbeColumn(t, store.Main.DB, "kept_logs") }},
+		{"shard ahead", func(t *testing.T, shard string, _ *engine.Storage) { addProbeColumnToFile(t, shard, "logs") }},
+		{"shard behind", func(t *testing.T, _ string, store *engine.Storage) { addProbeColumn(t, store.Main.DB, "kept_logs") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path, store, repo, clock := keepFixture(t)
 			ctx := context.Background()
-			tc.alter(t, filepath.Join(ShardsDir(path), "logs-20261004.db"), store)
+			tc.alter(t, filepath.Join(engine.ShardsDir(path), "logs-20261004.db"), store)
 
 			*clock = mustTime(t, "2026-10-06T01:00:00Z")
 			if err := store.Shards.Maintain(ctx); err != nil {

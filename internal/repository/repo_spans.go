@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/writescheduler"
 )
 
@@ -19,8 +20,8 @@ func (r *Repository) InsertSpansContext(ctx context.Context, spans []Span) error
 		return nil
 	}
 	// Writing spans must not emit spans. See WithoutSpanTracing.
-	ctx = WithoutSpanTracing(ctx)
-	return r.execLow(FamilySpans, func(db *sql.DB) error {
+	ctx = engine.WithoutSpanTracing(ctx)
+	return r.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
@@ -161,7 +162,7 @@ func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
 		return 0, nil
 	}
 	var n int64
-	err := r.execLow(FamilySpans, func(db *sql.DB) error {
+	err := r.execLow(engine.FamilySpans, func(db *sql.DB) error {
 		placeholders := make([]string, len(ids))
 		args := make([]any, len(ids))
 		for i, id := range ids {
@@ -186,7 +187,7 @@ const spanDeleteChunk = 1000
 
 // spanDeleteLabel names every chunk's write job, so slow writes group under
 // the label the single DELETE had.
-var spanDeleteLabel = "DeleteSpansByMaxID:" + FamilySpans.String()
+var spanDeleteLabel = "DeleteSpansByMaxID:" + engine.FamilySpans.String()
 
 // DeleteSpansByMaxID deletes every span with id <= maxID, the oldest
 // spanDeleteChunk at a time, each chunk in its own write job so other writes
@@ -194,7 +195,7 @@ var spanDeleteLabel = "DeleteSpansByMaxID:" + FamilySpans.String()
 // it runs, and the chunks delete what one DELETE would.
 func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
 	return deleteInChunks(spanDeleteChunk, func() (int64, error) {
-		return r.submitRows(FamilySpans, writescheduler.Low, spanDeleteLabel, func(db *sql.DB) (int64, error) {
+		return r.submitRows(engine.FamilySpans, writescheduler.Low, spanDeleteLabel, func(db *sql.DB) (int64, error) {
 			res, e := db.Exec(`DELETE FROM spans WHERE id IN
 				(SELECT id FROM spans WHERE id <= ? ORDER BY id LIMIT ?)`, maxID, spanDeleteChunk)
 			if e != nil {
@@ -223,7 +224,7 @@ func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThre
 	var total int64
 	for {
 		var n int64
-		err := r.execLow(FamilySpans, func(db *sql.DB) error {
+		err := r.execLow(engine.FamilySpans, func(db *sql.DB) error {
 			res, e := db.Exec(`DELETE FROM spans WHERE trace_id IN (
 				SELECT trace_id FROM spans
 				WHERE ingested_at < ? AND ingested_at >= ?
@@ -250,7 +251,7 @@ func (r *Repository) DeleteBoringTraces(olderThan, newerThan time.Time, slowThre
 }
 
 func (r *Repository) DeleteSpansOlderThan(cutoff time.Time) (int64, error) {
-	return r.execLowAffecting(FamilySpans, "DELETE FROM spans WHERE ingested_at < ?", cutoff)
+	return r.execLowAffecting(engine.FamilySpans, "DELETE FROM spans WHERE ingested_at < ?", cutoff)
 }
 
 func (r *Repository) CountSpansOlderThan(cutoff time.Time) (int64, error) {

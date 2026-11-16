@@ -10,26 +10,28 @@ import (
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	_ "github.com/wiebe-xyz/spanbarn/internal/repository/migrations"
 )
 
-func setupQueryTestServer(t *testing.T) (*Server, *SessionService, *repository.Repository) {
+func setupQueryTestServer(t *testing.T) (*Server, *session.Service, *repository.Repository) {
 	t.Helper()
 
-	db, err := repository.NewDB(":memory:")
+	db, err := engine.NewDB(":memory:")
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 
-	if err := repository.MigrateSingleFile(context.Background(), db.DB); err != nil {
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
 	repo := repository.NewRepository(db.DB)
 	querySvc := service.NewQueryService(repo, nil, nil)
-	sm := NewSessionService(repo, 3600, 3600, nil)
+	sm := session.NewService(repo, 3600, 3600, nil)
 
 	srv := NewServerWithQuery(ServerConfig{
 		APIKey:  "test-key",

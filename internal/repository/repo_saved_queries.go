@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // SavedQuery is a named query. Filters holds the shared filter model
@@ -51,7 +53,7 @@ func savedQueryArgs(q SavedQuery) []any {
 
 func (r *Repository) CreateSavedQuery(q SavedQuery) (int64, error) {
 	var id int64
-	err := r.execHigh(FamilyCore, func(db *sql.DB) error {
+	err := r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		res, e := db.Exec(insertSavedQuery, savedQueryArgs(q)...)
 		if e != nil {
 			return e
@@ -84,7 +86,7 @@ func (r *Repository) ListSavedQueries(projectID int64) ([]SavedQuery, error) {
 }
 
 func (r *Repository) DeleteSavedQuery(id int64) error {
-	return r.execHigh(FamilyCore, func(db *sql.DB) error {
+	return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
 		return r.inTx(db, func(tx *sql.Tx) error {
 			// A panel without its query cannot render, so it goes with it.
 			if _, err := tx.Exec("DELETE FROM board_panels WHERE saved_query_id = ?", id); err != nil {

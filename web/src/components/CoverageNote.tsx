@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react'
-import { coverageNote } from '../utils/coverage'
+import { coverageNote } from './coverage'
 
 /**
  * States the window a view read from the range's newest spans covers. Renders

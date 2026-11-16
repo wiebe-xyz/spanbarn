@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
 
@@ -224,7 +225,7 @@ func TestSpanHistMergeKeepsTheSideThatDecodes(t *testing.T) {
 
 func TestMigrateSpansAddsSpanRollupsOnce(t *testing.T) {
 	repo := setupCombinedTestDB(t)
-	if err := MigrateSpans(context.Background(), repo.db); err != nil {
+	if err := engine.MigrateSpans(context.Background(), repo.db); err != nil {
 		t.Fatalf("second spans migration run: %v", err)
 	}
 	var n int
@@ -234,7 +235,7 @@ func TestMigrateSpansAddsSpanRollupsOnce(t *testing.T) {
 	if n != 2 {
 		t.Errorf("found %d of the 2 span rollup tables", n)
 	}
-	if TableFamily("span_rollups") != FamilySpans || TableFamily("span_rollup_compaction") != FamilySpans {
+	if engine.TableFamily("span_rollups") != engine.FamilySpans || engine.TableFamily("span_rollup_compaction") != engine.FamilySpans {
 		t.Error("span rollup tables must belong to the spans family")
 	}
 }

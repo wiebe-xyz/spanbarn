@@ -15,7 +15,7 @@ sqlite3 -readonly /var/lib/spanbarn/spanbarn.db "PRAGMA auto_vacuum; PRAGMA free
 ```
 
 - `2` (INCREMENTAL, set by migration 018): the writer's checkpoint loop runs
-  `PRAGMA incremental_vacuum(5000)` every 30 seconds (`internal/repository/db.go`),
+  `PRAGMA incremental_vacuum(5000)` every 30 seconds (`internal/repository/engine/db.go`),
   so pages freed by row retention and by dropped tables go back to the volume
   within the hour. Nothing to do. Production was in this state on 2026-10-05,
   with a freelist of 0.
@@ -36,7 +36,7 @@ sqlite3 -readonly /var/lib/spanbarn/spanbarn.db "PRAGMA auto_vacuum; PRAGMA free
 With `SPANBARN_COMPACT_MAIN_ON_START=true` the writer does this itself when it
 opens a split-layout main in mode `0`: it runs `PRAGMA auto_vacuum =
 INCREMENTAL; VACUUM main` in place before any worker starts, then checkpoints
-(`internal/repository/compact_main.go`). It skips main when its live data
+(`internal/repository/engine/compact_main.go`). It skips main when its live data
 exceeds `SPANBARN_COMPACT_MAIN_MAX_LIVE_MB` (default 1024), because the VACUUM
 holds main's write lock while it runs, and it does nothing on a main already in
 mode `2`. Tables still waiting to be dropped do not need to be gone first: once

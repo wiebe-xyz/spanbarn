@@ -3,12 +3,14 @@ package repository
 import (
 	"strings"
 	"testing"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // queryPlan returns the EXPLAIN QUERY PLAN details of query, one per line.
 func queryPlan(t *testing.T, repo *Repository, query string, args ...any) string {
 	t.Helper()
-	rows, err := repo.writer(FamilySpans).Query("EXPLAIN QUERY PLAN "+query, args...)
+	rows, err := repo.writer(engine.FamilySpans).Query("EXPLAIN QUERY PLAN "+query, args...)
 	if err != nil {
 		t.Fatal(err)
 	}

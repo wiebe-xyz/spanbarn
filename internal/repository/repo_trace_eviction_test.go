@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // summaryIDs returns the listed traces of project 1 with their spansAvailable flag.
@@ -35,7 +37,7 @@ func TestTraceListFlagsEvictedSpans(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Evict spans behind the summaries' back, as the disk reclaim does.
-	if _, err := repo.writer(FamilySpans).Exec(`DELETE FROM spans WHERE trace_id IN ('gone', 'kept')`); err != nil {
+	if _, err := repo.writer(engine.FamilySpans).Exec(`DELETE FROM spans WHERE trace_id IN ('gone', 'kept')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +112,7 @@ func TestDeleteExpiredBoringSpansPrunesSummaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The orphan's summary was kept indefinitely by a span that is gone already.
-	if _, err := repo.writer(FamilySpans).Exec(`UPDATE trace_summaries SET expires_at = NULL WHERE trace_id = 'orphan'`); err != nil {
+	if _, err := repo.writer(engine.FamilySpans).Exec(`UPDATE trace_summaries SET expires_at = NULL WHERE trace_id = 'orphan'`); err != nil {
 		t.Fatal(err)
 	}
 

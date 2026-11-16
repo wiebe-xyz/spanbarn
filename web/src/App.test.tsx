@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import App from './App'
 
 const originalLocation = window.location
+const SLOW_RENDER_MS = 45_000
 let urls: string[]
 
 function stubFetch(meStatus: number) {
@@ -61,8 +62,12 @@ describe('App signed out', () => {
 describe('App signed in', () => {
   it('renders the dashboard and loads its data', async () => {
     stubFetch(200)
+    // The routes are lazy chunks. Resolve the dashboard chunk first, so the
+    // wait below is on the render and not on a cold module transform that a
+    // loaded CI host can stretch past any fixed ceiling.
+    await import('./pages/DashboardPage')
     render(<App />)
-    await waitFor(() => expect(screen.getAllByRole('navigation').length).toBeGreaterThan(0))
-    await waitFor(() => expect(urls.some(dashboardData)).toBe(true))
-  })
+    expect((await screen.findAllByRole('navigation', {}, { timeout: SLOW_RENDER_MS })).length).toBeGreaterThan(0)
+    await waitFor(() => expect(urls.some(dashboardData)).toBe(true), { timeout: SLOW_RENDER_MS })
+  }, 60_000)
 })

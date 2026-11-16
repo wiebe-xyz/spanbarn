@@ -45,24 +45,24 @@ One SQLite file made every heavy write contend with every read, and expiring a d
 
 ## Functional Requirements
 
-- **FR-001**: The system MUST place the span family in its own file and decide the layout from main alone at open time. Issues: [#242](https://github.com/wiebe-xyz/spanbarn/issues/242). Tests: `internal/repository/split_test.go::TestSplitLayoutRoutesWrites`, `internal/repository/layout_test.go::TestMainTrackLeavesSpanTablesAlone`.
-- **FR-002**: The writer MUST cut an existing database over by copying the span family, committing with the drop of the old tables, and keeping the single-file layout when the copy fails. Issues: [#243](https://github.com/wiebe-xyz/spanbarn/issues/243). Tests: `internal/repository/cutover_test.go::TestCutOverMovesSpansFamily`, `::TestCutOverFinishesAfterDrop`, `::TestCutOverFailureKeepsSingleFile`, `::TestCutOverReplacesUncommittedSpansFile`.
+- **FR-001**: The system MUST place the span family in its own file and decide the layout from main alone at open time. Issues: [#242](https://github.com/wiebe-xyz/spanbarn/issues/242). Tests: `internal/repository/split_test.go::TestSplitLayoutRoutesWrites`, `internal/repository/engine/layout_test.go::TestMainTrackLeavesSpanTablesAlone`.
+- **FR-002**: The writer MUST cut an existing database over by copying the span family, committing with the drop of the old tables, and keeping the single-file layout when the copy fails. Issues: [#243](https://github.com/wiebe-xyz/spanbarn/issues/243). Tests: `internal/repository/engine/cutover_test.go::TestCutOverMovesSpansFamily`, `::TestCutOverFinishesAfterDrop`, `::TestCutOverFailureKeepsSingleFile`, `::TestCutOverReplacesUncommittedSpansFile`.
 - **FR-003**: Each storage family MUST have one write handle and one write scheduler, and a repository method that writes MUST touch one family. Issues: [#248](https://github.com/wiebe-xyz/spanbarn/issues/248). Tests: `internal/repository/split_test.go::TestSplitLayoutRoutesWrites`.
-- **FR-004**: With `SPANBARN_SHARDS` on, the shard manager MUST create each family's file for the current period and for the next one ahead of the boundary, and route inserts to the open shard. Issues: [#244](https://github.com/wiebe-xyz/spanbarn/issues/244). Tests: `internal/repository/shards_test.go::TestShardMaintainCreatesAheadAndClosesEnded`.
-- **FR-005**: Reads of a sharded family MUST span every live shard through a per-family read pool and MUST NOT use `INDEXED BY`. Issues: [#245](https://github.com/wiebe-xyz/spanbarn/issues/245), [#269](https://github.com/wiebe-xyz/spanbarn/issues/269). Tests: `internal/repository/shard_read_test.go::TestShardReadsPromptsNewestFirst`, `internal/repository/shard_read_indexed_test.go::TestNoIndexedByOnShardedFamilies`.
+- **FR-004**: With `SPANBARN_SHARDS` on, the shard manager MUST create each family's file for the current period and for the next one ahead of the boundary, and route inserts to the open shard. Issues: [#244](https://github.com/wiebe-xyz/spanbarn/issues/244). Tests: `internal/repository/engine/shards_test.go::TestShardMaintainCreatesAheadAndClosesEnded`.
+- **FR-005**: Reads of a sharded family MUST span every live shard through a per-family read pool and MUST NOT use `INDEXED BY`. Issues: [#245](https://github.com/wiebe-xyz/spanbarn/issues/245), [#269](https://github.com/wiebe-xyz/spanbarn/issues/269). Tests: `internal/repository/shard_read_test.go::TestShardReadsPromptsNewestFirst`, `internal/repository/engine/shard_read_indexed_test.go::TestNoIndexedByOnShardedFamilies`.
 - **FR-006**: Retention MUST retire a shard whose whole period is older than its cutoff, never retire the current shard, and delete the file only after a delay. Issues: [#246](https://github.com/wiebe-xyz/spanbarn/issues/246). Tests: `internal/repository/shards_expire_test.go::TestShardExpiryNeverRetiresTheCurrentShard`, `::TestRetireOldestShardAcrossFamilies`.
 - **FR-007**: Disk reclaim MUST retire the oldest shards first, count retiring shards as free, and restore the ballast only when usage is under target. Issues: [#240](https://github.com/wiebe-xyz/spanbarn/issues/240). Tests: `internal/retention/shards_test.go::TestReclaimRetiresOldestShardsBeforeEvictingSpans`, `::TestReclaimCountsRetiringShardsAsFree`, `internal/retention/reclaim_test.go::TestReclaimReleasesAndRestoresBallast`.
 - **FR-008**: Disk accounting MUST sum main, the spans file and every listed shard. Issues: [#240](https://github.com/wiebe-xyz/spanbarn/issues/240). Tests: `internal/repository/shards_expire_test.go::TestDBSpaceCountsShardFiles`.
 - **FR-009**: When a heavy table in main is empty, the writer MUST retire it in two steps, and a writer started with shards off MUST recreate the dropped tables empty. Issues: [#247](https://github.com/wiebe-xyz/spanbarn/issues/247). Tests: `internal/repository/main_retire_test.go::TestMainRestoresHeavyTablesWithShardsOff`.
-- **FR-010**: A restored settings-only snapshot MUST start and serve without extra steps. Issues: [#235](https://github.com/wiebe-xyz/spanbarn/issues/235). Tests: `internal/repository/layout_test.go::TestSnapshotRestoreStartsAndServes`, `internal/repository/dr_test.go::TestSnapshotSettingsCopiesSettingsOnly`.
-- **FR-011**: A reader that starts before the writer has created the files MUST recover without a restart. Issues: [#297](https://github.com/wiebe-xyz/spanbarn/issues/297). Tests: `internal/repository/layout_test.go::TestReadDBRecoversWhenWriterStartsLater`.
+- **FR-010**: A restored settings-only snapshot MUST start and serve without extra steps. Issues: [#235](https://github.com/wiebe-xyz/spanbarn/issues/235). Tests: `internal/repository/storage_test.go::TestSnapshotRestoreStartsAndServes`, `internal/repository/dr_test.go::TestSnapshotSettingsCopiesSettingsOnly`.
+- **FR-011**: A reader that starts before the writer has created the files MUST recover without a restart. Issues: [#297](https://github.com/wiebe-xyz/spanbarn/issues/297). Tests: `internal/repository/storage_test.go::TestReadDBRecoversWhenWriterStartsLater`.
 - **FR-012**: The log retention delete MUST work on sharded logs and keep logs of pinned and error-sampled traces. Issues: [#307](https://github.com/wiebe-xyz/spanbarn/issues/307). Tests: `internal/repository/project_log_cap_shards_test.go::TestDeleteProjectLogsOlderThanOnShardedLogs`, `internal/repository/repo_logs_test.go::TestDeleteLogsOlderThan_SkipsErrorSampled`.
 - **FR-013**: CI MUST run the repository tests a second time with `SPANBARN_TEST_LAYOUT=split`. Issues: [#248](https://github.com/wiebe-xyz/spanbarn/issues/248). Tests: `.github/workflows/ci.yml` (the `code` job).
 - **FR-014**: The shard `kept_logs` table in main holds logs of pinned and error-sampled traces when a logs shard retires. Issues: none found. [inferred]
 
 ## Non-Functional Requirements
 
-- **NFR-001**: Heavy insert p99 under write load falls from 1458 ms to 101 ms with the split, and expiring a day of data takes 0.18 s with whole-file deletion. Source: the spike results comment on [#235](https://github.com/wiebe-xyz/spanbarn/issues/235), produced by `cmd/shardspike`. The run shared a loaded host, so differences under 30% are unconfirmed.
+- **NFR-001**: Heavy insert p99 under write load falls from 1458 ms to 101 ms with the split, and expiring a day of data takes 0.18 s with whole-file deletion. Source: the spike results comment on [#235](https://github.com/wiebe-xyz/spanbarn/issues/235), produced by `cmd/shardspike` (PR #241, since removed). The run shared a loaded host, so differences under 30% are unconfirmed.
 - **NFR-002**: A shard family attaches at most 9 files per read pool, because the SQLite driver refuses the 11th `ATTACH`. Source: [design.md](./design.md), "Cross-shard queries". [inferred]
 - **NFR-003**: The cut-over needs free space at least the size of main, otherwise it is postponed with a warning. Source: [design.md](./design.md), "Migration path". [inferred]
 
@@ -70,7 +70,7 @@ One SQLite file made every heavy write contend with every read, and expiring a d
 
 - **Storage family**: main, spans, and one per heavy table family. Owned by `internal/repository`.
 - **Shard**: one file per family and period, listed in the `shards` table in main with state `active` or `retiring`.
-- **Ballast**: a reserved file the reclaim step releases under disk pressure (`internal/repository/ballast.go`).
+- **Ballast**: a reserved file the reclaim step releases under disk pressure (`internal/repository/engine/ballast.go`).
 
 ## Non-Goals
 
@@ -86,7 +86,7 @@ One SQLite file made every heavy write contend with every read, and expiring a d
 | Claim | Source | Tree |
 |---|---|---|
 | The writer shards only with `SPANBARN_SHARDS` on, and it stays off in every environment until reads and expiry cover the shards. | [design.md](./design.md), "Migration path" | `deploy/k8s/base/configmap.yaml` sets `SPANBARN_SHARDS: "1"`. #245 and #246 are closed. The Go default is `false` (`internal/config/config.go`). |
-| Step 1 (the split) and step 2 (shards) are future work. | [design.md](./design.md), "Decision" | Both are in the tree: `internal/repository/cutover.go`, `shards.go`, `shard_read.go`, `main_retire.go`. |
+| Step 1 (the split) and step 2 (shards) are future work. | [design.md](./design.md), "Decision" | Both are in the tree: `internal/repository/engine/cutover.go`, `shards.go` and `shard_read.go`, and `internal/repository/main_retire.go`. |
 | The first prod cut-over attempt (v0.3.338) renamed before dropping. | [design.md](./design.md) | The tree commits with the drop and renames afterwards (`cutover.go`, `TestCutOverFinishesAfterDrop`). The version in the incident is from the design text and not checked here. |
 
 ## Proof contract
@@ -98,5 +98,5 @@ One SQLite file made every heavy write contend with every read, and expiring a d
 ## Sources
 
 - [design.md](./design.md) and the results comment on [#235](https://github.com/wiebe-xyz/spanbarn/issues/235)
-- `internal/repository/{cutover,shards,shard_read,shards_expire,main_retire,space,ballast}.go`, `internal/retention/`
+- `internal/repository/{cutover,shards,shard_read,shards_expire,main_retire,repo_space}.go`, `internal/repository/engine/{ballast,space}.go`, `internal/retention/`
 - `deploy/docs/compact-main.md`, `deploy/docs/disaster-recovery.md`, `deploy/k8s/base/configmap.yaml`

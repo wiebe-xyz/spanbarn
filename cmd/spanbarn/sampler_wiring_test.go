@@ -17,7 +17,7 @@ var otlpServingModes = []string{"runStandalone", "runReaderMode", "runIngestMode
 
 // TestEveryOTLPModeWiresTheSampler pins the wiring that nothing else checks.
 //
-// Sampling lives in ingest.TraceBuffer, and a mode opts into it by passing
+// Sampling lives in tracebuffer.TraceBuffer, and a mode opts into it by passing
 // api.WithTraceBuffer. A mode that forgets still compiles, still serves, still
 // passes every other test — it just silently ingests everything unsampled and
 // ignores every ingest.sample_ratio.* setting. runStandalone shipped that way

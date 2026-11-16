@@ -1,7 +1,7 @@
 import type { AnalyzeSeriesResponse } from '../api/types'
 import { emptyExpr, parseFilter, serializeFilter, type FilterExpr } from '../filters/model'
 import { formatCount, formatDuration, formatErrorRate } from '../utils/format'
-import type { PivotedSeries } from '../utils/dashboardData'
+import type { PivotedSeries } from '../dashboard/data'
 
 /** The calculations of the group-by view, by the wire name the API takes. */
 export const FIXED_CALCS: { wire: string; label: string }[] = [

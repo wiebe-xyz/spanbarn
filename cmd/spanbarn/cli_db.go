@@ -8,7 +8,7 @@ import (
 	"strconv"
 
 	"github.com/wiebe-xyz/spanbarn/internal/config"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // --- DB subcommand ---
@@ -47,7 +47,7 @@ func runDBSnapshotSettings(cfg config.Config, args []string) error {
 		srcPath = cfg.DBPath
 	}
 
-	counts, err := repository.SnapshotSettings(context.Background(), srcPath, *out)
+	counts, err := engine.SnapshotSettings(context.Background(), srcPath, *out)
 	if err != nil {
 		return fmt.Errorf("snapshot settings: %w", err)
 	}

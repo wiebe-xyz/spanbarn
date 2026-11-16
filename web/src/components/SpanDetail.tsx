@@ -6,7 +6,7 @@ import {
   parseAttributes,
   parseEvents,
   statusColor,
-} from '../utils/spanTree'
+} from '../traces/spanTree'
 import './SpanTimeline.css'
 
 type Props = {
