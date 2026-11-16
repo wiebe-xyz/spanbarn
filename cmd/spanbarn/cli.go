@@ -263,7 +263,7 @@ func runProjectList(cfg config.Config) error {
 
 func runAPIKeyCmd(cfg config.Config, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: spanbarn apikey <create|list|revoke>")
+		return fmt.Errorf("usage: spanbarn apikey <create|list|revoke|set-env>")
 	}
 
 	switch args[0] {
@@ -273,6 +273,8 @@ func runAPIKeyCmd(cfg config.Config, args []string) error {
 		return runAPIKeyList(cfg, args[1:])
 	case "revoke":
 		return runAPIKeyRevoke(cfg, args[1:])
+	case "set-env":
+		return runAPIKeySetEnv(cfg, args[1:])
 	default:
 		return fmt.Errorf("unknown apikey subcommand: %s", args[0])
 	}
@@ -283,11 +285,12 @@ func runAPIKeyCreate(cfg config.Config, args []string) error {
 	project := fs.String("project", "", "Project slug")
 	name := fs.String("name", "", "Key name")
 	scope := fs.String("scope", "ingest", "Key scope (ingest|read|full)")
+	env := fs.String("env", "", "Environment stamped on records that carry none (production|staging|testing|...)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *project == "" || *name == "" {
-		return fmt.Errorf("usage: spanbarn apikey create --project=X --name=Y [--scope=ingest|read|full]")
+		return fmt.Errorf("usage: spanbarn apikey create --project=X --name=Y [--scope=ingest|read|full] [--env=E]")
 	}
 	if *scope != "ingest" && *scope != "read" && *scope != "full" {
 		return fmt.Errorf("scope must be 'ingest', 'read', or 'full'")
@@ -309,8 +312,15 @@ func runAPIKeyCreate(cfg config.Config, args []string) error {
 		return err
 	}
 
-	if _, err := service.NewProjectService(repo).IssueAPIKey(proj.ID, *name, keyHash, *scope); err != nil {
+	svc := service.NewProjectService(repo)
+	keyID, err := svc.IssueAPIKey(proj.ID, *name, keyHash, *scope)
+	if err != nil {
 		return fmt.Errorf("create API key: %w", err)
+	}
+	if *env != "" {
+		if err := svc.SetKeyEnvironment(keyID, *env); err != nil {
+			return fmt.Errorf("set API key environment (key %d was created): %w", keyID, err)
+		}
 	}
 
 	fmt.Printf("API Key: %s\n", plainKey)
@@ -421,6 +431,30 @@ func runAPIKeyRevoke(cfg config.Config, args []string) error {
 	}
 
 	fmt.Printf("API key revoked: %d\n", *id)
+	return nil
+}
+
+func runAPIKeySetEnv(cfg config.Config, args []string) error {
+	fs := flag.NewFlagSet("apikey set-env", flag.ContinueOnError)
+	id := fs.Int64("id", 0, "API key ID")
+	env := fs.String("env", "", "Environment to stamp (empty clears it)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *id == 0 {
+		return fmt.Errorf("usage: spanbarn apikey set-env --id=X --env=E")
+	}
+
+	repo, db, err := openDB(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if err := service.NewProjectService(repo).SetKeyEnvironment(*id, *env); err != nil {
+		return fmt.Errorf("set API key environment: %w", err)
+	}
+	fmt.Printf("API key %d environment set to %q\n", *id, *env)
 	return nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 // setupKeyKind says which ingest key, if any, a setup guide carries.
@@ -59,6 +60,10 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 			key, err = s.mintSetupKey(project.ID)
 		}
 		status, kind = http.StatusCreated, setupKeyMinted
+	}
+	if errors.Is(err, service.ErrInvalidProjectSlug) {
+		writeError(w, http.StatusBadRequest, "invalid project slug", err.Error())
+		return
 	}
 	if err != nil {
 		s.logger.Error("setup: ensure project/key", "slug", slug, "error", err)

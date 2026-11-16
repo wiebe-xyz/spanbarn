@@ -23,9 +23,18 @@ type KeyLookup interface {
 // APIKeyRecord holds the fields returned by a key lookup.
 // Mirrors repository.APIKey but avoids importing the repository package.
 type APIKeyRecord struct {
-	ID        int64
-	ProjectID int64
-	Scope     string
+	ID          int64
+	ProjectID   int64
+	Scope       string
+	Environment string
+}
+
+// Identity is what a valid key stands for: the project it is bound to, its
+// scope and the environment stamped on records that carry none of their own.
+type Identity struct {
+	ProjectID   int64
+	Scope       string
+	Environment string
 }
 
 // Authorizer validates API keys against a static hash and/or the database.
@@ -58,9 +67,16 @@ func NewAuthorizer(staticKeyHash string, repo KeyLookup, logger *slog.Logger) *A
 // Authorize checks the provided raw API key. On success it returns the
 // associated project ID (0 for static/admin key) and scope ("full" for static).
 func (a *Authorizer) Authorize(key string) (projectID int64, scope string, err error) {
+	id, err := a.AuthorizeIdentity(key)
+	return id.ProjectID, id.Scope, err
+}
+
+// AuthorizeIdentity is Authorize with the key's environment included. The
+// static key has no environment.
+func (a *Authorizer) AuthorizeIdentity(key string) (Identity, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return 0, "", ErrUnauthorized
+		return Identity{}, ErrUnauthorized
 	}
 
 	sum := sha256.Sum256([]byte(key))
@@ -68,7 +84,7 @@ func (a *Authorizer) Authorize(key string) (projectID int64, scope string, err e
 	// Check static env-var hash first (admin/global access).
 	if len(a.staticHash) == sha256.Size {
 		if subtle.ConstantTimeCompare(sum[:], a.staticHash) == 1 {
-			return 0, "full", nil
+			return Identity{Scope: "full"}, nil
 		}
 	}
 
@@ -81,11 +97,11 @@ func (a *Authorizer) Authorize(key string) (projectID int64, scope string, err e
 			if touchErr := a.repo.TouchAPIKey(rec.ID); touchErr != nil {
 				a.logger.Warn("failed to touch API key", "id", rec.ID, "error", touchErr)
 			}
-			return rec.ProjectID, rec.Scope, nil
+			return Identity{ProjectID: rec.ProjectID, Scope: rec.Scope, Environment: rec.Environment}, nil
 		}
 	}
 
-	return 0, "", ErrUnauthorized
+	return Identity{}, ErrUnauthorized
 }
 
 // NewAPIKey returns a new API key and its hash: 32 bytes from crypto/rand,
