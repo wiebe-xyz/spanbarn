@@ -7,6 +7,8 @@ import { IambarnProfileModal } from './IambarnProfileModal'
 import { MobileTabBar } from './MobileTabBar'
 import { PWAInstallBanner } from './PWAInstallBanner'
 import { navManifest } from '../navManifest'
+import { EnvironmentSelect } from './EnvironmentSelect'
+import { useEnvironment } from '../environment'
 
 export function DashboardLayout(): ReactElement {
   const navigate = useNavigate()
@@ -16,6 +18,7 @@ export function DashboardLayout(): ReactElement {
   const profile = useIambarnProfile()
   const [profileOpen, setProfileOpen] = useState(false)
   const chipRef = useRef<HTMLButtonElement>(null)
+  const environment = useEnvironment()
 
   useEffect(() => {
     if (navigator.serviceWorker?.controller) {
@@ -59,6 +62,10 @@ export function DashboardLayout(): ReactElement {
           <span style={{ fontSize: '1.125rem', fontWeight: 700 }}>
             Span<span style={{ color: 'var(--accent)' }}>Barn</span>
           </span>
+        </div>
+
+        <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)' }}>
+          <EnvironmentSelect />
         </div>
 
         {/* Navigation */}
@@ -157,7 +164,8 @@ export function DashboardLayout(): ReactElement {
 
       {/* Main content */}
       <main className="main-content" style={{ flex: 1, padding: '1.5rem 2rem', overflowY: 'auto' }}>
-        <Outlet />
+        {/* Keyed by environment so a changed selection refetches every page. */}
+        <Outlet key={environment} />
       </main>
 
       {/* Mobile tab bar — shown on mobile via CSS */}

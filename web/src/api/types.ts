@@ -754,3 +754,9 @@ export type AnalyzeSeriesResponse = {
   truncated: boolean
   maxSpans: number
 }
+
+/** One environment of a project and its span count in a range (GET /api/v1/environments). */
+export type EnvironmentSummary = {
+  environment: string
+  spans: number
+}
