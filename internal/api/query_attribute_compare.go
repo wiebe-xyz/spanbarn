@@ -18,7 +18,7 @@ func parseFilterNamed(w http.ResponseWriter, r *http.Request, name string) (*fil
 		writeError(w, http.StatusBadRequest, "invalid "+name+" filter", err.Error())
 		return nil, false
 	}
-	return expr, true
+	return withEnvironment(w, r, expr)
 }
 
 // handleAttributeCompare ranks the attributes whose values differ most between
