@@ -31,14 +31,14 @@ Production SpanBarn holds 47 projects. Most products appear several times, one p
 | Slice | Content | Ships when |
 |---|---|---|
 | 1 | Migration 047 (`api_keys.environment`), ingest stamping of `deployment.environment`, CLI flags, name guard | tests prove a key with `environment=staging` stamps spans, logs and metrics, and an own attribute wins |
-| 2 | Environment filter on every read API and the UI (default production), environments listed per project, unique-key inventory and the new keys | tests prove one project with two environments reads separately and together |
+| 2 | `environment` parameter on the filter-aware read APIs and `GET /api/v1/environments` (PR 1), then the web selector with production as its default and the unique-key inventory (PR 2) | tests prove one project with two environments reads separately and together |
 | 3 | `project merge`, `project_merges` cursor, archive, counts per table in the log | tests prove resume after a kill, key repoint and collision sums on a real SQLite file |
 | 4 | Production merges per the table in #558, counts logged on the issue, one source at a time, smallest first, host idle gate before each | production project list matches the rule |
 
 ## Functional Requirements
 
 - **FR-001**: Ingest stores `deployment.environment` on every OTLP resource from the resource's own `deployment.environment`, else its `deployment.environment.name`, else the key's environment. [#558]
-- **FR-002**: Every read API takes `environment` (default `production`, `all` for no filter) and returns the environments a project holds. [#558]
+- **FR-002**: The filter-aware read APIs (traces, span search, analyze, analyze series, heatmap, attribute compare) take `environment` (a name or `all`); `production` also selects spans with no environment. A request without it reads everything, so existing callers keep their results; the web app sends `production` by default. `GET /api/v1/environments` returns the environments a project holds with span counts. Other read endpoints (services, service map, logs, metrics, dashboard counts) follow once the measured cost of the filter is known. [#558]
 - **FR-003**: `spanbarn project merge` moves all of a source's rows and keys into the target without a key change for the site, and is safe to run again after an interruption. [#558]
 - **FR-004**: A merge logs, per table, the row count moved, and refuses to start when the host idle gate is not met. [#558]
 - **FR-005**: A source project with zero rows after a merge is archived and resolves to its target. [#558]
@@ -56,4 +56,5 @@ Production SpanBarn holds 47 projects. Most products appear several times, one p
 | Item | Document says | Code does |
 |---|---|---|
 | #558 title | per-product projects exist | 47 projects, one per environment and spelling |
+| FR-002 (earlier draft) | every read API defaults to production | the API default stays unfiltered so current callers keep their reads; the web app defaults to production |
 | Decision 1 (earlier draft) | `environment` column on every record table | slice 1 stamps the resource attribute instead; columns wait for slice 2 |
