@@ -8,6 +8,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -96,7 +97,7 @@ func (s *QueryService) ListServices(ctx context.Context, projectID int64, from, 
 	defer span.End()
 
 	from, to, grain := snapRange(from, to)
-	cacheKey := fmt.Sprintf("services:%d:%d:%d:%v", projectID, from.Unix(), to.Unix(), serverOnly)
+	cacheKey := fmt.Sprintf("services:%d:%d:%d:%v:%s", projectID, from.Unix(), to.Unix(), serverOnly, filter.EnvironmentScope(ctx))
 	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]ServiceSummary, error) {
 		return s.listServicesUncached(ctx, projectID, from, to, serverOnly)
 	})
@@ -107,15 +108,21 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 	if serverOnly {
 		kind = "server"
 	}
-	if out, ok, err := s.servicesFromRollups(ctx, projectID, from, to, kind); ok {
-		return out, err
+	env := filter.EnvironmentScope(ctx)
+	// span_rollups carries no environment yet (#558 slice 2b, one PR per
+	// table), so a scoped read serves from aggregates, which do.
+	if env == "" {
+		if out, ok, err := s.servicesFromRollups(ctx, projectID, from, to, kind); ok {
+			return out, err
+		}
 	}
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
-		ProjectID: projectID,
-		Kind:      kind,
-		From:      from,
-		To:        to,
-		Limit:     10000,
+		ProjectID:   projectID,
+		Environment: env,
+		Kind:        kind,
+		From:        from,
+		To:          to,
+		Limit:       10000,
 	})
 	if err != nil {
 		return nil, err
@@ -130,7 +137,7 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 	// Merge recent in-memory aggregates (or fall back to raw spans when no
 	// accumulator is wired — reader pods and standalone mode).
 	if fbFrom, ok := narrowFallback(from, to); ok {
-		s.foldRecentServiceStats(merged, rates, projectID, kind, fbFrom, to)
+		s.foldRecentServiceStats(merged, rates, projectID, env, kind, fbFrom, to)
 	}
 
 	return serviceSummaries(merged), nil
@@ -148,14 +155,17 @@ func statsFor(m map[string]*aggStats, key string) *aggStats {
 
 // foldRecentServiceStats adds the not yet persisted window into merged, from
 // the in-memory accumulator or, without one, from the raw spans.
-func (s *QueryService) foldRecentServiceStats(merged map[string]*aggStats, rates *opRates, projectID int64, kind string, from, to time.Time) {
+func (s *QueryService) foldRecentServiceStats(merged map[string]*aggStats, rates *opRates, projectID int64, env, kind string, from, to time.Time) {
 	if s.accumulator != nil {
 		for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
-			ProjectID: projectID, Kind: kind, From: from, To: to,
+			ProjectID: projectID, Environment: env, Kind: kind, From: from, To: to,
 		}) {
 			statsFor(merged, a.Service).foldAggregate(rates.rate(a.Operation), a)
 		}
 		return
+	}
+	if env != "" {
+		return // the raw-span tail does not split by environment
 	}
 	spanStats, err := s.repo.QueryServiceStatsFromSpans(projectID, from, to, kind)
 	if err != nil {
@@ -210,16 +220,18 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 	defer span.End()
 
 	from, to, grain := snapRange(from, to)
-	cacheKey := fmt.Sprintf("ops:%d:%s:%s:%d:%d", projectID, service, kind, from.Unix(), to.Unix())
+	env := filter.EnvironmentScope(ctx)
+	cacheKey := fmt.Sprintf("ops:%d:%s:%s:%d:%d:%s", projectID, service, kind, from.Unix(), to.Unix(), env)
 	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]OperationSummary, error) {
 
 		aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
-			ProjectID: projectID,
-			Service:   service,
-			Kind:      kind,
-			From:      from,
-			To:        to,
-			Limit:     10000,
+			ProjectID:   projectID,
+			Environment: env,
+			Service:     service,
+			Kind:        kind,
+			From:        from,
+			To:          to,
+			Limit:       10000,
 		})
 		if err != nil {
 			return nil, err
@@ -243,7 +255,7 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 		if fbFrom, ok := narrowFallback(from, to); ok {
 			if s.accumulator != nil {
 				for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
-					ProjectID: projectID, Service: service, Kind: kind, From: fbFrom, To: to,
+					ProjectID: projectID, Environment: env, Service: service, Kind: kind, From: fbFrom, To: to,
 				}) {
 					k := opKey{CollapseParamLists(a.Operation), CollapseParamLists(a.Resource), a.Kind}
 					st := byOp[k]
@@ -253,7 +265,7 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 					}
 					st.foldAggregate(rates.rate(a.Operation), a)
 				}
-			} else {
+			} else if env == "" { // the raw-span tail does not split by environment
 				spanStats, err := s.repo.QueryOperationStatsFromSpans(projectID, service, fbFrom, to, kind)
 				if err != nil {
 					s.logger.Warn("failed to query operation stats from spans", "error", err)
@@ -317,22 +329,28 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 
 	from, to, grain := snapRange(from, to)
 	interval = timeseriesInterval(from, to, interval)
-	cacheKey := fmt.Sprintf("ts:%d:%s:%s:%d:%d:%d", projectID, svcName, operation, from.Unix(), to.Unix(), int64(interval.Seconds()))
+	env := filter.EnvironmentScope(ctx)
+	cacheKey := fmt.Sprintf("ts:%d:%s:%s:%d:%d:%d:%s", projectID, svcName, operation, from.Unix(), to.Unix(), int64(interval.Seconds()), env)
 	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]TimeseriesBucket, error) {
-		if out, ok, err := s.timeseriesFromRollups(ctx, projectID, svcName, operation, from, to, interval); ok {
-			return out, err
+		// See listServicesUncached: rollups hold every environment until
+		// span_rollups takes the column.
+		if env == "" {
+			if out, ok, err := s.timeseriesFromRollups(ctx, projectID, svcName, operation, from, to, interval); ok {
+				return out, err
+			}
 		}
 		if operation == allOperations {
 			operation = ""
 		}
 
 		aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
-			ProjectID: projectID,
-			Service:   svcName,
-			Operation: operation,
-			From:      from,
-			To:        to,
-			Limit:     100000,
+			ProjectID:   projectID,
+			Environment: env,
+			Service:     svcName,
+			Operation:   operation,
+			From:        from,
+			To:          to,
+			Limit:       100000,
 		})
 		if err != nil {
 			return nil, err
@@ -353,7 +371,7 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 		if fbFrom, ok := narrowFallback(from, to); ok {
 			if s.accumulator != nil {
 				for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
-					ProjectID: projectID, Service: svcName, Operation: operation, From: fbFrom, To: to,
+					ProjectID: projectID, Environment: env, Service: svcName, Operation: operation, From: fbFrom, To: to,
 				}) {
 					b := a.Bucket.Truncate(interval)
 					st := byBucket[b]
@@ -363,7 +381,7 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 					}
 					st.foldAggregate(rates.rate(a.Operation), a)
 				}
-			} else {
+			} else if env == "" { // the raw-span tail does not split by environment
 				spanBuckets, err := s.repo.QuerySpanTimeseries(projectID, svcName, operation, fbFrom, to, int64(interval.Seconds()))
 				if err != nil {
 					s.logger.Warn("failed to query span timeseries", "error", err)

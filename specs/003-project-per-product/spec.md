@@ -32,6 +32,7 @@ Production SpanBarn holds 47 projects. Most products appear several times, one p
 |---|---|---|
 | 1 | Migration 047 (`api_keys.environment`), ingest stamping of `deployment.environment`, CLI flags, name guard | tests prove a key with `environment=staging` stamps spans, logs and metrics, and an own attribute wins |
 | 2 | `environment` parameter on the filter-aware read APIs and `GET /api/v1/environments` (PR 1), then the web selector with production as its default and the unique-key inventory (PR 2) | tests prove one project with two environments reads separately and together |
+| 2b | `environment` column in each rollup table whose unique key lacks it, one PR per table: aggregates (done), span_rollups, span_edges, metric_rollups and metric_rollups_coarse, slo_counts, span_ledger; the services, operations, timeseries, service map and metrics reads honor `environment` as each table lands | tests prove two environments in one bucket stay two rows and read apart, and a second run of the migration succeeds |
 | 3 | `project merge`, `project_merges` cursor, archive, counts per table in the log | tests prove resume after a kill, key repoint and collision sums on a real SQLite file |
 | 4 | Production merges per the table in #558, counts logged on the issue, one source at a time, smallest first, host idle gate before each | production project list matches the rule |
 
@@ -45,11 +46,27 @@ Production SpanBarn holds 47 projects. Most products appear several times, one p
 - **FR-006**: Creating a project (CLI or setup flow) with an environment suffix or an `rr-` prefix is refused; the setup endpoint answers 400. [#558]
 - **FR-007**: No event is deleted by a merge or by the archive. [#558]
 
+- **FR-008**: `aggregates` carries `environment TEXT NOT NULL DEFAULT ''` in its unique key `(project_id, environment, service, operation, resource, kind, bucket)`. The accumulator and the retention aggregator take the environment from the span's `deployment.environment`. `GET /api/v1/services`, `/services/{service}/operations` and the timeseries read take `environment`; `production` also selects rows with no environment. A scoped read serves from `aggregates` and skips the rollup-first path until span_rollups carries the column. The alert evaluator reads every environment. [#558]
+
+## Slice 2b inventory: tables keyed on the project without an environment
+
+| Table | Key today | Step |
+|---|---|---|
+| aggregates | unique `(project_id, service, operation, resource, kind, bucket)` | PR 1 (migration 10 of the spans track) |
+| span_rollups, span_rollup_compaction | project, service, operation, bucket | own PR |
+| span_edges | project, caller, callee, bucket | own PR |
+| metric_rollups, metric_rollups_coarse | project, metric, labels, bucket | own PR |
+| slo_counts, span_ledger | project, bucket | own PR |
+| trace_summaries, error_exemplars | PK `(project_id, trace_id)` | a trace belongs to one environment; only a merge collision matters, handled in slice 3 |
+| slos, calculated_fields, trace_exclusions, pinned_traces | unique name or id per project | settings; slice 3 collision rule |
+
+Rollback caveat: migration 10 drops the old unique index on `aggregates`. A binary from before it upserts with `ON CONFLICT(project_id, service, ...)`, which SQLite refuses without a matching index, so a rollback past this migration stops aggregate writes. Aggregates back the usage stats and the fallback read, so the path is roll forward.
+
 ## Open Questions
 
 - Decision 1 defers the per-table column to slice 2. Whether the filter needs one depends on the read timing from #457. [inferred]
 
-- Collision sums for sketch-bearing rollups need the inventory of slice 2 before the merge of slice 3 is fixed. [inferred]
+- Collision sums for sketch-bearing rollups need the span_rollups and metric_rollups PRs of slice 2b before the merge of slice 3 is fixed. [inferred]
 
 ## Drift
 
@@ -58,3 +75,4 @@ Production SpanBarn holds 47 projects. Most products appear several times, one p
 | #558 title | per-product projects exist | 47 projects, one per environment and spelling |
 | FR-002 (earlier draft) | every read API defaults to production | the API default stays unfiltered so current callers keep their reads; the web app defaults to production |
 | Decision 1 (earlier draft) | `environment` column on every record table | slice 1 stamps the resource attribute instead; columns wait for slice 2 |
+| Slice 2b | every rollup table has an environment column | only `aggregates` has it; the services, operations and timeseries reads take `environment`, the others stay unscoped until their PR |

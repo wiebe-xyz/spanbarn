@@ -34,6 +34,7 @@ func spansMigrations() []*goose.Migration {
 		goose.NewGoMigration(7, &goose.GoFunc{RunTx: spansErrorSummaryIndexesUp}, nil),
 		goose.NewGoMigration(8, &goose.GoFunc{RunTx: spansTraceIndexCoveringUp}, nil),
 		goose.NewGoMigration(9, &goose.GoFunc{RunTx: spansCleanSummaryIndexUp}, nil),
+		goose.NewGoMigration(10, &goose.GoFunc{RunTx: spansAggregatesEnvironmentUp}, nil),
 	}
 }
 

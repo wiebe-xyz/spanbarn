@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -39,15 +40,16 @@ func NewAggregator(repo AggregateWriter, interval time.Duration, logger *slog.Lo
 
 // groupKey identifies a unique aggregation group.
 type groupKey struct {
-	ProjectID int64
-	Service   string
-	Name      string
-	Resource  string
-	Kind      string
-	Bucket    time.Time
+	ProjectID   int64
+	Environment string
+	Service     string
+	Name        string
+	Resource    string
+	Kind        string
+	Bucket      time.Time
 }
 
-// AggregateSpans groups the given spans by (project_id, service, name, resource, kind)
+// AggregateSpans groups the given spans by (project_id, environment, service, name, resource, kind)
 // and time bucket, computing count, error_count, percentiles, max, and sum for each group.
 func (a *Aggregator) AggregateSpans(ctx context.Context, spans []repository.Span) ([]repository.Aggregate, error) {
 	if len(spans) == 0 {
@@ -62,12 +64,13 @@ func (a *Aggregator) AggregateSpans(ctx context.Context, spans []repository.Span
 	for _, s := range spans {
 		bucket := TruncateToBucket(time.UnixMicro(s.StartTimeUs), a.interval)
 		k := groupKey{
-			ProjectID: s.ProjectID,
-			Service:   s.Service,
-			Name:      s.Name,
-			Resource:  s.Resource,
-			Kind:      s.Kind,
-			Bucket:    bucket,
+			ProjectID:   s.ProjectID,
+			Environment: filter.EnvironmentOf(s.Attributes),
+			Service:     s.Service,
+			Name:        s.Name,
+			Resource:    s.Resource,
+			Kind:        s.Kind,
+			Bucket:      bucket,
 		}
 		groups[k] = append(groups[k], s)
 	}
@@ -99,6 +102,7 @@ func (a *Aggregator) AggregateSpans(ctx context.Context, spans []repository.Span
 
 		out = append(out, repository.Aggregate{
 			ProjectID:     k.ProjectID,
+			Environment:   k.Environment,
 			Service:       k.Service,
 			Operation:     k.Name,
 			Resource:      k.Resource,

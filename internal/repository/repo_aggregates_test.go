@@ -61,3 +61,48 @@ func TestUpsertAggregatesBatch(t *testing.T) {
 		t.Fatalf("expected count to accumulate to 20, got %+v", got2)
 	}
 }
+
+func TestAggregatesKeepEnvironmentsApart(t *testing.T) {
+	repo := setupTestDB(t)
+
+	bucket := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	row := func(env string, count int64) Aggregate {
+		return Aggregate{
+			ProjectID: 1, Environment: env, Service: "api", Operation: "GET /a", Kind: "server",
+			Bucket: bucket, Count: count, SumDurationUs: count * 100,
+		}
+	}
+	if err := repo.UpsertAggregates([]Aggregate{row("production", 10), row("staging", 3), row("", 4)}); err != nil {
+		t.Fatalf("UpsertAggregates: %v", err)
+	}
+	// The same bucket again adds into the same environment's row only.
+	if err := repo.UpsertAggregates([]Aggregate{row("staging", 2)}); err != nil {
+		t.Fatalf("UpsertAggregates again: %v", err)
+	}
+
+	read := func(env string) map[string]int64 {
+		t.Helper()
+		got, err := repo.QueryAggregates(AggregateFilter{ProjectID: 1, Environment: env, From: bucket.Add(-time.Hour), To: bucket.Add(time.Hour)})
+		if err != nil {
+			t.Fatalf("QueryAggregates(%q): %v", env, err)
+		}
+		out := map[string]int64{}
+		for _, a := range got {
+			out[a.Environment] += a.Count
+		}
+		return out
+	}
+
+	if got := read(""); got["production"] != 10 || got["staging"] != 5 || got[""] != 4 || len(got) != 3 {
+		t.Fatalf("unscoped read = %v, want production 10, staging 5, unset 4", got)
+	}
+	if got := read("all"); len(got) != 3 {
+		t.Fatalf("all read = %v, want every environment", got)
+	}
+	if got := read("staging"); len(got) != 1 || got["staging"] != 5 {
+		t.Fatalf("staging read = %v, want staging 5 only", got)
+	}
+	if got := read("production"); len(got) != 2 || got["production"] != 10 || got[""] != 4 {
+		t.Fatalf("production read = %v, want production 10 plus the unset rows", got)
+	}
+}

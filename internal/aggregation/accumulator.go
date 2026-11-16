@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -30,11 +31,13 @@ type Accumulator struct {
 
 type accKey struct {
 	projectID int64
-	service   string
-	operation string
-	resource  string
-	kind      string
-	bucket    time.Time
+	// environment is the span's deployment.environment ("" when it has none).
+	environment string
+	service     string
+	operation   string
+	resource    string
+	kind        string
+	bucket      time.Time
 }
 
 type accSlot struct {
@@ -88,12 +91,13 @@ func (a *Accumulator) Add(s repository.Span) {
 func (a *Accumulator) addSlot(s repository.Span) {
 	bucket := TruncateToBucket(time.UnixMicro(s.StartTimeUs), a.interval)
 	k := accKey{
-		projectID: s.ProjectID,
-		service:   s.Service,
-		operation: s.Name,
-		resource:  s.Resource,
-		kind:      s.Kind,
-		bucket:    bucket,
+		projectID:   s.ProjectID,
+		environment: filter.EnvironmentOf(s.Attributes),
+		service:     s.Service,
+		operation:   s.Name,
+		resource:    s.Resource,
+		kind:        s.Kind,
+		bucket:      bucket,
 	}
 	a.mu.Lock()
 	sl := a.slots[k]
@@ -123,6 +127,9 @@ func (a *Accumulator) QueryRecent(f repository.AggregateFilter) []repository.Agg
 		if f.ProjectID != 0 && k.projectID != f.ProjectID {
 			continue
 		}
+		if !environmentMatches(f.Environment, k.environment) {
+			continue
+		}
 		if f.Service != "" && k.service != f.Service {
 			continue
 		}
@@ -141,6 +148,7 @@ func (a *Accumulator) QueryRecent(f repository.AggregateFilter) []repository.Agg
 		p50, p95, p99 := percentilesOf(sl.durations, sl.sampleWeights)
 		result = append(result, repository.Aggregate{
 			ProjectID:     k.projectID,
+			Environment:   k.environment,
 			Service:       k.service,
 			Operation:     k.operation,
 			Resource:      k.resource,
@@ -184,6 +192,7 @@ func (a *Accumulator) Flush(ctx context.Context) error {
 		p50, p95, p99 := percentilesOf(sl.durations, sl.sampleWeights)
 		aggs = append(aggs, repository.Aggregate{
 			ProjectID:     k.projectID,
+			Environment:   k.environment,
 			Service:       k.service,
 			Operation:     k.operation,
 			Resource:      k.resource,
@@ -226,12 +235,13 @@ func (a *Accumulator) requeue(slots map[accKey]*accSlot, cause error) {
 
 func aggregateKey(row repository.Aggregate) accKey {
 	return accKey{
-		projectID: row.ProjectID,
-		service:   row.Service,
-		operation: row.Operation,
-		resource:  row.Resource,
-		kind:      row.Kind,
-		bucket:    row.Bucket,
+		projectID:   row.ProjectID,
+		environment: row.Environment,
+		service:     row.Service,
+		operation:   row.Operation,
+		resource:    row.Resource,
+		kind:        row.Kind,
+		bucket:      row.Bucket,
 	}
 }
 
@@ -269,4 +279,17 @@ func (a *Accumulator) Run(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// environmentMatches reports whether a slot of environment have belongs to
+// the selected environment want, as the aggregates query selects rows:
+// production also takes the slots with none, and "" and "all" take every slot.
+func environmentMatches(want, have string) bool {
+	switch want {
+	case "", "all":
+		return true
+	case filter.ProductionEnvironment:
+		return have == "" || have == want
+	}
+	return have == want
 }

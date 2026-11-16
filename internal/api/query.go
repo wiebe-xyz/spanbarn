@@ -24,6 +24,11 @@ func (h *queryHandlers) handleServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, ok = scopeEnvironment(ctx, w, r)
+	if !ok {
+		return
+	}
+
 	projectID := parseInt64Param(r, "project_id", 0)
 	serverOnly := r.URL.Query().Get("server_only") == "true"
 
@@ -55,6 +60,11 @@ func (h *queryHandlers) handleOperations(w http.ResponseWriter, r *http.Request)
 	from, to, err := parseTimeRange(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())
+		return
+	}
+
+	ctx, ok := scopeEnvironment(ctx, w, r)
+	if !ok {
 		return
 	}
 
@@ -99,6 +109,11 @@ func (h *queryHandlers) handleTimeseries(w http.ResponseWriter, r *http.Request)
 	var interval time.Duration
 	if v := r.URL.Query().Get("interval"); v != "" {
 		interval = parseInterval(v)
+	}
+
+	ctx, ok := scopeEnvironment(ctx, w, r)
+	if !ok {
+		return
 	}
 
 	ts, err := h.svc.GetTimeseries(ctx, parseInt64Param(r, "project_id", 0), svcName, opName, from, to, interval)
