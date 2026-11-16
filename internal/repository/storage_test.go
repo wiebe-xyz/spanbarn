@@ -83,6 +83,12 @@ func TestStorageCheckpointsEveryFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "spanbarn.db")
 	store := openTestStorage(t, path)
 	insertAndReadSpan(t, store, path)
+	// A checkpoint truncates the WAL and then returns freed pages with
+	// incremental_vacuum, which writes into the WAL again. A fresh file holds
+	// the pages of an index a migration dropped (aggregates, #558 slice 2b), so
+	// the first pass leaves a vacuum behind and the second finds nothing to
+	// free. A shutdown after the first periodic checkpoint is the second pass.
+	store.FinalCheckpoint(testLogger())
 	store.FinalCheckpoint(testLogger())
 	for _, f := range []string{path, engine.SpansPath(path)} {
 		info, err := os.Stat(f + "-wal")
