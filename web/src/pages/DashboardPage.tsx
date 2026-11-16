@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
 import { api } from '../api/client'
 import type { DashboardFilter, DashboardPercentiles, DataSource } from '../api/dashboardTypes'
 import { AutoRefresh } from '../components/AutoRefresh'
@@ -20,6 +20,7 @@ import {
   zoomOutWindow,
 } from '../dashboard/window'
 import { formatCount, formatDuration } from '../utils/format'
+import { trackConversionOnce } from '../funnelbarn'
 
 const PERCENTILES = [
   { key: 'p99Us', label: 'P99(duration)' },
@@ -85,6 +86,10 @@ export function DashboardPage(): ReactElement {
 
   const counts = useMemo(() => pivotSeries(traceCounts.data?.points ?? [], (p) => p.count), [traceCounts.data])
   const countsByStatus = useMemo(() => pivotSeries(traceCountsByStatus.data?.points ?? [], (p) => p.count), [traceCountsByStatus.data])
+  const hasTraces = (traceCounts.data?.points?.length ?? 0) > 0
+  useEffect(() => {
+    if (hasTraces) trackConversionOnce('first_trace_received')
+  }, [hasTraces])
   const countsGroupLabel = COUNTS_GROUPS.find((g) => g.value === countsGroup)?.label ?? 'Service'
 
   return (

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strings"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
@@ -25,6 +26,7 @@ type ProjectRepository interface {
 	ListAPIKeys(projectID int64) ([]repository.APIKey, error)
 	ListAllAPIKeys() ([]repository.APIKey, error)
 	CreateAPIKey(projectID int64, name, keyHash, scope string) (int64, error)
+	SetAPIKeyEnvironment(id int64, environment string) error
 	RevokeAPIKey(id int64) error
 	UpsertE2EUser(username string, expiresAt time.Time) (repository.User, error)
 }
@@ -42,6 +44,9 @@ func (s *ProjectService) BySlug(slug string) (repository.Project, error) {
 	return s.repo.GetProjectBySlug(slug)
 }
 func (s *ProjectService) EnsurePending(slug, name string) (repository.Project, error) {
+	if err := ValidateProjectSlug(slug); err != nil {
+		return repository.Project{}, err
+	}
 	return s.repo.EnsureProjectPending(slug, name)
 }
 func (s *ProjectService) EnsureSetupAPIKey(projectID int64, keySHA256 string) error {
@@ -81,6 +86,9 @@ func (s *ProjectService) UpsertE2EUser(username string, expiresAt time.Time) (re
 
 // Create registers an approved project.
 func (s *ProjectService) Create(slug, name string) (repository.Project, error) {
+	if err := ValidateProjectSlug(slug); err != nil {
+		return repository.Project{}, err
+	}
 	return s.repo.CreateProject(slug, name)
 }
 
@@ -92,6 +100,12 @@ func (s *ProjectService) AllAPIKeys() ([]repository.APIKey, error) {
 // IssueAPIKey stores a key hash for projectID with any scope and no checks.
 func (s *ProjectService) IssueAPIKey(projectID int64, name, keyHash, scope string) (int64, error) {
 	return s.repo.CreateAPIKey(projectID, name, keyHash, scope)
+}
+
+// SetKeyEnvironment sets the environment a key stamps on records that carry
+// none. An empty value clears it.
+func (s *ProjectService) SetKeyEnvironment(keyID int64, environment string) error {
+	return s.repo.SetAPIKeyEnvironment(keyID, strings.ToLower(strings.TrimSpace(environment)))
 }
 
 // RevokeKey deletes a key by id, whatever project owns it.

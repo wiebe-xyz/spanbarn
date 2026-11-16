@@ -4,6 +4,7 @@
 
 export interface ClientConfig {
   funnelbarn?: { endpoint?: string; api_key?: string; project?: string }
+  brandtrace?: { site_key?: string; sdk_url?: string }
   oidc?: { enabled?: boolean; loginURL?: string }
   iambarn?: {
     profile_url?: string

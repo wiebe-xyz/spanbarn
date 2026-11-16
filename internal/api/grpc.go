@@ -95,6 +95,7 @@ type grpcTraceServer struct {
 
 func (t *grpcTraceServer) Export(ctx context.Context, req *collectortracepb.ExportTraceServiceRequest) (*collectortracepb.ExportTraceServiceResponse, error) {
 	projectID := GetProjectID(ctx)
+	stampTraceEnvironment(req, GetEnvironment(ctx))
 	t.s.acceptSpans(ctx, otlpToSpanRecords(req, projectID))
 	return &collectortracepb.ExportTraceServiceResponse{}, nil
 }
@@ -107,6 +108,7 @@ type grpcMetricsServer struct {
 
 func (m *grpcMetricsServer) Export(ctx context.Context, req *collectormetricspb.ExportMetricsServiceRequest) (*collectormetricspb.ExportMetricsServiceResponse, error) {
 	projectID := GetProjectID(ctx)
+	stampMetricEnvironment(req, GetEnvironment(ctx))
 	recs := otlpToMetricRecords(req, projectID)
 	if m.s.metricsIngest != nil {
 		m.s.metricsIngest.Enqueue(recs)
@@ -122,6 +124,7 @@ type grpcLogsServer struct {
 
 func (l *grpcLogsServer) Export(ctx context.Context, req *collectorlogspb.ExportLogsServiceRequest) (*collectorlogspb.ExportLogsServiceResponse, error) {
 	projectID := GetProjectID(ctx)
+	stampLogEnvironment(req, GetEnvironment(ctx))
 	recs := otlpToLogRecords(req, projectID)
 	if l.s.logsIngest != nil {
 		l.s.logsIngest.Enqueue(recs)
@@ -149,12 +152,13 @@ func grpcAuthInterceptor(s *Server) grpc.UnaryServerInterceptor {
 		}
 
 		if s.authorizer != nil {
-			projectID, scope, err := s.authorizer.Authorize(key)
+			ident, err := s.authorizer.AuthorizeIdentity(key)
 			if err != nil {
 				return nil, refuse("invalid api key")
 			}
-			ctx = SetProjectID(ctx, projectID)
-			ctx = SetScope(ctx, scope)
+			ctx = SetProjectID(ctx, ident.ProjectID)
+			ctx = SetScope(ctx, ident.Scope)
+			ctx = SetEnvironment(ctx, ident.Environment)
 		} else {
 			if key != s.apiKey {
 				return nil, refuse("invalid api key")

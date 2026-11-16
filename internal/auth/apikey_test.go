@@ -141,3 +141,35 @@ func TestNewAPIKey(t *testing.T) {
 		t.Error("two keys are identical")
 	}
 }
+
+// AuthorizeIdentity returns the environment of a database key and none for the
+// static key; Authorize keeps its two-value answer (#558).
+func TestAuthorizeIdentityCarriesEnvironment(t *testing.T) {
+	repo := newMockKeyLookup()
+	repo.keys[HashKey("staging-key")] = APIKeyRecord{ID: 4, ProjectID: 9, Scope: "ingest", Environment: "staging"}
+	a := NewAuthorizer(HashKey("static-key"), repo, nil)
+
+	got, err := a.AuthorizeIdentity("staging-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Identity{ProjectID: 9, Scope: "ingest", Environment: "staging"}); got != want {
+		t.Errorf("identity = %+v, want %+v", got, want)
+	}
+
+	got, err = a.AuthorizeIdentity("static-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Identity{Scope: "full"}); got != want {
+		t.Errorf("static identity = %+v, want %+v", got, want)
+	}
+
+	pid, scope, err := a.Authorize("staging-key")
+	if err != nil || pid != 9 || scope != "ingest" {
+		t.Errorf("Authorize = %d, %q, %v", pid, scope, err)
+	}
+	if _, err := a.AuthorizeIdentity("nope"); err == nil {
+		t.Error("unknown key authorised")
+	}
+}

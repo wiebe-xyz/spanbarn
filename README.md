@@ -247,6 +247,8 @@ project automatically.
 | `SPANBARN_ADMIN_USERNAME` | | Dashboard login username |
 | `SPANBARN_ADMIN_PASSWORD` | | Dashboard login password |
 | `SPANBARN_SESSION_TTL_SECONDS` | `43200` | Absolute session cap (12h); OIDC sessions additionally track the ~15m access token via refresh |
+| `SPANBARN_OIDC_ORGANIZATION_ID` | unset | IamBarn organization id allowed to sign in, or several separated by commas. Needs an owner, organization_admin or operator role in it. Unset refuses every OIDC sign-in |
+| `SPANBARN_OIDC_EXTRA_ORGANIZATION_IDS` | unset | More IamBarn organization ids allowed to sign in, comma separated, on top of `SPANBARN_OIDC_ORGANIZATION_ID` (the e2e organization). Plain config, not a secret. Same role requirement |
 | `SPANBARN_OIDC_REFRESH_GRACE_SECONDS` | `3600` | Stale-serve ceiling while IamBarn refresh fails transiently |
 | `SPANBARN_E2E_ENABLED` | `false` | Open the e2e session endpoint (never in production) |
 | `SPANBARN_TRUSTED_PROXIES` | | CIDRs allowed to assert X-Forwarded-Proto; unset outside dev assumes upstream TLS |
@@ -309,6 +311,8 @@ project automatically.
 | `SPANBARN_FUNNELBARN_ENDPOINT` | | FunnelBarn endpoint for analytics forwarding |
 | `SPANBARN_FUNNELBARN_API_KEY` | | FunnelBarn API key |
 | `SPANBARN_FUNNELBARN_PROJECT` | | FunnelBarn project slug |
+| `SPANBARN_BRANDTRACE_SITE_KEY` | | Public BrandTrace site key; empty leaves the page tracker off |
+| `SPANBARN_BRANDTRACE_SDK_URL` | `https://brandtrace.net/sdk.js` | Hosted BrandTrace SDK |
 
 ### Rollup tiers
 

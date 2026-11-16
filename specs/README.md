@@ -17,6 +17,7 @@ All specs were last verified against the tree on 2026-10-17 at `41a73f7`.
 |---|---|---|
 | [001 Telemetry aggregator](./001-telemetry-aggregator/spec.md) | Partial | Ingest (OTLP and native JSON), the spool, retention and aggregation, the dashboard and query APIs, dependencies, alerts and SLOs, the SDKs, auth, and the integrations. Also holds the [plan](./001-telemetry-aggregator/plan.md), [tasks](./001-telemetry-aggregator/tasks.md), [data model](./001-telemetry-aggregator/data-model.md) and the [ingest contract](./001-telemetry-aggregator/contracts/ingest-api.yaml). |
 | [002 Temporal sharding](./002-temporal-sharding/spec.md) | Shipped | The span file split, the cut-over of existing databases, time shards for logs, metrics and prompts, shard-aware reads and retention, disk reclaim. The rationale and spike are in [design.md](./002-temporal-sharding/design.md). |
+| [003 One project per product](./003-project-per-product/spec.md) | Draft | Environment as a column and key attribute, the project merge that keeps old ingest keys valid, archive of emptied sources, refusal of environment-suffixed project names. |
 
 ## Workflow
 

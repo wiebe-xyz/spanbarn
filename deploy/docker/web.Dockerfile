@@ -7,6 +7,7 @@ RUN corepack enable
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY web/package.json web/
+COPY web/vendor/ web/vendor/
 COPY sdks/js/package.json sdks/js/
 RUN pnpm install --frozen-lockfile --filter @spanbarn/web...
 

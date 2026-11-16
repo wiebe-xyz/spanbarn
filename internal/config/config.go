@@ -76,13 +76,14 @@ type RetentionConfig struct {
 // ClientID, ClientSecret and RedirectURL are all set, OIDC login is offered
 // alongside local auth.
 type OIDCConfig struct {
-	Issuer            string   // SPANBARN_OIDC_ISSUER
-	ClientID          string   // SPANBARN_OIDC_CLIENT_ID
-	ClientSecret      string   // SPANBARN_OIDC_CLIENT_SECRET
-	RedirectURL       string   // SPANBARN_OIDC_REDIRECT_URL
-	RequiredGroup     string   // SPANBARN_OIDC_REQUIRED_GROUP — defaults to "spanbarn-users"
-	ResourceAudiences []string // SPANBARN_OIDC_RESOURCE_AUDIENCES — CSV of audiences accepted on IamBarn access tokens (sb CLI)
-	CLIClientID       string   // SPANBARN_OIDC_CLI_CLIENT_ID — public IamBarn client the sb device-code flow uses
+	Issuer               string   // SPANBARN_OIDC_ISSUER
+	ClientID             string   // SPANBARN_OIDC_CLIENT_ID
+	ClientSecret         string   // SPANBARN_OIDC_CLIENT_SECRET
+	RedirectURL          string   // SPANBARN_OIDC_REDIRECT_URL
+	OrganizationID       string   // SPANBARN_OIDC_ORGANIZATION_ID — unset refuses every OIDC sign-in
+	ExtraOrganizationIDs string   // SPANBARN_OIDC_EXTRA_ORGANIZATION_IDS — more organization ids, comma separated (the e2e organization)
+	ResourceAudiences    []string // SPANBARN_OIDC_RESOURCE_AUDIENCES — CSV of audiences accepted on IamBarn access tokens (sb CLI)
+	CLIClientID          string   // SPANBARN_OIDC_CLI_CLIENT_ID — public IamBarn client the sb device-code flow uses
 	// PostLogoutRedirectURI is where IamBarn sends the browser back after an
 	// RP-initiated /oauth2/end-session logout. It must be registered on the
 	// client's post-logout allowlist. SPANBARN_OIDC_POST_LOGOUT_REDIRECT_URI;
@@ -93,6 +94,18 @@ type OIDCConfig struct {
 	// (network error / 5xx). invalid_grant never gets grace — it kills the
 	// session immediately. SPANBARN_OIDC_REFRESH_GRACE_SECONDS, default 3600.
 	RefreshGraceSeconds int
+}
+
+// AllowedOrganizations is the comma separated list of organizations that may
+// sign in: the owner's organization plus the extra ones. Empty when neither is set.
+func (o OIDCConfig) AllowedOrganizations() string {
+	var ids []string
+	for _, v := range []string{o.OrganizationID, o.ExtraOrganizationIDs} {
+		if v = strings.TrimSpace(v); v != "" {
+			ids = append(ids, v)
+		}
+	}
+	return strings.Join(ids, ",")
 }
 
 // SelfConfig groups self-instrumentation (SpanBarn reporting to itself/BugBarn).
@@ -115,6 +128,17 @@ type FunnelBarnConfig struct {
 	APIKey   string // SPANBARN_FUNNELBARN_API_KEY
 	Project  string // SPANBARN_FUNNELBARN_PROJECT
 }
+
+// BrandTraceConfig groups the public site key of the BrandTrace page tracker.
+// The key is public (allow-listed per origin); an empty key leaves the tracker
+// off.
+type BrandTraceConfig struct {
+	SiteKey string // SPANBARN_BRANDTRACE_SITE_KEY
+	SDKURL  string // SPANBARN_BRANDTRACE_SDK_URL
+}
+
+// DefaultBrandTraceSDKURL is where the hosted BrandTrace SDK is served.
+const DefaultBrandTraceSDKURL = "https://brandtrace.net/sdk.js"
 
 // DefaultMaxBodyBytes is the default SPANBARN_MAX_BODY_BYTES: 4 MiB, applied to
 // the wire and the decompressed size of an ingest request on both OTLP
@@ -183,6 +207,7 @@ type Config struct {
 	Self                         SelfConfig
 	BugBarn                      BugBarnConfig
 	FunnelBarn                   FunnelBarnConfig
+	BrandTrace                   BrandTraceConfig
 	Environment                  string
 	LoginRatePerMinute           int
 	IngestRatePerMinute          int
@@ -316,6 +341,10 @@ func Load() Config {
 			APIKey:   os.Getenv("SPANBARN_FUNNELBARN_API_KEY"),
 			Project:  getenv("SPANBARN_FUNNELBARN_PROJECT", "spanbarn"),
 		},
+		BrandTrace: BrandTraceConfig{
+			SiteKey: os.Getenv("SPANBARN_BRANDTRACE_SITE_KEY"),
+			SDKURL:  getenv("SPANBARN_BRANDTRACE_SDK_URL", DefaultBrandTraceSDKURL),
+		},
 		Environment:         getenv("SPANBARN_ENVIRONMENT", "development"),
 		LoginRatePerMinute:  getenvInt("SPANBARN_LOGIN_RATE_PER_MINUTE", 10),
 		IngestRatePerMinute: getenvInt("SPANBARN_INGEST_RATE_PER_MINUTE", 1000),
@@ -333,7 +362,8 @@ func Load() Config {
 			ClientID:              os.Getenv("SPANBARN_OIDC_CLIENT_ID"),
 			ClientSecret:          os.Getenv("SPANBARN_OIDC_CLIENT_SECRET"),
 			RedirectURL:           os.Getenv("SPANBARN_OIDC_REDIRECT_URL"),
-			RequiredGroup:         getenv("SPANBARN_OIDC_REQUIRED_GROUP", "spanbarn-users"),
+			OrganizationID:        os.Getenv("SPANBARN_OIDC_ORGANIZATION_ID"),
+			ExtraOrganizationIDs:  os.Getenv("SPANBARN_OIDC_EXTRA_ORGANIZATION_IDS"),
 			CLIClientID:           os.Getenv("SPANBARN_OIDC_CLI_CLIENT_ID"),
 			PostLogoutRedirectURI: os.Getenv("SPANBARN_OIDC_POST_LOGOUT_REDIRECT_URI"),
 			RefreshGraceSeconds:   getenvInt("SPANBARN_OIDC_REFRESH_GRACE_SECONDS", 3600),

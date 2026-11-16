@@ -50,6 +50,9 @@ func mintSession(t *testing.T, svc *session.Service, username string) string {
 	return token
 }
 
+// testOrgHome is the organization the test IdP and client agree on.
+const testOrgHome = "org_home"
+
 // fakeIdP is an in-process iambarn stand-in: discovery, an Ed25519 JWKS, and
 // a scriptable token endpoint that serves both the authorization_code and
 // refresh_token grants with signed id_tokens. It drives the full session
@@ -67,6 +70,7 @@ type fakeIdP struct {
 	refreshToken  string
 	expiresIn     int
 	idClaims      map[string]any // extra claims merged into the id_token
+	omitIDToken   bool           // leave the id_token out, as IamBarn's refresh grant does
 	tokenCalls    int
 	lastTokenForm map[string][]string
 	// meAccess is the access token /api/v1/me currently accepts. A
@@ -140,6 +144,8 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 			"name":  "Wiebe",
 			"email": "wiebe@wiebe.xyz",
 			"roles": []string{"owner"},
+
+			"organization_id": testOrgHome,
 		}
 		if nonce := r.PostForm.Get("nonce"); nonce != "" {
 			claims["nonce"] = nonce
@@ -148,13 +154,16 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 			claims[k] = v
 		}
 		f.meAccess = f.accessToken
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		resp := map[string]any{
 			"access_token":  f.accessToken,
 			"refresh_token": f.refreshToken,
-			"id_token":      f.signLocked(t, claims),
 			"token_type":    "Bearer",
 			"expires_in":    f.expiresIn,
-		})
+		}
+		if !f.omitIDToken {
+			resp["id_token"] = f.signLocked(t, claims)
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 	mux.HandleFunc("/oauth2/revoke", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -235,6 +244,8 @@ func (f *fakeIdP) client() *auth.OIDCClient {
 		ClientSecret:          "sek",
 		RedirectURL:           "https://spanbarn.example.com/api/v1/oidc/callback",
 		PostLogoutRedirectURI: "https://spanbarn.example.com/api/v1/oidc/logout-complete",
+
+		RequiredOrganizationID: testOrgHome,
 	})
 }
 
@@ -250,6 +261,8 @@ func newOIDCSessionRow(t *testing.T, svc *session.Service, accessExpiresAt time.
 			Name:      "Wiebe",
 			Email:     "wiebe@wiebe.xyz",
 			Roles:     []string{"owner"},
+
+			OrganizationID: testOrgHome,
 		},
 		IDToken:         "idtok-login",
 		AccessToken:     "at-login",
