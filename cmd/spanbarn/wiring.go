@@ -26,7 +26,7 @@ func buildOIDCClient(cfg config.Config, logger *slog.Logger) *auth.OIDCClient {
 		ClientID:               cfg.OIDC.ClientID,
 		ClientSecret:           cfg.OIDC.ClientSecret,
 		RedirectURL:            cfg.OIDC.RedirectURL,
-		RequiredOrganizationID: cfg.OIDC.OrganizationID,
+		RequiredOrganizationID: cfg.OIDC.AllowedOrganizations(),
 		ResourceAudiences:      cfg.OIDC.ResourceAudiences,
 		CLIClientID:            cfg.OIDC.CLIClientID,
 		PostLogoutRedirectURI:  cfg.OIDC.PostLogoutRedirectURI,
