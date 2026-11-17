@@ -48,8 +48,10 @@ func (r *Repository) GetProjectBySlug(slug string) (Project, error) {
 	return scanProject(r.db.QueryRow("SELECT "+projectColumns+" FROM projects WHERE slug = ?", slug))
 }
 
+// ListProjects returns the projects that are not archived. A project a merge
+// emptied stays in the table and out of this list.
 func (r *Repository) ListProjects() ([]Project, error) {
-	rows, err := r.db.Query("SELECT " + projectColumns + " FROM projects ORDER BY id")
+	rows, err := r.db.Query("SELECT " + projectColumns + " FROM projects WHERE archived_at IS NULL ORDER BY id")
 	if err != nil {
 		return nil, err
 	}

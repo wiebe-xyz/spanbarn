@@ -27,7 +27,7 @@ func (s *Server) registerRoutes() {
 		ingestRL:    RateLimitMiddleware(rl, "ingest"),
 		apiRL:       RateLimitMiddleware(rl, "api"),
 		sessionAuth: SessionMiddleware(s.sessions),
-		readAuth:    SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient),
+		readAuth:    s.readAuthMiddleware(),
 	}
 	env.ingestAuth, env.otlpAuth = s.ingestAuthMiddleware()
 
@@ -336,4 +336,15 @@ func (s *Server) registerMetricsAndLogsRoutes(env *routeEnv) {
 	for _, r := range routes {
 		s.mux.Handle(r.path, env.apiRL(r.auth(r.h)))
 	}
+}
+
+// readAuthMiddleware authorizes read requests. A server with a repository first
+// sends an old project id to the project it was merged into.
+func (s *Server) readAuthMiddleware() func(http.Handler) http.Handler {
+	auth := SessionOrReadKey(s.sessions, s.authorizer, s.oidcClient)
+	if s.repo == nil {
+		return auth
+	}
+	resolve := withMergedProjects(s.projectService())
+	return func(h http.Handler) http.Handler { return resolve(auth(h)) }
 }

@@ -69,7 +69,7 @@ func runProjectMerge(cfg config.Config, args []string) error {
 	results, err := svc.Merge(context.Background(), spec, repository.MergeOptions{
 		Batch: *batch,
 		OnBatch: func(r repository.MergeStepResult) error {
-			fmt.Printf("batch %s.%s moved=%d collided=%d\n", r.Family, r.Table, r.Moved, r.Collided)
+			fmt.Printf("batch %s.%s moved=%d collided=%d\n", r.Family, stepName(r), r.Moved, r.Collided)
 			return nil
 		},
 	})
@@ -77,14 +77,24 @@ func runProjectMerge(cfg config.Config, args []string) error {
 	if err != nil {
 		return fmt.Errorf("merge stopped, run it again to resume: %w", err)
 	}
-	fmt.Println("core tables moved; the span, log, metric and prompt tables follow in a later release")
+	if archived, err := svc.Resolve(src.ID); err == nil && archived == tgt.ID {
+		fmt.Printf("%s holds no rows any more and is archived; its old id and slug resolve to %s\n", src.Slug, tgt.Slug)
+	}
 	return nil
+}
+
+// stepName is the table of a step, with the shard it ran in when it has one.
+func stepName(r repository.MergeStepResult) string {
+	if r.Shard == "" {
+		return r.Table
+	}
+	return r.Table + "@" + r.Shard
 }
 
 func printMergeTable(results []repository.MergeStepResult) {
 	rows := make([][]string, len(results))
 	for i, r := range results {
-		rows[i] = []string{r.Family, r.Table, strconv.FormatInt(r.Moved, 10), strconv.FormatInt(r.Collided, 10)}
+		rows[i] = []string{r.Family, stepName(r), strconv.FormatInt(r.Moved, 10), strconv.FormatInt(r.Collided, 10)}
 	}
 	printTable([]string{"Family", "Table", "Moved", "Collided"}, rows)
 }
