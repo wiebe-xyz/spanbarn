@@ -218,3 +218,13 @@ func TestMergeKeepsHTTPStatusesApart(t *testing.T) {
 		t.Errorf("merged = %+v", got)
 	}
 }
+
+func TestMergeKeepsEnvironmentsApart(t *testing.T) {
+	b := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
+	prod, staging, prod2 := fiveMinute(b, "op", 10), fiveMinute(b, "op", 20), fiveMinute(b.Add(5*time.Minute), "op", 30)
+	prod.Environment, staging.Environment, prod2.Environment = "production", "staging", "production"
+	got := Merge([]repository.SpanRollup{prod, staging, prod2}, 3600, b)
+	if len(got) != 2 || got[0].Environment != "production" || got[0].Count != 2 || got[1].Environment != "staging" || got[1].Count != 1 {
+		t.Errorf("merged = %+v", got)
+	}
+}

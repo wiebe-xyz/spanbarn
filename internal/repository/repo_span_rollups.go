@@ -20,6 +20,9 @@ type SpanRollup struct {
 	StepSeconds int64
 	Bucket      time.Time // bucket start, whole seconds, UTC
 	ProjectID   int64
+	// Environment is the deployment.environment of the spans the row sums, or
+	// "" for spans that carry none, which read as production (#558).
+	Environment string
 	Service     string
 	Name        string
 	Kind        string
@@ -43,15 +46,15 @@ type SpanRollup struct {
 // slot, as metricRollupChunk does for metric rollups.
 const spanRollupChunk = 500
 
-const spanRollupColumns = `step_seconds, bucket, project_id, service, name, kind, is_root, status, http_status,
+const spanRollupColumns = `step_seconds, bucket, project_id, environment, service, name, kind, is_root, status, http_status,
 	count, weighted_count, weighted_spans, sum_duration_us, min_us, max_us, hist`
 
 // spanRollupAddSQL folds a flush into its row: counts and sums add, min and
 // max take the extreme and the histograms merge, so the accumulator can write
 // the open bucket on every flush and a late span still lands in its bucket.
 const spanRollupAddSQL = `INSERT INTO span_rollups (` + spanRollupColumns + `)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(step_seconds, bucket, project_id, service, name, kind, is_root, status, http_status)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(step_seconds, bucket, project_id, environment, service, name, kind, is_root, status, http_status)
 	DO UPDATE SET
 		count = count + excluded.count,
 		weighted_count = weighted_count + excluded.weighted_count,
@@ -65,7 +68,7 @@ const spanRollupAddSQL = `INSERT INTO span_rollups (` + spanRollupColumns + `)
 // coarse row from every source row of its bucket, so writing it again after an
 // interrupted pass replaces it with the same value instead of counting twice.
 const spanRollupReplaceSQL = `INSERT OR REPLACE INTO span_rollups (` + spanRollupColumns + `)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func spanRollupArgs(s SpanRollup) []any {
 	root := 0
@@ -73,7 +76,7 @@ func spanRollupArgs(s SpanRollup) []any {
 		root = 1
 	}
 	return []any{
-		s.StepSeconds, s.Bucket.Unix(), s.ProjectID, s.Service, s.Name, s.Kind, root, s.Status, s.HTTPStatus,
+		s.StepSeconds, s.Bucket.Unix(), s.ProjectID, s.Environment, s.Service, s.Name, s.Kind, root, s.Status, s.HTTPStatus,
 		s.Count, s.WeightedCount, s.WeightedSpans, s.SumDurationUs, s.MinUs, s.MaxUs, s.Hist,
 	}
 }
@@ -136,6 +139,7 @@ func compareSpanRollupKey(a, b SpanRollup) int {
 		cmp.Compare(a.StepSeconds, b.StepSeconds),
 		a.Bucket.Compare(b.Bucket),
 		cmp.Compare(a.ProjectID, b.ProjectID),
+		strings.Compare(a.Environment, b.Environment),
 		strings.Compare(a.Service, b.Service),
 		strings.Compare(a.Name, b.Name),
 		strings.Compare(a.Kind, b.Kind),
@@ -247,7 +251,7 @@ func (r *Repository) SetSpanRollupWatermark(ctx context.Context, step int64, thr
 // buckets before cutoff, oldest first, reporting whether more remain.
 func (r *Repository) DeleteSpanRollupsOlderThanLimited(ctx context.Context, step int64, cutoff time.Time, max int64) (int64, bool, error) {
 	return r.deleteTierRowsOlderThan(ctx, "span_rollups",
-		"step_seconds, bucket, project_id, service, name, kind, is_root, status, http_status", step, cutoff, max)
+		"step_seconds, bucket, project_id, environment, service, name, kind, is_root, status, http_status", step, cutoff, max)
 }
 
 // deleteTierRowsOlderThan removes at most max rows of one tier of table with

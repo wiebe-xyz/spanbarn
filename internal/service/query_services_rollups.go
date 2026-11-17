@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
@@ -77,7 +78,7 @@ func (s *QueryService) servicesFromRollups(ctx context.Context, projectID int64,
 	if !ok {
 		return nil, false, nil
 	}
-	byService, err := foldSpanRollups(ctx, s, projectID, repository.SpanRollupScan{Segments: segs, ProjectID: projectID, Kind: kind},
+	byService, err := foldSpanRollups(ctx, s, projectID, repository.SpanRollupScan{Segments: segs, ProjectID: projectID, Environment: filter.EnvironmentScope(ctx), Kind: kind},
 		func(r repository.SpanRollup) string { return r.Service })
 	if err != nil {
 		return nil, true, err
@@ -116,7 +117,7 @@ func (s *QueryService) timeseriesFromRollups(ctx context.Context, projectID int6
 	if name == allOperations {
 		name = ""
 	}
-	byBucket, err := foldSpanRollups(ctx, s, projectID, repository.SpanRollupScan{Segments: segs, ProjectID: projectID, Service: svcName, Name: name},
+	byBucket, err := foldSpanRollups(ctx, s, projectID, repository.SpanRollupScan{Segments: segs, ProjectID: projectID, Environment: filter.EnvironmentScope(ctx), Service: svcName, Name: name},
 		func(r repository.SpanRollup) int64 { b := r.Bucket.Unix(); return b - b%sec })
 	if err != nil {
 		return nil, true, err
