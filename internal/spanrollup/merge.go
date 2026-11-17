@@ -75,6 +75,7 @@ func Merge(rows []repository.SpanRollup, step int64, bucket time.Time) []reposit
 
 type edgeKey struct {
 	projectID                  int64
+	environment                string
 	source, target, targetType string
 }
 
@@ -82,7 +83,9 @@ type edgeKey struct {
 // bucket, as Merge does. Bucket markers merge into one marker.
 func MergeEdges(rows []repository.SpanEdge, step int64, bucket time.Time) []repository.SpanEdge {
 	return mergeTier(rows,
-		func(e repository.SpanEdge) edgeKey { return edgeKey{e.ProjectID, e.Source, e.Target, e.TargetType} },
+		func(e repository.SpanEdge) edgeKey {
+			return edgeKey{e.ProjectID, e.Environment, e.Source, e.Target, e.TargetType}
+		},
 		func(e repository.SpanEdge) repository.SpanEdge {
 			e.StepSeconds, e.Bucket = step, bucket
 			e.Count, e.ErrorCount, e.WeightedCount, e.WeightedSpans, e.SumDurationUs = 0, 0, 0, 0, 0

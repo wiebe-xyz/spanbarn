@@ -32,20 +32,8 @@ const spanRollupsEnvironmentColumns = `step_seconds, bucket, project_id, environ
 // until the roll forward. The accumulator keeps the unwritten slots for an
 // hour (spanRollupRequeueAge) and compaction waits on its watermark.
 func spansSpanRollupsEnvironmentUp(ctx context.Context, tx *sql.Tx) error {
-	var tables, withColumn int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'span_rollups'`).Scan(&tables); err != nil {
-		return fmt.Errorf("span rollups environment: %w", err)
-	}
-	if tables == 0 {
-		return fmt.Errorf("span rollups environment: no span_rollups table")
-	}
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pragma_table_info('span_rollups') WHERE name = 'environment'`).Scan(&withColumn); err != nil {
-		return fmt.Errorf("span rollups environment: %w", err)
-	}
-	if withColumn > 0 {
-		return nil
+	if todo, err := spansTableLacksEnvironment(ctx, tx, "span rollups environment", "span_rollups"); err != nil || !todo {
+		return err
 	}
 	return execSpansDDL(ctx, tx, "span rollups environment",
 		`DROP TABLE IF EXISTS span_rollups_env`,
@@ -75,4 +63,24 @@ func spansSpanRollupsEnvironmentUp(ctx context.Context, tx *sql.Tx) error {
 		FROM span_rollups ORDER BY step_seconds, bucket, project_id, service, name, kind, is_root, status, http_status`,
 		`DROP TABLE span_rollups`,
 		`ALTER TABLE span_rollups_env RENAME TO span_rollups`)
+}
+
+// spansTableLacksEnvironment reports whether table exists without an
+// environment column, which is when a rebuild has work to do. A file without
+// the table is not a spans file and is an error, so the migration does not
+// pass over it.
+func spansTableLacksEnvironment(ctx context.Context, tx *sql.Tx, label, table string) (bool, error) {
+	var tables, withColumn int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&tables); err != nil {
+		return false, fmt.Errorf("%s: %w", label, err)
+	}
+	if tables == 0 {
+		return false, fmt.Errorf("%s: no %s table", label, table)
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'environment'`, table).Scan(&withColumn); err != nil {
+		return false, fmt.Errorf("%s: %w", label, err)
+	}
+	return withColumn == 0, nil
 }

@@ -106,3 +106,21 @@ func TestMergeEdgesKeepsOneMarker(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeEdgesKeepsEnvironmentsApart(t *testing.T) {
+	b := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
+	var rows []repository.SpanEdge
+	for _, env := range []string{"production", "staging", "staging"} {
+		e := fiveMinuteEdge(b, 10)
+		e.Environment = env
+		rows = append(rows, e)
+	}
+	got := MergeEdges(rows, 3600, b)
+	counts := map[string]int64{}
+	for _, e := range got {
+		counts[e.Environment] += e.Count
+	}
+	if len(got) != 2 || counts["production"] != 1 || counts["staging"] != 2 {
+		t.Errorf("merged = %+v, want one production and one staging row of count 2", got)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/deptarget"
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -30,6 +31,7 @@ type spanEdges struct {
 type spanEdgeKey struct {
 	bucket                     int64
 	projectID                  int64
+	environment                string
 	source, target, targetType string
 }
 
@@ -98,7 +100,7 @@ func (e *spanEdges) addCall(c deptarget.Call, s repository.Span) {
 		e.logger.Info("span edges: cardinality cap reached, folding the rest of the hour into "+OtherName,
 			"project_id", s.ProjectID, "source", c.Source, "max_targets", e.cfg.MaxEdgeTargets, "max_services", e.cfg.MaxServices)
 	}
-	k := spanEdgeKey{bucket: bucket, projectID: s.ProjectID, source: source, target: target, targetType: c.TargetType}
+	k := spanEdgeKey{bucket: bucket, projectID: s.ProjectID, environment: filter.EnvironmentOf(s.Attributes), source: source, target: target, targetType: c.TargetType}
 	sl := e.slots[k]
 	if sl == nil {
 		sl = &spanEdgeSlot{}
@@ -144,6 +146,7 @@ func (sl *spanEdgeSlot) row(k spanEdgeKey) repository.SpanEdge {
 		StepSeconds:   SpanRollupStep,
 		Bucket:        time.Unix(k.bucket, 0).UTC(),
 		ProjectID:     k.projectID,
+		Environment:   k.environment,
 		Source:        k.source,
 		Target:        k.target,
 		TargetType:    k.targetType,
@@ -160,11 +163,12 @@ func (sl *spanEdgeSlot) row(k spanEdgeKey) repository.SpanEdge {
 
 func spanEdgeRowKey(row repository.SpanEdge) spanEdgeKey {
 	return spanEdgeKey{
-		bucket:     row.Bucket.Unix(),
-		projectID:  row.ProjectID,
-		source:     row.Source,
-		target:     row.Target,
-		targetType: row.TargetType,
+		bucket:      row.Bucket.Unix(),
+		projectID:   row.ProjectID,
+		environment: row.Environment,
+		source:      row.Source,
+		target:      row.Target,
+		targetType:  row.TargetType,
 	}
 }
 

@@ -55,3 +55,16 @@ func FloorOperation(attributes, name string) string {
 	}
 	return env + "\x00" + name
 }
+
+// EnvironmentMatches reports whether something of environment have belongs to
+// the selected environment want, as the environment clause selects rows:
+// production also takes what has none, and "" and "all" take everything.
+func EnvironmentMatches(want, have string) bool {
+	switch want {
+	case "", "all":
+		return true
+	case ProductionEnvironment:
+		return have == "" || have == want
+	}
+	return have == want
+}

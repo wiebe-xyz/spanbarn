@@ -127,7 +127,7 @@ func (a *Accumulator) QueryRecent(f repository.AggregateFilter) []repository.Agg
 		if f.ProjectID != 0 && k.projectID != f.ProjectID {
 			continue
 		}
-		if !environmentMatches(f.Environment, k.environment) {
+		if !filter.EnvironmentMatches(f.Environment, k.environment) {
 			continue
 		}
 		if f.Service != "" && k.service != f.Service {
@@ -279,17 +279,4 @@ func (a *Accumulator) Run(ctx context.Context) {
 			}
 		}
 	}
-}
-
-// environmentMatches reports whether a slot of environment have belongs to
-// the selected environment want, as the aggregates query selects rows:
-// production also takes the slots with none, and "" and "all" take every slot.
-func environmentMatches(want, have string) bool {
-	switch want {
-	case "", "all":
-		return true
-	case filter.ProductionEnvironment:
-		return have == "" || have == want
-	}
-	return have == want
 }
