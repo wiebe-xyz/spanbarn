@@ -48,6 +48,16 @@ spec:
                   key: SPANBARN_REDIS_QUEUE_URL
             - name: SPANBARN_ADDR
               value: ":8080"
+            # This pod serves /api/v1/client-config to the browser but takes no
+            # spanbarn-config envFrom, so the public BrandTrace site key has to
+            # arrive by name. Environments without the key leave it unset and
+            # the dashboard loads no tracker.
+            - name: SPANBARN_BRANDTRACE_SITE_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: spanbarn-config
+                  key: SPANBARN_BRANDTRACE_SITE_KEY
+                  optional: true
             - name: SPANBARN_SPOOL_DIR
               value: "/tmp/spool"
             - name: SPANBARN_DB_PATH
