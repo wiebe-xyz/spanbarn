@@ -26,7 +26,9 @@ type MetricInputRequest struct {
 	Name      string
 	From, To  time.Time
 	Labels    map[string]string
-	Limit     int
+	// Environment scopes the read to one environment; "" and "all" read every one.
+	Environment string
+	Limit       int
 	// Totals marks a sum over the range, which reads the hour tier from a day on.
 	Totals bool
 }
@@ -58,7 +60,7 @@ func (s *MetricsService) ReadInput(ctx context.Context, req MetricInputRequest) 
 // rawInput loads raw metric data points and maps them to derivation input.
 func (s *MetricsService) rawInput(ctx context.Context, req MetricInputRequest) (MetricInput, error) {
 	rows, err := s.repo.QueryMetricSeries(ctx, MetricFilter{
-		ProjectID: req.ProjectID, Name: req.Name, From: req.From, To: req.To, Attributes: req.Labels, Limit: req.Limit,
+		ProjectID: req.ProjectID, Name: req.Name, From: req.From, To: req.To, Attributes: req.Labels, Environment: req.Environment, Limit: req.Limit,
 	})
 	if err != nil {
 		return MetricInput{}, err
@@ -117,9 +119,9 @@ func rollupTierSteps(width time.Duration) []int64 {
 // every bucket in the range and has no chart to keep smooth, so the 12 times
 // fewer rows are all gain: a delta total is the same sum either way, and a
 // cumulative one only loses a reset that happened inside one hour.
-func tierStepsForRead(width time.Duration, labels map[string]string, totals bool) []int64 {
+func tierStepsForRead(width time.Duration, filtered, totals bool) []int64 {
 	steps := rollupTierSteps(width)
-	wide := len(labels) > 0 && width > FilteredFineTierWidth
+	wide := filtered && width > FilteredFineTierWidth
 	if totals && width >= FilteredFineTierWidth {
 		wide = true
 	}
@@ -137,10 +139,10 @@ func tierStepsForRead(width time.Duration, labels map[string]string, totals bool
 // from, so a range narrower than a coarse bucket still finds that bucket.
 func (s *MetricsService) rollupInput(ctx context.Context, req MetricInputRequest) (MetricInput, error) {
 	filter := MetricRollupFilter{
-		ProjectID: req.ProjectID, Name: req.Name, From: req.From, To: req.To, Attributes: req.Labels, Limit: req.Limit,
+		ProjectID: req.ProjectID, Name: req.Name, From: req.From, To: req.To, Attributes: req.Labels, Environment: req.Environment, Limit: req.Limit,
 	}
 	fineRead := false
-	for _, step := range tierStepsForRead(req.To.Sub(req.From), req.Labels, req.Totals) {
+	for _, step := range tierStepsForRead(req.To.Sub(req.From), len(req.Labels) > 0 || scopedEnvironment(req.Environment), req.Totals) {
 		filter.From = tier.TruncateBucket(req.From, step)
 		var rows []MetricRollup
 		var err error
@@ -197,6 +199,7 @@ func (s *MetricsService) queryTier(ctx context.Context, step int64, f MetricRoll
 		From:        f.From,
 		To:          f.To,
 		Attributes:  f.Attributes,
+		Environment: f.Environment,
 		Limit:       f.Limit,
 	})
 }
@@ -208,3 +211,6 @@ func rollupToInput(row MetricRollup) metrics.InputPoint {
 	p.Attributes = metrics.ParseAttributes([]byte(row.Attributes))
 	return p
 }
+
+// scopedEnvironment reports whether env narrows a read to one environment.
+func scopedEnvironment(env string) bool { return env != "" && env != "all" }

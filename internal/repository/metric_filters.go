@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 )
 
 // ErrInvalidLabelKey is returned when a metric label (attribute) key contains
@@ -45,4 +47,22 @@ func appendAttrFilters(where []string, args []any, attrs map[string]string) ([]s
 		args = append(args, v)
 	}
 	return where, args, nil
+}
+
+// appendMetricEnvironment scopes a metric read to one environment through the
+// deployment.environment label. Production also selects series that carry no
+// such label: they come from senders that predate the label and ran in
+// production (#558, decided 2026-11-17; revisit once every sender labels its
+// environment). An empty name and "all" select every series.
+func appendMetricEnvironment(where []string, args []any, env string) ([]string, []any) {
+	if env == "" || env == "all" {
+		return where, args
+	}
+	expr := fmt.Sprintf(attrTextSQL, filter.EnvironmentKey)
+	if env == filter.ProductionEnvironment {
+		where = append(where, "("+expr+" IS NULL OR "+expr+" = '' OR "+expr+" = ?)")
+	} else {
+		where = append(where, expr+" = ?")
+	}
+	return where, append(args, env)
 }

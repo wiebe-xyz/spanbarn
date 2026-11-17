@@ -50,7 +50,10 @@ type MetricFilter struct {
 	From       time.Time
 	To         time.Time
 	Attributes map[string]string // label equality filters via JSON_EXTRACT
-	Limit      int
+	// Environment scopes the read through the deployment.environment label;
+	// production also selects series without the label. "" and "all" select all.
+	Environment string
+	Limit       int
 }
 
 // InsertMetrics persists a batch of metric data points in a single transaction.
@@ -179,6 +182,7 @@ func (r *Repository) QueryMetricSeries(ctx context.Context, f MetricFilter) ([]M
 	if err != nil {
 		return nil, err
 	}
+	where, args = appendMetricEnvironment(where, args, f.Environment)
 
 	limit := f.Limit
 	if limit <= 0 || limit > 10000 {
