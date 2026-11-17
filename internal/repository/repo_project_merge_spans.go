@@ -8,10 +8,11 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
-// mergeSteps is every step a merge runs, in order: the core family, then the
-// spans family. The spans and the traces move first and the tiers after them,
-// so a read of the target meets the tiers last.
-var mergeSteps = append(append([]mergeStep{}, coreMergeSteps...), spansMergeSteps...)
+// fixedMergeSteps are the steps that run on a family's one file: the core
+// family, then the spans family. The spans and the traces move first and the
+// tiers after them, so a read of the target meets the tiers last. The sharded
+// families join them in mergePlan.
+var fixedMergeSteps = append(append([]mergeStep{}, coreMergeSteps...), spansMergeSteps...)
 
 var spansMergeSteps = []mergeStep{
 	{family: "spans", fam: engine.FamilySpans, table: "spans", batch: moveByID("spans", moveOpts{stamp: true})},

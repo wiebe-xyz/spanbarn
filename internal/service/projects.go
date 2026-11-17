@@ -32,6 +32,7 @@ type ProjectRepository interface {
 	UpsertE2EUser(username string, expiresAt time.Time) (repository.User, error)
 	MergeProject(ctx context.Context, spec repository.MergeSpec, opts repository.MergeOptions) ([]repository.MergeStepResult, error)
 	MergedInto(sourceID int64) (int64, error)
+	ArchivedInto(sourceID int64) (int64, error)
 }
 
 // ProjectService manages projects, their API keys and E2E accounts.
@@ -118,4 +119,15 @@ func (s *ProjectService) RevokeKey(keyID int64) error { return s.repo.RevokeAPIK
 // reports what each table moved; a second call after a stop moves the rest.
 func (s *ProjectService) Merge(ctx context.Context, spec repository.MergeSpec, opts repository.MergeOptions) ([]repository.MergeStepResult, error) {
 	return s.repo.MergeProject(ctx, spec, opts)
+}
+
+// Resolve returns the project a request for id reads: the target when id is a
+// source whose merge finished and archived it, and id itself otherwise. Links
+// and bookmarks that name an old project keep working through it (#558).
+func (s *ProjectService) Resolve(id int64) (int64, error) {
+	target, err := s.repo.ArchivedInto(id)
+	if err != nil || target == 0 {
+		return id, err
+	}
+	return target, nil
 }

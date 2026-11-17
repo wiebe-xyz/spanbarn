@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
@@ -22,8 +23,11 @@ type MergeSpec struct {
 // target already held an equal of (a duplicate pin, a duplicate exclusion) or
 // rows that were renamed to avoid a clash.
 type MergeStepResult struct {
-	Family    string
-	Table     string
+	Family string
+	Table  string
+	// Shard is the start date of the time shard a step ran in, empty for a
+	// table in a single file.
+	Shard     string
 	Moved     int64
 	Collided  int64
 	LastMoved int64
@@ -45,8 +49,18 @@ type mergeStep struct {
 	family string
 	fam    engine.Family
 	table  string
+	// shardStart is the period start of the shard file the step runs in; the
+	// zero time means the family's one file.
+	shardStart time.Time
 	// batch moves at most n rows in tx and reports what it moved and collided.
 	batch func(tx *sql.Tx, spec MergeSpec, n int) (MergeStepResult, error)
+}
+
+func (s mergeStep) shardLabel() string {
+	if s.shardStart.IsZero() {
+		return ""
+	}
+	return s.shardStart.Format(time.DateOnly)
 }
 
 // MergeProject moves the core family of the source into the target in batches:
@@ -62,8 +76,12 @@ func (r *Repository) MergeProject(ctx context.Context, spec MergeSpec, opts Merg
 		return nil, err
 	}
 	var out []MergeStepResult
-	for _, step := range mergeSteps {
-		total := MergeStepResult{Family: step.family, Table: step.table}
+	plan, err := r.mergePlan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, step := range plan {
+		total := MergeStepResult{Family: step.family, Table: step.table, Shard: step.shardLabel()}
 		for {
 			res, err := r.runMergeBatch(ctx, step, spec, opts.Batch)
 			if err != nil {
@@ -83,7 +101,44 @@ func (r *Repository) MergeProject(ctx context.Context, spec MergeSpec, opts Merg
 		}
 		out = append(out, total)
 	}
+	if err := r.archiveMergedSource(spec); err != nil {
+		return out, fmt.Errorf("archive %s: %w", spec.SourceSlug, err)
+	}
 	return out, nil
+}
+
+// archiveMergedSource marks the source archived and its merge done once a full
+// pass found nothing left to move in any step, which is the proof the source
+// holds no rows. The project row, its id and its slug stay.
+func (r *Repository) archiveMergedSource(spec MergeSpec) error {
+	return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.Exec(`UPDATE projects SET archived_at = COALESCE(archived_at, datetime('now')) WHERE id = ?`, spec.SourceID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE project_merges SET state = 'done', updated_at = datetime('now')
+			WHERE source_id = ? AND target_id = ? AND table_name = ''`, spec.SourceID, spec.TargetID); err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
+}
+
+// ArchivedInto returns the project an archived source was merged into, or 0
+// when the project is not archived. Only a finished merge resolves: while one
+// runs, the source still holds rows of its own.
+func (r *Repository) ArchivedInto(sourceID int64) (int64, error) {
+	var target int64
+	err := r.db.QueryRow(`SELECT m.target_id FROM project_merges m JOIN projects p ON p.id = m.source_id
+		WHERE m.source_id = ? AND m.table_name = '' AND m.state = 'done' AND p.archived_at IS NOT NULL LIMIT 1`, sourceID).Scan(&target)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return target, err
 }
 
 // runMergeBatch moves one batch in the step's family. A core step records its
@@ -102,6 +157,11 @@ func (r *Repository) runMergeBatch(ctx context.Context, step mergeStep, spec Mer
 	if !inCore {
 		write = r.execLow
 	}
+	if !step.shardStart.IsZero() {
+		write = func(f engine.Family, fn func(db *sql.DB) error) error {
+			return r.shards.OnShard(f, step.shardStart, "projectMerge", fn)
+		}
+	}
 	err := write(step.fam, func(db *sql.DB) error {
 		tx, err := db.Begin()
 		if err != nil {
@@ -111,7 +171,7 @@ func (r *Repository) runMergeBatch(ctx context.Context, step mergeStep, spec Mer
 		if res, err = step.batch(tx, spec, n); err != nil {
 			return err
 		}
-		res.Family, res.Table = step.family, step.table
+		res.Family, res.Table, res.Shard = step.family, step.table, step.shardLabel()
 		if inCore && res.Moved+res.Collided > 0 {
 			if err := recordMergeProgress(tx, spec, res); err != nil {
 				return err
@@ -161,20 +221,20 @@ func (r *Repository) beginMerge(spec MergeSpec) error {
 
 func recordMergeProgress(tx *sql.Tx, spec MergeSpec, res MergeStepResult) error {
 	_, err := tx.Exec(`INSERT INTO project_merges
-		(source_id, target_id, environment, family, table_name, cursor, rows_moved, rows_collided)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		(source_id, target_id, environment, family, table_name, shard, cursor, rows_moved, rows_collided)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (source_id, target_id, family, table_name, shard) DO UPDATE SET
 			cursor = max(cursor, excluded.cursor),
 			rows_moved = rows_moved + excluded.rows_moved,
 			rows_collided = rows_collided + excluded.rows_collided,
 			updated_at = datetime('now')`,
-		spec.SourceID, spec.TargetID, spec.Environment, res.Family, res.Table, res.LastMoved, res.Moved, res.Collided)
+		spec.SourceID, spec.TargetID, spec.Environment, res.Family, res.Table, res.Shard, res.LastMoved, res.Moved, res.Collided)
 	return err
 }
 
 // MergeProgress returns the stored progress rows of a source, run row first.
 func (r *Repository) MergeProgress(sourceID int64) ([]MergeStepResult, error) {
-	rows, err := r.db.Query(`SELECT family, table_name, rows_moved, rows_collided, cursor
+	rows, err := r.db.Query(`SELECT family, table_name, shard, rows_moved, rows_collided, cursor
 		FROM project_merges WHERE source_id = ? ORDER BY table_name <> '', id`, sourceID)
 	if err != nil {
 		return nil, err
@@ -183,7 +243,7 @@ func (r *Repository) MergeProgress(sourceID int64) ([]MergeStepResult, error) {
 	var out []MergeStepResult
 	for rows.Next() {
 		var m MergeStepResult
-		if err := rows.Scan(&m.Family, &m.Table, &m.Moved, &m.Collided, &m.LastMoved); err != nil {
+		if err := rows.Scan(&m.Family, &m.Table, &m.Shard, &m.Moved, &m.Collided, &m.LastMoved); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
