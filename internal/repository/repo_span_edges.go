@@ -57,7 +57,11 @@ const spanEdgeKey = `step_seconds, bucket, project_id, environment, source, targ
 const spanEdgeAddSQL = `INSERT INTO span_edges (` + spanEdgeColumns + `)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(` + spanEdgeKey + `)
-	DO UPDATE SET
+	DO UPDATE SET ` + spanEdgeMergeSQL
+
+// spanEdgeMergeSQL is the SET list that folds a row into the one it collides
+// with, shared with the project merge.
+const spanEdgeMergeSQL = `
 		count = count + excluded.count,
 		error_count = error_count + excluded.error_count,
 		weighted_count = weighted_count + excluded.weighted_count,

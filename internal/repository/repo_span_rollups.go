@@ -54,8 +54,14 @@ const spanRollupColumns = `step_seconds, bucket, project_id, environment, servic
 // the open bucket on every flush and a late span still lands in its bucket.
 const spanRollupAddSQL = `INSERT INTO span_rollups (` + spanRollupColumns + `)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(step_seconds, bucket, project_id, environment, service, name, kind, is_root, status, http_status)
-	DO UPDATE SET
+	ON CONFLICT(` + spanRollupKey + `)
+	DO UPDATE SET ` + spanRollupMergeSQL
+
+const spanRollupKey = `step_seconds, bucket, project_id, environment, service, name, kind, is_root, status, http_status`
+
+// spanRollupMergeSQL is the SET list that folds a row into the one it collides
+// with. A project merge uses it too, so two sources sum the same way a flush does.
+const spanRollupMergeSQL = `
 		count = count + excluded.count,
 		weighted_count = weighted_count + excluded.weighted_count,
 		weighted_spans = weighted_spans + excluded.weighted_spans,
