@@ -28,17 +28,8 @@ func runProjectSet(cfg config.Config, args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if *traceRatio < -1 {
-		return fmt.Errorf("--trace-ratio must be 0 or more")
-	}
-	if *logHours < -1 {
-		return fmt.Errorf("--log-retention-hours must be 0 or more")
-	}
-	if *op != "" && *traceRatio == -1 {
-		return fmt.Errorf("--op needs --trace-ratio. %s", usage)
-	}
-	if *traceRatio == -1 && *logHours == -1 {
-		return fmt.Errorf("nothing to set. %s", usage)
+	if err := checkProjectSetFlags(*traceRatio, *logHours, *op, usage); err != nil {
+		return err
 	}
 
 	repo, db, err := openDB(cfg.DBPath)
@@ -137,6 +128,22 @@ func applyTraceRatio(settings *service.SettingsService, slug string, projectID i
 		fmt.Printf("%s: trace ratio back to the defaults\n", slug)
 	} else {
 		fmt.Printf("%s: keeping 1 in %d traces\n", slug, ratio)
+	}
+	return nil
+}
+
+// checkProjectSetFlags refuses negative values, --op without a ratio and a call
+// that sets nothing.
+func checkProjectSetFlags(traceRatio, logHours int, op, usage string) error {
+	switch {
+	case traceRatio < -1:
+		return fmt.Errorf("--trace-ratio must be 0 or more")
+	case logHours < -1:
+		return fmt.Errorf("--log-retention-hours must be 0 or more")
+	case op != "" && traceRatio == -1:
+		return fmt.Errorf("--op needs --trace-ratio. %s", usage)
+	case traceRatio == -1 && logHours == -1:
+		return fmt.Errorf("nothing to set. %s", usage)
 	}
 	return nil
 }
