@@ -59,7 +59,7 @@ func writeOTLPReadError(w http.ResponseWriter, err error) {
 // after writing the error response.
 func decodeOTLP(w http.ResponseWriter, r *http.Request, body []byte, msg proto.Message) bool {
 	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-		if err := protojson.Unmarshal(body, msg); err != nil {
+		if err := protojson.Unmarshal(hexIDsToBase64(body), msg); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON", err.Error())
 			return false
 		}
