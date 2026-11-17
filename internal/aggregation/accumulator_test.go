@@ -128,3 +128,37 @@ func TestAccumulatorQueryRecent(t *testing.T) {
 		t.Fatalf("QueryRecent (projectID=99) = %d rows, want 0", len(none))
 	}
 }
+
+func TestAccumulatorKeepsEnvironmentsApart(t *testing.T) {
+	w := &mockAccWriter{}
+	acc := NewAccumulator(w, time.Minute, time.Hour, nil)
+
+	now := time.Now().UTC().UnixMicro()
+	span := func(attrs string) repository.Span {
+		return repository.Span{ProjectID: 1, Service: "svc", Name: "op", Kind: "server", StartTimeUs: now, DurationUs: 100, Attributes: attrs}
+	}
+	acc.Add(span(`{"deployment.environment":"production"}`))
+	acc.Add(span(`{"deployment.environment":"staging"}`))
+	acc.Add(span(`{"deployment.environment":"staging"}`))
+	acc.Add(span(`{}`))
+
+	all := acc.QueryRecent(repository.AggregateFilter{ProjectID: 1})
+	if len(all) != 3 {
+		t.Fatalf("QueryRecent (all) = %d rows, want 3 (production, staging, none)", len(all))
+	}
+
+	staging := acc.QueryRecent(repository.AggregateFilter{ProjectID: 1, Environment: "staging"})
+	if len(staging) != 1 || staging[0].Count != 2 || staging[0].Environment != "staging" {
+		t.Fatalf("QueryRecent (staging) = %+v, want one staging row of 2", staging)
+	}
+
+	// production also reads the spans that never named an environment.
+	prod := acc.QueryRecent(repository.AggregateFilter{ProjectID: 1, Environment: "production"})
+	var n int64
+	for _, a := range prod {
+		n += a.Count
+	}
+	if len(prod) != 2 || n != 2 {
+		t.Fatalf("QueryRecent (production) = %+v, want production and unset rows of 2 spans", prod)
+	}
+}

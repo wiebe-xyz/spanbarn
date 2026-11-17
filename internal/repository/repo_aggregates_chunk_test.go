@@ -56,6 +56,7 @@ func TestCompareAggregateKeyFollowsTheLookupIndex(t *testing.T) {
 	b := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
 	rows := []Aggregate{
 		{ProjectID: 2, Service: "a", Operation: "a", Kind: "a", Bucket: b},
+		{ProjectID: 1, Environment: "a", Service: "a", Operation: "a", Kind: "a", Bucket: b},
 		{ProjectID: 1, Service: "b", Operation: "a", Kind: "a", Bucket: b},
 		{ProjectID: 1, Service: "a", Operation: "b", Kind: "a", Bucket: b},
 		{ProjectID: 1, Service: "a", Operation: "a", Resource: "r", Kind: "a", Bucket: b},

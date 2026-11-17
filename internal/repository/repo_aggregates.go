@@ -16,9 +16,9 @@ import (
 // from before the columns existed) stays NULL, and WeightedEstimate reports it
 // as unknown instead of mixing weighted and unweighted spans.
 const upsertAggregateSQL = `INSERT INTO aggregates
-	(project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us, weighted_count, weighted_spans)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(project_id, service, operation, resource, kind, bucket)
+	(project_id, environment, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us, weighted_count, weighted_spans)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(project_id, environment, service, operation, resource, kind, bucket)
 	DO UPDATE SET
 		count = count + excluded.count,
 		error_count = error_count + excluded.error_count,
@@ -32,7 +32,7 @@ const upsertAggregateSQL = `INSERT INTO aggregates
 
 func upsertAggregateArgs(agg Aggregate) []any {
 	return []any{
-		agg.ProjectID, agg.Service, agg.Operation, agg.Resource, agg.Kind,
+		agg.ProjectID, agg.Environment, agg.Service, agg.Operation, agg.Resource, agg.Kind,
 		agg.Bucket, agg.Count, agg.ErrorCount,
 		agg.P50Us, agg.P95Us, agg.P99Us, agg.MaxUs, agg.SumDurationUs,
 		agg.WeightedCount, agg.WeightedSpans,
@@ -49,14 +49,14 @@ func (r *Repository) UpsertAggregate(agg Aggregate) error {
 }
 
 // aggregateChunk caps the rows one aggregate upsert writes in one write slot.
-// Each row seeks idx_agg_lookup and rewrites its idx_agg_stats entry, about
+// Each row seeks idx_agg_lookup_env and rewrites its idx_agg_stats entry, about
 // 4.5 to 5.9 ms a row on production's cold disk, so flushes of 612 to 1,213
 // rows held the spans writer for 4.5 to 9.4 s on 2026-10-29. A chunk of 150
 // stays under a second.
 const aggregateChunk = 150
 
 // UpsertAggregates adds a batch of aggregate rows into their buckets, in
-// idx_agg_lookup key order, one transaction and one write slot per chunk of
+// idx_agg_lookup_env key order, one transaction and one write slot per chunk of
 // aggregateChunk rows. A chunk that fails stops the batch and the chunks
 // before it stay written. Retention persists a batch before it deletes the
 // spans, so after such a failure its next cycle aggregates the same spans
@@ -65,10 +65,11 @@ func (r *Repository) UpsertAggregates(aggs []Aggregate) error {
 	return writeTierRows(r, context.Background(), "UpsertAggregates", upsertAggregateSQL, aggs, aggregateChunk, compareAggregateKey, upsertAggregateArgs)
 }
 
-// compareAggregateKey orders aggregates by idx_agg_lookup.
+// compareAggregateKey orders aggregates by idx_agg_lookup_env.
 func compareAggregateKey(a, b Aggregate) int {
 	return cmp.Or(
 		cmp.Compare(a.ProjectID, b.ProjectID),
+		strings.Compare(a.Environment, b.Environment),
 		strings.Compare(a.Service, b.Service),
 		strings.Compare(a.Operation, b.Operation),
 		strings.Compare(a.Resource, b.Resource),
@@ -84,6 +85,10 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 	if f.ProjectID != 0 {
 		where = append(where, "project_id = ?")
 		args = append(args, f.ProjectID)
+	}
+	if clause, envArgs := environmentClause(f.Environment); clause != "" {
+		where = append(where, clause)
+		args = append(args, envArgs...)
 	}
 	if f.Service != "" {
 		where = append(where, "service = ?")
@@ -106,7 +111,7 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 		args = append(args, f.To)
 	}
 
-	q := "SELECT id, project_id, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us, COALESCE(weighted_count, 0), COALESCE(weighted_spans, 0) FROM aggregates"
+	q := "SELECT id, project_id, COALESCE(environment, ''), service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us, COALESCE(weighted_count, 0), COALESCE(weighted_spans, 0) FROM aggregates"
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -132,7 +137,7 @@ func (r *Repository) QueryAggregates(f AggregateFilter) ([]Aggregate, error) {
 	for rows.Next() {
 		var a Aggregate
 		if err := rows.Scan(
-			&a.ID, &a.ProjectID, &a.Service, &a.Operation, &a.Resource, &a.Kind,
+			&a.ID, &a.ProjectID, &a.Environment, &a.Service, &a.Operation, &a.Resource, &a.Kind,
 			&a.Bucket, &a.Count, &a.ErrorCount,
 			&a.P50Us, &a.P95Us, &a.P99Us, &a.MaxUs, &a.SumDurationUs,
 			&a.WeightedCount, &a.WeightedSpans,

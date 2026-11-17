@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
@@ -120,5 +121,61 @@ func TestWithEnvironmentRefusesTooDeepFilter(t *testing.T) {
 	}}
 	if _, ok := filter.Conjoin(deep, []filter.Node{node}); ok {
 		t.Error("Conjoin accepted an OR filter with a nested group")
+	}
+}
+
+// Services read per environment from aggregate rows, and a malformed name is
+// refused before the read (#558 slice 2b).
+func TestServicesEnvironmentScope(t *testing.T) {
+	srv, sm, repo := setupQueryTestServer(t)
+	token, _, err := sm.Create("admin", "local", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket := time.Now().UTC().Truncate(time.Hour)
+	agg := func(env, svc string, n int64) repository.Aggregate {
+		return repository.Aggregate{
+			ProjectID: 1, Environment: env, Service: svc, Operation: "GET /x", Kind: "server",
+			Bucket: bucket, Count: n, SumDurationUs: n * 100, MaxUs: 100,
+		}
+	}
+	if err := repo.UpsertAggregates([]repository.Aggregate{
+		agg("production", "web", 10), agg("staging", "web-staging", 3), agg("", "legacy", 2),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	names := func(env string) map[string]bool {
+		t.Helper()
+		q := filterRange()
+		q.Set("from", bucket.Add(-time.Minute).Format(time.RFC3339))
+		if env != "" {
+			q.Set("environment", env)
+		}
+		code, body := filterReq(t, srv, token, http.MethodGet, "/api/v1/services?"+q.Encode(), "")
+		var rows []struct{ Service string }
+		if code != 200 || json.Unmarshal(body, &rows) != nil {
+			t.Fatalf("services environment=%q: %d %s", env, code, body)
+		}
+		out := map[string]bool{}
+		for _, r := range rows {
+			out[r.Service] = true
+		}
+		return out
+	}
+	if got := names(""); len(got) != 3 {
+		t.Errorf("services without environment = %v, want all three", got)
+	}
+	if got := names("staging"); len(got) != 1 || !got["web-staging"] {
+		t.Errorf("services environment=staging = %v, want web-staging only", got)
+	}
+	if got := names("production"); len(got) != 2 || !got["web"] || !got["legacy"] {
+		t.Errorf("services environment=production = %v, want web and the unset legacy row", got)
+	}
+
+	q := filterRange()
+	q.Set("environment", "Not A Name")
+	if code, body := filterReq(t, srv, token, http.MethodGet, "/api/v1/services?"+q.Encode(), ""); code != 400 {
+		t.Errorf("services bad environment = %d %s, want 400", code, body)
 	}
 }

@@ -69,8 +69,11 @@ type Span struct {
 }
 
 type Aggregate struct {
-	ID            int64     `json:"id"`
-	ProjectID     int64     `json:"projectId"`
+	ID        int64 `json:"id"`
+	ProjectID int64 `json:"projectId"`
+	// Environment is the deployment.environment of the spans the row sums, or
+	// "" for spans that carry none, which read as production (#558).
+	Environment   string    `json:"environment,omitempty"`
 	Service       string    `json:"service"`
 	Operation     string    `json:"operation"`
 	Resource      string    `json:"resource"`
@@ -174,13 +177,16 @@ type RootSpanGroup struct {
 
 type AggregateFilter struct {
 	ProjectID int64
-	Service   string
-	Operation string
-	Kind      string
-	From      time.Time
-	To        time.Time
-	Limit     int
-	Offset    int
+	// Environment selects one environment's rows. production also selects the
+	// rows without one; "" and "all" select every row.
+	Environment string
+	Service     string
+	Operation   string
+	Kind        string
+	From        time.Time
+	To          time.Time
+	Limit       int
+	Offset      int
 }
 
 type PromptRecord struct {

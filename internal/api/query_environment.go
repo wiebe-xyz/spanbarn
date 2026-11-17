@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"regexp"
 	"sort"
@@ -26,8 +27,7 @@ func withEnvironment(w http.ResponseWriter, r *http.Request, expr *filter.Expr) 
 	if !ok {
 		return expr, true
 	}
-	if !environmentName.MatchString(env) {
-		writeError(w, http.StatusBadRequest, "invalid environment", "use a lowercase name such as production, staging or testing, or all")
+	if !validEnvironment(w, env) {
 		return nil, false
 	}
 	out, ok := filter.Conjoin(expr, []filter.Node{node})
@@ -36,6 +36,31 @@ func withEnvironment(w http.ResponseWriter, r *http.Request, expr *filter.Expr) 
 		return nil, false
 	}
 	return out, true
+}
+
+// validEnvironment writes the 400 for a malformed environment name and reports
+// whether the name may be used.
+func validEnvironment(w http.ResponseWriter, env string) bool {
+	if environmentName.MatchString(env) {
+		return true
+	}
+	writeError(w, http.StatusBadRequest, "invalid environment", "use a lowercase name such as production, staging or testing, or all")
+	return false
+}
+
+// scopeEnvironment puts the request's environment onto ctx for the reads that
+// serve from aggregate rows, which carry the environment as a column and not as
+// a span filter. Absent and "all" leave ctx unscoped. It writes the 400 itself
+// and reports false on a bad name.
+func scopeEnvironment(ctx context.Context, w http.ResponseWriter, r *http.Request) (context.Context, bool) {
+	env := r.URL.Query().Get(environmentParam)
+	if env == "" || env == "all" {
+		return ctx, true
+	}
+	if !validEnvironment(w, env) {
+		return ctx, false
+	}
+	return filter.WithEnvironmentScope(ctx, env), true
 }
 
 // environmentRow is one environment of a project and its span count in the
