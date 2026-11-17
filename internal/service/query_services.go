@@ -316,6 +316,42 @@ func (s *QueryService) ListOperations(ctx context.Context, projectID int64, serv
 	})
 }
 
+// foldTimeseriesTail adds the window's newest minutes, which the stored
+// aggregates do not hold yet, to byBucket: the in-memory accumulator, or the
+// raw spans where no accumulator is wired. The raw-span tail does not split by
+// environment, so a scoped read leaves it out.
+func (s *QueryService) foldTimeseriesTail(byBucket map[time.Time]*aggStats, rates *opRates, env string, projectID int64, svcName, operation string, from, to time.Time, interval time.Duration) {
+	if fbFrom, ok := narrowFallback(from, to); ok {
+		if s.accumulator != nil {
+			for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
+				ProjectID: projectID, Environment: env, Service: svcName, Operation: operation, From: fbFrom, To: to,
+			}) {
+				b := a.Bucket.Truncate(interval)
+				st := byBucket[b]
+				if st == nil {
+					st = &aggStats{}
+					byBucket[b] = st
+				}
+				st.foldAggregate(rates.rate(a.Operation), a)
+			}
+		} else if env == "" { // the raw-span tail does not split by environment
+			spanBuckets, err := s.repo.QuerySpanTimeseries(projectID, svcName, operation, fbFrom, to, int64(interval.Seconds()))
+			if err != nil {
+				s.logger.Warn("failed to query span timeseries", "error", err)
+			}
+			for _, sb := range spanBuckets {
+				b := sb.Bucket.Truncate(interval)
+				st := byBucket[b]
+				if st == nil {
+					st = &aggStats{}
+					byBucket[b] = st
+				}
+				st.foldSpanFallback(rates.rate(operation), sb.Count, sb.ErrorCount, sb.Weights, sb.P50Us, sb.P95Us, sb.P99Us)
+			}
+		}
+	}
+}
+
 // GetTimeseries returns bucketed timeseries data for a specific operation, or
 // for every operation of the service when operation is "*". A zero interval
 // picks the dashboard's chart bucket width for the window.
@@ -368,35 +404,7 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 			st.foldAggregate(rates.rate(a.Operation), a)
 		}
 
-		if fbFrom, ok := narrowFallback(from, to); ok {
-			if s.accumulator != nil {
-				for _, a := range s.accumulator.QueryRecent(repository.AggregateFilter{
-					ProjectID: projectID, Environment: env, Service: svcName, Operation: operation, From: fbFrom, To: to,
-				}) {
-					b := a.Bucket.Truncate(interval)
-					st := byBucket[b]
-					if st == nil {
-						st = &aggStats{}
-						byBucket[b] = st
-					}
-					st.foldAggregate(rates.rate(a.Operation), a)
-				}
-			} else if env == "" { // the raw-span tail does not split by environment
-				spanBuckets, err := s.repo.QuerySpanTimeseries(projectID, svcName, operation, fbFrom, to, int64(interval.Seconds()))
-				if err != nil {
-					s.logger.Warn("failed to query span timeseries", "error", err)
-				}
-				for _, sb := range spanBuckets {
-					b := sb.Bucket.Truncate(interval)
-					st := byBucket[b]
-					if st == nil {
-						st = &aggStats{}
-						byBucket[b] = st
-					}
-					st.foldSpanFallback(rates.rate(operation), sb.Count, sb.ErrorCount, sb.Weights, sb.P50Us, sb.P95Us, sb.P99Us)
-				}
-			}
-		}
+		s.foldTimeseriesTail(byBucket, rates, env, projectID, svcName, operation, from, to, interval)
 
 		result := make([]TimeseriesBucket, 0, len(byBucket))
 		for b, st := range byBucket {

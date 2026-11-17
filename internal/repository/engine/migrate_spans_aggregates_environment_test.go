@@ -39,3 +39,21 @@ func TestAggregatesEnvironmentMigration(t *testing.T) {
 		t.Fatalf("second run: %v", err)
 	}
 }
+
+// A file without an aggregates table is not a spans file: the migration says
+// so instead of passing.
+func TestAggregatesEnvironmentMigrationRefusesAFileWithoutTheTable(t *testing.T) {
+	db := spansWriter(t)
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `DROP TABLE aggregates`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := spansAggregatesEnvironmentUp(ctx, tx); err == nil {
+		t.Fatal("migration passed on a file with no aggregates table")
+	}
+}

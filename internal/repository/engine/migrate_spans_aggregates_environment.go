@@ -26,17 +26,15 @@ import (
 // The new index is built over the table once per file. aggregates keeps 30
 // days of one row per bucket, service and operation.
 func spansAggregatesEnvironmentUp(ctx context.Context, tx *sql.Tx) error {
-	if _, err := tx.ExecContext(ctx, `ALTER TABLE aggregates ADD COLUMN environment TEXT NOT NULL DEFAULT ''`); err != nil &&
-		!strings.Contains(err.Error(), "duplicate column name") {
-		return fmt.Errorf("aggregates environment: %w", err)
-	}
 	for _, stmt := range []string{
+		`ALTER TABLE aggregates ADD COLUMN environment TEXT NOT NULL DEFAULT ''`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_agg_lookup_env
 			ON aggregates(project_id, environment, service, operation, resource, kind, bucket)`,
 		`DROP INDEX IF EXISTS idx_agg_lookup`,
 	} {
-		if _, err := tx.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("aggregates environment index: %w", err)
+		// A file that already has the column (a re-run) is not an error.
+		if _, err := tx.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("aggregates environment: %w", err)
 		}
 	}
 	return nil
