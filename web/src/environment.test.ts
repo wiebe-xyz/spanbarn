@@ -7,6 +7,9 @@ describe('withEnvironment', () => {
   it('adds the selected environment to the reads that take one', () => {
     expect(withEnvironment('/api/v1/traces?from=a&to=b')).toBe('/api/v1/traces?from=a&to=b&environment=production')
     expect(withEnvironment('/api/v1/analyze')).toBe('/api/v1/analyze?environment=production')
+    for (const path of ['/api/v1/traces/groups', '/api/v1/dashboard/counts', '/api/v1/dashboard/percentiles', '/api/v1/dashboard/heatmap']) {
+      expect(withEnvironment(`${path}?from=a`)).toBe(`${path}?from=a&environment=production`)
+    }
     setEnvironment('staging')
     expect(withEnvironment('/api/v1/spans/search?project_id=3')).toBe(
       '/api/v1/spans/search?project_id=3&environment=staging',

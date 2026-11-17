@@ -13,6 +13,10 @@ const ENVIRONMENT_PATHS = new Set([
   '/api/v1/analyze/series',
   '/api/v1/heatmap',
   '/api/v1/attributes/compare',
+  '/api/v1/traces/groups',
+  '/api/v1/dashboard/counts',
+  '/api/v1/dashboard/percentiles',
+  '/api/v1/dashboard/heatmap',
 ])
 
 function readStored(): string {

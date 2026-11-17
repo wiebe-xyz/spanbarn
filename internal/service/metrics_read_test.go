@@ -101,7 +101,7 @@ func TestTierStepsForReadSkipsTheFineTierWhenWide(t *testing.T) {
 		"totals, under a day":  {12 * time.Hour, nil, true, tier.Step5m},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := tierStepsForRead(tc.width, tc.labels, tc.totals)[0]; got != tc.want {
+			if got := tierStepsForRead(tc.width, len(tc.labels) > 0, tc.totals)[0]; got != tc.want {
 				t.Errorf("first step = %d, want %d", got, tc.want)
 			}
 		})

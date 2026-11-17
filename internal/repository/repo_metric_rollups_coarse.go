@@ -21,6 +21,9 @@ type CoarseRollupFilter struct {
 	From        time.Time
 	To          time.Time
 	Attributes  map[string]string // label equality filters via JSON_EXTRACT
+	// Environment scopes the read through the deployment.environment label;
+	// production also selects series without the label. "" and "all" select all.
+	Environment string
 	Limit       int
 }
 
@@ -146,6 +149,7 @@ func (r *Repository) QueryCoarseRollups(ctx context.Context, f CoarseRollupFilte
 	if err != nil {
 		return nil, err
 	}
+	where, args = appendMetricEnvironment(where, args, f.Environment)
 
 	limit := f.Limit
 	if limit <= 0 || limit > 50000 {

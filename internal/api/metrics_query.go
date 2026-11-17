@@ -178,7 +178,9 @@ type metricRequest struct {
 	limit     int
 	from, to  time.Time
 	labels    map[string]string
-	groupBy   []string
+	// environment is the validated environment parameter; "" reads every one.
+	environment string
+	groupBy     []string
 	// totals marks a sum over the range, which reads the hour tier from a day on.
 	totals bool
 }
@@ -194,7 +196,7 @@ func (m metricRequest) cacheKey(kind string) string {
 	for _, k := range keys {
 		fmt.Fprintf(&lb, "%q=%q,", k, m.labels[k])
 	}
-	return fmt.Sprintf("metric:%s:%d:%q:%d:%s:%s", kind, m.projectID, m.name, m.limit, lb.String(), strings.Join(m.groupBy, ","))
+	return fmt.Sprintf("metric:%s:%d:%q:%d:%s:%s:%q", kind, m.projectID, m.name, m.limit, lb.String(), strings.Join(m.groupBy, ","), m.environment)
 }
 
 // parseMetricRequest reads and checks the query parameters, writing the error
@@ -225,14 +227,22 @@ func parseMetricRequest(w http.ResponseWriter, r *http.Request, defaultLimit int
 			return metricRequest{}, false
 		}
 	}
+	env := r.URL.Query().Get(environmentParam)
+	if env == "all" {
+		env = ""
+	}
+	if env != "" && !validEnvironment(w, env) {
+		return metricRequest{}, false
+	}
 	return metricRequest{
-		name:      name,
-		projectID: parseInt64Param(r, "project_id", 0),
-		limit:     parseIntParam(r, "limit", defaultLimit),
-		from:      from,
-		to:        to,
-		labels:    labels,
-		groupBy:   parseGroupBy(r),
+		name:        name,
+		environment: env,
+		projectID:   parseInt64Param(r, "project_id", 0),
+		limit:       parseIntParam(r, "limit", defaultLimit),
+		from:        from,
+		to:          to,
+		labels:      labels,
+		groupBy:     parseGroupBy(r),
 	}, true
 }
 
@@ -240,7 +250,7 @@ func parseMetricRequest(w http.ResponseWriter, r *http.Request, defaultLimit int
 func (h *metricsQueryHandlers) readMetricQuery(ctx context.Context, req metricRequest, from, to time.Time) (metricQuery, error) {
 	in, err := h.svc.ReadInput(ctx, service.MetricInputRequest{
 		ProjectID: req.projectID, Name: req.name, From: from, To: to,
-		Labels: req.labels, Limit: req.limit, Totals: req.totals,
+		Labels: req.labels, Environment: req.environment, Limit: req.limit, Totals: req.totals,
 	})
 	if err != nil {
 		return metricQuery{}, err

@@ -47,7 +47,10 @@ type MetricRollupFilter struct {
 	From       time.Time
 	To         time.Time
 	Attributes map[string]string // label equality filters via JSON_EXTRACT
-	Limit      int
+	// Environment scopes the read through the deployment.environment label;
+	// production also selects series without the label. "" and "all" select all.
+	Environment string
+	Limit       int
 }
 
 // metricRollupChunk caps the rows one rollup upsert writes in one write slot.
@@ -222,6 +225,7 @@ func (r *Repository) QueryMetricRollups(ctx context.Context, f MetricRollupFilte
 	if err != nil {
 		return nil, err
 	}
+	where, args = appendMetricEnvironment(where, args, f.Environment)
 
 	limit := f.Limit
 	if limit <= 0 || limit > 50000 {
