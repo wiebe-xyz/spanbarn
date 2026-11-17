@@ -35,6 +35,9 @@ type Identity struct {
 	ProjectID   int64
 	Scope       string
 	Environment string
+	// KeyID is the api_keys row the key matched. The static key has no row and
+	// reads 0.
+	KeyID int64
 }
 
 // Authorizer validates API keys against a static hash and/or the database.
@@ -97,7 +100,7 @@ func (a *Authorizer) AuthorizeIdentity(key string) (Identity, error) {
 			if touchErr := a.repo.TouchAPIKey(rec.ID); touchErr != nil {
 				a.logger.Warn("failed to touch API key", "id", rec.ID, "error", touchErr)
 			}
-			return Identity{ProjectID: rec.ProjectID, Scope: rec.Scope, Environment: rec.Environment}, nil
+			return Identity{ProjectID: rec.ProjectID, Scope: rec.Scope, Environment: rec.Environment, KeyID: rec.ID}, nil
 		}
 	}
 

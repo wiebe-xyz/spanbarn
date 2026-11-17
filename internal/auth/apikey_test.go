@@ -142,8 +142,8 @@ func TestNewAPIKey(t *testing.T) {
 	}
 }
 
-// AuthorizeIdentity returns the environment of a database key and none for the
-// static key; Authorize keeps its two-value answer (#558).
+// AuthorizeIdentity returns the environment and row id of a database key and
+// neither for the static key; Authorize keeps its two-value answer (#558).
 func TestAuthorizeIdentityCarriesEnvironment(t *testing.T) {
 	repo := newMockKeyLookup()
 	repo.keys[HashKey("staging-key")] = APIKeyRecord{ID: 4, ProjectID: 9, Scope: "ingest", Environment: "staging"}
@@ -153,7 +153,7 @@ func TestAuthorizeIdentityCarriesEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (Identity{ProjectID: 9, Scope: "ingest", Environment: "staging"}); got != want {
+	if want := (Identity{ProjectID: 9, Scope: "ingest", Environment: "staging", KeyID: 4}); got != want {
 		t.Errorf("identity = %+v, want %+v", got, want)
 	}
 

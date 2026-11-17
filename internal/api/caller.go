@@ -7,6 +7,8 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/wiebe-xyz/spanbarn/internal/auth"
 )
 
 // Auth kinds recorded on every authenticated request.
@@ -24,6 +26,8 @@ const (
 type callerInfo struct {
 	kind string
 	org  string
+	// key is set when an API key authenticated the request.
+	key *auth.Identity
 }
 
 // withCaller returns a context carrying an empty callerInfo that the auth
@@ -44,6 +48,15 @@ func recordCaller(r *http.Request, kind, org string) {
 		attrs = append(attrs, attribute.String("auth.org_id", org))
 	}
 	trace.SpanFromContext(r.Context()).SetAttributes(attrs...)
+}
+
+// recordKeyCaller notes that an API key authenticated the request, with the
+// key's identity for the access log and the key-use line.
+func recordKeyCaller(r *http.Request, ident auth.Identity) {
+	recordCaller(r, authKindAPIKey, "")
+	if c, ok := r.Context().Value(ctxCaller).(*callerInfo); ok {
+		c.key = &ident
+	}
 }
 
 // sessionOrganization reads organization_id out of a stored claims snapshot.

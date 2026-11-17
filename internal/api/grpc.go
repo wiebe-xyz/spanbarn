@@ -159,6 +159,7 @@ func grpcAuthInterceptor(s *Server) grpc.UnaryServerInterceptor {
 			ctx = SetProjectID(ctx, ident.ProjectID)
 			ctx = SetScope(ctx, ident.Scope)
 			ctx = SetEnvironment(ctx, ident.Environment)
+			s.keyUse.use(ident, newKeyUseRequest(strings.Join(md.Get("user-agent"), " "), peerHost(ctx), info.FullMethod, strings.Join(md.Get("origin"), " "), strings.Join(md.Get("referer"), " ")))
 		} else {
 			if key != s.apiKey {
 				return nil, refuse("invalid api key")
