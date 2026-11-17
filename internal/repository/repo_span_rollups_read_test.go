@@ -279,3 +279,34 @@ func TestSpansIngestedBetween(t *testing.T) {
 		}
 	}
 }
+
+// A read scoped to an environment sees that environment's rows, and
+// production also sees the rows of spans that named none.
+func TestScanSpanRollupsEnvironment(t *testing.T) {
+	repo := setupTestDB(t)
+	row := func(env string) SpanRollup {
+		r := spanRollupRow(readBase, "GET /", 5)
+		r.Environment = env
+		return r
+	}
+	addRollups(t, repo, row(""), row("production"), row("staging"), row("staging"))
+	got := map[string]int64{}
+	for _, env := range []string{"", "all", "production", "staging", "testing"} {
+		err := repo.ScanSpanRollups(context.Background(),
+			SpanRollupScan{Segments: fiveMinutes(readBase, readBase.Add(time.Hour)), Environment: env},
+			func(r SpanRollup) error { got[env] += r.Count; return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Every flush adds on conflict: the two staging rows are one row of count 2.
+	want := map[string]int64{"": 4, "all": 4, "production": 2, "staging": 2}
+	for env, n := range want {
+		if got[env] != n {
+			t.Errorf("environment %q: count %d, want %d", env, got[env], n)
+		}
+	}
+	if got["testing"] != 0 {
+		t.Errorf("environment testing: count %d, want 0", got["testing"])
+	}
+}

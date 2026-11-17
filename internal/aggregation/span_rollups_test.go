@@ -191,3 +191,33 @@ func TestSpanRollupCapsPruneOldHours(t *testing.T) {
 		t.Errorf("overflow marks kept: %v", c.overflowed)
 	}
 }
+
+// Spans of one operation in one bucket fold into a row per environment, and
+// spans that name none keep the empty environment.
+func TestSpanRollupsKeepEnvironmentsApart(t *testing.T) {
+	w := &fakeSpanRollupWriter{}
+	at := time.Date(2026, 10, 26, 12, 7, 30, 0, time.UTC)
+	r := newTestRollups(w, SpanRollupConfig{}, at)
+	for _, attrs := range []string{
+		`{"deployment.environment":"production"}`, `{"deployment.environment":"staging"}`,
+		`{"deployment.environment":"Staging"}`, `{}`,
+	} {
+		r.Add(repository.Span{ProjectID: 1, Service: "api", Name: "GET /", Kind: "server", Status: "ok", DurationUs: 10, IngestedAt: at, Attributes: attrs})
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int64{}
+	for _, row := range w.rows {
+		counts[row.Environment] += row.Count
+	}
+	want := map[string]int64{"production": 1, "staging": 2, "": 1}
+	if len(w.rows) != 3 {
+		t.Fatalf("rows = %+v", w.rows)
+	}
+	for env, n := range want {
+		if counts[env] != n {
+			t.Errorf("environment %q: count %d, want %d", env, counts[env], n)
+		}
+	}
+}

@@ -109,12 +109,8 @@ func (s *QueryService) listServicesUncached(ctx context.Context, projectID int64
 		kind = "server"
 	}
 	env := filter.EnvironmentScope(ctx)
-	// span_rollups carries no environment yet (#558 slice 2b, one PR per
-	// table), so a scoped read serves from aggregates, which do.
-	if env == "" {
-		if out, ok, err := s.servicesFromRollups(ctx, projectID, from, to, kind); ok {
-			return out, err
-		}
+	if out, ok, err := s.servicesFromRollups(ctx, projectID, from, to, kind); ok {
+		return out, err
 	}
 	aggs, err := s.repo.QueryAggregates(repository.AggregateFilter{
 		ProjectID:   projectID,
@@ -368,12 +364,8 @@ func (s *QueryService) GetTimeseries(ctx context.Context, projectID int64, svcNa
 	env := filter.EnvironmentScope(ctx)
 	cacheKey := fmt.Sprintf("ts:%d:%s:%s:%d:%d:%d:%s", projectID, svcName, operation, from.Unix(), to.Unix(), int64(interval.Seconds()), env)
 	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) ([]TimeseriesBucket, error) {
-		// See listServicesUncached: rollups hold every environment until
-		// span_rollups takes the column.
-		if env == "" {
-			if out, ok, err := s.timeseriesFromRollups(ctx, projectID, svcName, operation, from, to, interval); ok {
-				return out, err
-			}
+		if out, ok, err := s.timeseriesFromRollups(ctx, projectID, svcName, operation, from, to, interval); ok {
+			return out, err
 		}
 		if operation == allOperations {
 			operation = ""

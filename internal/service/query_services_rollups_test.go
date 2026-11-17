@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
@@ -139,4 +140,48 @@ func TestRollupGapReadsTheOtherSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantSource(t, "dashboard after the gap", after.Source, SourceRollups)
+}
+
+// A read scoped to an environment answers from span_rollups, and counts only
+// that environment's spans.
+func TestServicesAndTimeseriesFromRollupsScopeToTheEnvironment(t *testing.T) {
+	repo := setupTestRepo(t)
+	spans := rollupFixture()
+	for i := range spans {
+		if spans[i].Service == "web" {
+			spans[i].Attributes = `{"deployment.environment":"staging"}`
+		}
+	}
+	seedRollupFixture(t, repo, spans)
+	svc := NewQueryService(repo, nil, nil)
+	svc.SetSpanRollupReads(SpanRollupReads{Enabled: true, HTTPStatus: true})
+	to := rollupBase.Add(2 * time.Hour)
+
+	names := func(env string) map[string]int64 {
+		t.Helper()
+		got, err := svc.ListServices(filter.WithEnvironmentScope(context.Background(), env), 1, rollupBase, to, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]int64{}
+		for _, g := range got {
+			wantSource(t, env+" services", g.Source, SourceRollups)
+			out[g.Service] = g.SpanCount
+		}
+		return out
+	}
+	if got := names("staging"); len(got) != 1 || got["web"] != 24 {
+		t.Errorf("staging services = %v, want only web with 24 spans", got)
+	}
+	if got := names("production"); len(got) != 2 || got["api"] != 24 || got["db"] != 48 {
+		t.Errorf("production services = %v, want api 24 and db 48", got)
+	}
+	if got := names("all"); len(got) != 3 {
+		t.Errorf("all services = %v, want web, api and db", got)
+	}
+
+	series, err := svc.GetTimeseries(filter.WithEnvironmentScope(context.Background(), "production"), 1, "web", allOperations, rollupBase, to, 0)
+	if err != nil || len(series) != 0 {
+		t.Errorf("production timeseries of a staging-only service = %v, %v", series, err)
+	}
 }

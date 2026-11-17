@@ -97,8 +97,11 @@ type SpanRollupSegment struct {
 
 // SpanRollupScan selects span rollup rows. Empty fields apply no filter.
 type SpanRollupScan struct {
-	Segments     []SpanRollupSegment
-	ProjectID    int64
+	Segments  []SpanRollupSegment
+	ProjectID int64
+	// Environment selects one environment's rows. production also selects the
+	// rows without one; "" and "all" select every row.
+	Environment  string
 	Service      string
 	Name         string
 	Kind         string
@@ -117,6 +120,9 @@ func (q SpanRollupScan) where(seg SpanRollupSegment) ([]string, []any) {
 	b.add("bucket < ?", seg.To.Unix())
 	if q.ProjectID != 0 {
 		b.add("project_id = ?", q.ProjectID)
+	}
+	if clause, args := environmentClause(q.Environment); clause != "" {
+		b.add(clause, args...)
 	}
 	if q.Service != "" {
 		b.add("service = ?", q.Service)
@@ -162,7 +168,7 @@ func scanSpanRollupRows(rows *sql.Rows, fn func(SpanRollup) error) error {
 	for rows.Next() {
 		var s SpanRollup
 		var bucket int64
-		if err := rows.Scan(&s.StepSeconds, &bucket, &s.ProjectID, &s.Service, &s.Name, &s.Kind, &s.IsRoot, &s.Status, &s.HTTPStatus,
+		if err := rows.Scan(&s.StepSeconds, &bucket, &s.ProjectID, &s.Environment, &s.Service, &s.Name, &s.Kind, &s.IsRoot, &s.Status, &s.HTTPStatus,
 			&s.Count, &s.WeightedCount, &s.WeightedSpans, &s.SumDurationUs, &s.MinUs, &s.MaxUs, &s.Hist); err != nil {
 			return err
 		}

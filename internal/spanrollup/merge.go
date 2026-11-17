@@ -42,6 +42,7 @@ func mergeTier[R any, K comparable](rows []R, key func(R) K, first func(R) R, ad
 
 type rowKey struct {
 	projectID           int64
+	environment         string
 	service, name, kind string
 	root                bool
 	status              string
@@ -54,7 +55,7 @@ type rowKey struct {
 func Merge(rows []repository.SpanRollup, step int64, bucket time.Time) []repository.SpanRollup {
 	return mergeTier(rows,
 		func(r repository.SpanRollup) rowKey {
-			return rowKey{r.ProjectID, r.Service, r.Name, r.Kind, r.IsRoot, r.Status, r.HTTPStatus}
+			return rowKey{r.ProjectID, r.Environment, r.Service, r.Name, r.Kind, r.IsRoot, r.Status, r.HTTPStatus}
 		},
 		func(r repository.SpanRollup) repository.SpanRollup {
 			r.StepSeconds, r.Bucket = step, bucket

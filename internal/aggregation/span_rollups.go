@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/spanhist"
 )
@@ -66,8 +67,8 @@ func (c SpanRollupConfig) withDefaults() SpanRollupConfig {
 
 // SpanRollups folds every span it is given into 5-minute buckets of
 // span_rollups: counts, sample weights, duration sum, min, max and a
-// quarter-octave histogram per (project, service, name, kind, root, status,
-// HTTP status of a root span).
+// quarter-octave histogram per (project, environment, service, name, kind,
+// root, status, HTTP status of a root span).
 // A bucket is keyed by arrival time. Each flush adds what arrived since the
 // last one into the stored rows, so the open bucket is written on every flush
 // and a restart loses one flush interval at most. AddBatch also folds the
@@ -86,12 +87,14 @@ type SpanRollups struct {
 type spanRollupKey struct {
 	bucket    int64
 	projectID int64
-	service   string
-	name      string
-	kind      string
-	root      bool
-	status    string
-	http      int64
+	// environment is the span's deployment.environment ("" when it has none).
+	environment string
+	service     string
+	name        string
+	kind        string
+	root        bool
+	status      string
+	http        int64
 }
 
 // durationStats is what a span rollup or span edge slot holds: the spans,
@@ -169,14 +172,15 @@ func (r *SpanRollups) Add(s repository.Span) {
 			"project_id", s.ProjectID, "service", s.Service, "max_names", r.cfg.MaxNames, "max_services", r.cfg.MaxServices)
 	}
 	k := spanRollupKey{
-		bucket:    bucket,
-		projectID: s.ProjectID,
-		service:   service,
-		name:      name,
-		kind:      strings.ToLower(s.Kind),
-		root:      s.ParentSpanID == "",
-		status:    rollupStatus(s.Status),
-		http:      code,
+		bucket:      bucket,
+		projectID:   s.ProjectID,
+		environment: filter.EnvironmentOf(s.Attributes),
+		service:     service,
+		name:        name,
+		kind:        strings.ToLower(s.Kind),
+		root:        s.ParentSpanID == "",
+		status:      rollupStatus(s.Status),
+		http:        code,
 	}
 	sl := r.slots[k]
 	if sl == nil {
@@ -235,6 +239,7 @@ func (sl *spanRollupSlot) row(k spanRollupKey) repository.SpanRollup {
 		StepSeconds:   SpanRollupStep,
 		Bucket:        time.Unix(k.bucket, 0).UTC(),
 		ProjectID:     k.projectID,
+		Environment:   k.environment,
 		Service:       k.service,
 		Name:          k.name,
 		Kind:          k.kind,
@@ -253,14 +258,15 @@ func (sl *spanRollupSlot) row(k spanRollupKey) repository.SpanRollup {
 
 func spanRollupRowKey(row repository.SpanRollup) spanRollupKey {
 	return spanRollupKey{
-		bucket:    row.Bucket.Unix(),
-		projectID: row.ProjectID,
-		service:   row.Service,
-		name:      row.Name,
-		kind:      row.Kind,
-		root:      row.IsRoot,
-		status:    row.Status,
-		http:      row.HTTPStatus,
+		bucket:      row.Bucket.Unix(),
+		projectID:   row.ProjectID,
+		environment: row.Environment,
+		service:     row.Service,
+		name:        row.Name,
+		kind:        row.Kind,
+		root:        row.IsRoot,
+		status:      row.Status,
+		http:        row.HTTPStatus,
 	}
 }
 
