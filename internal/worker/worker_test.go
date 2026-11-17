@@ -577,6 +577,27 @@ func TestClassifyForStorageFloorPerOperation(t *testing.T) {
 	}
 }
 
+func TestClassifyForStorageFloorPerEnvironment(t *testing.T) {
+	// Same project, operation and minute in two environments: each keeps its
+	// own floor trace. A span without an environment shares production's slot.
+	staging := `{"deployment.environment":"staging"}`
+	prod := `{"deployment.environment":"production"}`
+	spans := []repository.Span{
+		{ProjectID: 1, TraceID: "t1", SpanID: "s1", Name: "GET /x", Status: "ok", DurationUs: 100, Attributes: prod},
+		{ProjectID: 1, TraceID: "t2", SpanID: "s2", Name: "GET /x", Status: "ok", DurationUs: 100, Attributes: staging},
+		{ProjectID: 1, TraceID: "t3", SpanID: "s3", Name: "GET /x", Status: "ok", DurationUs: 100},
+		{ProjectID: 1, TraceID: "t4", SpanID: "s4", Name: "GET /x", Status: "ok", DurationUs: 100, Attributes: staging},
+	}
+	rw := &RedisWorker{
+		cfg:          WorkerConfig{SlowThresholdUs: 1_000_000},
+		boringPolicy: &mockBoringPolicy{ratio: 0, minPerMinute: 1},
+		floor:        sampling.NewMinuteFloor(),
+	}
+	if got := len(rw.classifyForStorage(spans)); got != 2 {
+		t.Fatalf("per-environment floor: want 2 spans (production, staging), got %d", got)
+	}
+}
+
 func TestClassifyForStorageFloorProjectIsolation(t *testing.T) {
 	// Same operation and minute but different projects → each project keeps its
 	// own floor trace.

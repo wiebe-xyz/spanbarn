@@ -49,6 +49,8 @@ Production SpanBarn holds 47 projects. Most products appear several times, one p
 - **FR-008**: `aggregates` carries `environment TEXT NOT NULL DEFAULT ''` in its unique key `(project_id, environment, service, operation, resource, kind, bucket)`. The accumulator and the retention aggregator take the environment from the span's `deployment.environment`. `GET /api/v1/services`, `/services/{service}/operations` and the timeseries read take `environment`; `production` also selects rows with no environment. The alert evaluator reads every environment. [#558]
 - **FR-009**: `span_rollups` carries `environment TEXT NOT NULL DEFAULT ''` in its primary key `(step_seconds, bucket, project_id, environment, service, name, kind, is_root, status, http_status)`. The accumulator takes the environment from the span's `deployment.environment`; compaction merges rows per environment, so tiers never sum two environments. Rows written before the migration carry `''`, which a `production` read also selects. The services and timeseries reads serve a scoped request from `span_rollups` as they serve an unscoped one. [#558]
 
+- **FR-010**: The boring-trace floors (the minute floor of the worker, the hourly floor and the carried drop counts of the trace buffer) key on the operation and the environment of the root span, so one slot belongs to one environment of one operation. A root span with no environment or `production` keeps the plain operation name as its key, so production traffic shares the slot it had before. Ratio lookups keep the plain operation name. A project that sends several environments stores at least one boring trace per environment, operation and minute, where one slot used to serve all of them. [#558]
+
 ## Slice 2b inventory: tables keyed on the project without an environment
 
 | Table | Key today | Step |
@@ -80,3 +82,4 @@ Rollback caveat, migration 11: it rebuilds `span_rollups` because a WITHOUT ROWI
 | FR-002 (earlier draft) | every read API defaults to production | the API default stays unfiltered so current callers keep their reads; the web app defaults to production |
 | Decision 1 (earlier draft) | `environment` column on every record table | slice 1 stamps the resource attribute instead; columns wait for slice 2 |
 | Slice 2b | every rollup table has an environment column | `aggregates` and `span_rollups` have it; the services, operations and timeseries reads take `environment`; the dashboard cards, trace groups, service map and metrics reads stay unscoped until their PR |
+| Floor key | one floor slot per (project, operation) | one slot per (project, environment, operation); `production` and no environment share the old key |

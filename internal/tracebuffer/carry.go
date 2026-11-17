@@ -3,6 +3,8 @@ package tracebuffer
 import (
 	"sync"
 	"time"
+
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 )
 
 // Counting what the buffer drops (#333).
@@ -156,11 +158,24 @@ func (c *carryTally) stats() (heldSpans int, carried, uncarried int64) {
 	return c.heldSpans, c.carriedTotal, c.uncarriedTotal
 }
 
-// traceOp is the root operation a trace is counted under: its root span's
-// name, or its first span's when the root never arrived.
+// traceOp is the root operation a trace is counted under, qualified by its
+// environment (filter.FloorOperation): its root span's name, or its first
+// span's when the root never arrived. The hourly and minute floors and the
+// carried drop counts all key on it.
 func traceOp(tr *bufferedTrace) string {
-	if tr.rootOp != "" || len(tr.spans) == 0 {
+	if len(tr.spans) == 0 {
 		return tr.rootOp
 	}
-	return tr.spans[0].Name
+	first := tr.spans[0]
+	for _, sp := range tr.spans {
+		if sp.ParentSpanID == "" {
+			first = sp
+			break
+		}
+	}
+	name := tr.rootOp
+	if name == "" {
+		name = tr.spans[0].Name
+	}
+	return filter.FloorOperation(string(first.Attributes), name)
 }

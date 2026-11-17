@@ -36,3 +36,20 @@ func TestEnvironmentOf(t *testing.T) {
 		})
 	}
 }
+
+func TestFloorOperation(t *testing.T) {
+	staging := `{"deployment.environment":"staging"}`
+	for _, tc := range []struct{ name, attrs, want string }{
+		{"no attributes", ``, "GET /x"},
+		{"production", `{"deployment.environment":"production"}`, "GET /x"},
+		{"upper case production", `{"deployment.environment":"Production"}`, "GET /x"},
+		{"staging", staging, "staging\x00GET /x"},
+		{"upper case staging", `{"deployment.environment":" STAGING "}`, "staging\x00GET /x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FloorOperation(tc.attrs, "GET /x"); got != tc.want {
+				t.Errorf("FloorOperation(%s) = %q, want %q", tc.attrs, got, tc.want)
+			}
+		})
+	}
+}

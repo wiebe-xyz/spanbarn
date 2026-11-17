@@ -43,3 +43,15 @@ func EnvironmentOf(attributes string) string {
 	}
 	return strings.ToLower(strings.TrimSpace(value))
 }
+
+// FloorOperation names an operation for the sampling floors and the carried
+// drop counts: one slot per environment, so the staging traffic of a product
+// cannot take the slot of its production traffic. production and spans with
+// no environment share one slot, as a production read selects both.
+func FloorOperation(attributes, name string) string {
+	env := EnvironmentOf(attributes)
+	if env == "" || env == ProductionEnvironment {
+		return name
+	}
+	return env + "\x00" + name
+}

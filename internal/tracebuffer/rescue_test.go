@@ -115,3 +115,28 @@ func TestRescue_RatioKeepStillKeeps(t *testing.T) {
 		t.Fatalf("ratio 1 keeps everything, got %d", n)
 	}
 }
+
+func envRootSpan(traceID, name, env string) model.SpanRecord {
+	r := rootSpan(traceID, name, 1000)
+	r.Attributes = []byte(`{"deployment.environment":"` + env + `"}`)
+	return r
+}
+
+// TestRescue_FloorPerEnvironment checks the hourly floor keeps one trace per
+// environment: a busy production does not use up the slot of a quiet staging.
+func TestRescue_FloorPerEnvironment(t *testing.T) {
+	tb := rescueBuffer(RescueRules{MinTracesPerHour: 1})
+	tb.Add(envRootSpan(noSampleID, "GET /x", "production"))
+	tb.Add(envRootSpan(noSampleID2, "GET /x", "production"))
+	tb.Add(envRootSpan(noSampleID3, "GET /x", "staging"))
+	tb.Add(rootSpan(noSampleID4, "GET /x", 1000)) // no environment reads as production
+	tb.Flush(time.Now().Add(time.Second))
+
+	kept := 0
+	for drained(tb) {
+		kept++
+	}
+	if kept != 2 {
+		t.Fatalf("kept %d traces, want 2 (one for production, one for staging)", kept)
+	}
+}
