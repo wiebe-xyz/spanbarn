@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -29,6 +30,8 @@ type ProjectRepository interface {
 	SetAPIKeyEnvironment(id int64, environment string) error
 	RevokeAPIKey(id int64) error
 	UpsertE2EUser(username string, expiresAt time.Time) (repository.User, error)
+	MergeProject(ctx context.Context, spec repository.MergeSpec, opts repository.MergeOptions) ([]repository.MergeStepResult, error)
+	MergedInto(sourceID int64) (int64, error)
 }
 
 // ProjectService manages projects, their API keys and E2E accounts.
@@ -110,3 +113,9 @@ func (s *ProjectService) SetKeyEnvironment(keyID int64, environment string) erro
 
 // RevokeKey deletes a key by id, whatever project owns it.
 func (s *ProjectService) RevokeKey(keyID int64) error { return s.repo.RevokeAPIKey(keyID) }
+
+// Merge moves a source project into a target in resumable batches (#558). It
+// reports what each table moved; a second call after a stop moves the rest.
+func (s *ProjectService) Merge(ctx context.Context, spec repository.MergeSpec, opts repository.MergeOptions) ([]repository.MergeStepResult, error) {
+	return s.repo.MergeProject(ctx, spec, opts)
+}
