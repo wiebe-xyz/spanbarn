@@ -28,7 +28,7 @@ func (s *QueryService) dashboardRollupQuery(ctx context.Context, q DashboardQuer
 	}
 	return repository.DashboardRollupQuery{
 		Scan: repository.SpanRollupScan{
-			Segments: segs, ProjectID: q.ProjectID, Service: q.Service, Name: q.Name,
+			Segments: segs, ProjectID: q.ProjectID, Environment: q.Environment, Service: q.Service, Name: q.Name,
 			Status: q.Status, RootOnly: rootOnly,
 		},
 		Interval: interval, BinLo: lo, BinHi: hi,

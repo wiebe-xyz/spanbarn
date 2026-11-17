@@ -151,6 +151,10 @@ type SpanFilter struct {
 	HasRoot *bool
 	// HasOrphans keeps only traces with at least one orphan span.
 	HasOrphans bool
+	// Environment selects one environment's spans. production also selects the
+	// spans that name none; "" and "all" select every span. Callers that build
+	// the condition into Expr themselves leave it empty.
+	Environment string
 	// Expr is the attribute and column filter model (internal/filter). On a span
 	// query it ANDs with the fields above. On a trace query a trace matches when
 	// one of its spans satisfies the whole expression. A From bound is required
