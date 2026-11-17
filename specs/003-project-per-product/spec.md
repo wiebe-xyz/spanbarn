@@ -32,7 +32,7 @@ Production SpanBarn holds 47 projects. Most products appear several times, one p
 |---|---|---|
 | 1 | Migration 047 (`api_keys.environment`), ingest stamping of `deployment.environment`, CLI flags, name guard | tests prove a key with `environment=staging` stamps spans, logs and metrics, and an own attribute wins |
 | 2 | `environment` parameter on the filter-aware read APIs and `GET /api/v1/environments` (PR 1), then the web selector with production as its default and the unique-key inventory (PR 2) | tests prove one project with two environments reads separately and together |
-| 2b | `environment` column in each rollup table whose unique key lacks it, one PR per table: aggregates (done), span_rollups (done), span_edges (done), metric_rollups and metric_rollups_coarse, slo_counts, span_ledger; the services, operations, timeseries, service map and metrics reads honor `environment` as each table lands | tests prove two environments in one bucket stay two rows and read apart, and a second run of the migration succeeds |
+| 2b | `environment` column in each rollup table whose unique key lacks it, one PR per table: aggregates (done), span_rollups (done), span_edges (done), metric_rollups and metric_rollups_coarse (done, no column needed), slo_counts, span_ledger; the services, operations, timeseries, service map and metrics reads honor `environment` as each table lands | tests prove two environments in one bucket stay two rows and read apart, and a second run of the migration succeeds |
 | 3 | `project merge`, `project_merges` cursor, archive, counts per table in the log | tests prove resume after a kill, key repoint and collision sums on a real SQLite file |
 | 4 | Production merges per the table in #558, counts logged on the issue, one source at a time, smallest first, host idle gate before each | production project list matches the rule |
 
@@ -53,6 +53,8 @@ Production SpanBarn holds 47 projects. Most products appear several times, one p
 
 - **FR-011**: `span_edges` carries `environment TEXT NOT NULL DEFAULT ''` in its primary key `(step_seconds, bucket, project_id, environment, source, target, target_type)`. The accumulator takes the environment from the span that carries the call; compaction merges rows per environment. The bucket marker keeps an empty environment. Rows written before the migration carry `''`, which a `production` read also selects. The service map and the dependency list take `environment` and read it from `span_edges` and `span_rollups`; their raw-span fallback keeps the spans of the environment out of the newest spans it fetched. [#558]
 
+- **FR-012**: `metric_rollups` and `metric_rollups_coarse` gain no `environment` column. OTLP resource attributes merge into each data point's label set at ingest (resource < scope < data point) and stamping writes `deployment.environment` there, so the label set, its fingerprint and the unique key already hold the environment. The default drop policy keeps `deployment.environment` at every tier, so compaction merges builds and pods of one environment and never two environments. A metric read reaches one environment through the label filter `deployment.environment=<value>`; the value is matched as stored, without the lowercasing and production-equals-empty rule that span reads apply. Tests: `TestMetricAccumulatorKeepsEnvironmentsApart`, `TestReduceKeepsEnvironmentsApart`.
+
 ## Slice 2b inventory: tables keyed on the project without an environment
 
 | Table | Key today | Step |
@@ -61,7 +63,7 @@ Production SpanBarn holds 47 projects. Most products appear several times, one p
 | span_rollups | PK `(step_seconds, bucket, project_id, service, name, kind, is_root, status, http_status)` | PR 2 (migration 11 of the spans track) |
 | span_rollup_compaction | step and bucket watermark, no project | none needed |
 | span_edges | PK `(step_seconds, bucket, project_id, source, target, target_type)` | PR 3 (migration 12 of the spans track) |
-| metric_rollups, metric_rollups_coarse | project, metric, labels, bucket | own PR |
+| metric_rollups, metric_rollups_coarse | unique `(project_id, name, attr_fingerprint, bucket)` and the coarse key with `step_seconds` | PR 4: no migration, `deployment.environment` is a label in the key (FR-012) |
 | slo_counts, span_ledger | project, bucket | own PR |
 | trace_summaries, error_exemplars | PK `(project_id, trace_id)` | a trace belongs to one environment; only a merge collision matters, handled in slice 3 |
 | slos, calculated_fields, trace_exclusions, pinned_traces | unique name or id per project | settings; slice 3 collision rule |
@@ -85,5 +87,5 @@ Rollback caveat, migration 12: it rebuilds `span_edges` the same way (copy into 
 | #558 title | per-product projects exist | 47 projects, one per environment and spelling |
 | FR-002 (earlier draft) | every read API defaults to production | the API default stays unfiltered so current callers keep their reads; the web app defaults to production |
 | Decision 1 (earlier draft) | `environment` column on every record table | slice 1 stamps the resource attribute instead; columns wait for slice 2 |
-| Slice 2b | every rollup table has an environment column | `aggregates`, `span_rollups` and `span_edges` have it; the services, operations, timeseries, service map and dependency reads take `environment`; the dashboard cards, trace groups and metrics reads stay unscoped until their PR |
+| Slice 2b | every rollup table has an environment column | `aggregates`, `span_rollups` and `span_edges` have it, the metric rollup tables hold it as a label; the services, operations, timeseries, service map and dependency reads take `environment`; the dashboard cards, trace groups and metrics reads stay unscoped until their PR |
 | Floor key | one floor slot per (project, operation) | one slot per (project, environment, operation); `production` and no environment share the old key |
