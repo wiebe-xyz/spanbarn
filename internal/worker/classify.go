@@ -4,6 +4,7 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/sampling"
 )
@@ -89,7 +90,7 @@ func (h *hourlyTier) admit(projectID int64, spans []repository.Span) bool {
 		h.minCache[projectID] = min
 	}
 	root := traceRoot(spans)
-	if !h.floor.ShouldKeep(projectID, root.Name, h.floor.BucketOf(root.StartTimeUs), min, false) {
+	if !h.floor.ShouldKeep(projectID, filter.FloorOperation(root.Attributes, root.Name), h.floor.BucketOf(root.StartTimeUs), min, false) {
 		return false
 	}
 	for i := range spans {
@@ -266,7 +267,7 @@ func (b *boringSampler) ratioVerdict(projectID int64) bool {
 // parent), falling back to the first span in the batch.
 func boringTraceKey(spans []repository.Span) (string, int64) {
 	root := traceRoot(spans)
-	return root.Name, root.StartTimeUs / 60_000_000
+	return filter.FloorOperation(root.Attributes, root.Name), root.StartTimeUs / 60_000_000
 }
 
 // traceRoot returns the root span (no parent) of a trace, falling back to the

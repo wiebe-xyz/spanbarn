@@ -130,20 +130,22 @@ linters:
             - pkg: github.com/wiebe-xyz/spanbarn
               desc: livetail, queue, spanledger and spool depend on internal/model only.
 
-        # The trace buffer depends on the span model, the sampler and the ledger.
+        # The trace buffer depends on the span model, the sampler, the ledger and the
+        # filter leaf (the environment a floor slot belongs to).
         tracebuffer-deps:
           list-mode: lax
           files:
             - "**/internal/tracebuffer/**"
             - "!$test"
           allow:
+            - github.com/wiebe-xyz/spanbarn/internal/filter
             - github.com/wiebe-xyz/spanbarn/internal/model
             - github.com/wiebe-xyz/spanbarn/internal/observability
             - github.com/wiebe-xyz/spanbarn/internal/sampling
             - github.com/wiebe-xyz/spanbarn/internal/spanledger
           deny:
             - pkg: github.com/wiebe-xyz/spanbarn
-              desc: tracebuffer depends on model, observability, sampling and spanledger only.
+              desc: tracebuffer depends on filter, model, observability, sampling and spanledger only.
 
         # The scheduler and the sampler depend on observability only.
         write-scheduler-leaf:
