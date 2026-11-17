@@ -76,6 +76,7 @@ type Server struct {
 	cache          *cache.Cache
 	logger         *slog.Logger
 	rejectedAuth   *rejectedAuthLog
+	keyUse         *keyUseLog
 	oidc           *auth.OIDCClient
 	selfMetrics    *selfmetrics.Recorder
 	e2eEnabled     bool
@@ -230,6 +231,7 @@ func NewServerWithQuery(cfg ServerConfig, ingestHandler *ingest.Handler, querySv
 		logger:      logger,
 	}
 	s.rejectedAuth = newRejectedAuthLog(logger)
+	s.keyUse = newKeyUseLog(logger)
 
 	for _, opt := range opts {
 		opt(s)

@@ -103,7 +103,7 @@ func APIKeyMiddleware(authorizer *auth.Authorizer) func(http.Handler) http.Handl
 				return
 			}
 
-			recordCaller(r, authKindAPIKey, "")
+			recordKeyCaller(r, ident)
 			ctx := SetProjectID(r.Context(), ident.ProjectID)
 			ctx = SetScope(ctx, ident.Scope)
 			ctx = SetEnvironment(ctx, ident.Environment)
@@ -171,11 +171,12 @@ func SessionOrReadKey(sessions *session.Service, authorizer *auth.Authorizer, oi
 
 // serveAPIKey handles read/full API-key authentication and project scoping.
 func serveAPIKey(w http.ResponseWriter, r *http.Request, next http.Handler, authorizer *auth.Authorizer, key string) {
-	projectID, scope, err := authorizer.Authorize(key)
+	ident, err := authorizer.AuthorizeIdentity(key)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid API key", "")
 		return
 	}
+	projectID, scope := ident.ProjectID, ident.Scope
 	if scope != "read" && scope != "full" {
 		writeError(w, http.StatusForbidden, "API key lacks read scope", "")
 		return
@@ -191,7 +192,7 @@ func serveAPIKey(w http.ResponseWriter, r *http.Request, next http.Handler, auth
 	// per-project key) overrides any client-supplied project_id so a key cannot
 	// read another project's data. The static/full key has project ID 0 (all
 	// projects); leave the query param untouched so it can target a project.
-	recordCaller(r, authKindAPIKey, "")
+	recordKeyCaller(r, ident)
 	ctx := SetScope(r.Context(), scope)
 	if projectID != 0 {
 		ctx = SetProjectID(ctx, projectID)

@@ -42,6 +42,7 @@ func getRequestID(r *http.Request) string {
 // request ID, and hands each finished request to record. An authenticated request
 // also logs how it authenticated and its organization.
 func loggingMiddleware(logger *slog.Logger, record func(r *http.Request, status int, elapsed time.Duration), next http.Handler) http.Handler {
+	keyUse := newKeyUseLog(logger)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
@@ -63,6 +64,10 @@ func loggingMiddleware(logger *slog.Logger, record func(r *http.Request, status 
 			if caller.org != "" {
 				attrs = append(attrs, "org_id", caller.org)
 			}
+		}
+		if caller.key != nil {
+			attrs = append(attrs, "key_id", caller.key.KeyID)
+			keyUse.use(*caller.key, newKeyUseRequest(r.UserAgent(), clientIP(r), r.URL.Path, r.Header.Get("Origin"), r.Referer()))
 		}
 		logger.Info("http", attrs...)
 	})
@@ -246,6 +251,7 @@ func authorizerOrBearerAuth(a *auth.Authorizer, next http.Handler) http.Handler 
 			writeError(w, http.StatusUnauthorized, "invalid API key", "")
 			return
 		}
+		recordKeyCaller(r, ident)
 		ctx := SetProjectID(r.Context(), ident.ProjectID)
 		ctx = SetScope(ctx, ident.Scope)
 		ctx = SetEnvironment(ctx, ident.Environment)
