@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/metrics"
@@ -34,6 +36,7 @@ func (h *metricsQueryHandlers) handleMetricTotals(w http.ResponseWriter, r *http
 	// The same page asks for several metrics and a reload asks again, each a
 	// scan of up to the limit's worth of points, so the result is kept per
 	// window like the service reads are.
+	started := time.Now()
 	resp, err := service.ReadMetricRange(r.Context(), h.svc, req.cacheKey("totals"), req.from, req.to,
 		func(ctx context.Context, from, to time.Time) (metricTotalsResponse, error) {
 			q, err := h.readMetricQuery(ctx, req, from, to)
@@ -46,9 +49,38 @@ func (h *metricsQueryHandlers) handleMetricTotals(w http.ResponseWriter, r *http
 			}
 			return metricTotalsResponse{Name: q.name, Type: q.metricType, Unit: q.unit, Groups: groups}, nil
 		})
+	logSlowTotals(slog.Default(), req, time.Since(started), len(resp.Groups))
 	if err != nil {
 		writeServerError(w, r, "query failed", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// slowTotalsThreshold is the read time from which a totals request is logged.
+// The route latency metric carries the route only, so without this line a slow
+// totals read cannot be traced to a project or metric (#457).
+const slowTotalsThreshold = 2 * time.Second
+
+// logSlowTotals names a slow totals read: the project, metric, range, group-by
+// keys and label keys, never a label value. Cache hits return in microseconds,
+// so a line means a read that scanned.
+func logSlowTotals(log *slog.Logger, req metricRequest, took time.Duration, groups int) {
+	if took < slowTotalsThreshold {
+		return
+	}
+	labelKeys := make([]string, 0, len(req.labels))
+	for k := range req.labels {
+		labelKeys = append(labelKeys, k)
+	}
+	log.Info("slow metric totals read",
+		"project_id", req.projectID,
+		"metric", req.name,
+		"range_hours", req.to.Sub(req.from).Hours(),
+		"group_by", strings.Join(req.groupBy, ","),
+		"label_keys", strings.Join(labelKeys, ","),
+		"environment", req.environment,
+		"groups", groups,
+		"took_ms", took.Milliseconds(),
+	)
 }
