@@ -179,3 +179,77 @@ func TestServicesEnvironmentScope(t *testing.T) {
 		t.Errorf("services bad environment = %d %s, want 400", code, body)
 	}
 }
+
+// The dashboard cards and the trace groups take the environment parameter:
+// one environment reads its own spans, production also covers untagged spans,
+// no parameter reads everything and a malformed name is a 400.
+func TestDashboardAndTraceGroupsEnvironmentScope(t *testing.T) {
+	srv, sm, repo := setupQueryTestServer(t)
+	token, _, err := sm.Create("admin", "local", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := func(id, attrs string) repository.Span {
+		return repository.Span{ProjectID: 1, TraceID: "t-" + id, SpanID: id, Name: "GET /", Service: "web", Kind: "server",
+			Status: "ok", StartTimeUs: time.Now().UnixMicro(), DurationUs: 1000, Attributes: attrs, Events: "[]"}
+	}
+	if err := repo.InsertSpans([]repository.Span{
+		root("p1", `{"deployment.environment":"production"}`),
+		root("p2", `{"deployment.environment":"production"}`),
+		root("s1", `{"deployment.environment":"staging"}`),
+		root("n1", `{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	counts := func(env string) int64 {
+		t.Helper()
+		p := dashboardParams(30 * time.Minute)
+		if env != "" {
+			p.Set("environment", env)
+		}
+		rec := dashboardGet(t, srv, token, "/api/v1/dashboard/counts", p)
+		var res service.DashboardCounts
+		if rec.Code != http.StatusOK || json.NewDecoder(rec.Body).Decode(&res) != nil {
+			t.Fatalf("counts environment=%q: %d %s", env, rec.Code, rec.Body.String())
+		}
+		var n int64
+		for _, pt := range res.Points {
+			n += pt.Count
+		}
+		return n
+	}
+	groups := func(env string) int64 {
+		t.Helper()
+		p := dashboardParams(30 * time.Minute)
+		if env != "" {
+			p.Set("environment", env)
+		}
+		rec := dashboardGet(t, srv, token, "/api/v1/traces/groups", p)
+		var res []service.TraceGroupSummary
+		if rec.Code != http.StatusOK || json.NewDecoder(rec.Body).Decode(&res) != nil {
+			t.Fatalf("groups environment=%q: %d %s", env, rec.Code, rec.Body.String())
+		}
+		var n int64
+		for _, g := range res {
+			n += g.Count
+		}
+		return n
+	}
+	for env, want := range map[string]int64{"": 4, "all": 4, "production": 3, "staging": 1, "testing": 0} {
+		if got := counts(env); got != want {
+			t.Errorf("dashboard counts environment=%q = %d, want %d", env, got, want)
+		}
+		if got := groups(env); got != want {
+			t.Errorf("trace groups environment=%q = %d, want %d", env, got, want)
+		}
+	}
+
+	for _, path := range []string{"/api/v1/dashboard/counts", "/api/v1/dashboard/percentiles", "/api/v1/dashboard/heatmap", "/api/v1/traces/groups"} {
+		p := dashboardParams(30 * time.Minute)
+		p.Set("environment", "Not A Name")
+		if rec := dashboardGet(t, srv, token, path, p); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s with a bad environment = %d, want 400", path, rec.Code)
+		}
+	}
+}

@@ -101,6 +101,7 @@ func dashboardWhere(f SpanFilter, extra ...string) (string, []any) {
 	var where []string
 	var args []any
 	where, args = f.appendCommonWhere(where, args)
+	where, args = f.appendEnvironmentWhere(where, args)
 	if f.RootOnly {
 		where = append(where, "COALESCE(parent_span_id,'') = ''")
 	}

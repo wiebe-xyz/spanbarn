@@ -277,7 +277,8 @@ func (f SpanFilter) rootSpanGroupWhere() ([]string, []any) {
 	}
 	b.addNotIn("name", f.ExcludeOperations)
 	b.addTimeRange("ingested_at", f.From, f.To)
-	return b.where, b.args
+	where, args := f.appendEnvironmentWhere(b.where, b.args)
+	return where, args
 }
 
 // groupRootSpanRows folds the per-bin rows into one group per operation and

@@ -53,6 +53,10 @@ func (h *queryHandlers) handleDashboardCounts(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	ctx, ok = scopeEnvironment(ctx, w, r)
+	if !ok {
+		return
+	}
 	res, err := h.svc.GetDashboardCounts(ctx, q, groupByParam(r), r.URL.Query().Get("root_only") == "true")
 	if err != nil {
 		writeDashboardError(w, r, err)
@@ -69,6 +73,10 @@ func (h *queryHandlers) handleDashboardPercentiles(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
+	ctx, ok = scopeEnvironment(ctx, w, r)
+	if !ok {
+		return
+	}
 	res, err := h.svc.GetDashboardPercentiles(ctx, q, groupByParam(r))
 	if err != nil {
 		writeDashboardError(w, r, err)
@@ -82,6 +90,10 @@ func (h *queryHandlers) handleDashboardHeatmap(w http.ResponseWriter, r *http.Re
 	defer span.End()
 
 	q, ok := parseDashboardQuery(w, r)
+	if !ok {
+		return
+	}
+	ctx, ok = scopeEnvironment(ctx, w, r)
 	if !ok {
 		return
 	}

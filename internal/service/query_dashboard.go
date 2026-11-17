@@ -61,9 +61,9 @@ func (q DashboardQuery) snapped() DashboardQuery {
 }
 
 func (q DashboardQuery) cacheKey(kind, group string, rootOnly bool) string {
-	return fmt.Sprintf("dashboard:%s:%s:%t:%d:%q:%q:%q:%d:%d:%d:%d",
+	return fmt.Sprintf("dashboard:%s:%s:%t:%d:%q:%q:%q:%d:%d:%d:%d:%q",
 		kind, group, rootOnly, q.ProjectID, q.Service, q.Name, q.Status,
-		q.MinDurationUs, q.MaxDurationUs, q.From.Unix(), q.To.Unix())
+		q.MinDurationUs, q.MaxDurationUs, q.From.Unix(), q.To.Unix(), q.Environment)
 }
 
 // DashboardQuery is the filter shared by every dashboard card.
@@ -76,6 +76,10 @@ type DashboardQuery struct {
 	MinDurationUs int64
 	MaxDurationUs int64
 	From, To      time.Time
+	// Environment selects one environment's spans; production also selects the
+	// spans that name none. "" reads every environment. The Get methods fill it
+	// from the context's environment scope.
+	Environment string
 }
 
 // DashboardCountPoint is one point of a count series.
@@ -174,6 +178,7 @@ func (q DashboardQuery) spanFilter(rootOnly bool) repository.SpanFilter {
 		Status:      q.Status,
 		MinDuration: q.MinDurationUs,
 		MaxDuration: q.MaxDurationUs,
+		Environment: q.Environment,
 		RootOnly:    rootOnly,
 		From:        q.From.UTC(),
 		To:          q.To.UTC(),
@@ -201,6 +206,7 @@ func (s *QueryService) GetDashboardCounts(ctx context.Context, q DashboardQuery,
 	if _, err := q.validate(); err != nil {
 		return nil, err
 	}
+	q.Environment = environmentOf(ctx)
 	q = q.snapped()
 	return readCached(ctx, s.cache, q.cacheKey("counts", group, rootOnly), q.grain(), func(ctx context.Context) (*DashboardCounts, error) {
 		return s.dashboardCountsUncached(ctx, q, group, rootOnly)
@@ -238,6 +244,7 @@ func (s *QueryService) GetDashboardPercentiles(ctx context.Context, q DashboardQ
 	if _, err := q.validate(); err != nil {
 		return nil, err
 	}
+	q.Environment = environmentOf(ctx)
 	q = q.snapped()
 	return readCached(ctx, s.cache, q.cacheKey("percentiles", group, false), q.grain(), func(ctx context.Context) (*DashboardPercentiles, error) {
 		return s.dashboardPercentilesUncached(ctx, q, group)
@@ -277,6 +284,7 @@ func (s *QueryService) GetDashboardHeatmap(ctx context.Context, q DashboardQuery
 	if _, err := q.validate(); err != nil {
 		return nil, err
 	}
+	q.Environment = environmentOf(ctx)
 	q = q.snapped()
 	return readCached(ctx, s.cache, q.cacheKey("heatmap", "", rootOnly), q.grain(), func(ctx context.Context) (*DashboardHeatmap, error) {
 		return s.dashboardHeatmapUncached(ctx, q, rootOnly)

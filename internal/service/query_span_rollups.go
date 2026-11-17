@@ -167,7 +167,7 @@ func (s *QueryService) rootSpanGroups(ctx context.Context, sf repository.SpanFil
 		sf.To.Sub(sf.From) >= traceGroupRollupMinWindow {
 		if segs, ok := s.spanRollupPlan(ctx, sf.From, sf.To, 0); ok {
 			groups, err := s.repo.QueryRootSpanGroupsFromRollups(ctx, repository.SpanRollupScan{
-				Segments: segs, ProjectID: sf.ProjectID, Service: sf.Service, Status: sf.Status,
+				Segments: segs, ProjectID: sf.ProjectID, Environment: sf.Environment, Service: sf.Service, Status: sf.Status,
 				ExcludeNames: sf.ExcludeOperations,
 			})
 			return groups, SourceRollups, err

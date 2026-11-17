@@ -202,6 +202,10 @@ type TraceSearchFilter struct {
 	HasRoot *bool
 	// HasOrphans keeps only traces with at least one orphan span.
 	HasOrphans bool
+	// Environment selects one environment's spans; production also selects the
+	// spans that name none. "" reads every environment. ListTraceGroups fills it
+	// from the context's environment scope.
+	Environment string
 	// Expr keeps traces holding a span that matches the filter model. Needs From.
 	Expr   *filter.Expr
 	From   time.Time

@@ -93,8 +93,10 @@ func (s *QueryService) ListTraceGroups(ctx context.Context, filter TraceSearchFi
 
 	var grain time.Duration
 	filter.From, filter.To, grain = snapRange(filter.From, filter.To)
-	key := fmt.Sprintf("tracegroups:%d:%q:%q:%d:%q:%d:%d", filter.ProjectID, filter.Service, filter.Status,
-		filter.MinDurationUs, strings.Join(filter.ExcludeOperations, ","), filter.From.Unix(), filter.To.Unix())
+	env := environmentOf(ctx)
+	key := fmt.Sprintf("tracegroups:%d:%q:%q:%d:%q:%d:%d:%q", filter.ProjectID, filter.Service, filter.Status,
+		filter.MinDurationUs, strings.Join(filter.ExcludeOperations, ","), filter.From.Unix(), filter.To.Unix(), env)
+	filter.Environment = env
 	return readCached(ctx, s.cache, key, grain, func(ctx context.Context) ([]TraceGroupSummary, error) {
 		return s.listTraceGroupsUncached(ctx, filter)
 	})
@@ -108,6 +110,7 @@ func (s *QueryService) listTraceGroupsUncached(ctx context.Context, filter Trace
 		Service:           filter.Service,
 		Status:            filter.Status,
 		MinDuration:       filter.MinDurationUs,
+		Environment:       filter.Environment,
 		ExcludeOperations: excluded,
 		From:              filter.From,
 		To:                filter.To,

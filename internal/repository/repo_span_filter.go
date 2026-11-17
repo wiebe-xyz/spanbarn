@@ -7,22 +7,54 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
 )
 
-// exprPredicate compiles f.Expr. It refuses an expression without a From bound
-// because attribute predicates read the JSON of every span in the window.
+// scopedExpr returns f.Expr with the environment condition ANDed on, or f.Expr
+// itself when f selects every environment.
+func (f SpanFilter) scopedExpr() (*filter.Expr, error) {
+	node, ok := filter.EnvironmentNode(f.Environment)
+	if !ok {
+		return f.Expr, nil
+	}
+	out, ok := filter.Conjoin(f.Expr, []filter.Node{node})
+	if !ok {
+		return nil, fmt.Errorf("%w: the environment condition cannot be added to a filter with nested groups under or", filter.ErrInvalid)
+	}
+	return out, nil
+}
+
+// exprPredicate compiles f.Expr with the environment condition. It refuses an
+// expression without a From bound because attribute predicates read the JSON of
+// every span in the window.
 func (f SpanFilter) exprPredicate() (string, []any, error) {
-	if f.Expr == nil || len(f.Expr.Filters) == 0 {
-		return "", nil, nil
+	expr, err := f.scopedExpr()
+	if err != nil || expr == nil || len(expr.Filters) == 0 {
+		return "", nil, err
 	}
 	if f.From.IsZero() {
 		return "", nil, fmt.Errorf("%w: a time range (from) is required", filter.ErrInvalid)
 	}
-	return filter.CompileWith(f.Expr, f.calc)
+	return filter.CompileWith(expr, f.calc)
+}
+
+// appendEnvironmentWhere ANDs the environment condition alone onto a span
+// query that has no expression of its own, such as the dashboard cards and the
+// root span groups. The condition compiles from a constant node, so a failure
+// is a bug: it selects nothing and a test pins the compiled form.
+func (f SpanFilter) appendEnvironmentWhere(where []string, args []any) ([]string, []any) {
+	node, ok := filter.EnvironmentNode(f.Environment)
+	if !ok {
+		return where, args
+	}
+	pred, a, err := filter.Compile(&filter.Expr{Match: filter.MatchAnd, Filters: []filter.Node{node}})
+	if err != nil || pred == "" {
+		return append(where, "0 = 1"), args
+	}
+	return append(where, pred), append(args, a...)
 }
 
 // withCalc returns f with the calculated fields of its project, loaded once for
 // the query. A filter without an expression needs none.
 func (r *Repository) withCalc(f SpanFilter) (SpanFilter, error) {
-	if f.Expr == nil || len(f.Expr.Filters) == 0 {
+	if (f.Expr == nil || len(f.Expr.Filters) == 0) && f.Environment == "" {
 		return f, nil
 	}
 	calc, err := r.calcResolver(f.ProjectID)

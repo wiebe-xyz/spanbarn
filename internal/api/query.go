@@ -180,6 +180,11 @@ func (h *queryHandlers) handleTraceGroups(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	ctx, ok = scopeEnvironment(ctx, w, r)
+	if !ok {
+		return
+	}
+
 	filter := service.TraceSearchFilter{
 		ProjectID:         parseInt64Param(r, "project_id", 0),
 		Service:           r.URL.Query().Get("service"),
