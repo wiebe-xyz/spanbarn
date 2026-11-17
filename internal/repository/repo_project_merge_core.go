@@ -3,6 +3,9 @@ package repository
 import (
 	"database/sql"
 	"fmt"
+
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 // coreMergeSteps are the tables of the core family a merge moves, in order. The
@@ -10,31 +13,45 @@ import (
 // the rest moves. slo_counts has no step: it keys on the SLO id and follows its
 // SLO (FR-014). Boards keep their panels, which key on the board id.
 var coreMergeSteps = []mergeStep{
-	{family: "core", table: "api_keys", batch: moveByID("api_keys", true, nil)},
-	{family: "core", table: "alerts", batch: moveByID("alerts", false, nil)},
-	{family: "core", table: "boards", batch: moveByID("boards", false, nil)},
-	{family: "core", table: "saved_queries", batch: moveByID("saved_queries", false, nil)},
-	{family: "core", table: "releases", batch: moveByID("releases", false, nil)},
-	{family: "core", table: "slos", batch: moveByID("slos", false, renameClashing("slos", "name"))},
-	{family: "core", table: "calculated_fields", batch: moveByID("calculated_fields", false, renameClashing("calculated_fields", "name"))},
-	{family: "core", table: "trace_exclusions", batch: moveByID("trace_exclusions", false, dropClashing("trace_exclusions", "operation"))},
-	{family: "core", table: "pinned_traces", batch: moveByID("pinned_traces", false, dropClashing("pinned_traces", "trace_id"))},
-	{family: "core", table: "span_ledger", batch: moveLedger},
+	{family: "core", fam: engine.FamilyCore, table: "api_keys", batch: moveByID("api_keys", moveOpts{env: true})},
+	{family: "core", fam: engine.FamilyCore, table: "alerts", batch: moveByID("alerts", moveOpts{})},
+	{family: "core", fam: engine.FamilyCore, table: "boards", batch: moveByID("boards", moveOpts{})},
+	{family: "core", fam: engine.FamilyCore, table: "saved_queries", batch: moveByID("saved_queries", moveOpts{})},
+	{family: "core", fam: engine.FamilyCore, table: "releases", batch: moveByID("releases", moveOpts{})},
+	{family: "core", fam: engine.FamilyCore, table: "slos", batch: moveByID("slos", moveOpts{clash: renameClashing("slos", "name")})},
+	{family: "core", fam: engine.FamilyCore, table: "calculated_fields", batch: moveByID("calculated_fields", moveOpts{clash: renameClashing("calculated_fields", "name")})},
+	{family: "core", fam: engine.FamilyCore, table: "trace_exclusions", batch: moveByID("trace_exclusions", moveOpts{clash: dropClashing("trace_exclusions", "operation")})},
+	{family: "core", fam: engine.FamilyCore, table: "pinned_traces", batch: moveByID("pinned_traces", moveOpts{clash: dropClashing("pinned_traces", "trace_id")})},
+	{family: "core", fam: engine.FamilyCore, table: "span_ledger", batch: moveLedger},
 }
 
 // clashFunc resolves the rows of the source whose key the target already holds,
 // before a batch moves, and returns how many it resolved.
 type clashFunc func(tx *sql.Tx, spec MergeSpec) (int64, error)
 
+// moveOpts shapes moveByID. env sets the environment column of a row that has
+// none. stamp writes deployment.environment into the attributes of a row that
+// has none, for the tables that carry the environment only there. clash resolves
+// unique-name collisions first.
+type moveOpts struct {
+	env   bool
+	stamp bool
+	clash clashFunc
+}
+
+// stampAttributesSQL adds deployment.environment to a valid attribute document
+// that has none or an empty one, and leaves every other document as it is.
+const stampAttributesSQL = `attributes = CASE WHEN json_valid(attributes)
+		AND COALESCE(json_extract(attributes, '$."deployment.environment"'), '') = ''
+		THEN json_set(attributes, '$."deployment.environment"', ?) ELSE attributes END`
+
 // moveByID moves up to n rows of a table that has an integer id and a
-// project_id. With withEnv the row's environment becomes the merge environment
-// when it has none of its own. clash, when set, resolves unique-name collisions
-// first.
-func moveByID(table string, withEnv bool, clash clashFunc) func(*sql.Tx, MergeSpec, int) (MergeStepResult, error) {
+// project_id.
+func moveByID(table string, o moveOpts) func(*sql.Tx, MergeSpec, int) (MergeStepResult, error) {
 	return func(tx *sql.Tx, spec MergeSpec, n int) (MergeStepResult, error) {
 		var res MergeStepResult
-		if clash != nil {
-			c, err := clash(tx, spec)
+		if o.clash != nil {
+			c, err := o.clash(tx, spec)
 			if err != nil {
 				return res, err
 			}
@@ -47,8 +64,12 @@ func moveByID(table string, withEnv bool, clash clashFunc) func(*sql.Tx, MergeSp
 		}
 		set := "project_id = ?"
 		args := []any{spec.TargetID}
-		if withEnv {
+		if o.env {
 			set += ", environment = COALESCE(NULLIF(environment, ''), ?)"
+			args = append(args, spec.Environment)
+		}
+		if o.stamp && spec.Environment != filter.ProductionEnvironment {
+			set += ", " + stampAttributesSQL
 			args = append(args, spec.Environment)
 		}
 		args = append(args, spec.SourceID, n)

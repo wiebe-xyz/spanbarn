@@ -43,6 +43,7 @@ var ErrMergeConflict = errors.New("merge conflicts with an earlier merge")
 
 type mergeStep struct {
 	family string
+	fam    engine.Family
 	table  string
 	// batch moves at most n rows in tx and reports what it moved and collided.
 	batch func(tx *sql.Tx, spec MergeSpec, n int) (MergeStepResult, error)
@@ -61,7 +62,7 @@ func (r *Repository) MergeProject(ctx context.Context, spec MergeSpec, opts Merg
 		return nil, err
 	}
 	var out []MergeStepResult
-	for _, step := range coreMergeSteps {
+	for _, step := range mergeSteps {
 		total := MergeStepResult{Family: step.family, Table: step.table}
 		for {
 			res, err := r.runMergeBatch(ctx, step, spec, opts.Batch)
@@ -85,12 +86,23 @@ func (r *Repository) MergeProject(ctx context.Context, spec MergeSpec, opts Merg
 	return out, nil
 }
 
+// runMergeBatch moves one batch in the step's family. A core step records its
+// progress in the same transaction. Another family lives in another file, which
+// cannot commit together with main, so its progress is written right after the
+// batch commits: a kill between the two loses that batch's count and leaves the
+// rows moved, and the next run counts only what it moves itself. Family writes
+// queue behind ingest, so a merge never takes the slot ahead of a flush.
 func (r *Repository) runMergeBatch(ctx context.Context, step mergeStep, spec MergeSpec, n int) (MergeStepResult, error) {
 	var res MergeStepResult
 	if err := ctx.Err(); err != nil {
 		return res, err
 	}
-	err := r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
+	inCore := step.fam == engine.FamilyCore
+	write := r.execHigh
+	if !inCore {
+		write = r.execLow
+	}
+	err := write(step.fam, func(db *sql.DB) error {
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -100,14 +112,27 @@ func (r *Repository) runMergeBatch(ctx context.Context, step mergeStep, spec Mer
 			return err
 		}
 		res.Family, res.Table = step.family, step.table
-		if res.Moved+res.Collided > 0 {
+		if inCore && res.Moved+res.Collided > 0 {
 			if err := recordMergeProgress(tx, spec, res); err != nil {
 				return err
 			}
 		}
 		return tx.Commit()
 	})
-	return res, err
+	if err != nil || inCore || res.Moved+res.Collided == 0 {
+		return res, err
+	}
+	return res, r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if err := recordMergeProgress(tx, spec, res); err != nil {
+			return err
+		}
+		return tx.Commit()
+	})
 }
 
 // beginMerge writes the run row, and refuses a source that already merges into

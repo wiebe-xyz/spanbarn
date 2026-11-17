@@ -18,8 +18,14 @@ import (
 const upsertAggregateSQL = `INSERT INTO aggregates
 	(project_id, environment, service, operation, resource, kind, bucket, count, error_count, p50_us, p95_us, p99_us, max_us, sum_duration_us, weighted_count, weighted_spans)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(project_id, environment, service, operation, resource, kind, bucket)
-	DO UPDATE SET
+	ON CONFLICT(` + aggregateKey + `)
+	DO UPDATE SET ` + aggregateMergeSQL
+
+const aggregateKey = `project_id, environment, service, operation, resource, kind, bucket`
+
+// aggregateMergeSQL is the SET list that folds a row into the one it collides
+// with, shared with the project merge.
+const aggregateMergeSQL = `
 		count = count + excluded.count,
 		error_count = error_count + excluded.error_count,
 		p50_us = excluded.p50_us,
