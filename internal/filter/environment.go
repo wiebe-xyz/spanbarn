@@ -1,5 +1,7 @@
 package filter
 
+import "regexp"
+
 // EnvironmentKey is the attribute that carries a record's environment.
 const EnvironmentKey = "deployment.environment"
 
@@ -22,3 +24,10 @@ func EnvironmentNode(env string) (Node, bool) {
 	}
 	return Node{Key: EnvironmentKey, Op: OpEq, Value: Scalar(env)}, true
 }
+
+var environmentName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+// ValidEnvironmentName reports whether s is a name an environment may have: a
+// lowercase letter or digit, then lowercase letters, digits, dots, dashes and
+// underscores, 64 characters at most.
+func ValidEnvironmentName(s string) bool { return environmentName.MatchString(s) }

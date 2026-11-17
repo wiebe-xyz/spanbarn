@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"regexp"
 	"sort"
 
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
@@ -15,8 +14,6 @@ import (
 // existing callers read what they always read; the web app sends production
 // by default (#558).
 const environmentParam = "environment"
-
-var environmentName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // withEnvironment conjoins the request's environment condition onto expr. It
 // writes the 400 itself and reports false on a bad name or a filter that
@@ -41,7 +38,7 @@ func withEnvironment(w http.ResponseWriter, r *http.Request, expr *filter.Expr) 
 // validEnvironment writes the 400 for a malformed environment name and reports
 // whether the name may be used.
 func validEnvironment(w http.ResponseWriter, env string) bool {
-	if environmentName.MatchString(env) {
+	if filter.ValidEnvironmentName(env) {
 		return true
 	}
 	writeError(w, http.StatusBadRequest, "invalid environment", "use a lowercase name such as production, staging or testing, or all")
