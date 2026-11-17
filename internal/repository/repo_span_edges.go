@@ -16,6 +16,10 @@ type SpanEdge struct {
 	StepSeconds int64
 	Bucket      time.Time // bucket start, whole seconds, UTC
 	ProjectID   int64
+	// Environment is the deployment.environment of the spans that carry the
+	// calls, or empty for spans with none (which read as production) and for
+	// a bucket marker.
+	Environment string
 	// Source is the calling service; empty for a client span without one.
 	Source string
 	Target string
@@ -44,14 +48,14 @@ func SpanEdgeMarker(step int64, bucket time.Time) SpanEdge {
 	return SpanEdge{StepSeconds: step, Bucket: bucket, Hist: spanhist.Hist{}.Encode()}
 }
 
-const spanEdgeColumns = `step_seconds, bucket, project_id, source, target, target_type,
+const spanEdgeColumns = `step_seconds, bucket, project_id, environment, source, target, target_type,
 	count, error_count, weighted_count, weighted_spans, sum_duration_us, min_us, max_us, hist`
 
-const spanEdgeKey = `step_seconds, bucket, project_id, source, target, target_type`
+const spanEdgeKey = `step_seconds, bucket, project_id, environment, source, target, target_type`
 
 // spanEdgeAddSQL folds a flush into its row, as spanRollupAddSQL does.
 const spanEdgeAddSQL = `INSERT INTO span_edges (` + spanEdgeColumns + `)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(` + spanEdgeKey + `)
 	DO UPDATE SET
 		count = count + excluded.count,
@@ -65,11 +69,11 @@ const spanEdgeAddSQL = `INSERT INTO span_edges (` + spanEdgeColumns + `)
 
 // spanEdgeReplaceSQL writes a compacted row whole, as spanRollupReplaceSQL does.
 const spanEdgeReplaceSQL = `INSERT OR REPLACE INTO span_edges (` + spanEdgeColumns + `)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func spanEdgeArgs(e SpanEdge) []any {
 	return []any{
-		e.StepSeconds, e.Bucket.Unix(), e.ProjectID, e.Source, e.Target, e.TargetType,
+		e.StepSeconds, e.Bucket.Unix(), e.ProjectID, e.Environment, e.Source, e.Target, e.TargetType,
 		e.Count, e.ErrorCount, e.WeightedCount, e.WeightedSpans, e.SumDurationUs, e.MinUs, e.MaxUs, e.Hist,
 	}
 }
@@ -79,6 +83,7 @@ func compareSpanEdgeKey(a, b SpanEdge) int {
 		cmp.Compare(a.StepSeconds, b.StepSeconds),
 		a.Bucket.Compare(b.Bucket),
 		cmp.Compare(a.ProjectID, b.ProjectID),
+		strings.Compare(a.Environment, b.Environment),
 		strings.Compare(a.Source, b.Source),
 		strings.Compare(a.Target, b.Target),
 		strings.Compare(a.TargetType, b.TargetType),
@@ -117,7 +122,10 @@ func (r *Repository) CountSpanEdgeBuckets(ctx context.Context, step int64, from,
 type SpanEdgeScan struct {
 	Segments  []SpanRollupSegment
 	ProjectID int64
-	Source    string
+	// Environment selects one environment's rows. production also selects the
+	// rows with no environment; "" and "all" select every row.
+	Environment string
+	Source      string
 	// Markers includes the bucket markers. Readers leave them out; the
 	// compactor carries them into the coarse tier.
 	Markers bool
@@ -130,6 +138,9 @@ func (q SpanEdgeScan) where(seg SpanRollupSegment) ([]string, []any) {
 	b.add("bucket < ?", seg.To.Unix())
 	if q.ProjectID != 0 {
 		b.add("project_id = ?", q.ProjectID)
+	}
+	if clause, args := environmentClause(q.Environment); clause != "" {
+		b.add(clause, args...)
 	}
 	if q.Source != "" {
 		b.add("source = ?", q.Source)
@@ -155,7 +166,7 @@ func (r *Repository) ScanSpanEdges(ctx context.Context, q SpanEdgeScan, fn func(
 		for rows.Next() {
 			var e SpanEdge
 			var bucket int64
-			if err = rows.Scan(&e.StepSeconds, &bucket, &e.ProjectID, &e.Source, &e.Target, &e.TargetType,
+			if err = rows.Scan(&e.StepSeconds, &bucket, &e.ProjectID, &e.Environment, &e.Source, &e.Target, &e.TargetType,
 				&e.Count, &e.ErrorCount, &e.WeightedCount, &e.WeightedSpans, &e.SumDurationUs, &e.MinUs, &e.MaxUs, &e.Hist); err != nil {
 				break
 			}

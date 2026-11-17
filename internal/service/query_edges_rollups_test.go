@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -175,5 +176,79 @@ func TestEdgeReadsSourceSelection(t *testing.T) {
 	gapped.SetSpanRollupReads(SpanRollupReads{Enabled: true})
 	if _, ok, _ := gapped.dependenciesFromRollups(ctx, 1, rollupBase.Add(30*time.Minute), to, ""); ok {
 		t.Error("dependencies read span_edges across a gap")
+	}
+}
+
+// stampEnvironment gives every span of a trace its environment: staging for
+// the traces with an even last digit, production for the others, none for the
+// traces ending in 5.
+func stampEnvironment(spans []repository.Span) []repository.Span {
+	for i := range spans {
+		id := spans[i].TraceID
+		env := "production"
+		switch id[len(id)-1] {
+		case '0', '2', '4', '6', '8':
+			env = "staging"
+		case '5':
+			continue
+		}
+		attrs := spans[i].Attributes
+		if attrs == "" || attrs == "{}" {
+			attrs = "{"
+		} else {
+			attrs = attrs[:len(attrs)-1] + ","
+		}
+		spans[i].Attributes = attrs + `"deployment.environment":"` + env + `"}`
+	}
+	return spans
+}
+
+// With the traces of one project in two environments, a scoped service map and
+// dependency list read the same from span_edges and from raw spans, and differ
+// from the unscoped read.
+func TestEdgeReadsScopedToAnEnvironment(t *testing.T) {
+	repo := setupTestRepo(t)
+	seedRollupFixture(t, repo, stampEnvironment(edgeFixture()))
+	rollups := NewQueryService(repo, nil, nil)
+	rollups.SetSpanRollupReads(SpanRollupReads{Enabled: true, HTTPStatus: true})
+	spans := NewQueryService(repo, nil, nil)
+	to := rollupBase.Add(2 * time.Hour)
+
+	var calls = map[string]int64{}
+	for _, env := range []string{"", "staging", "production"} {
+		ctx := filter.WithEnvironmentScope(context.Background(), env)
+		gotDeps, _, err := rollups.ListDependencies(ctx, 1, rollupBase, to, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantDeps, _, err := spans.ListDependencies(ctx, 1, rollupBase, to, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := depsByTarget(wantDeps)
+		if len(gotDeps) == 0 || len(gotDeps) != len(want) {
+			t.Fatalf("environment %q: rollups %+v, spans %+v", env, gotDeps, wantDeps)
+		}
+		for _, d := range gotDeps {
+			w := want[dependencyKey{d.Target, d.TargetType}]
+			if d.CallCount != w.CallCount || d.ErrorCount != w.ErrorCount {
+				t.Errorf("environment %q dependency %s: rollups %+v, spans %+v", env, d.Target, d, w)
+			}
+			calls[env] += d.CallCount
+		}
+		gotMap, err := rollups.GetServiceMap(ctx, 1, rollupBase, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantMap, err := spans.GetServiceMap(ctx, 1, rollupBase, to)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gotMap.Nodes) != len(wantMap.Nodes) || len(gotMap.Edges) != len(wantMap.Edges) {
+			t.Errorf("environment %q map: rollups %+v, spans %+v", env, gotMap, wantMap)
+		}
+	}
+	if calls["staging"] == 0 || calls["production"] == 0 || calls["staging"] >= calls[""] || calls["production"] >= calls[""] {
+		t.Errorf("calls per environment = %v, want each environment below the total", calls)
 	}
 }

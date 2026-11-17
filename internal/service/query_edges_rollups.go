@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -51,12 +52,12 @@ func (s *QueryService) serviceMapFromRollups(ctx context.Context, projectID int6
 	if !ok {
 		return nil, false, nil
 	}
-	nodes, err := foldSpanRollups(ctx, s, projectID, repository.SpanRollupScan{Segments: nodeSegs, ProjectID: projectID},
+	nodes, err := foldSpanRollups(ctx, s, projectID, repository.SpanRollupScan{Segments: nodeSegs, ProjectID: projectID, Environment: filter.EnvironmentScope(ctx)},
 		func(r repository.SpanRollup) string { return r.Service })
 	if err != nil {
 		return nil, true, err
 	}
-	edges, err := foldSpanEdges(ctx, s, repository.SpanEdgeScan{Segments: edgeSegs, ProjectID: projectID},
+	edges, err := foldSpanEdges(ctx, s, repository.SpanEdgeScan{Segments: edgeSegs, ProjectID: projectID, Environment: filter.EnvironmentScope(ctx)},
 		func(e repository.SpanEdge) (serviceMapEdgeKey, bool) {
 			return serviceMapEdgeKey{e.Source, e.Target, e.TargetType}, e.Source != ""
 		})
@@ -105,7 +106,7 @@ func (s *QueryService) dependenciesFromRollups(ctx context.Context, projectID in
 	if !ok {
 		return nil, false, nil
 	}
-	byDep, err := foldSpanEdges(ctx, s, repository.SpanEdgeScan{Segments: segs, ProjectID: projectID, Source: svc},
+	byDep, err := foldSpanEdges(ctx, s, repository.SpanEdgeScan{Segments: segs, ProjectID: projectID, Environment: filter.EnvironmentScope(ctx), Source: svc},
 		func(e repository.SpanEdge) (dependencyKey, bool) { return dependencyKey{e.Target, e.TargetType}, true })
 	if err != nil {
 		return nil, true, err

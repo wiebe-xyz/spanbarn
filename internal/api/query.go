@@ -237,6 +237,11 @@ func (h *queryHandlers) handleDependencies(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	ctx, ok = scopeEnvironment(ctx, w, r)
+	if !ok {
+		return
+	}
+
 	svcFilter := r.URL.Query().Get("service")
 
 	deps, coverage, err := h.svc.ListDependencies(ctx, parseInt64Param(r, "project_id", 0), from, to, svcFilter)
@@ -330,6 +335,11 @@ func (h *queryHandlers) handleServiceMap(w http.ResponseWriter, r *http.Request)
 	defer span.End()
 
 	from, to, ok := parseGetTimeRange(w, r)
+	if !ok {
+		return
+	}
+
+	ctx, ok = scopeEnvironment(ctx, w, r)
 	if !ok {
 		return
 	}

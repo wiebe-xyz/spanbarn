@@ -140,3 +140,37 @@ func TestAccumulatorPassesBatchesToEdges(t *testing.T) {
 		t.Errorf("accumulator slots = %d, want 1", len(got))
 	}
 }
+
+func TestSpanEdgesKeepEnvironmentsApart(t *testing.T) {
+	w := &fakeSpanRollupWriter{}
+	at := time.Date(2026, 10, 26, 12, 7, 30, 0, time.UTC)
+	r := newTestRollups(w, SpanRollupConfig{}, at)
+	for i, env := range []string{"production", "staging", "Staging", ""} {
+		r.AddBatch([]repository.Span{{
+			ProjectID: 1, TraceID: fmt.Sprintf("t%d", i), SpanID: "a", Service: "web", Kind: "client", DurationUs: 40, IngestedAt: at,
+			Attributes: `{"db.system":"sqlite","deployment.environment":"` + env + `"}`,
+		}})
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int64{}
+	for _, e := range w.edges {
+		if e.IsMarker() {
+			if e.Environment != "" {
+				t.Errorf("marker carries environment %q", e.Environment)
+			}
+			continue
+		}
+		counts[e.Environment] += e.Count
+	}
+	want := map[string]int64{"production": 1, "staging": 2, "": 1}
+	if len(counts) != len(want) {
+		t.Fatalf("edges per environment = %v, want %v", counts, want)
+	}
+	for env, n := range want {
+		if counts[env] != n {
+			t.Errorf("environment %q: count %d, want %d", env, counts[env], n)
+		}
+	}
+}

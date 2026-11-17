@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/deptarget"
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -15,7 +16,7 @@ func (s *QueryService) GetServiceMap(ctx context.Context, projectID int64, from,
 	defer span.End()
 
 	from, to, grain := snapRange(from, to)
-	cacheKey := fmt.Sprintf("svcmap:%d:%d:%d", projectID, from.Unix(), to.Unix())
+	cacheKey := fmt.Sprintf("svcmap:%d:%d:%d:%s", projectID, from.Unix(), to.Unix(), filter.EnvironmentScope(ctx))
 	return readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) (*ServiceMap, error) {
 		if m, ok, err := s.serviceMapFromRollups(ctx, projectID, from, to); ok {
 			return m, err
@@ -34,7 +35,7 @@ func (s *QueryService) GetServiceMap(ctx context.Context, projectID int64, from,
 		}
 
 		b := newServiceMapBuilder()
-		b.addSpans(spans)
+		b.addSpans(spansInEnvironment(ctx, spans))
 		result := b.build()
 		result.Coverage = spanCoverage(spans)
 

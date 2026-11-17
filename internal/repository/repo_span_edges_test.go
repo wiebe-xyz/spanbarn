@@ -146,3 +146,35 @@ func TestMigrateSpansAddsSpanEdgesOnce(t *testing.T) {
 		t.Error("span_edges must belong to the spans family")
 	}
 }
+
+// One bucket holds an edge row per environment, and a scoped scan reads one
+// environment; production also reads the rows with none.
+func TestScanSpanEdgesEnvironment(t *testing.T) {
+	repo := setupTestDB(t)
+	b := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	var rows []SpanEdge
+	for _, env := range []string{"production", "staging", ""} {
+		e := spanEdgeRow(b, 1, "api", "sqlite", 10)
+		e.Environment = env
+		rows = append(rows, e)
+	}
+	if err := repo.AddSpanEdges(append(rows, SpanEdgeMarker(300, b))); err != nil {
+		t.Fatal(err)
+	}
+	seg := []SpanRollupSegment{{Step: 300, From: b, To: b.Add(5 * time.Minute)}}
+	for env, want := range map[string]int{"": 3, "all": 3, "production": 2, "staging": 1, "testing": 0} {
+		if got := scanEdges(t, repo, SpanEdgeScan{Segments: seg, Environment: env}); len(got) != want {
+			t.Errorf("environment %q: %d rows, want %d", env, len(got), want)
+		}
+	}
+	// A second flush of the staging edge folds into its own row.
+	staging := spanEdgeRow(b, 1, "api", "sqlite", 20)
+	staging.Environment = "staging"
+	if err := repo.AddSpanEdges([]SpanEdge{staging}); err != nil {
+		t.Fatal(err)
+	}
+	got := scanEdges(t, repo, SpanEdgeScan{Segments: seg, Environment: "staging"})
+	if len(got) != 1 || got[0].Count != 2 {
+		t.Errorf("staging edge = %+v, want one row with count 2", got)
+	}
+}

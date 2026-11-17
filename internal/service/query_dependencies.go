@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/deptarget"
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -19,7 +20,7 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 	defer span.End()
 
 	from, to, grain := snapRange(from, to)
-	cacheKey := fmt.Sprintf("deps:%d:%s:%d:%d", projectID, svcFilter, from.Unix(), to.Unix())
+	cacheKey := fmt.Sprintf("deps:%d:%s:%d:%d:%s", projectID, svcFilter, from.Unix(), to.Unix(), filter.EnvironmentScope(ctx))
 	list, err := readCached(ctx, s.cache, cacheKey, grain, func(ctx context.Context) (coveredList[DependencySummary], error) {
 		if deps, ok, err := s.dependenciesFromRollups(ctx, projectID, from, to, svcFilter); ok {
 			return coveredList[DependencySummary]{Items: deps}, err
@@ -39,7 +40,7 @@ func (s *QueryService) ListDependencies(ctx context.Context, projectID int64, fr
 		}
 
 		agg := newDependencyAggregator()
-		agg.addCalls(spans)
+		agg.addCalls(spansInEnvironment(ctx, spans))
 		result := agg.summaries(s.projectSampleRate(ctx, projectID))
 
 		return coveredList[DependencySummary]{Items: result, Coverage: spanCoverage(spans)}, nil
@@ -208,4 +209,22 @@ func (v spanView) At(i int) deptarget.Span {
 	sp := &v[i]
 	return deptarget.Span{TraceID: sp.TraceID, SpanID: sp.SpanID, ParentSpanID: sp.ParentSpanID,
 		Service: sp.Service, Kind: sp.Kind, Attributes: sp.Attributes}
+}
+
+// spansInEnvironment keeps the spans of the environment ctx is scoped to, for
+// the reads that fall back to raw spans. The fetch is the newest spanReadLimit
+// spans of every environment, so a scoped read of a busy project can hold fewer
+// than the limit: Coverage still says the fetch was cut short.
+func spansInEnvironment(ctx context.Context, spans []repository.Span) []repository.Span {
+	env := filter.EnvironmentScope(ctx)
+	if env == "" {
+		return spans
+	}
+	out := make([]repository.Span, 0, len(spans))
+	for _, sp := range spans {
+		if filter.EnvironmentMatches(env, filter.EnvironmentOf(sp.Attributes)) {
+			out = append(out, sp)
+		}
+	}
+	return out
 }
