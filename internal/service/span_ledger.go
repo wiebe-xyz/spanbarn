@@ -58,7 +58,8 @@ func spanLedgerSettled(bucket int64, now time.Time) bool {
 }
 
 // SpanLedger returns the ledger of the range, for one project or for all of them
-// when projectID is 0.
+// when projectID is 0, one entry per environment of each project and bucket. A
+// ctx carrying an environment scope keeps one environment.
 func (s *QueryService) SpanLedger(ctx context.Context, projectID int64, from, to time.Time) ([]SpanLedgerEntry, error) {
 	_, span := tracer.Start(ctx, "query.span_ledger")
 	defer span.End()
@@ -101,6 +102,36 @@ func (s *QueryService) attachWindowLoss(ctx context.Context, summaries []PromptS
 // SpanLedgerReader is what the watch reads.
 type SpanLedgerReader interface {
 	ListSpanLedger(ctx context.Context, projectID int64, from, to time.Time) ([]model.SpanLedgerRow, error)
+}
+
+// foldLedgerEnvironments adds the environments of one project and bucket into
+// one row. The watch judges a project's bucket whole: an image that does not
+// know environments counts a span's accepted under the production row while the
+// writer counts its exit under the span's own, so the rows of one environment
+// do not balance on their own through a rollout, and their sum does.
+func foldLedgerEnvironments(rows []model.SpanLedgerRow) []model.SpanLedgerRow {
+	type key struct{ bucket, projectID int64 }
+	at := map[key]int{}
+	var out []model.SpanLedgerRow
+	for _, r := range rows {
+		k := key{r.Bucket, r.ProjectID}
+		i, ok := at[k]
+		if !ok {
+			r.Environment = ""
+			at[k] = len(out)
+			out = append(out, r)
+			continue
+		}
+		o := &out[i]
+		o.Accepted += r.Accepted
+		o.SampledOut += r.SampledOut
+		o.ShedUnsampled += r.ShedUnsampled
+		o.LostInBuffer += r.LostInBuffer
+		o.Forwarded += r.Forwarded
+		o.Processed += r.Processed
+		o.Failed += r.Failed
+	}
+	return out
 }
 
 // SpanLedgerWatch logs at error level when a settled bucket shows loss, so
@@ -181,7 +212,7 @@ func (w *SpanLedgerWatch) Check(ctx context.Context) {
 		return
 	}
 	now := w.now()
-	for _, r := range rows {
+	for _, r := range foldLedgerEnvironments(rows) {
 		if spanLedgerLost(r, true) < spanLedgerAlertSpans {
 			continue
 		}
@@ -216,7 +247,7 @@ func (w *SpanLedgerWatch) judgePending(ctx context.Context) {
 		second := p.first
 		second.Accepted, second.LostInBuffer, second.Forwarded = 0, 0, 0
 		second.Processed, second.Failed, second.SampledOut, second.ShedUnsampled = 0, 0, 0, 0
-		for _, r := range rows {
+		for _, r := range foldLedgerEnvironments(rows) {
 			if r.ProjectID == p.first.ProjectID && r.Bucket == p.first.Bucket {
 				second = r
 			}

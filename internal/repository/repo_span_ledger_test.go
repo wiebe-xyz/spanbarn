@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
@@ -106,5 +107,41 @@ func TestDeleteExpiredSpanLedger(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Accepted != 2 {
 		t.Errorf("rows left = %+v, want the current bucket", got)
+	}
+}
+
+func TestSpanLedgerKeepsEnvironmentsApart(t *testing.T) {
+	repo := spanLedgerRepo(t)
+	rows := []model.SpanLedgerRow{
+		{Bucket: 1_800_000_000, ProjectID: 1, Accepted: 10, Processed: 10},
+		{Bucket: 1_800_000_000, ProjectID: 1, Environment: "staging", Accepted: 4, Processed: 1},
+	}
+	for range 2 {
+		if err := repo.AddSpanLedgerRows(rows); err != nil {
+			t.Fatal(err)
+		}
+	}
+	from, to := time.Unix(1_800_000_000, 0), time.Unix(1_800_000_300, 0)
+	all, err := repo.ListSpanLedger(context.Background(), 1, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || all[0].Environment != "" || all[0].Accepted != 20 || all[1].Environment != "staging" || all[1].Accepted != 8 {
+		t.Fatalf("rows = %+v, want a production row of 20 and a staging row of 8", all)
+	}
+
+	staging, err := repo.ListSpanLedger(filter.WithEnvironmentScope(context.Background(), "staging"), 1, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(staging) != 1 || staging[0].Environment != "staging" {
+		t.Errorf("staging scope = %+v", staging)
+	}
+	prod, err := repo.ListSpanLedger(filter.WithEnvironmentScope(context.Background(), "production"), 1, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prod) != 1 || prod[0].Environment != "" {
+		t.Errorf("production scope = %+v, want the row with no environment", prod)
 	}
 }

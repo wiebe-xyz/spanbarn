@@ -14,10 +14,10 @@ const startUs = 1_800_000_123 * 1_000_000 // inside the bucket of 1_800_000_000
 
 func TestTallyCountsPerProjectAndBucket(t *testing.T) {
 	tally := New()
-	tally.Add(Accepted, 1, startUs, 2)
-	tally.Add(Accepted, 2, startUs, 1)
-	tally.Add(Forwarded, 1, startUs+299*1_000_000, 1)
-	tally.Add(Accepted, 1, startUs+300*1_000_000, 1)
+	tally.Add(Accepted, 1, startUs, nil, 2)
+	tally.Add(Accepted, 2, startUs, nil, 1)
+	tally.Add(Forwarded, 1, startUs+299*1_000_000, nil, 1)
+	tally.Add(Accepted, 1, startUs+300*1_000_000, nil, 1)
 
 	byKey := map[[2]int64]model.SpanLedgerRow{}
 	for _, r := range tally.Take() {
@@ -52,7 +52,7 @@ func TestTallyAddSpansAndTakeBack(t *testing.T) {
 
 func TestNilTallyCountsNothing(t *testing.T) {
 	var tally *Tally
-	tally.Add(Accepted, 1, startUs, 1)
+	tally.Add(Accepted, 1, startUs, nil, 1)
 	tally.AddSpans(Accepted, []model.SpanRecord{{ProjectID: 1}}, 1)
 	tally.Merge([]model.SpanLedgerRow{{ProjectID: 1}})
 	if rows := tally.Take(); rows != nil {
@@ -62,14 +62,14 @@ func TestNilTallyCountsNothing(t *testing.T) {
 
 func TestReportKeepsCountsWhenTheSinkFails(t *testing.T) {
 	tally := New()
-	tally.Add(Accepted, 1, startUs, 3)
-	tally.Add(Failed, 1, startUs, 1)
+	tally.Add(Accepted, 1, startUs, nil, 3)
+	tally.Add(Failed, 1, startUs, nil, 1)
 
 	failing := func(context.Context, []model.SpanLedgerRow) error { return errors.New("redis down") }
 	if err := tally.Report(context.Background(), failing); err == nil {
 		t.Fatal("Report = nil, want the sink's error")
 	}
-	tally.Add(Accepted, 1, startUs, 1)
+	tally.Add(Accepted, 1, startUs, nil, 1)
 
 	var got []model.SpanLedgerRow
 	sink := func(_ context.Context, rows []model.SpanLedgerRow) error {
@@ -97,7 +97,7 @@ func TestReportWithNothingToSayCallsNoSink(t *testing.T) {
 
 func TestRunReportsUntilCancelled(t *testing.T) {
 	tally := New()
-	tally.Add(Accepted, 1, startUs, 1)
+	tally.Add(Accepted, 1, startUs, nil, 1)
 	reported := make(chan []model.SpanLedgerRow, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -113,4 +113,39 @@ func TestRunReportsUntilCancelled(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+func TestTallyKeepsEnvironmentsApart(t *testing.T) {
+	tally := New()
+	prod := []byte(`{"deployment.environment":"production"}`)
+	staging := []byte(`{"deployment.environment":"Staging"}`)
+	tally.Add(Accepted, 1, startUs, prod, 2)
+	tally.Add(Accepted, 1, startUs, nil, 1)
+	tally.Add(Accepted, 1, startUs, staging, 4)
+	tally.Add(Processed, 1, startUs, staging, 3)
+
+	byEnv := map[string]model.SpanLedgerRow{}
+	for _, r := range tally.Take() {
+		byEnv[r.Environment] = r
+	}
+	if len(byEnv) != 2 {
+		t.Fatalf("rows = %v, want production and staging", byEnv)
+	}
+	if r := byEnv[""]; r.Accepted != 3 {
+		t.Errorf("production row = %+v, want accepted 3 (production and no environment share one row)", r)
+	}
+	if r := byEnv["staging"]; r.Accepted != 4 || r.Processed != 3 {
+		t.Errorf("staging row = %+v, want accepted 4 processed 3", r)
+	}
+}
+
+func TestMergeKeepsTheEnvironmentOfAFailedReport(t *testing.T) {
+	tally := New()
+	tally.Add(Accepted, 1, startUs, []byte(`{"deployment.environment":"staging"}`), 2)
+	rows := tally.Take()
+	tally.Merge(rows)
+	got := tally.Take()
+	if len(got) != 1 || got[0].Environment != "staging" || got[0].Accepted != 2 {
+		t.Errorf("rows after merge = %+v, want the staging row back", got)
+	}
 }

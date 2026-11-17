@@ -11,6 +11,11 @@ func (h *queryHandlers) handleSpanLedger(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	ctx, ok := scopeEnvironment(ctx, w, r)
+	if !ok {
+		return
+	}
+
 	from, to, err := parseTimeRange(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid time range", err.Error())

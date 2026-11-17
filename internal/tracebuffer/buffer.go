@@ -269,7 +269,7 @@ func NewTraceBufferWithRules(ttl time.Duration, maxSpans int, rules RescueRules,
 func (tb *TraceBuffer) Add(rec model.SpanRecord) {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
-	tb.ledger.Add(spanledger.Accepted, rec.ProjectID, rec.StartTimeUs, 1)
+	tb.ledger.Add(spanledger.Accepted, rec.ProjectID, rec.StartTimeUs, rec.Attributes, 1)
 
 	isErr := isErrorStatus(rec.Status)
 	tr := tb.traces[rec.TraceID]
@@ -284,7 +284,7 @@ func (tb *TraceBuffer) Add(rec model.SpanRecord) {
 	if !tb.ensureRoom(tr) && !protected {
 		tb.refused++
 		tb.refusedTotal++
-		tb.ledger.Add(spanledger.LostInBuffer, rec.ProjectID, rec.StartTimeUs, 1)
+		tb.ledger.Add(spanledger.LostInBuffer, rec.ProjectID, rec.StartTimeUs, rec.Attributes, 1)
 		return
 	}
 

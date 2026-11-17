@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 )
 
@@ -228,5 +229,57 @@ func TestSpanLedgerWatchRechecksBeforeLogging(t *testing.T) {
 				t.Errorf("late counts not noted: %s", out)
 			}
 		})
+	}
+}
+
+// A rollout can count a span's accepted under the production row and its exit
+// under the span's own environment. The rows of one project and bucket add up
+// whole before the watch judges them, so that does not read as loss, and a real
+// loss in any environment still does.
+func TestSpanLedgerWatchJudgesEnvironmentsTogether(t *testing.T) {
+	at := time.Unix(1_800_003_000, 0)
+	repo := &fakeLedgerReader{rows: []model.SpanLedgerRow{
+		{Bucket: 1_800_001_200, ProjectID: 81, Accepted: 200, Processed: 100},
+		{Bucket: 1_800_001_200, ProjectID: 81, Environment: "staging", Processed: 100},
+		{Bucket: 1_800_001_200, ProjectID: 82, Accepted: 100, Processed: 100},
+		{Bucket: 1_800_001_200, ProjectID: 82, Environment: "staging", Accepted: 100, Processed: 20},
+	}}
+	w, logs := newLedgerWatch(repo, noBacklog, &at)
+	at = at.Add(5 * time.Minute)
+	w.Check(context.Background())
+
+	out := logs.String()
+	if strings.Contains(out, "project_id=81") {
+		t.Errorf("project 81 balances across its environments and was logged: %s", out)
+	}
+	if !strings.Contains(out, "project_id=82") || !strings.Contains(out, "lost_spans=80") {
+		t.Errorf("loss of 80 in project 82 not logged: %s", out)
+	}
+}
+
+func TestSpanLedgerEntriesCarryTheEnvironment(t *testing.T) {
+	repo := setupTestRepo(t)
+	now := time.Now()
+	b := model.SpanLedgerBucket(now.Add(-2 * time.Hour).UnixMicro())
+	if err := repo.AddSpanLedgerRows([]model.SpanLedgerRow{
+		{Bucket: b, ProjectID: 1, Accepted: 5, Processed: 5},
+		{Bucket: b, ProjectID: 1, Environment: "staging", Accepted: 5},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewQueryService(repo, nil, nil)
+	got, err := svc.SpanLedger(context.Background(), 1, now.Add(-3*time.Hour), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Environment != "" || got[1].Environment != "staging" || got[1].LostSpans != 5 {
+		t.Fatalf("entries = %+v, want a production entry and a staging entry that lost 5", got)
+	}
+	scoped, err := svc.SpanLedger(filter.WithEnvironmentScope(context.Background(), "staging"), 1, now.Add(-3*time.Hour), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scoped) != 1 || scoped[0].Environment != "staging" {
+		t.Errorf("staging scope = %+v", scoped)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 )
 
@@ -38,8 +39,9 @@ const (
 )
 
 type rowKey struct {
-	bucket    int64
-	projectID int64
+	bucket      int64
+	projectID   int64
+	environment string
 }
 
 // Sink receives the counts of a report. It fails as a whole: the tally keeps
@@ -58,15 +60,17 @@ func New() *Tally {
 	return &Tally{rows: map[rowKey]*[columnCount]int64{}}
 }
 
-// Add counts n spans of a project that started at startUs. A negative n takes
-// back an earlier count.
-func (t *Tally) Add(col Column, projectID, startUs, n int64) {
+// Add counts n spans of a project and environment that started at startUs. A
+// negative n takes back an earlier count. attributes is the span's attributes
+// JSON, which names its environment, so every stage counts a span under the
+// same row as the stage before it.
+func (t *Tally) Add(col Column, projectID, startUs int64, attributes []byte, n int64) {
 	if t == nil {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.add(col, projectID, startUs, n)
+	t.add(col, projectID, startUs, attributes, n)
 }
 
 // AddSpans adds sign once for every span.
@@ -77,13 +81,25 @@ func (t *Tally) AddSpans(col Column, spans []model.SpanRecord, sign int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i := range spans {
-		t.add(col, spans[i].ProjectID, spans[i].StartTimeUs, sign)
+		t.add(col, spans[i].ProjectID, spans[i].StartTimeUs, spans[i].Attributes, sign)
 	}
 }
 
 // add counts under the lock.
-func (t *Tally) add(col Column, projectID, startUs, n int64) {
-	t.row(rowKey{model.SpanLedgerBucket(startUs), projectID})[col] += n
+func (t *Tally) add(col Column, projectID, startUs int64, attributes []byte, n int64) {
+	env := ledgerEnvironment(attributes)
+	t.row(rowKey{model.SpanLedgerBucket(startUs), projectID, env})[col] += n
+}
+
+// ledgerEnvironment names the environment a ledger row counts. production and
+// no environment share one row, as a production read selects both, and a
+// process that does not know environments counts every span under that row.
+func ledgerEnvironment(attributes []byte) string {
+	env := filter.EnvironmentOf(string(attributes))
+	if env == filter.ProductionEnvironment {
+		return ""
+	}
+	return env
 }
 
 func (t *Tally) row(k rowKey) *[columnCount]int64 {
@@ -109,6 +125,7 @@ func (t *Tally) Take() []model.SpanLedgerRow {
 			out = append(out, model.SpanLedgerRow{
 				Bucket:        k.bucket,
 				ProjectID:     k.projectID,
+				Environment:   k.environment,
 				Accepted:      r[Accepted],
 				SampledOut:    r[SampledOut],
 				ShedUnsampled: r[ShedUnsampled],
@@ -132,7 +149,7 @@ func (t *Tally) Merge(rows []model.SpanLedgerRow) {
 	defer t.mu.Unlock()
 	for i := range rows {
 		s := &rows[i]
-		r := t.row(rowKey{s.Bucket, s.ProjectID})
+		r := t.row(rowKey{s.Bucket, s.ProjectID, s.Environment})
 		r[Accepted] += s.Accepted
 		r[SampledOut] += s.SampledOut
 		r[ShedUnsampled] += s.ShedUnsampled
