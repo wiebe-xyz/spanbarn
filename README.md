@@ -172,6 +172,10 @@ spanbarn project create --name=my-app
 # Writes the trace buffer ratio and the boring-span ratio together.
 spanbarn project set my-app --trace-ratio=1
 
+# Keep every trace whose root operation is NAME, whatever the project's ratio.
+# Writes the trace buffer's per-operation key only; 0 removes it.
+spanbarn project set my-app --trace-ratio=1 --op=boot.check-in
+
 # Delete a project's logs after H hours, error-trace logs included (0 removes the cap).
 spanbarn project set my-app --log-retention-hours=168
 

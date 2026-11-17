@@ -107,3 +107,33 @@ func TestProjectSetLogRetention(t *testing.T) {
 		t.Error("negative hours: want error")
 	}
 }
+
+// An operation's ratio is its own key: the project's keys stay as they were.
+func TestProjectSetOperationRatio(t *testing.T) {
+	cfg, id := newProjectSetFixture(t)
+	opKey := "ingest.sample_ratio.project." + itoa(id) + ".op.boot.check-in"
+	if err := runProjectCmd(cfg, []string{"set", "claude-code", "--trace-ratio=1", "--op=boot.check-in"}); err != nil {
+		t.Fatalf("project set --op: %v", err)
+	}
+	if got := settingOf(t, cfg, opKey); got != "1" {
+		t.Errorf("%s = %q, want 1", opKey, got)
+	}
+	for _, key := range []string{"ingest.sample_ratio.project." + itoa(id), "boring.sample_ratio.project." + itoa(id)} {
+		if got := settingOf(t, cfg, key); got != "" {
+			t.Errorf("%s = %q, want untouched", key, got)
+		}
+	}
+	if err := runProjectCmd(cfg, []string{"set", "claude-code", "--trace-ratio=0", "--op=boot.check-in"}); err != nil {
+		t.Fatalf("project set --op clear: %v", err)
+	}
+	if got := settingOf(t, cfg, opKey); got != "" {
+		t.Errorf("%s = %q, want cleared", opKey, got)
+	}
+}
+
+func TestProjectSetOperationNeedsARatio(t *testing.T) {
+	cfg, _ := newProjectSetFixture(t)
+	if err := runProjectCmd(cfg, []string{"set", "claude-code", "--op=boot.check-in"}); err == nil {
+		t.Fatal("--op without --trace-ratio was accepted")
+	}
+}
