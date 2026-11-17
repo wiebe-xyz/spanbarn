@@ -209,22 +209,24 @@ func TestMergeSkipsAHistogramThatDoesNotDecode(t *testing.T) {
 	}
 }
 
-func TestMergeKeepsHTTPStatusesApart(t *testing.T) {
+// Rows that differ in one key field stay apart, and each merges on its own.
+func TestMergeKeepsKeyFieldsApart(t *testing.T) {
 	b := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
-	ok, failed, ok2 := fiveMinute(b, "op", 10), fiveMinute(b, "op", 20), fiveMinute(b.Add(5*time.Minute), "op", 30)
-	ok.HTTPStatus, failed.HTTPStatus, ok2.HTTPStatus = 200, 500, 200
-	got := Merge([]repository.SpanRollup{ok, failed, ok2}, 3600, b)
-	if len(got) != 2 || got[0].HTTPStatus != 200 || got[0].Count != 2 || got[1].HTTPStatus != 500 || got[1].Count != 1 {
-		t.Errorf("merged = %+v", got)
-	}
-}
-
-func TestMergeKeepsEnvironmentsApart(t *testing.T) {
-	b := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
-	prod, staging, prod2 := fiveMinute(b, "op", 10), fiveMinute(b, "op", 20), fiveMinute(b.Add(5*time.Minute), "op", 30)
-	prod.Environment, staging.Environment, prod2.Environment = "production", "staging", "production"
-	got := Merge([]repository.SpanRollup{prod, staging, prod2}, 3600, b)
-	if len(got) != 2 || got[0].Environment != "production" || got[0].Count != 2 || got[1].Environment != "staging" || got[1].Count != 1 {
-		t.Errorf("merged = %+v", got)
+	for name, set := range map[string]func(r *repository.SpanRollup, second bool){
+		"HTTP status": func(r *repository.SpanRollup, second bool) {
+			r.HTTPStatus = map[bool]int64{false: 200, true: 500}[second]
+		},
+		"environment": func(r *repository.SpanRollup, second bool) {
+			r.Environment = map[bool]string{false: "production", true: "staging"}[second]
+		},
+	} {
+		first, other, later := fiveMinute(b, "op", 10), fiveMinute(b, "op", 20), fiveMinute(b.Add(5*time.Minute), "op", 30)
+		set(&first, false)
+		set(&other, true)
+		set(&later, false)
+		got := Merge([]repository.SpanRollup{first, other, later}, 3600, b)
+		if len(got) != 2 || got[0].Count != 2 || got[1].Count != 1 {
+			t.Errorf("%s: merged = %+v", name, got)
+		}
 	}
 }
