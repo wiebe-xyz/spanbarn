@@ -362,3 +362,35 @@ func TestMetricAccumulatorFinalFlushWritesPendingAndLogsLoss(t *testing.T) {
 		t.Fatalf("final flush skipped a pending rollup: %+v", w.got)
 	}
 }
+
+// TestMetricAccumulatorKeepsEnvironmentsApart pins what keeps metric_rollups
+// free of an environment column: resource attributes join the label set, so
+// two environments in one bucket are two series with two fingerprints.
+func TestMetricAccumulatorKeepsEnvironmentsApart(t *testing.T) {
+	base := time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC)
+	w := &fakeRollupWriter{}
+	acc := NewMetricAccumulator(w, time.Minute, time.Minute, nil)
+	acc.now = func() time.Time { return base.Add(90 * time.Second) }
+
+	at := uint64(base.Add(10 * time.Second).UnixNano())
+	acc.AddMetric(gaugeRec("g", `{"deployment.environment":"production"}`, at, 1))
+	acc.AddMetric(gaugeRec("g", `{"deployment.environment":"staging"}`, at, 2))
+	acc.AddMetric(gaugeRec("g", `{"deployment.environment":"staging"}`, at, 4))
+
+	if err := acc.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if len(w.got) != 2 {
+		t.Fatalf("want 2 rollups (one per environment), got %d: %+v", len(w.got), w.got)
+	}
+	counts := map[string]int64{}
+	for _, r := range w.got {
+		counts[r.AttrFingerprint] += r.Count
+	}
+	if w.got[0].AttrFingerprint == w.got[1].AttrFingerprint {
+		t.Errorf("both environments share fingerprint %s", w.got[0].AttrFingerprint)
+	}
+	if len(counts) != 2 {
+		t.Errorf("counts by fingerprint = %v", counts)
+	}
+}

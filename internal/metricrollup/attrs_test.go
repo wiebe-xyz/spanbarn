@@ -118,3 +118,34 @@ func TestParseDropList(t *testing.T) {
 		}
 	}
 }
+
+// TestReduceKeepsEnvironmentsApart checks every tier keeps deployment.environment,
+// so the coarse tiers need no environment column of their own: a staging and a
+// production series that differ only in a volatile label stay two series.
+func TestReduceKeepsEnvironmentsApart(t *testing.T) {
+	prod := `{"deployment.environment":"production","service.name":"api","service.version":"a","k8s.pod.name":"p1"}`
+	stag := `{"deployment.environment":"staging","service.name":"api","service.version":"a","k8s.pod.name":"p1"}`
+	stagNewBuild := `{"deployment.environment":"staging","service.name":"api","service.version":"b","k8s.pod.name":"p2"}`
+
+	p := DefaultDropPolicy()
+	for _, step := range []int64{tier.Step5m, tier.StepHour, tier.StepDay} {
+		_, fpProd := p.Reduce(prod, step)
+		_, fpStag := p.Reduce(stag, step)
+		if fpProd == fpStag {
+			t.Errorf("step %d: production and staging share fingerprint %s", step, fpProd)
+		}
+		attrs, _ := p.Reduce(stag, step)
+		var m map[string]string
+		if err := json.Unmarshal([]byte(attrs), &m); err != nil {
+			t.Fatalf("attributes: %v", err)
+		}
+		if m["deployment.environment"] != "staging" {
+			t.Errorf("step %d: deployment.environment = %q, want staging", step, m["deployment.environment"])
+		}
+	}
+	_, fpA := p.Reduce(stag, tier.StepHour)
+	_, fpB := p.Reduce(stagNewBuild, tier.StepHour)
+	if fpA != fpB {
+		t.Error("two builds of one environment must still merge at the hourly tier")
+	}
+}
