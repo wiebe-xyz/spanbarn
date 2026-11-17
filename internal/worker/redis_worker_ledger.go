@@ -15,10 +15,10 @@ func (w *RedisWorker) SetLedger(t *spanledger.Tally) {
 // handled yet and is counted when it comes round again.
 func (w *RedisWorker) settleLedger(spans, lost []repository.Span) {
 	for i := range spans {
-		w.ledger.Add(spanledger.Processed, spans[i].ProjectID, spans[i].StartTimeUs, 1)
+		w.ledger.Add(spanledger.Processed, spans[i].ProjectID, spans[i].StartTimeUs, []byte(spans[i].Attributes), 1)
 	}
 	for i := range lost {
-		w.ledger.Add(spanledger.Processed, lost[i].ProjectID, lost[i].StartTimeUs, -1)
-		w.ledger.Add(spanledger.Failed, lost[i].ProjectID, lost[i].StartTimeUs, 1)
+		w.ledger.Add(spanledger.Processed, lost[i].ProjectID, lost[i].StartTimeUs, []byte(lost[i].Attributes), -1)
+		w.ledger.Add(spanledger.Failed, lost[i].ProjectID, lost[i].StartTimeUs, []byte(lost[i].Attributes), 1)
 	}
 }

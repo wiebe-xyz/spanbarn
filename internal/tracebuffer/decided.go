@@ -99,7 +99,7 @@ func (d *decidedTraces) follow(rec model.SpanRecord) bool {
 		d.m[rec.TraceID] = e
 	case e.weight == 0:
 		d.lateDropped++
-		d.ledger.Add(spanledger.SampledOut, rec.ProjectID, rec.StartTimeUs, 1)
+		d.ledger.Add(spanledger.SampledOut, rec.ProjectID, rec.StartTimeUs, rec.Attributes, 1)
 		return true
 	}
 	rec.SampleWeight = e.weight

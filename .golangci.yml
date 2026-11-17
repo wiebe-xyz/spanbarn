@@ -121,14 +121,27 @@ linters:
           files:
             - "**/internal/livetail/**"
             - "**/internal/queue/**"
-            - "**/internal/spanledger/**"
             - "**/internal/spool/**"
             - "!$test"
           allow:
             - github.com/wiebe-xyz/spanbarn/internal/model
           deny:
             - pkg: github.com/wiebe-xyz/spanbarn
-              desc: livetail, queue, spanledger and spool depend on internal/model only.
+              desc: livetail, queue and spool depend on internal/model only.
+
+        # The span ledger depends on the span model and the filter leaf (the
+        # environment a row counts).
+        spanledger-deps:
+          list-mode: lax
+          files:
+            - "**/internal/spanledger/**"
+            - "!$test"
+          allow:
+            - github.com/wiebe-xyz/spanbarn/internal/filter
+            - github.com/wiebe-xyz/spanbarn/internal/model
+          deny:
+            - pkg: github.com/wiebe-xyz/spanbarn
+              desc: spanledger depends on filter and model only.
 
         # The trace buffer depends on the span model, the sampler, the ledger and the
         # filter leaf (the environment a floor slot belongs to).

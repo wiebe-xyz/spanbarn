@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"time"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/model"
 	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
@@ -40,9 +41,9 @@ func (r *Repository) AddSpanLedgerRows(rows []model.SpanLedgerRow) error {
 
 func upsertSpanLedgerRow(tx *sql.Tx, row *model.SpanLedgerRow) error {
 	_, err := tx.Exec(`INSERT INTO span_ledger
-			(bucket, project_id, accepted, sampled_out, shed_unsampled, lost_in_buffer, forwarded, processed, failed)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (bucket, project_id) DO UPDATE SET
+			(bucket, project_id, environment, accepted, sampled_out, shed_unsampled, lost_in_buffer, forwarded, processed, failed)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (bucket, project_id, environment) DO UPDATE SET
 			accepted       = accepted + excluded.accepted,
 			sampled_out    = sampled_out + excluded.sampled_out,
 			shed_unsampled = shed_unsampled + excluded.shed_unsampled,
@@ -50,24 +51,30 @@ func upsertSpanLedgerRow(tx *sql.Tx, row *model.SpanLedgerRow) error {
 			forwarded      = forwarded + excluded.forwarded,
 			processed      = processed + excluded.processed,
 			failed         = failed + excluded.failed`,
-		row.Bucket, row.ProjectID, row.Accepted, row.SampledOut, row.ShedUnsampled,
+		row.Bucket, row.ProjectID, row.Environment, row.Accepted, row.SampledOut, row.ShedUnsampled,
 		row.LostInBuffer, row.Forwarded, row.Processed, row.Failed)
 	return err
 }
 
 // ListSpanLedger returns the rows of the buckets from the one holding from up to
-// to, oldest first, for one project or for all of them when projectID is 0.
+// to, oldest first, for one project or for all of them when projectID is 0. A
+// ctx carrying an environment scope (filter.WithEnvironmentScope) keeps the rows
+// of that environment; production also keeps the rows with none.
 func (r *Repository) ListSpanLedger(ctx context.Context, projectID int64, from, to time.Time) ([]model.SpanLedgerRow, error) {
 	ctx, cancel := r.readContext(ctx)
 	defer cancel()
-	query := `SELECT bucket, project_id, accepted, sampled_out, shed_unsampled, lost_in_buffer, forwarded, processed, failed
+	query := `SELECT bucket, project_id, environment, accepted, sampled_out, shed_unsampled, lost_in_buffer, forwarded, processed, failed
 		FROM span_ledger WHERE bucket >= ? AND bucket < ?`
 	args := []any{model.SpanLedgerBucket(from.UnixMicro()), to.Unix()}
 	if projectID > 0 {
 		query += " AND project_id = ?"
 		args = append(args, projectID)
 	}
-	rows, err := r.db.QueryContext(ctx, query+" ORDER BY bucket, project_id", args...)
+	if clause, envArgs := environmentClause(filter.EnvironmentScope(ctx)); clause != "" {
+		query += " AND " + clause
+		args = append(args, envArgs...)
+	}
+	rows, err := r.db.QueryContext(ctx, query+" ORDER BY bucket, project_id, environment", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +82,7 @@ func (r *Repository) ListSpanLedger(ctx context.Context, projectID int64, from, 
 	var out []model.SpanLedgerRow
 	for rows.Next() {
 		var row model.SpanLedgerRow
-		if err := rows.Scan(&row.Bucket, &row.ProjectID, &row.Accepted, &row.SampledOut, &row.ShedUnsampled,
+		if err := rows.Scan(&row.Bucket, &row.ProjectID, &row.Environment, &row.Accepted, &row.SampledOut, &row.ShedUnsampled,
 			&row.LostInBuffer, &row.Forwarded, &row.Processed, &row.Failed); err != nil {
 			return nil, err
 		}
