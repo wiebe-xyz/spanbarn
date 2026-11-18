@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/config"
+	"github.com/wiebe-xyz/spanbarn/internal/model"
+	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 )
 
 func newMergeCLIFixture(t *testing.T) (config.Config, int64, int64) {
@@ -119,4 +125,75 @@ func TestParseCPUStat(t *testing.T) {
 			t.Errorf("parseCPUStat(%q) accepted a malformed line", bad)
 		}
 	}
+}
+
+// With SPANBARN_SHARDS on, the merge reaches the rows in the logs shard. The
+// first production run of a source with shard rows archived it with every log
+// still in the shard, because the command opened the database without them.
+func TestProjectMergeMovesRowsInShards(t *testing.T) {
+	cfg := config.Config{DBPath: filepath.Join(t.TempDir(), "spanbarn.db"), Shards: true}
+	cfg.Retention.LogHours = 48
+	cfg.Retention.MetricsDays = 7
+	cfg.Retention.PromptDays = 14
+	hostIdle = func() (float64, error) { return 90, nil }
+	t.Cleanup(func() { hostIdle = readHostIdle })
+
+	store, err := engine.OpenStorage(context.Background(), cfg.DBPath, engine.StorageOptions{Shards: shardRetention(cfg)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := repository.ForStorage(store)
+	src, err := repo.CreateProject("main-staging", "main-staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt, err := repo.CreateProject("main", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := model.LogRecord{ProjectID: src.ID, Body: "line", SeverityNumber: 9, SeverityText: "INFO",
+		TimeUnixNano: uint64(time.Now().UnixNano()), Attributes: []byte(`{"service.name":"web"}`)}
+	if err := repo.InsertLogs(context.Background(), []model.LogRecord{rec, rec, rec}); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	args := []string{"merge", "--source=main-staging", "--target=main", "--env=staging"}
+	if err := runProjectCmd(cfg, args); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+
+	store, err = engine.OpenStorage(context.Background(), cfg.DBPath, engine.StorageOptions{Shards: shardRetention(cfg)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	left, moved := 0, 0
+	for _, row := range mustShardRows(t, store) {
+		if row.Family != engine.FamilyLogs {
+			continue
+		}
+		db, err := sql.Open("sqlite", filepath.Join(engine.ShardsDir(cfg.DBPath), row.File)+"?mode=ro")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var l, m int
+		if err := db.QueryRow(`SELECT count(*) FILTER (WHERE project_id = ?), count(*) FILTER (WHERE project_id = ?) FROM logs`, src.ID, tgt.ID).Scan(&l, &m); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		left, moved = left+l, moved+m
+	}
+	if left != 0 || moved != 3 {
+		t.Errorf("logs in shards: source %d, target %d, want 0 and 3", left, moved)
+	}
+}
+
+func mustShardRows(t *testing.T, store *engine.Storage) []engine.ShardRow {
+	t.Helper()
+	rows, err := store.Shards.Rows(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
 }

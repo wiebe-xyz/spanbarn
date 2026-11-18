@@ -13,6 +13,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
@@ -48,7 +49,7 @@ func runProjectMerge(cfg config.Config, args []string) error {
 		return err
 	}
 
-	repo, db, err := openDB(cfg.DBPath)
+	repo, db, err := openMergeDB(cfg)
 	if err != nil {
 		return err
 	}
@@ -81,6 +82,22 @@ func runProjectMerge(cfg config.Config, args []string) error {
 		fmt.Printf("%s holds no rows any more and is archived; its old id and slug resolve to %s\n", src.Slug, tgt.Slug)
 	}
 	return nil
+}
+
+// openMergeDB opens the database the way the writer does, shard manager
+// included. A merge plans one step per active logs, metrics and prompts shard,
+// and without the manager it sees none: it would archive a source that still
+// holds rows in the shards, with a "holds no rows any more" message that is
+// false. openDB, which the other subcommands use, leaves the shards out.
+func openMergeDB(cfg config.Config) (*repository.Repository, *engine.Storage, error) {
+	store, err := engine.OpenStorage(context.Background(), cfg.DBPath, engine.StorageOptions{
+		CacheMB: engine.DefaultWriterCacheMB, MmapMB: engine.DefaultWriterMmapMB,
+		Shards: shardRetention(cfg),
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("open database: %w", err)
+	}
+	return repository.ForStorage(store), store, nil
 }
 
 // stepName is the table of a step, with the shard it ran in when it has one.
