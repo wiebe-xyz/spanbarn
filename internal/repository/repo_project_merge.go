@@ -163,7 +163,7 @@ func (r *Repository) runMergeBatch(ctx context.Context, step mergeStep, spec Mer
 		}
 	}
 	err := write(step.fam, func(db *sql.DB) error {
-		tx, err := db.Begin()
+		tx, err := beginMergeTx(db, step.table)
 		if err != nil {
 			return err
 		}
@@ -193,6 +193,26 @@ func (r *Repository) runMergeBatch(ctx context.Context, step mergeStep, spec Mer
 		}
 		return tx.Commit()
 	})
+}
+
+// beginMergeTx opens a batch transaction that holds the write lock before its
+// first read. A batch reads (the collision count) and then writes, and a
+// deferred transaction that upgrades from read to write after another process
+// committed in between fails at once with SQLITE_BUSY and skips the busy
+// timeout. The merge command runs beside the serving writer, so span_edges,
+// which the writer touches all the time, hit that on the first production
+// merge. A DELETE that matches nothing takes the lock as the first statement;
+// the wait for the writer then falls under the busy timeout.
+func beginMergeTx(db *sql.DB, table string) (*sql.Tx, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM "` + table + `" WHERE 0`); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
 }
 
 // beginMerge writes the run row, and refuses a source that already merges into
