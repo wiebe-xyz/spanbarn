@@ -298,12 +298,13 @@ func lookbackFor(comparisonWindow int, interval time.Duration) time.Duration {
 // the count-weighted mean of the rows' p95, which is close but not exact.
 func (e *Evaluator) serviceBuckets(a repository.Alert, now time.Time) ([]repository.Aggregate, error) {
 	rows, err := e.repo.QueryAggregates(repository.AggregateFilter{
-		ProjectID: a.ProjectID,
-		Service:   a.Service,
-		Operation: a.Operation,
-		From:      now.Add(-lookbackFor(a.ComparisonWindow, e.aggInterval)),
-		To:        now,
-		Limit:     aggregateRowCap,
+		ProjectID:   a.ProjectID,
+		Environment: a.Environment,
+		Service:     a.Service,
+		Operation:   a.Operation,
+		From:        now.Add(-lookbackFor(a.ComparisonWindow, e.aggInterval)),
+		To:          now,
+		Limit:       aggregateRowCap,
 	})
 	if err != nil {
 		return nil, err

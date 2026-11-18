@@ -293,8 +293,12 @@ type SLOCount struct {
 }
 
 type Alert struct {
-	ID               int64   `json:"id"`
-	ProjectID        int64   `json:"projectId"`
+	ID        int64 `json:"id"`
+	ProjectID int64 `json:"projectId"`
+	// Environment limits a span alert to one deployment environment. Empty
+	// evaluates every environment of the service; production also counts the
+	// rows that name none.
+	Environment      string  `json:"environment"`
 	Service          string  `json:"service"`
 	Operation        string  `json:"operation"`
 	Type             string  `json:"type"`

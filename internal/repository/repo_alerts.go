@@ -16,14 +16,14 @@ func (r *Repository) ListAlerts(projectID int64) ([]Alert, error) {
 	)
 	if projectID == 0 {
 		rows, err = r.db.Query(
-			`SELECT id, project_id, service, operation, type, threshold,
+			`SELECT id, project_id, environment, service, operation, type, threshold,
 				comparison_window, cooldown_minutes, COALESCE(webhook_url,''), COALESCE(email,''),
 				enabled, metric_name, metric_agg, label_filters, last_triggered_at, created_at
 			FROM alerts ORDER BY id`,
 		)
 	} else {
 		rows, err = r.db.Query(
-			`SELECT id, project_id, service, operation, type, threshold,
+			`SELECT id, project_id, environment, service, operation, type, threshold,
 				comparison_window, cooldown_minutes, COALESCE(webhook_url,''), COALESCE(email,''),
 				enabled, metric_name, metric_agg, label_filters, last_triggered_at, created_at
 			FROM alerts WHERE project_id = ? ORDER BY id`,
@@ -39,7 +39,7 @@ func (r *Repository) ListAlerts(projectID int64) ([]Alert, error) {
 		var a Alert
 		var enabled int
 		if err := rows.Scan(
-			&a.ID, &a.ProjectID, &a.Service, &a.Operation, &a.Type, &a.Threshold,
+			&a.ID, &a.ProjectID, &a.Environment, &a.Service, &a.Operation, &a.Type, &a.Threshold,
 			&a.ComparisonWindow, &a.CooldownMinutes, &a.WebhookURL, &a.Email,
 			&enabled, &a.MetricName, &a.MetricAgg, &a.LabelFilters, &a.LastTriggeredAt, &a.CreatedAt,
 		); err != nil {
@@ -68,11 +68,11 @@ func (r *Repository) CreateAlert(a Alert) (int64, error) {
 			enabled = 1
 		}
 		res, e := db.Exec(
-			`INSERT INTO alerts (project_id, service, operation, type, threshold,
+			`INSERT INTO alerts (project_id, environment, service, operation, type, threshold,
 				comparison_window, cooldown_minutes, webhook_url, email, enabled,
 				metric_name, metric_agg, label_filters)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			a.ProjectID, a.Service, a.Operation, a.Type, a.Threshold,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			a.ProjectID, a.Environment, a.Service, a.Operation, a.Type, a.Threshold,
 			a.ComparisonWindow, a.CooldownMinutes, a.WebhookURL, a.Email, enabled,
 			a.MetricName, a.MetricAgg, normalizeLabelFilters(a.LabelFilters),
 		)
@@ -92,11 +92,11 @@ func (r *Repository) UpdateAlert(a Alert) error {
 			enabled = 1
 		}
 		res, err := db.Exec(
-			`UPDATE alerts SET service = ?, operation = ?, type = ?, threshold = ?,
+			`UPDATE alerts SET environment = ?, service = ?, operation = ?, type = ?, threshold = ?,
 				comparison_window = ?, cooldown_minutes = ?, webhook_url = ?, email = ?, enabled = ?,
 				metric_name = ?, metric_agg = ?, label_filters = ?
 			WHERE id = ?`,
-			a.Service, a.Operation, a.Type, a.Threshold,
+			a.Environment, a.Service, a.Operation, a.Type, a.Threshold,
 			a.ComparisonWindow, a.CooldownMinutes, a.WebhookURL, a.Email, enabled,
 			a.MetricName, a.MetricAgg, normalizeLabelFilters(a.LabelFilters),
 			a.ID,
