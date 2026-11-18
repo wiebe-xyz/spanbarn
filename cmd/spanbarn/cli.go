@@ -190,7 +190,7 @@ func runUserList(cfg config.Config) error {
 
 func runProjectCmd(cfg config.Config, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: spanbarn project <create|list|set|merge>")
+		return fmt.Errorf("usage: spanbarn project <create|list|set|merge|archive>")
 	}
 
 	switch args[0] {
@@ -202,6 +202,8 @@ func runProjectCmd(cfg config.Config, args []string) error {
 		return runProjectSet(cfg, args[1:])
 	case "merge":
 		return runProjectMerge(cfg, args[1:])
+	case "archive":
+		return runProjectArchive(cfg, args[1:])
 	default:
 		return fmt.Errorf("unknown project subcommand: %s", args[0])
 	}
