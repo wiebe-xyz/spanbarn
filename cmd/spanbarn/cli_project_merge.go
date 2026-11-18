@@ -84,6 +84,34 @@ func runProjectMerge(cfg config.Config, args []string) error {
 	return nil
 }
 
+// runProjectArchive archives a project that holds no key and no row (#558). A
+// project with data refuses; merge it into its canonical project instead.
+func runProjectArchive(cfg config.Config, args []string) error {
+	fs := flag.NewFlagSet("project archive", flag.ContinueOnError)
+	slug := fs.String("slug", "", "slug of the empty project to archive")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *slug == "" {
+		return errors.New("usage: spanbarn project archive --slug=SLUG")
+	}
+	repo, db, err := openMergeDB(cfg)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	svc := service.NewProjectService(repo)
+	p, err := svc.BySlug(*slug)
+	if err != nil {
+		return fmt.Errorf("find %q: %w", *slug, err)
+	}
+	if err := svc.ArchiveEmpty(context.Background(), p.ID); err != nil {
+		return fmt.Errorf("archive %s: %w", p.Slug, err)
+	}
+	fmt.Printf("%s (project %d) holds nothing and is archived\n", p.Slug, p.ID)
+	return nil
+}
+
 // openMergeDB opens the database the way the writer does, shard manager
 // included. A merge plans one step per active logs, metrics and prompts shard,
 // and without the manager it sees none: it would archive a source that still

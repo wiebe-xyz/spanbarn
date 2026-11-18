@@ -31,6 +31,7 @@ type ProjectRepository interface {
 	RevokeAPIKey(id int64) error
 	UpsertE2EUser(username string, expiresAt time.Time) (repository.User, error)
 	MergeProject(ctx context.Context, spec repository.MergeSpec, opts repository.MergeOptions) ([]repository.MergeStepResult, error)
+	ArchiveEmptyProject(ctx context.Context, id int64) error
 	MergedInto(sourceID int64) (int64, error)
 	ArchivedInto(sourceID int64) (int64, error)
 }
@@ -119,6 +120,12 @@ func (s *ProjectService) RevokeKey(keyID int64) error { return s.repo.RevokeAPIK
 // reports what each table moved; a second call after a stop moves the rest.
 func (s *ProjectService) Merge(ctx context.Context, spec repository.MergeSpec, opts repository.MergeOptions) ([]repository.MergeStepResult, error) {
 	return s.repo.MergeProject(ctx, spec, opts)
+}
+
+// ArchiveEmpty archives a project that holds no key and no row (#558). A project
+// with data refuses.
+func (s *ProjectService) ArchiveEmpty(ctx context.Context, id int64) error {
+	return s.repo.ArchiveEmptyProject(ctx, id)
 }
 
 // Resolve returns the project a request for id reads: the target when id is a

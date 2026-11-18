@@ -153,15 +153,7 @@ func (r *Repository) runMergeBatch(ctx context.Context, step mergeStep, spec Mer
 		return res, err
 	}
 	inCore := step.fam == engine.FamilyCore
-	write := r.execHigh
-	if !inCore {
-		write = r.execLow
-	}
-	if !step.shardStart.IsZero() {
-		write = func(f engine.Family, fn func(db *sql.DB) error) error {
-			return r.shards.OnShard(f, step.shardStart, "projectMerge", fn)
-		}
-	}
+	write := r.stepWriter(step)
 	err := retryBusy(ctx, func() error {
 		return write(step.fam, func(db *sql.DB) error {
 			tx, err := beginMergeTx(db, step.table)
@@ -197,6 +189,20 @@ func (r *Repository) runMergeBatch(ctx context.Context, step mergeStep, spec Mer
 			return tx.Commit()
 		})
 	})
+}
+
+// stepWriter returns the write queue a step runs on: core writes first, the other
+// families queue behind ingest, and a shard step runs on its shard's queue.
+func (r *Repository) stepWriter(step mergeStep) func(engine.Family, func(*sql.DB) error) error {
+	if !step.shardStart.IsZero() {
+		return func(f engine.Family, fn func(db *sql.DB) error) error {
+			return r.shards.OnShard(f, step.shardStart, "projectMerge", fn)
+		}
+	}
+	if step.fam == engine.FamilyCore {
+		return r.execHigh
+	}
+	return r.execLow
 }
 
 // beginMergeTx opens a batch transaction that holds the write lock before its
