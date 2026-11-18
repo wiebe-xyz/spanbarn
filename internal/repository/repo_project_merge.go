@@ -162,36 +162,40 @@ func (r *Repository) runMergeBatch(ctx context.Context, step mergeStep, spec Mer
 			return r.shards.OnShard(f, step.shardStart, "projectMerge", fn)
 		}
 	}
-	err := write(step.fam, func(db *sql.DB) error {
-		tx, err := beginMergeTx(db, step.table)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		if res, err = step.batch(tx, spec, n); err != nil {
-			return err
-		}
-		res.Family, res.Table, res.Shard = step.family, step.table, step.shardLabel()
-		if inCore && res.Moved+res.Collided > 0 {
-			if err := recordMergeProgress(tx, spec, res); err != nil {
+	err := retryBusy(ctx, func() error {
+		return write(step.fam, func(db *sql.DB) error {
+			tx, err := beginMergeTx(db, step.table)
+			if err != nil {
 				return err
 			}
-		}
-		return tx.Commit()
+			defer tx.Rollback()
+			if res, err = step.batch(tx, spec, n); err != nil {
+				return err
+			}
+			res.Family, res.Table, res.Shard = step.family, step.table, step.shardLabel()
+			if inCore && res.Moved+res.Collided > 0 {
+				if err := recordMergeProgress(tx, spec, res); err != nil {
+					return err
+				}
+			}
+			return tx.Commit()
+		})
 	})
 	if err != nil || inCore || res.Moved+res.Collided == 0 {
 		return res, err
 	}
-	return res, r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		if err := recordMergeProgress(tx, spec, res); err != nil {
-			return err
-		}
-		return tx.Commit()
+	return res, retryBusy(ctx, func() error {
+		return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
+			tx, err := db.Begin()
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback()
+			if err := recordMergeProgress(tx, spec, res); err != nil {
+				return err
+			}
+			return tx.Commit()
+		})
 	})
 }
 
