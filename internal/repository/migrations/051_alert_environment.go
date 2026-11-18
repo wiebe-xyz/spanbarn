@@ -3,6 +3,7 @@ package migrations
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	"github.com/pressly/goose/v3"
 )
@@ -15,16 +16,13 @@ func init() {
 // production, staging and testing aggregates of one service into one project,
 // and an alert summed all of them. The default is empty, which keeps every
 // existing alert evaluating all environments, so an older image after a
-// rollback reads the same rows.
+// rollback reads the same rows. A run over a database that has the column is a
+// no-op.
 func up051(ctx context.Context, tx *sql.Tx) error {
-	var have int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('alerts') WHERE name = 'environment'`).Scan(&have); err != nil {
-		return err
-	}
-	if have > 0 {
+	_, err := tx.ExecContext(ctx, `ALTER TABLE alerts ADD COLUMN environment TEXT NOT NULL DEFAULT ''`)
+	if err != nil && strings.Contains(err.Error(), "duplicate column") {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, `ALTER TABLE alerts ADD COLUMN environment TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 
