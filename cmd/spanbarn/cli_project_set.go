@@ -16,7 +16,7 @@ func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 // the running server already reads, so no restart is needed (they are cached
 // for a short TTL).
 func runProjectSet(cfg config.Config, args []string) error {
-	const usage = "usage: spanbarn project set <slug> [--trace-ratio=N [--op=NAME]] [--log-retention-hours=H]"
+	const usage = "usage: spanbarn project set <slug> [--trace-ratio=N [--op=NAME]] [--log-retention-hours=H] [--organizations=ID,ID]"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
@@ -25,10 +25,12 @@ func runProjectSet(cfg config.Config, args []string) error {
 	traceRatio := fs.Int("trace-ratio", -1, "keep 1 in N traces (1 keeps every trace, 0 returns to the defaults)")
 	op := fs.String("op", "", "with --trace-ratio: apply the ratio to traces whose root operation is NAME only")
 	logHours := fs.Int("log-retention-hours", -1, "delete the project's logs older than H hours, error-trace logs included (0 removes the cap)")
+	orgs := fs.String("organizations", "-", "IamBarn organization ids besides the owner's that may read the project (empty returns it to owner-only)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if err := checkProjectSetFlags(*traceRatio, *logHours, *op, usage); err != nil {
+	setOrgs := *orgs != "-"
+	if err := checkProjectSetOptions(setOrgs, *traceRatio, *logHours, *op, usage); err != nil {
 		return err
 	}
 
@@ -41,6 +43,11 @@ func runProjectSet(cfg config.Config, args []string) error {
 	p, err := service.NewProjectService(repo).BySlug(slug)
 	if err != nil {
 		return fmt.Errorf("find project %q: %w", slug, err)
+	}
+	if setOrgs {
+		if err := setProjectOrganizations(service.NewProjectService(repo), p.ID, slug, *orgs); err != nil {
+			return err
+		}
 	}
 	if *traceRatio >= 0 {
 		if err := applyTraceRatio(service.NewSettingsService(repo), slug, p.ID, *op, *traceRatio); err != nil {

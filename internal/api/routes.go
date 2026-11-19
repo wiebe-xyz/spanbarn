@@ -345,6 +345,8 @@ func (s *Server) readAuthMiddleware() func(http.Handler) http.Handler {
 	if s.repo == nil {
 		return auth
 	}
-	resolve := withMergedProjects(s.projectService())
-	return func(h http.Handler) http.Handler { return resolve(auth(h)) }
+	projects := s.projectService()
+	resolve := withMergedProjects(projects)
+	scope := withOrganizationScope(projects, s.oidcClient)
+	return func(h http.Handler) http.Handler { return resolve(auth(scope(h))) }
 }

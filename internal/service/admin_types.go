@@ -20,6 +20,7 @@ type (
 	MetricCatalogEntry = repository.MetricCatalogEntry
 	MetricRow          = repository.MetricRow
 	SavedQuery         = repository.SavedQuery
+	Project            = repository.Project
 	ProjectUsageStats  = repository.ProjectUsageStats
 	DBSize             = repository.DBSize
 	DBCounts           = repository.DBCounts
