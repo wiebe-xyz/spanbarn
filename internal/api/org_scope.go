@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
 // ctxOrgScope carries the organization whose projects a restricted caller may
@@ -15,7 +15,7 @@ import (
 const ctxOrgScope contextKey = "orgScope"
 
 type projectLookup interface {
-	ByID(id int64) (repository.Project, error)
+	ByID(id int64) (service.Project, error)
 }
 
 // listsOrganization reports whether a project's organization list names org.
@@ -77,12 +77,12 @@ func withOrganizationScope(projects projectLookup, oidcFn func() *auth.OIDCClien
 
 // filterProjectsForOrganization keeps the projects that list the organization
 // the request was scoped to; an unscoped request keeps every project.
-func filterProjectsForOrganization(ctx context.Context, projects []repository.Project) []repository.Project {
+func filterProjectsForOrganization(ctx context.Context, projects []service.Project) []service.Project {
 	org, _ := ctx.Value(ctxOrgScope).(string)
 	if org == "" {
 		return projects
 	}
-	out := make([]repository.Project, 0, len(projects))
+	out := make([]service.Project, 0, len(projects))
 	for _, p := range projects {
 		if listsOrganization(p.OrganizationIDs, org) {
 			out = append(out, p)

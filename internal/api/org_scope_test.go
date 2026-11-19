@@ -6,15 +6,15 @@ import (
 	"testing"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
-	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 )
 
-type fakeProjectLookup map[int64]repository.Project
+type fakeProjectLookup map[int64]service.Project
 
-func (f fakeProjectLookup) ByID(id int64) (repository.Project, error) {
+func (f fakeProjectLookup) ByID(id int64) (service.Project, error) {
 	p, ok := f[id]
 	if !ok {
-		return repository.Project{}, http.ErrNoCookie
+		return service.Project{}, http.ErrNoCookie
 	}
 	return p, nil
 }
@@ -69,7 +69,7 @@ func TestOrganizationScopeMatrix(t *testing.T) {
 
 func TestOrganizationScopeFiltersTheProjectList(t *testing.T) {
 	oc := auth.NewOIDCClient(auth.OIDCConfig{RequiredOrganizationID: "org-owner,org-e2e"})
-	all := []repository.Project{
+	all := []service.Project{
 		{ID: 1, OrganizationIDs: "org-e2e"}, {ID: 2}, {ID: 3, OrganizationIDs: "org-other,org-e2e"},
 	}
 	gate := withOrganizationScope(fakeProjectLookup{}, func() *auth.OIDCClient { return oc })
