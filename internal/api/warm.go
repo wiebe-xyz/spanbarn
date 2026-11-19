@@ -177,3 +177,57 @@ func WarmDashboardLoop(ctx context.Context, qs *service.QueryService, logger *sl
 		}
 	}()
 }
+
+// traceListWarmPeriod is how often the trace list warm runs. The page cache
+// drops a shard's pages after a quiet spell, so the reads repeat inside the
+// time a viewer takes to come back (#457).
+const traceListWarmPeriod = 5 * time.Minute
+
+// warmTraceListsOnce reads the newest hour of the trace list for every project
+// that is not archived, one read at a time.
+func warmTraceListsOnce(ctx context.Context, qs *service.QueryService, projects service.ProjectRepository, logger *slog.Logger) {
+	start := time.Now()
+	list, err := projects.ListProjects()
+	if err != nil {
+		logger.Warn("warm trace lists: listing projects failed", "error", err)
+		return
+	}
+	ids := make([]int64, 0, len(list))
+	for _, p := range list {
+		ids = append(ids, p.ID)
+	}
+	wctx, cancel := context.WithTimeout(ctx, traceListWarmPeriod)
+	defer cancel()
+	reads, err := qs.WarmTraceLists(wctx, ids, start)
+	if err != nil {
+		if ctx.Err() == nil {
+			logger.Warn("warm trace lists: failed", "reads", reads, "elapsed", time.Since(start), "error", err)
+		}
+		return
+	}
+	logger.Debug("warm trace lists: complete", "reads", reads, "elapsed", time.Since(start))
+}
+
+// WarmTraceListsLoop keeps the pages under the newest hour of every project's
+// trace list in the page cache: one pass at start, then one every
+// traceListWarmPeriod until ctx is cancelled. A missed pass costs the next
+// viewer a slow first read and loses no data.
+func WarmTraceListsLoop(ctx context.Context, qs *service.QueryService, projects service.ProjectRepository, logger *slog.Logger) {
+	if qs == nil || projects == nil {
+		return
+	}
+	go func() {
+		defer observability.RecoverAndReport("warm-trace-lists", false)
+		warmTraceListsOnce(ctx, qs, projects, logger)
+		ticker := time.NewTicker(traceListWarmPeriod)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				warmTraceListsOnce(ctx, qs, projects, logger)
+			}
+		}
+	}()
+}

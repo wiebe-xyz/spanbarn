@@ -203,6 +203,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 
 	api.WarmCaches(ctx, queryRepo, querySvc.Cache(), logger)
 	api.WarmDashboardLoop(ctx, querySvc, logger)
+	api.WarmTraceListsLoop(ctx, querySvc, repo, logger)
 
 	mux := http.NewServeMux()
 	mux.Handle("/", apiServer.Handler())
