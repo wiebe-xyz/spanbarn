@@ -1,0 +1,12 @@
+# Organizations besides the owner's that may sign in (#547). An IamBarn
+# organization id is an identifier, not a credential, so it is plain config.
+# The owner's organization stays in SPANBARN_OIDC_ORGANIZATION_ID (SOPS).
+# e2e-spanbarn is the acceptance organization; its user needs an owner,
+# organization_admin or operator role there. It reads only the projects that
+# list it (#557): the e2e-acceptance project. List it on no other project.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spanbarn-config
+data:
+  SPANBARN_OIDC_EXTRA_ORGANIZATION_IDS: "org_1794821499287534474"
