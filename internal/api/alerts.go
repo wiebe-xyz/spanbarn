@@ -39,6 +39,7 @@ type alertHandlers struct {
 
 type alertRequest struct {
 	ProjectID        int64             `json:"projectId"`
+	Environment      string            `json:"environment"`
 	Service          string            `json:"service"`
 	Operation        string            `json:"operation"`
 	Type             string            `json:"type"`
@@ -56,6 +57,7 @@ type alertRequest struct {
 type alertResponse struct {
 	ID               int64             `json:"id"`
 	ProjectID        int64             `json:"projectId"`
+	Environment      string            `json:"environment"`
 	Service          string            `json:"service"`
 	Operation        string            `json:"operation"`
 	Type             string            `json:"type"`
@@ -76,6 +78,7 @@ func toAlertResponse(a service.Alert) alertResponse {
 	resp := alertResponse{
 		ID:               a.ID,
 		ProjectID:        a.ProjectID,
+		Environment:      a.Environment,
 		Service:          a.Service,
 		Operation:        a.Operation,
 		Type:             a.Type,
@@ -173,6 +176,7 @@ func (h *alertHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 
 	alert := service.Alert{
 		ProjectID:        req.ProjectID,
+		Environment:      req.Environment,
 		Service:          req.Service,
 		Operation:        req.Operation,
 		Type:             req.Type,
@@ -273,6 +277,7 @@ func (h *alertHandlers) handleUpdate(w http.ResponseWriter, r *http.Request, id 
 
 	alert := service.Alert{
 		ID:               id,
+		Environment:      req.Environment,
 		Service:          req.Service,
 		Operation:        req.Operation,
 		Type:             req.Type,

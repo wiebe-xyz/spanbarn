@@ -153,3 +153,27 @@ func TestDeleteAlert(t *testing.T) {
 		t.Fatal("expected error for nonexistent alert")
 	}
 }
+
+func TestAlertEnvironmentRoundTrips(t *testing.T) {
+	repo := setupTestDB(t)
+	p, err := repo.CreateProject("proj", "Project")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	id, err := repo.CreateAlert(Alert{ProjectID: p.ID, Environment: "production", Service: "web", Type: "error_rate", Threshold: 5, Enabled: true})
+	if err != nil {
+		t.Fatalf("CreateAlert: %v", err)
+	}
+	got, err := repo.ListAlerts(p.ID)
+	if err != nil || len(got) != 1 || got[0].Environment != "production" {
+		t.Fatalf("created alert reads %+v, %v; want environment production", got, err)
+	}
+	got[0].Environment = ""
+	if err := repo.UpdateAlert(got[0]); err != nil {
+		t.Fatalf("UpdateAlert: %v", err)
+	}
+	got, err = repo.ListAlerts(p.ID)
+	if err != nil || len(got) != 1 || got[0].ID != id || got[0].Environment != "" {
+		t.Fatalf("updated alert reads %+v, %v; want empty environment", got, err)
+	}
+}

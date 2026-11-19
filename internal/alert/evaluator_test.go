@@ -67,6 +67,10 @@ func (m *mockAlertRepo) QueryAggregates(f repository.AggregateFilter) ([]reposit
 		if f.ProjectID != 0 && a.ProjectID != f.ProjectID {
 			continue
 		}
+		if f.Environment != "" && f.Environment != "all" && a.Environment != f.Environment &&
+			!(f.Environment == "production" && a.Environment == "") {
+			continue
+		}
 		if f.Service != "" && a.Service != f.Service {
 			continue
 		}
@@ -518,5 +522,50 @@ func TestSumByBucketWeightsP95ByCount(t *testing.T) {
 	}
 	if got[1].Count != 5 || got[1].P95Us != 200 {
 		t.Errorf("older bucket = %+v", got[1])
+	}
+}
+
+// TestEvaluateErrorRateAlertHonoursItsEnvironment is #329: after the project
+// merge one service held production, staging and testing rows, and an alert
+// summed all of them. An alert with an environment reads only that one.
+func TestEvaluateErrorRateAlertHonoursItsEnvironment(t *testing.T) {
+	now := time.Date(2026, 5, 3, 12, 10, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		env       string
+		wantEmail int
+	}{
+		{env: "production", wantEmail: 0},
+		{env: "testing", wantEmail: 1},
+		{env: "", wantEmail: 1},
+	} {
+		t.Run("environment "+tc.env, func(t *testing.T) {
+			repo := newMockRepo()
+			repo.alerts = []repository.Alert{{
+				ID: 3, ProjectID: 1, Environment: tc.env, Service: "api", Type: "error_rate",
+				Threshold: 5.0, ComparisonWindow: 3, CooldownMinutes: 15,
+				Email: "ops@example.com", Enabled: true,
+			}}
+			for i := 1; i <= 4; i++ {
+				at := now.Add(-time.Duration(i) * time.Minute)
+				repo.aggregates = append(repo.aggregates,
+					repository.Aggregate{ProjectID: 1, Environment: "production", Service: "api", Operation: "GET /a", Bucket: at, Count: 100, ErrorCount: 1},
+					repository.Aggregate{ProjectID: 1, Environment: "testing", Service: "api", Operation: "GET /a", Bucket: at, Count: 100, ErrorCount: 1},
+				)
+			}
+			// Only testing errs in the newest bucket.
+			repo.aggregates = append(repo.aggregates, repository.Aggregate{
+				ProjectID: 1, Environment: "testing", Service: "api", Operation: "GET /a",
+				Bucket: now.Add(-30 * time.Second), Count: 100, ErrorCount: 60,
+			})
+			notifier := &mockNotifier{}
+			eval := NewEvaluator(repo, notifier, slog.Default(), nil)
+			eval.now = func() time.Time { return now }
+			if err := eval.Evaluate(context.Background(), 1); err != nil {
+				t.Fatalf("Evaluate: %v", err)
+			}
+			if len(notifier.emails) != tc.wantEmail {
+				t.Fatalf("environment %q: got %d emails, want %d", tc.env, len(notifier.emails), tc.wantEmail)
+			}
+		})
 	}
 }
