@@ -30,10 +30,16 @@ spec:
           # The 500m CPU limit throttled 4.5% of periods (~920 s), which stalls
           # the serial write scheduler; the limit is raised to 2 cores and the
           # request kept low so scheduling is unchanged.
+          # 2026-11-19 (#457): at 3Gi the pod sat at its limit again (page cache
+          # 2.0 GB of 2.7 GB used, 1.77M file refaults and 51k major faults in
+          # 2.3 h), and the first UI read after a quiet spell took 1.3 to 1.5 s
+          # against 0.08 s for repeats. The limit goes to 5Gi so the kernel can
+          # keep the newest shards cached; the request stays 3Gi, so scheduling
+          # is unchanged. layer7 had ~5 GB available memory when this was set.
           resources:
             requests:
               cpu: 250m
               memory: 3Gi
             limits:
               cpu: "2"
-              memory: 3Gi
+              memory: 5Gi
