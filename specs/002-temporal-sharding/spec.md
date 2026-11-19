@@ -59,6 +59,7 @@ One SQLite file made every heavy write contend with every read, and expiring a d
 - **FR-012**: The log retention delete MUST work on sharded logs and keep logs of pinned and error-sampled traces. Issues: [#307](https://github.com/wiebe-xyz/spanbarn/issues/307). Tests: `internal/repository/project_log_cap_shards_test.go::TestDeleteProjectLogsOlderThanOnShardedLogs`, `internal/repository/repo_logs_test.go::TestDeleteLogsOlderThan_SkipsErrorSampled`.
 - **FR-013**: CI MUST run the repository tests a second time with `SPANBARN_TEST_LAYOUT=split`. Issues: [#248](https://github.com/wiebe-xyz/spanbarn/issues/248). Tests: `.github/workflows/ci.yml` (the `code` job).
 - **FR-014**: The shard `kept_logs` table in main holds logs of pinned and error-sampled traces when a logs shard retires. Issues: none found. [inferred]
+- **FR-015**: The reader keeps the pages under the newest hour of the trace list in the page cache. `WarmTraceListsLoop` runs one pass at start and one every 5 minutes: for all projects and for every project that is not archived it reads the traces page default (newest hour, root spans, errors first, 50 rows), one read at a time, and stops between two reads when the context ends. The reads discard their result; the first read after a quiet spell took 1.5 s against 0.07 s for the repeat. Tests: `TestWarmTraceListsReadsTheTracesPageDefaultPerProject`, `TestWarmTraceListsStopsBetweenReadsWhenCancelled`, `TestWarmTraceListsOnceSurvivesAProjectListFailure`. [#457]
 
 ## Non-Functional Requirements
 

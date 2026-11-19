@@ -156,6 +156,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	if roRepo != nil && queryCache != nil {
 		api.WarmCaches(readerCtx, roRepo, queryCache, logger)
 		api.WarmDashboardLoop(readerCtx, querySvc, logger)
+		api.WarmTraceListsLoop(readerCtx, querySvc, roRepo, logger)
 	}
 
 	mux := http.NewServeMux()
