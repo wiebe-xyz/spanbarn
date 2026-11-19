@@ -202,6 +202,8 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	safeGo("metrics-consumer", &wg, func() { runMetricsConsumer(workerCtx, writeQueue.Metrics(), metricAccumulator, rawMetrics, logger) })
 	safeGo("logs-consumer", &wg, func() { runLogsConsumer(workerCtx, writeQueue.Logs(), repo, logger) })
 	safeGo("apikey-touch-consumer", &wg, func() { runTouchConsumer(workerCtx, writeQueue, repo, logger) })
+	startKeyRejectionCounter(workerCtx, &wg, authorizer, storeKeyRejections(repo), logger)
+	safeGo("key-rejection-consumer", &wg, func() { runKeyRejectionConsumer(workerCtx, writeQueue, repo, logger) })
 	safeGo("span-ledger-consumer", &wg, func() { runSpanLedgerConsumer(workerCtx, writeQueue.SpanLedger(), repo, logger) })
 	ledgerWatch := service.NewSpanLedgerWatch(queryRepo, writeQueue.Len, logger)
 	ledgerWatch.SetRecheck(time.Duration(cfg.SpanLedgerRecheckMinutes) * time.Minute)

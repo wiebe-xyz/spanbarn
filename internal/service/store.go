@@ -14,6 +14,7 @@ type Store interface {
 	BoardRepository
 	SLORepository
 	CalculatedFieldRepository
+	KeyRejectionRepository
 }
 
 // WarmRepository is the storage the cache warmers need.

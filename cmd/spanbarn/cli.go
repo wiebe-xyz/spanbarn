@@ -267,7 +267,7 @@ func runProjectList(cfg config.Config) error {
 
 func runAPIKeyCmd(cfg config.Config, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: spanbarn apikey <create|list|revoke|set-env>")
+		return fmt.Errorf("usage: spanbarn apikey <create|list|revoke|set-env|rejections>")
 	}
 
 	switch args[0] {
@@ -279,6 +279,8 @@ func runAPIKeyCmd(cfg config.Config, args []string) error {
 		return runAPIKeyRevoke(cfg, args[1:])
 	case "set-env":
 		return runAPIKeySetEnv(cfg, args[1:])
+	case "rejections":
+		return runAPIKeyRejections(cfg, args[1:])
 	default:
 		return fmt.Errorf("unknown apikey subcommand: %s", args[0])
 	}

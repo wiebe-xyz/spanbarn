@@ -115,6 +115,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	authorizer := auth.NewAuthorizer(staticKeyHash(cfg), keyLookup, logger)
+	startKeyRejectionCounter(readerCtx, &wg, authorizer, writeQueue.PublishKeyRejections, logger)
 
 	serverCfg := serverConfigFrom(cfg)
 	// Trace buffer: holds spans for up to 10 min then applies ratio-based

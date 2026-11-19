@@ -308,6 +308,8 @@ func (s *Server) registerProjectRoutes(env *routeEnv) {
 	ph := &projectHandlers{svc: s.projectService(), settings: service.NewSettingsService(s.repo), cache: s.cache}
 	s.mux.Handle("/api/v1/projects", env.apiRL(env.readAuth(ph)))
 	s.mux.Handle("/api/v1/projects/", env.apiRL(env.readAuth(ph)))
+	krh := &keyRejectionHandlers{svc: service.NewKeyRejectionService(s.repo)}
+	s.mux.Handle("/api/v1/apikey-rejections", env.apiRL(env.readAuth(krh)))
 }
 
 // registerMetricsAndLogsRoutes mounts the metrics and logs query endpoints.
