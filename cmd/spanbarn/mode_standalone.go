@@ -151,7 +151,7 @@ func runStandalone(cfg config.Config, logger *slog.Logger) error {
 	safeGo("alert-runner", &wg, func() { alertRunner.Run(alertCtx) })
 
 	authorizer := auth.NewAuthorizer(staticKeyHash(cfg), &keyLookupAdapter{repo: repo}, logger)
-	_ = authorizer
+	startKeyRejectionCounter(ctx, &wg, authorizer, storeKeyRejections(repo), logger)
 	userAuth := auth.NewUserAuthenticator(&userLookupAdapter{repo: repo}, logger)
 	sessions := newSessionService(repo, cfg, logger)
 

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"log/slog"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
@@ -15,6 +17,9 @@ type keyLookupAdapter struct {
 
 func (a *keyLookupAdapter) GetAPIKeyByHash(keyHash string) (auth.APIKeyRecord, error) {
 	k, err := a.repo.GetAPIKeyByHash(keyHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return auth.APIKeyRecord{}, auth.ErrKeyNotFound
+	}
 	if err != nil {
 		return auth.APIKeyRecord{}, err
 	}

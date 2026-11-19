@@ -100,8 +100,31 @@ func (r *Repository) ListAllAPIKeys() ([]APIKey, error) {
 	return out, rows.Err()
 }
 
+// RevokeAPIKey deletes the key and remembers its fingerprint, id, project and
+// name in revoked_keys, so a request that still uses it shows up in the
+// rejection counters as a revoked key (#572). It returns sql.ErrNoRows for an
+// id no key has.
 func (r *Repository) RevokeAPIKey(id int64) error {
-	return r.execHighExpectingRows(engine.FamilyCore, "DELETE FROM api_keys WHERE id = ?", id)
+	return r.execHigh(engine.FamilyCore, func(db *sql.DB) error {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO revoked_keys (fingerprint, key_id, project_id, name, revoked_at)
+			SELECT substr(key_hash, 1, ?), id, project_id, name, CAST(strftime('%s', 'now') AS INTEGER) FROM api_keys WHERE id = ?`,
+			KeyFingerprintLen, id); err != nil {
+			return err
+		}
+		res, err := tx.Exec("DELETE FROM api_keys WHERE id = ?", id)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return sql.ErrNoRows
+		}
+		return tx.Commit()
+	})
 }
 
 // SetAPIKeyEnvironment sets the environment stamped on records that arrive

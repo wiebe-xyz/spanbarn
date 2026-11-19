@@ -227,7 +227,9 @@ func TestEveryProjectTableIsMerged(t *testing.T) {
 	for _, s := range plan {
 		merged[s.table] = true
 	}
-	exempt := map[string]string{}
+	exempt := map[string]string{
+		"revoked_keys": "a record of the project a key belonged to when it was revoked; the merge repoints live keys, and the record stays as it was (#572)",
+	}
 	rows, err := repo.db.Query(`SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
 		WHERE m.type = 'table' AND c.name = 'project_id' ORDER BY 1`)
 	if err != nil {

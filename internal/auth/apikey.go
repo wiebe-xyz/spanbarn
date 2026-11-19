@@ -45,7 +45,12 @@ type Authorizer struct {
 	staticHash []byte // raw SHA-256 bytes (32 bytes)
 	repo       KeyLookup
 	logger     *slog.Logger
+	rejections RejectionSink
 }
+
+// SetRejectionSink makes the authorizer report every request whose key no
+// stored key matches (#572). Call it before the authorizer serves requests.
+func (a *Authorizer) SetRejectionSink(s RejectionSink) { a.rejections = s }
 
 // NewAuthorizer creates an Authorizer. staticKeyHash is the hex-encoded SHA-256
 // of the static env key (may be empty to skip static key auth). repo may be nil
@@ -101,6 +106,9 @@ func (a *Authorizer) AuthorizeIdentity(key string) (Identity, error) {
 				a.logger.Warn("failed to touch API key", "id", rec.ID, "error", touchErr)
 			}
 			return Identity{ProjectID: rec.ProjectID, Scope: rec.Scope, Environment: rec.Environment, KeyID: rec.ID}, nil
+		}
+		if errors.Is(err, ErrKeyNotFound) && a.rejections != nil {
+			a.rejections.Reject(hexHash[:KeyFingerprintLen])
 		}
 	}
 
