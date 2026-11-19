@@ -8,8 +8,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/wiebe-xyz/spanbarn/internal/model"
 )
 
 type lookupFunc func(hash string) (APIKeyRecord, error)
@@ -76,7 +74,7 @@ func TestRejectionCounterTalliesPerFingerprintAndFlushes(t *testing.T) {
 	if dropped != 0 || len(rows) != 2 {
 		t.Fatalf("flush = %v dropped %d, want two fingerprints", rows, dropped)
 	}
-	got := map[string]model.KeyRejection{}
+	got := map[string]KeyRejection{}
 	for _, r := range rows {
 		got[r.Fingerprint] = r
 	}
@@ -105,8 +103,8 @@ func TestRejectionCounterKeepsCountsWhenTheStoreFails(t *testing.T) {
 	c := NewRejectionCounter()
 	c.Reject("aaaaaaaa")
 	fail := true
-	var stored []model.KeyRejection
-	store := func(_ context.Context, rows []model.KeyRejection) error {
+	var stored []KeyRejection
+	store := func(_ context.Context, rows []KeyRejection) error {
 		if fail {
 			return errors.New("redis down")
 		}
@@ -126,10 +124,10 @@ func TestRejectionCounterRunFlushesOnItsInterval(t *testing.T) {
 	c := NewRejectionCounter()
 	c.Reject("aaaaaaaa")
 	var mu sync.Mutex
-	got := make(chan []model.KeyRejection, 1)
+	got := make(chan []KeyRejection, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go c.Run(ctx, 10*time.Millisecond, func(_ context.Context, rows []model.KeyRejection) error {
+	go c.Run(ctx, 10*time.Millisecond, func(_ context.Context, rows []KeyRejection) error {
 		mu.Lock()
 		defer mu.Unlock()
 		select {

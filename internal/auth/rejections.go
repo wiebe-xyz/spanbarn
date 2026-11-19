@@ -6,8 +6,6 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/wiebe-xyz/spanbarn/internal/model"
 )
 
 // ErrKeyNotFound is what a KeyLookup returns for a hash no key has. Any other
@@ -29,19 +27,30 @@ const KeyFingerprintLen = 8
 // that tries a new key on every request must not grow the map without limit.
 const rejectionMaxKeys = 1024
 
+// KeyRejection counts the requests one unknown or revoked API key made.
+// Fingerprint is the first eight hex digits of the key's SHA-256 hash: enough
+// to match a key a sender still uses, and of no use for guessing it. LastSeen is
+// the unix second of the newest rejected request. The auth package is a leaf, so
+// the pod wiring converts it to model.KeyRejection for the queue and the table.
+type KeyRejection struct {
+	Fingerprint string
+	Count       int64
+	LastSeen    int64
+}
+
 // RejectionCounter tallies rejected keys in memory until Flush takes them. It
 // is the RejectionSink of every pod; the pod decides where the tally goes.
 type RejectionCounter struct {
 	now func() time.Time
 
 	mu      sync.Mutex
-	counts  map[string]*model.KeyRejection
+	counts  map[string]*KeyRejection
 	dropped int64
 }
 
 // NewRejectionCounter returns an empty counter.
 func NewRejectionCounter() *RejectionCounter {
-	return &RejectionCounter{now: time.Now, counts: make(map[string]*model.KeyRejection)}
+	return &RejectionCounter{now: time.Now, counts: make(map[string]*KeyRejection)}
 }
 
 // Reject counts one rejected request.
@@ -58,7 +67,7 @@ func (c *RejectionCounter) Reject(fingerprint string) {
 			c.dropped++
 			return
 		}
-		e = &model.KeyRejection{Fingerprint: fingerprint}
+		e = &KeyRejection{Fingerprint: fingerprint}
 		c.counts[fingerprint] = e
 	}
 	e.Count++
@@ -67,14 +76,14 @@ func (c *RejectionCounter) Reject(fingerprint string) {
 
 // Flush returns the counts since the last flush and the number of requests
 // dropped for lack of room, and starts a new tally.
-func (c *RejectionCounter) Flush() (rows []model.KeyRejection, dropped int64) {
+func (c *RejectionCounter) Flush() (rows []KeyRejection, dropped int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, e := range c.counts {
 		rows = append(rows, *e)
 	}
 	dropped = c.dropped
-	c.counts = make(map[string]*model.KeyRejection)
+	c.counts = make(map[string]*KeyRejection)
 	c.dropped = 0
 	return rows, dropped
 }
@@ -85,7 +94,7 @@ const RejectionFlushInterval = 15 * time.Second
 
 // Run hands the tally to store every interval until ctx ends, then once more.
 // A failed store puts the counts back for the next interval.
-func (c *RejectionCounter) Run(ctx context.Context, interval time.Duration, store func(context.Context, []model.KeyRejection) error, logger *slog.Logger) {
+func (c *RejectionCounter) Run(ctx context.Context, interval time.Duration, store func(context.Context, []KeyRejection) error, logger *slog.Logger) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -99,11 +108,11 @@ func (c *RejectionCounter) Run(ctx context.Context, interval time.Duration, stor
 }
 
 // FlushTo is one flush: it hands the tally to store and puts it back on failure.
-func (c *RejectionCounter) FlushTo(ctx context.Context, store func(context.Context, []model.KeyRejection) error, logger *slog.Logger) {
+func (c *RejectionCounter) FlushTo(ctx context.Context, store func(context.Context, []KeyRejection) error, logger *slog.Logger) {
 	c.flushTo(ctx, store, logger)
 }
 
-func (c *RejectionCounter) flushTo(ctx context.Context, store func(context.Context, []model.KeyRejection) error, logger *slog.Logger) {
+func (c *RejectionCounter) flushTo(ctx context.Context, store func(context.Context, []KeyRejection) error, logger *slog.Logger) {
 	rows, dropped := c.Flush()
 	if dropped > 0 {
 		logger.Warn("key rejections: too many distinct keys between flushes, requests not counted", "requests", dropped)
@@ -118,7 +127,7 @@ func (c *RejectionCounter) flushTo(ctx context.Context, store func(context.Conte
 }
 
 // restore adds counts a failed store did not take back to the tally.
-func (c *RejectionCounter) restore(rows []model.KeyRejection) {
+func (c *RejectionCounter) restore(rows []KeyRejection) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, r := range rows {

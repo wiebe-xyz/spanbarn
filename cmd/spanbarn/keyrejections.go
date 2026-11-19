@@ -22,11 +22,20 @@ func startKeyRejectionCounter(ctx context.Context, wg *sync.WaitGroup, authorize
 	store func(context.Context, []model.KeyRejection) error, logger *slog.Logger) {
 	counter := auth.NewRejectionCounter()
 	authorizer.SetRejectionSink(counter)
+	// auth is a leaf package with a type of its own; the struct conversion
+	// ignores the tags the queue payload carries.
+	toModel := func(ctx context.Context, rows []auth.KeyRejection) error {
+		out := make([]model.KeyRejection, len(rows))
+		for i, r := range rows {
+			out[i] = model.KeyRejection(r)
+		}
+		return store(ctx, out)
+	}
 	safeGo("key-rejections", wg, func() {
-		counter.Run(ctx, auth.RejectionFlushInterval, store, logger)
+		counter.Run(ctx, auth.RejectionFlushInterval, toModel, logger)
 		final, cancel := context.WithTimeout(context.Background(), keyRejectionFinalTimeout)
 		defer cancel()
-		counter.FlushTo(final, store, logger)
+		counter.FlushTo(final, toModel, logger)
 	})
 }
 
