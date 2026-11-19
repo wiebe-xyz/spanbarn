@@ -177,3 +177,24 @@ func TestAlertEnvironmentRoundTrips(t *testing.T) {
 		t.Fatalf("updated alert reads %+v, %v; want empty environment", got, err)
 	}
 }
+
+func TestProjectOrganizationsRoundTrip(t *testing.T) {
+	repo := setupTestDB(t)
+	p, err := repo.CreateProject("proj", "Project")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if p.OrganizationIDs != "" {
+		t.Fatalf("new project lists %q, want owner-only", p.OrganizationIDs)
+	}
+	if err := repo.SetProjectOrganizations(p.ID, "org-a,org-b"); err != nil {
+		t.Fatalf("SetProjectOrganizations: %v", err)
+	}
+	got, err := repo.GetProjectByID(p.ID)
+	if err != nil || got.OrganizationIDs != "org-a,org-b" {
+		t.Fatalf("project reads %q, %v; want org-a,org-b", got.OrganizationIDs, err)
+	}
+	if err := repo.SetProjectOrganizations(999, "x"); err == nil {
+		t.Fatal("setting an unknown project succeeded")
+	}
+}

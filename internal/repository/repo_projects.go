@@ -26,13 +26,13 @@ func (r *Repository) CreateProject(slug, name string) (Project, error) {
 // projectColumns is the SELECT list every project read shares; scanProject
 // consumes it in the same field order, so the column list and scan targets stay
 // defined in exactly one place.
-const projectColumns = "id, slug, name, status, e2e_enabled, created_at"
+const projectColumns = "id, slug, name, status, e2e_enabled, created_at, organization_ids"
 
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanProject(row rowScanner) (Project, error) {
 	var p Project
-	err := row.Scan(&p.ID, &p.Slug, &p.Name, &p.Status, &p.E2EEnabled, &p.CreatedAt)
+	err := row.Scan(&p.ID, &p.Slug, &p.Name, &p.Status, &p.E2EEnabled, &p.CreatedAt, &p.OrganizationIDs)
 	return p, err
 }
 
@@ -65,6 +65,12 @@ func (r *Repository) ListProjects() ([]Project, error) {
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// SetProjectOrganizations replaces the extra organizations that may read a
+// project; empty returns it to owner-only (#557).
+func (r *Repository) SetProjectOrganizations(id int64, organizationIDs string) error {
+	return r.execHighExpectingRows(engine.FamilyCore, "UPDATE projects SET organization_ids = ? WHERE id = ?", organizationIDs, id)
 }
 
 func (r *Repository) SetProjectE2E(id int64, enabled bool) error {

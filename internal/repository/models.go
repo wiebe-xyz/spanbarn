@@ -16,6 +16,9 @@ type Project struct {
 	Status     string    `json:"status"`
 	E2EEnabled bool      `json:"e2eEnabled"`
 	CreatedAt  time.Time `json:"createdAt"`
+	// OrganizationIDs lists, comma separated, the IamBarn organizations besides
+	// the owner's that may read the project. Empty keeps it owner-only.
+	OrganizationIDs string `json:"organizationIds"`
 }
 
 type User struct {

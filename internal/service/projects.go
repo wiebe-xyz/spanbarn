@@ -22,6 +22,7 @@ type ProjectRepository interface {
 	ApproveProject(id int64) (repository.Project, error)
 	DeleteProject(id int64) error
 	SetProjectE2E(id int64, enabled bool) error
+	SetProjectOrganizations(id int64, organizationIDs string) error
 	ProjectUsageStatsAll(hours int) ([]repository.ProjectUsageStats, error)
 	CreateProject(slug, name string) (repository.Project, error)
 	ListAPIKeys(projectID int64) ([]repository.APIKey, error)
@@ -63,6 +64,11 @@ func (s *ProjectService) Approve(id int64) (repository.Project, error) {
 func (s *ProjectService) Delete(id int64) error { return s.repo.DeleteProject(id) }
 func (s *ProjectService) SetE2E(id int64, enabled bool) error {
 	return s.repo.SetProjectE2E(id, enabled)
+}
+
+// SetOrganizations names the extra organizations that may read a project.
+func (s *ProjectService) SetOrganizations(id int64, organizationIDs string) error {
+	return s.repo.SetProjectOrganizations(id, organizationIDs)
 }
 
 // UsageStats returns per-project span counts over the last hours hours, never nil.

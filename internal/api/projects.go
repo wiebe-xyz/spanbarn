@@ -106,7 +106,7 @@ func (h *projectHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 
 	projects, err := h.svc.List()
-	writeListJSON(w, r, "projects", projects, err)
+	writeListJSON(w, r, "projects", filterProjectsForOrganization(r.Context(), projects), err)
 }
 
 func (h *projectHandlers) handleDelete(w http.ResponseWriter, r *http.Request, id int64) {

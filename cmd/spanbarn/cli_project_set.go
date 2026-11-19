@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/wiebe-xyz/spanbarn/internal/config"
 	"github.com/wiebe-xyz/spanbarn/internal/service"
@@ -16,7 +17,7 @@ func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 // the running server already reads, so no restart is needed (they are cached
 // for a short TTL).
 func runProjectSet(cfg config.Config, args []string) error {
-	const usage = "usage: spanbarn project set <slug> [--trace-ratio=N [--op=NAME]] [--log-retention-hours=H]"
+	const usage = "usage: spanbarn project set <slug> [--trace-ratio=N [--op=NAME]] [--log-retention-hours=H] [--organizations=ID,ID]"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
@@ -25,11 +26,15 @@ func runProjectSet(cfg config.Config, args []string) error {
 	traceRatio := fs.Int("trace-ratio", -1, "keep 1 in N traces (1 keeps every trace, 0 returns to the defaults)")
 	op := fs.String("op", "", "with --trace-ratio: apply the ratio to traces whose root operation is NAME only")
 	logHours := fs.Int("log-retention-hours", -1, "delete the project's logs older than H hours, error-trace logs included (0 removes the cap)")
+	orgs := fs.String("organizations", "-", "IamBarn organization ids besides the owner's that may read the project (empty returns it to owner-only)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if err := checkProjectSetFlags(*traceRatio, *logHours, *op, usage); err != nil {
-		return err
+	setOrgs := *orgs != "-"
+	if !setOrgs || *traceRatio != -1 || *logHours != -1 {
+		if err := checkProjectSetFlags(*traceRatio, *logHours, *op, usage); err != nil {
+			return err
+		}
 	}
 
 	repo, db, err := openDB(cfg.DBPath)
@@ -41,6 +46,12 @@ func runProjectSet(cfg config.Config, args []string) error {
 	p, err := service.NewProjectService(repo).BySlug(slug)
 	if err != nil {
 		return fmt.Errorf("find project %q: %w", slug, err)
+	}
+	if setOrgs {
+		if err := service.NewProjectService(repo).SetOrganizations(p.ID, normalizeOrganizations(*orgs)); err != nil {
+			return err
+		}
+		fmt.Printf("%s: organizations set, %d listed\n", slug, len(splitOrganizations(*orgs)))
 	}
 	if *traceRatio >= 0 {
 		if err := applyTraceRatio(service.NewSettingsService(repo), slug, p.ID, *op, *traceRatio); err != nil {
@@ -146,4 +157,20 @@ func checkProjectSetFlags(traceRatio, logHours int, op, usage string) error {
 		return fmt.Errorf("nothing to set. %s", usage)
 	}
 	return nil
+}
+
+// splitOrganizations reads a comma separated organization list, dropping blanks.
+func splitOrganizations(raw string) []string {
+	var out []string
+	for _, id := range strings.Split(raw, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// normalizeOrganizations stores the list without blanks or spaces.
+func normalizeOrganizations(raw string) string {
+	return strings.Join(splitOrganizations(raw), ",")
 }
