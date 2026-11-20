@@ -189,12 +189,21 @@ func serveAPIKey(w http.ResponseWriter, r *http.Request, next http.Handler, auth
 	}
 
 	// Scope the request to the key's project. A non-zero project ID (a
-	// per-project key) overrides any client-supplied project_id so a key cannot
-	// read another project's data. The static/full key has project ID 0 (all
+	// per-project key) overrides a client-supplied project_id that matches it, and
+	// refuses one that names another project, so a key cannot read another
+	// project's data. The static/full key has project ID 0 (all
 	// projects); leave the query param untouched so it can target a project.
 	recordKeyCaller(r, ident)
 	ctx := SetScope(r.Context(), scope)
 	if projectID != 0 {
+		// A request that names another project is refused. The key's project
+		// used to answer in its place, so a caller that asked for project B
+		// with a key of project A read A's data and took it for B's.
+		if asked, err := strconv.ParseInt(r.URL.Query().Get("project_id"), 10, 64); err == nil && asked != 0 && asked != projectID {
+			writeError(w, http.StatusForbidden, "project mismatch",
+				"this API key belongs to project "+strconv.FormatInt(projectID, 10)+", the request names project "+strconv.FormatInt(asked, 10))
+			return
+		}
 		ctx = SetProjectID(ctx, projectID)
 		q := r.URL.Query()
 		q.Set("project_id", strconv.FormatInt(projectID, 10))
