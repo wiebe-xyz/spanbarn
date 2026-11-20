@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,8 +169,8 @@ func TestSessionOrReadKey(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		}))
 
-		// Client tries to target another project; the key must override it.
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/traces?project_id=99", nil)
+		// The client names the key's own project: the request passes, scoped to it.
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/traces?project_id=7", nil)
 		req.Header.Set("X-SpanBarn-Api-Key", readKey)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
@@ -181,7 +182,42 @@ func TestSessionOrReadKey(t *testing.T) {
 			t.Errorf("expected ctx projectID 7, got %d", gotPID)
 		}
 		if gotQueryPID != "7" {
-			t.Errorf("expected project_id query overridden to 7, got %q", gotQueryPID)
+			t.Errorf("expected project_id query 7, got %q", gotQueryPID)
+		}
+
+		// No project named: the key's project is injected.
+		gotQueryPID = ""
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/traces", nil)
+		req.Header.Set("X-SpanBarn-Api-Key", readKey)
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+		if gotQueryPID != "7" {
+			t.Errorf("expected project_id 7 injected, got %q", gotQueryPID)
+		}
+	})
+
+	t.Run("read key refuses a request that names another project", func(t *testing.T) {
+		lookup.hash = auth.HashKey(readKey)
+		lookup.rec = auth.APIKeyRecord{ID: 1, ProjectID: 7, Scope: "read"}
+
+		reached := false
+		handler := SessionOrReadKey(sm, authorizer, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reached = true
+			w.WriteHeader(http.StatusOK)
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/traces?project_id=99", nil)
+		req.Header.Set("X-SpanBarn-Api-Key", readKey)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 for another project, got %d", rec.Code)
+		}
+		if reached {
+			t.Error("the handler ran for a request naming another project")
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "7") || !strings.Contains(body, "99") {
+			t.Errorf("the answer should name both projects, got %q", body)
 		}
 	})
 

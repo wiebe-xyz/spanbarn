@@ -136,7 +136,11 @@ func (c *Client) query(path string, params url.Values) (json.RawMessage, error) 
 		params = url.Values{}
 	}
 	if params.Get("project_id") == "" {
-		if id, err := c.resolveProjectID(); err == nil && id != 0 {
+		id, err := c.resolveProjectID()
+		if err != nil {
+			return nil, err
+		}
+		if id != 0 {
 			params.Set("project_id", strconv.FormatInt(id, 10))
 		}
 	}
@@ -171,6 +175,11 @@ func (c *Client) resolveProjectID() (int64, error) {
 			c.projectID = p.ID
 			return p.ID, nil
 		}
+	}
+	if len(projects) == 1 {
+		// A key bound to one project lists only that project. Reading it as
+		// the asked project's data is the mistake this refuses.
+		return 0, fmt.Errorf("project %q differs from the project of this API key (%q): use a key bound to %q, or drop --project", c.project, projects[0].Slug, c.project)
 	}
 	return 0, fmt.Errorf("project %q not found — run 'sb projects' to list available projects", c.project)
 }
