@@ -68,6 +68,9 @@ func (h *projectHandlers) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
 	}
+	if !projectKeyMayReach(w, r, id) {
+		return
+	}
 	handler(w, r, id)
 }
 
@@ -106,6 +109,7 @@ func (h *projectHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 
 	projects, err := h.svc.List()
+	projects = filterProjectsForKey(r.Context(), projects)
 	writeListJSON(w, r, "projects", filterProjectsForOrganization(r.Context(), projects), err)
 }
 
@@ -139,9 +143,15 @@ func (h *projectHandlers) handleStats(w http.ResponseWriter, r *http.Request) {
 	_, span := apiTracer.Start(r.Context(), "api.projects.stats")
 	defer span.End()
 
-	serveSWR(w, r, h.cache, "projects:stats:24h", projectsStatsFresh, projectsStatsStale,
+	key := "projects:stats:24h"
+	keyProject := GetProjectID(r.Context())
+	if keyProject != 0 {
+		key += ":" + strconv.FormatInt(keyProject, 10)
+	}
+	serveSWR(w, r, h.cache, key, projectsStatsFresh, projectsStatsStale,
 		func(_ context.Context) ([]service.ProjectUsageStats, error) {
-			return h.svc.UsageStats(24)
+			stats, err := h.svc.UsageStats(24)
+			return filterStatsForKey(keyProject, stats), err
 		})
 }
 

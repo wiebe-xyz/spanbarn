@@ -200,8 +200,7 @@ func serveAPIKey(w http.ResponseWriter, r *http.Request, next http.Handler, auth
 		// used to answer in its place, so a caller that asked for project B
 		// with a key of project A read A's data and took it for B's.
 		if asked, err := strconv.ParseInt(r.URL.Query().Get("project_id"), 10, 64); err == nil && asked != 0 && asked != projectID {
-			writeError(w, http.StatusForbidden, "project mismatch",
-				"this API key belongs to project "+strconv.FormatInt(projectID, 10)+", the request names project "+strconv.FormatInt(asked, 10))
+			writeProjectMismatch(w, r, projectID, asked)
 			return
 		}
 		ctx = SetProjectID(ctx, projectID)
