@@ -81,7 +81,7 @@ def run(fail: str = "", script: Path = SCRIPT) -> tuple[subprocess.CompletedProc
             STUB_FAIL=fail,
             STUB_VERBOSE=str(verbose),
             RUNNER_TEMP=tmp,
-            RACE_SHARDED="./internal/repository:4 ./internal/api:2",
+            RACE_SHARDED="./internal/repository:4 ./internal/api:2 ./internal/repository/engine:2",
         )
         result = subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env, timeout=60)
         return result, log.read_text().splitlines()
@@ -92,7 +92,7 @@ class RaceTestScriptTest(unittest.TestCase):
         result, calls = run()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         shards = [c for c in calls if "-run" in c]
-        self.assertEqual(len(shards), 6)
+        self.assertEqual(len(shards), 8)
         for pkg, count in (("internal/repository", 4), ("internal/api", 2)):
             mine = [c for c in shards if c.endswith(f"{MOD}/{pkg}")]
             self.assertEqual(len(mine), count, shards)
@@ -138,6 +138,7 @@ class RaceTestScriptTest(unittest.TestCase):
     def test_the_run_reports_that_the_shards_cover_every_listed_test(self):
         result, _ = run()
         self.assertIn(f"repository: {len(TESTS)} of {len(TESTS)} listed tests ran in 4 shards", result.stdout)
+        self.assertIn(f"repository/engine: {len(TESTS)} of {len(TESTS)} listed tests ran in 2 shards", result.stdout)
         self.assertIn(f"api: {len(TESTS)} of {len(TESTS)} listed tests ran in 2 shards", result.stdout)
 
     def test_a_shard_that_drops_a_test_fails_the_run(self):
