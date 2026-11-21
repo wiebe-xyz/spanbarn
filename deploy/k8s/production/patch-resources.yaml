@@ -19,9 +19,20 @@ spec:
           # goroutine (queue consumers, timers, the API) shared the other one:
           # 18 runnable goroutines in the 2026-10-29 00:03 wedge dump. Four Ps
           # leave room for them; the CPU limit still caps what the pod uses.
+          # 2026-11-21 (layer7 memory): spanbarn.mem.* gauges (PR 592) read, 9 h
+          # after a restart, writer anon memory 1274 MiB against a Go runtime
+          # total of 120 MiB: ~1.15 GiB is SQLite page cache outside the Go
+          # heap (main and spans handles 256 MiB each plus 32 MiB per attached
+          # file and shard handle). The main and spans caches go to 128 MiB and
+          # the attached/shard caches to 16 MiB (staging runs 64 and 16); mmap
+          # windows are file-backed and unchanged. The request drops to 2Gi.
           env:
             - name: GOMAXPROCS
               value: "4"
+            - name: SPANBARN_SQLITE_CACHE_MB
+              value: "128"
+            - name: SPANBARN_SQLITE_RO_CACHE_MB
+              value: "16"
           # The writer ran at its 2Gi limit (memory.events max in the hundreds,
           # ~470 GiB of file refaults over 37h): anon memory (Go heap up to
           # GOMEMLIMIT 1GiB plus the 256 MiB SQLite page cache and the
@@ -39,7 +50,7 @@ spec:
           resources:
             requests:
               cpu: 250m
-              memory: 3Gi
+              memory: 2Gi
             limits:
               cpu: "2"
               memory: 5Gi
