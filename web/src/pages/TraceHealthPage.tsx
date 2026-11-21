@@ -30,7 +30,7 @@ const TABS = [
 ] as const
 
 type Tab = (typeof TABS)[number]['value']
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 type TabData =
   | { tab: 'orphans'; rows: OrphanSpanGroup[] }
   | { tab: 'rootless'; data: RootlessTraces }

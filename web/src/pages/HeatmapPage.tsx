@@ -15,7 +15,7 @@ import { hasFilters, parseFilter, serializeFilter, type FilterExpr } from '../fi
 import { formatCount, formatDuration } from '../utils/format'
 import { ProjectSwitcher } from '../components/ProjectSwitcher'
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 type Corner = { t: number; d: number }
 type Loaded = { data: HeatmapResult; fromUs: number; range: string; filter: FilterExpr; projectId: number }
 

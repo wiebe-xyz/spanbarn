@@ -17,7 +17,7 @@ import {
 import { sortAlpha } from '../../utils/sortAlpha'
 import { ProjectSwitcher } from '../ProjectSwitcher'
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 
 type Props = {
   value: QueryState

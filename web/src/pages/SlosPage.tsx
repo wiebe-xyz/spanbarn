@@ -8,7 +8,7 @@ import { SloCard } from '../components/slo/SloCard'
 import { SloForm } from '../components/slo/SloForm'
 import { ProjectSwitcher } from '../components/ProjectSwitcher'
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 type Row = { slo: Slo; status: SloStatus | null; alerts: BurnAlert[] }
 
 async function loadRows(projectId: number): Promise<Row[]> {

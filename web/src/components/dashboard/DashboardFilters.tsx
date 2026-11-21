@@ -15,7 +15,7 @@ type DashboardFiltersProps = {
   onChange: (next: DashboardFilterValues) => void
 }
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 
 const fieldStyle = { padding: '0.25rem 0.5rem', fontSize: '0.8125rem' }
 

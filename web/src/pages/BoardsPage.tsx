@@ -6,7 +6,7 @@ import { errorStyle, inputStyle, mutedText, primaryButton, selectStyle } from '.
 import { BOARD_RANGES } from '../boards/model'
 import { ProjectSwitcher } from '../components/ProjectSwitcher'
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 
 /** The boards of a project, and a form to start a new one. */
 export function BoardsPage(): ReactElement {

@@ -24,7 +24,7 @@ const SAMPLES = [
   { value: '100', label: '1 in 100 spans' },
 ] as const
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 
 /** Which attribute keys exist for a project, how many spans set them and what values they hold. */
 export function AttributesPage(): ReactElement {

@@ -21,7 +21,7 @@ import {
 import { formatCount } from '../utils/format'
 import { sortAlpha } from '../utils/sortAlpha'
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 type Window = { fromMs: number; toMs: number }
 
 const CHART_GROUPS = 8

@@ -5,7 +5,7 @@ import { calculatedFieldsApi, type CalculatedField, type CalculatedFieldSample }
 import { buttonStyle, errorStyle, inputStyle, mutedText, primaryButton, selectStyle } from '../components/boards/styles'
 import { ProjectSwitcher } from '../components/ProjectSwitcher'
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 
 /** How long the editor waits after a keystroke before it asks for a preview. */
 const PREVIEW_DELAY_MS = 300
