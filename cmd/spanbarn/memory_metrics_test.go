@@ -1,0 +1,60 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/wiebe-xyz/spanbarn/internal/selfmetrics"
+)
+
+func TestReadCgroupMemoryPicksTheNamedField(t *testing.T) {
+	dir := t.TempDir()
+	stat := "anon 1386557440\nfile 737091584\nfile_mapped 148201472\nanon_thp 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "memory.stat"), []byte(stat), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for field, want := range map[string]float64{"anon": 1386557440, "file": 737091584, "file_mapped": 148201472} {
+		if got, ok := readCgroupMemory(dir, field); !ok || got != want {
+			t.Errorf("%s = %v %v, want %v", field, got, ok, want)
+		}
+	}
+	if _, ok := readCgroupMemory(dir, "slab"); ok {
+		t.Error("a field the file lacks must read as absent")
+	}
+	if _, ok := readCgroupMemory(t.TempDir(), "anon"); ok {
+		t.Error("a missing memory.stat must read as absent")
+	}
+}
+
+func TestReadCgroupFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "memory.current")
+	if err := os.WriteFile(p, []byte("2168926208\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := readCgroupFile(p); !ok || got != 2168926208 {
+		t.Errorf("memory.current = %v %v", got, ok)
+	}
+	if err := os.WriteFile(p, []byte("max\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readCgroupFile(p); ok {
+		t.Error("a non-numeric value must read as absent")
+	}
+	if _, ok := readCgroupFile(p + ".none"); ok {
+		t.Error("a missing file must read as absent")
+	}
+}
+
+func TestMemoryGaugesReportGoClasses(t *testing.T) {
+	rec := selfmetrics.NewRecorder()
+	registerMemoryGauges(rec)
+	registerMemoryGauges(nil)
+	got := map[string]float64{}
+	for _, r := range rec.Readings() {
+		got[r.Name] = r.Value
+	}
+	if got["spanbarn.mem.go_total_bytes"] <= 0 || got["spanbarn.mem.go_heap_objects_bytes"] <= 0 {
+		t.Errorf("go memory classes = %v", got)
+	}
+}
