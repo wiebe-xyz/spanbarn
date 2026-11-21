@@ -14,6 +14,7 @@ import {
   type QueryState,
   type RangeValue,
 } from '../../analyze/model'
+import { sortAlpha } from '../../utils/sortAlpha'
 
 type Project = { id: number; name: string }
 
@@ -56,7 +57,7 @@ export function QueryEditor({ value, projects, onChange, onRun, running }: Props
       style={{ marginBottom: 16 }}
     >
       <datalist id={KEY_LIST_ID}>
-        {suggestions.keys.map((k) => <option key={k} value={k} />)}
+        {sortAlpha(suggestions.keys).map((k) => <option key={k} value={k} />)}
       </datalist>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -66,7 +67,7 @@ export function QueryEditor({ value, projects, onChange, onRun, running }: Props
           onChange={(e) => set({ projectId: Number(e.target.value) })}
           style={inputStyle}
         >
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <select
           aria-label="Time range"

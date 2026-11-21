@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactElement } from 'react'
 import { api } from '../api/client'
 import { getTimeRange } from '../utils/timeRange'
+import { sortAlpha } from '../utils/sortAlpha'
 
 type Props = {
   value: string
@@ -29,7 +30,7 @@ export function ServiceSelect({ value, onChange, range }: Props): ReactElement {
       }}
     >
       <option value="">All services</option>
-      {services.map((s) => (
+      {sortAlpha(services).map((s) => (
         <option key={s} value={s}>{s}</option>
       ))}
     </select>

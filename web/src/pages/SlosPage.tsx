@@ -6,6 +6,7 @@ import { AutoRefresh } from '../components/AutoRefresh'
 import { errorStyle, mutedText, primaryButton, selectStyle } from '../components/boards/styles'
 import { SloCard } from '../components/slo/SloCard'
 import { SloForm } from '../components/slo/SloForm'
+import { sortAlpha } from '../utils/sortAlpha'
 
 type Project = { id: number; name: string }
 type Row = { slo: Slo; status: SloStatus | null; alerts: BurnAlert[] }
@@ -68,7 +69,7 @@ export function SlosPage(): ReactElement {
           onChange={(e) => { setRows(null); setForm(null); setParams({ project: e.target.value }) }}
           style={selectStyle}
         >
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <button type="button" style={primaryButton} disabled={!projectId} onClick={() => setForm('new')}>New SLO</button>
         <AutoRefresh value={refreshSeconds} onChange={setRefreshSeconds} onRefresh={refresh} />

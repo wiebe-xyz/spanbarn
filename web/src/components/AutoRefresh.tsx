@@ -5,6 +5,7 @@ type AutoRefreshOption = {
   seconds: number
 }
 
+// Natural order: off first, then ascending interval.
 const OPTIONS: AutoRefreshOption[] = [
   { label: 'Off', seconds: 0 },
   { label: '10s', seconds: 10 },

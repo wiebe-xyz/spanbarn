@@ -6,7 +6,9 @@ import { FilterBuilder } from '../components/filter/FilterBuilder'
 import { CompareResults } from '../components/compare/CompareResults'
 import { COMPARE_RANGES } from '../filters/compareLink'
 import { hasFilters, parseFilter, serializeFilter, type FilterExpr } from '../filters/model'
+import { sortAlpha } from '../utils/sortAlpha'
 
+// Natural order: automatic first, then exact, then coarser sampling.
 const SAMPLES = [
   { value: '', label: 'Sampling: automatic' },
   { value: '1', label: 'Exact (every span)' },
@@ -96,7 +98,7 @@ export function ComparePage(): ReactElement {
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <select aria-label="Project" value={projectId} onChange={(e) => update({ project: e.target.value })} style={fieldStyle}>
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <select aria-label="Time range" value={range.value} onChange={(e) => update({ range: e.target.value })} style={fieldStyle}>
           {COMPARE_RANGES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}

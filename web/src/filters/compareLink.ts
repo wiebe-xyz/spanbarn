@@ -1,6 +1,7 @@
 import { serializeFilter, type FilterExpr } from './model'
 
 /** Ranges the comparison page offers. The server caps the range at 7 days. */
+// Natural order: shortest range to longest.
 export const COMPARE_RANGES = [
   { value: '1h', label: 'Last 1 hour', hours: 1 },
   { value: '24h', label: 'Last 1 day', hours: 24 },

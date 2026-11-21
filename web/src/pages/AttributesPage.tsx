@@ -3,8 +3,10 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { AttributeDiscovery, AttributeKey, AttributeValue, SpanNameSummary } from '../api/types'
 import { formatCount } from '../utils/format'
+import { sortAlpha } from '../utils/sortAlpha'
 
 /** The server caps the range at 7 days and samples above 24h. */
+// Natural order: shortest range to longest.
 const RANGES = [
   { value: '1h', label: 'Last 1 hour', hours: 1 },
   { value: '24h', label: 'Last 1 day', hours: 24 },
@@ -12,6 +14,7 @@ const RANGES = [
   { value: '7d', label: 'Last 7 days', hours: 168 },
 ] as const
 
+// Natural order: automatic first, then exact, then coarser sampling.
 const SAMPLES = [
   { value: '', label: 'Sampling: automatic' },
   { value: '1', label: 'Exact (every span)' },
@@ -105,14 +108,14 @@ export function AttributesPage(): ReactElement {
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <select aria-label="Project" value={projectId} onChange={(e) => update({ project: e.target.value })} style={fieldStyle}>
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <select aria-label="Time range" value={range.value} onChange={(e) => update({ range: e.target.value })} style={fieldStyle}>
           {RANGES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
         </select>
         <select aria-label="Span name" value={spanName} onChange={(e) => update({ span: e.target.value })} style={{ ...fieldStyle, maxWidth: 360 }}>
           <option value="">All span names</option>
-          {names.map((n) => <option key={n.name} value={n.name}>{n.name} ({formatCount(n.count)})</option>)}
+          {sortAlpha(names, (n) => n.name).map((n) => <option key={n.name} value={n.name}>{n.name} ({formatCount(n.count)})</option>)}
         </select>
         <select aria-label="Sampling" value={sample} onChange={(e) => update({ sample: e.target.value })} style={fieldStyle}>
           {SAMPLES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}

@@ -11,8 +11,10 @@ import type {
 import { TraceStructureBadges } from '../components/TraceStructureBadges'
 import { formatCount } from '../utils/format'
 import { truncateId } from '../traces/spanTree'
+import { sortAlpha } from '../utils/sortAlpha'
 
 /** The queries join spans back to themselves, so the server caps the range at 7 days. */
+// Natural order: shortest range to longest.
 const RANGES = [
   { value: '1h', label: 'Last 1 hour', hours: 1 },
   { value: '24h', label: 'Last 1 day', hours: 24 },
@@ -115,7 +117,7 @@ export function TraceHealthPage(): ReactElement {
           onChange={(e) => update({ project: e.target.value })}
           style={fieldStyle}
         >
-          {projects.map((p) => (
+          {sortAlpha(projects, (p) => p.name).map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>

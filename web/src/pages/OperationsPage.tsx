@@ -177,11 +177,11 @@ export function OperationsPage(): ReactElement {
             }}
           >
             <option value="">All</option>
-            <option value="server">Entry points (server)</option>
-            <option value="client">Outbound (client)</option>
-            <option value="internal">Internal</option>
-            <option value="producer">Producer</option>
             <option value="consumer">Consumer</option>
+            <option value="server">Entry points (server)</option>
+            <option value="internal">Internal</option>
+            <option value="client">Outbound (client)</option>
+            <option value="producer">Producer</option>
           </select>
           <AutoRefresh value={refreshInterval} onChange={setRefreshInterval} onRefresh={fetchData} />
           <TimeRangeSelector value={range} onChange={setRange} />

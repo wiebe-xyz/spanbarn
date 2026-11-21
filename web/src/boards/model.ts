@@ -6,6 +6,7 @@ import { RANGES, defaultState, stateToParams, type QueryState, type RangeValue }
 export const BOARD_RANGES = RANGES
 
 /** The refresh intervals a board offers, in seconds. 0 is off. */
+// Natural order: ascending refresh interval.
 export const REFRESH_OPTIONS: { seconds: number; label: string }[] = [
   { seconds: 0, label: 'Off' },
   { seconds: 30, label: 'Every 30s' },

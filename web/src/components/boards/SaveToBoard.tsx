@@ -5,6 +5,7 @@ import type { Board } from '../../api/types'
 import { definitionFromState, filtersFromState } from '../../boards/model'
 import { calcLabel, type QueryState } from '../../analyze/model'
 import { buttonStyle, errorStyle, inputStyle, mutedText, primaryButton, selectStyle } from './styles'
+import { sortAlpha } from '../../utils/sortAlpha'
 
 const NEW_BOARD = 'new'
 
@@ -92,7 +93,7 @@ export function SaveToBoard({ projectId, state }: Props): ReactElement {
       {open && (
         <form onSubmit={save} aria-label="Save to board" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
           <select aria-label="Board" value={target} onChange={(e) => setTarget(e.target.value)} style={selectStyle}>
-            {boards.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            {sortAlpha(boards, (b) => b.name).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             <option value={NEW_BOARD}>New board...</option>
           </select>
           {target === NEW_BOARD && (

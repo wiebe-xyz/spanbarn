@@ -24,6 +24,7 @@ import {
   statusColor,
   truncateId,
 } from '../traces/spanTree'
+import { sortAlpha } from '../utils/sortAlpha'
 
 const PAGE_SIZE = 50
 
@@ -370,7 +371,7 @@ export function TracesPage(): ReactElement {
               style={inputStyle}
             >
               <option value="">All services</option>
-              {services.map((s) => (
+              {sortAlpha(services).map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
@@ -397,8 +398,8 @@ export function TracesPage(): ReactElement {
               style={inputStyle}
             >
               <option value="">All</option>
-              <option value="ok">OK</option>
               <option value="error">Error</option>
+              <option value="ok">OK</option>
             </select>
           </label>
 
@@ -460,8 +461,8 @@ export function TracesPage(): ReactElement {
                 style={inputStyle}
               >
                 <option value="">All traces</option>
-                <option value="rootless">No root span</option>
                 <option value="orphans">Has orphan spans</option>
+                <option value="rootless">No root span</option>
               </select>
             </label>
           )}
@@ -474,6 +475,7 @@ export function TracesPage(): ReactElement {
                 onChange={(e) => updateFilter('rootOnly', e.target.value === 'true')}
                 style={inputStyle}
               >
+                {/* Natural order: the default first. */}
                 <option value="true">Yes (default)</option>
                 <option value="false">All traces</option>
               </select>

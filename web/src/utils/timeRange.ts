@@ -4,6 +4,7 @@ type RangeOption = {
   hours: number
 }
 
+// Natural order: shortest range to longest.
 export const RANGES: RangeOption[] = [
   { label: '1h', value: '1h', hours: 1 },
   { label: '4h', value: '4h', hours: 4 },

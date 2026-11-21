@@ -175,13 +175,13 @@ export function DatabaseQueryDetailPage(): ReactElement {
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} style={inputStyle}>
           <option value="all">All statuses</option>
-          <option value="ok">ok only</option>
           <option value="error">errors only</option>
+          <option value="ok">ok only</option>
         </select>
         <select value={speedFilter} onChange={(e) => setSpeedFilter(e.target.value as SpeedFilter)} style={inputStyle}>
           <option value="all">All speeds</option>
-          <option value="slow">Slow only (&gt;P95)</option>
           <option value="normal">Normal only (≤P95)</option>
+          <option value="slow">Slow only (&gt;P95)</option>
         </select>
         {(statusFilter !== 'all' || speedFilter !== 'all') && (
           <button
