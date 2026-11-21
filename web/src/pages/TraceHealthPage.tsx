@@ -63,7 +63,7 @@ export function TraceHealthPage(): ReactElement {
   const projectId = Number(params.get('project')) || projects[0]?.id || 0
 
   useEffect(() => {
-    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name }) => ({ id, name })))).catch(() => {})
+    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name, slug }) => ({ id, name, slug })))).catch(() => {})
   }, [])
 
   const update = (changes: Record<string, string>) =>

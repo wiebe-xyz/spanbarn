@@ -42,7 +42,7 @@ export function AttributesPage(): ReactElement {
   const sample = SAMPLES.find((s) => s.value === params.get('sample'))?.value ?? ''
 
   useEffect(() => {
-    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name }) => ({ id, name })))).catch(() => {})
+    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name, slug }) => ({ id, name, slug })))).catch(() => {})
   }, [])
 
   const update = (changes: Record<string, string>) => {

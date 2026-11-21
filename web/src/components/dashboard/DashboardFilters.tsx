@@ -25,7 +25,7 @@ export function DashboardFilters({ values, onChange }: DashboardFiltersProps): R
   const [name, setName] = useState(values.name)
 
   useEffect(() => {
-    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name: n }) => ({ id, name: n })))).catch(() => {})
+    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name, slug }) => ({ id, name, slug })))).catch(() => {})
   }, [])
 
   // Keep the text box in step when the URL changes underneath it (back button).
