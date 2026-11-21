@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { Board } from '../api/types'
 import { errorStyle, inputStyle, mutedText, primaryButton, selectStyle } from '../components/boards/styles'
 import { BOARD_RANGES } from '../boards/model'
+import { sortAlpha } from '../utils/sortAlpha'
 
 type Project = { id: number; name: string }
 
@@ -58,7 +59,7 @@ export function BoardsPage(): ReactElement {
           onChange={(e) => { setBoards(null); setParams({ project: e.target.value }) }}
           style={selectStyle}
         >
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <form onSubmit={create} style={{ display: 'flex', gap: 6 }}>
           <input aria-label="New board name" placeholder="New board name" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} style={{ ...inputStyle, width: 220 }} />

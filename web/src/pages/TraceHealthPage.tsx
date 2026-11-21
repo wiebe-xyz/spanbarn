@@ -11,6 +11,7 @@ import type {
 import { TraceStructureBadges } from '../components/TraceStructureBadges'
 import { formatCount } from '../utils/format'
 import { truncateId } from '../traces/spanTree'
+import { sortAlpha } from '../utils/sortAlpha'
 
 /** The queries join spans back to themselves, so the server caps the range at 7 days. */
 const RANGES = [
@@ -115,7 +116,7 @@ export function TraceHealthPage(): ReactElement {
           onChange={(e) => update({ project: e.target.value })}
           style={fieldStyle}
         >
-          {projects.map((p) => (
+          {sortAlpha(projects, (p) => p.name).map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>

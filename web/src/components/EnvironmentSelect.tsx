@@ -3,6 +3,7 @@ import { api } from '../api/client'
 import type { EnvironmentSummary } from '../api/types'
 import { ALL_ENVIRONMENTS, setEnvironment, useEnvironment } from '../environment'
 import { getTimeRange } from '../utils/timeRange'
+import { sortAlpha } from '../utils/sortAlpha'
 
 /** Picks the environment every environment-aware read is scoped to. */
 export function EnvironmentSelect(): ReactElement {
@@ -33,7 +34,7 @@ export function EnvironmentSelect(): ReactElement {
       Environment
       <select value={selected} onChange={(e) => setEnvironment(e.target.value)}>
         <option value={ALL_ENVIRONMENTS}>all</option>
-        {names.map((n) => (
+        {sortAlpha(names).map((n) => (
           <option key={n} value={n}>
             {n}
           </option>

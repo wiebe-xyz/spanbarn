@@ -8,6 +8,7 @@ import { getTimeRange } from '../utils/timeRange'
 import { AutoRefresh } from '../components/AutoRefresh'
 import { useTimeRange } from '../contexts/useTimeRange'
 import { Sparkline } from '../components/Sparkline'
+import { sortAlpha } from '../utils/sortAlpha'
 
 const METRIC_ORDER = ['LCP', 'FCP', 'TTFB', 'CLS', 'INP'] as const
 
@@ -238,7 +239,7 @@ export function PagesPage(): ReactElement {
               }}
             >
               <option value="">All services</option>
-              {services.map((s) => (
+              {sortAlpha(services).map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>

@@ -24,6 +24,7 @@ import {
   statusColor,
   truncateId,
 } from '../traces/spanTree'
+import { sortAlpha } from '../utils/sortAlpha'
 
 const PAGE_SIZE = 50
 
@@ -370,7 +371,7 @@ export function TracesPage(): ReactElement {
               style={inputStyle}
             >
               <option value="">All services</option>
-              {services.map((s) => (
+              {sortAlpha(services).map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>

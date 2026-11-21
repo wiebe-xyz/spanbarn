@@ -13,6 +13,7 @@ import {
 } from '../filters/heatmapSelection'
 import { hasFilters, parseFilter, serializeFilter, type FilterExpr } from '../filters/model'
 import { formatCount, formatDuration } from '../utils/format'
+import { sortAlpha } from '../utils/sortAlpha'
 
 type Project = { id: number; name: string }
 type Corner = { t: number; d: number }
@@ -137,7 +138,7 @@ export function HeatmapPage(): ReactElement {
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
         <select aria-label="Project" value={projectId} onChange={(e) => update({ project: e.target.value })} style={fieldStyle}>
-          {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <select aria-label="Time range" value={range.value} onChange={(e) => update({ range: e.target.value })} style={fieldStyle}>
           {COMPARE_RANGES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}

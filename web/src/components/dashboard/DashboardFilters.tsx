@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { api } from '../../api/client'
 import { ServiceSelect } from '../ServiceSelect'
+import { sortAlpha } from '../../utils/sortAlpha'
 
 export type DashboardFilterValues = {
   projectId: number
@@ -47,7 +48,7 @@ export function DashboardFilters({ values, onChange }: DashboardFiltersProps): R
         style={fieldStyle}
       >
         <option value={0}>All projects</option>
-        {projects.map((p) => (
+        {sortAlpha(projects, (p) => p.name).map((p) => (
           <option key={p.id} value={p.id}>{p.name}</option>
         ))}
       </select>

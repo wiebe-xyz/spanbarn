@@ -3,6 +3,7 @@ import { useId, useState } from 'react'
 import { OPERATORS, takesList, takesNoValue, type Condition, type FilterOp } from '../../filters/model'
 import type { Suggestions } from '../../filters/useAttributeSuggestions'
 import { inputStyle } from './styles'
+import { sortAlpha } from '../../utils/sortAlpha'
 
 type Props = {
   condition: Condition
@@ -37,7 +38,7 @@ export function ConditionRow({ condition, suggestions, onChange, onRemove }: Pro
         style={{ ...inputStyle, minWidth: 180, flex: '1 1 180px' }}
       />
       <datalist id={keyListId}>
-        {suggestions.keys.map((k) => <option key={k} value={k} />)}
+        {sortAlpha(suggestions.keys).map((k) => <option key={k} value={k} />)}
       </datalist>
 
       <select
@@ -68,7 +69,7 @@ export function ConditionRow({ condition, suggestions, onChange, onRemove }: Pro
           />
           {!takesList(condition.op) && (
             <datalist id={valueListId}>
-              {values.map((v) => <option key={v} value={v} />)}
+              {sortAlpha(values).map((v) => <option key={v} value={v} />)}
             </datalist>
           )}
         </>

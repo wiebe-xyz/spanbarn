@@ -6,6 +6,7 @@ import { TimeRangeSelector } from '../components/TimeRangeSelector'
 import { getTimeRange } from '../utils/timeRange'
 import { formatDuration, formatErrorRate, errorRateColor } from '../utils/format'
 import { useTimeRange } from '../contexts/useTimeRange'
+import { sortAlpha } from '../utils/sortAlpha'
 
 function formatCost(usd: number): string {
   if (usd === 0) return '$0'
@@ -253,7 +254,7 @@ export function PromptDetailPage(): ReactElement {
         </select>
         <select value={finishReasonFilter} onChange={(e) => setFinishReasonFilter(e.target.value)} style={inputStyle}>
           <option value="">All finish reasons</option>
-          {finishReasons.map((fr) => (
+          {sortAlpha(finishReasons).map((fr) => (
             <option key={fr} value={fr}>{fr}</option>
           ))}
         </select>
