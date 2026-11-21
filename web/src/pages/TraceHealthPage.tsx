@@ -11,7 +11,7 @@ import type {
 import { TraceStructureBadges } from '../components/TraceStructureBadges'
 import { formatCount } from '../utils/format'
 import { truncateId } from '../traces/spanTree'
-import { sortAlpha } from '../utils/sortAlpha'
+import { ProjectSwitcher } from '../components/ProjectSwitcher'
 
 /** The queries join spans back to themselves, so the server caps the range at 7 days. */
 // Natural order: shortest range to longest.
@@ -111,16 +111,7 @@ export function TraceHealthPage(): ReactElement {
       </p>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
-        <select
-          aria-label="Project"
-          value={projectId}
-          onChange={(e) => update({ project: e.target.value })}
-          style={fieldStyle}
-        >
-          {sortAlpha(projects, (p) => p.name).map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
+        <ProjectSwitcher projects={projects} value={String(projectId)} onChange={(id) => update({ project: id })} style={fieldStyle} />
         <select
           aria-label="Time range"
           value={range.value}

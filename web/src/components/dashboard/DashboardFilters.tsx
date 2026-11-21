@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { api } from '../../api/client'
 import { ServiceSelect } from '../ServiceSelect'
-import { sortAlpha } from '../../utils/sortAlpha'
+import { ProjectSwitcher } from '../ProjectSwitcher'
 
 export type DashboardFilterValues = {
   projectId: number
@@ -41,17 +41,7 @@ export function DashboardFilters({ values, onChange }: DashboardFiltersProps): R
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
       <span style={{ fontSize: '0.8125rem', fontWeight: 600 }}>Filter by</span>
-      <select
-        aria-label="Project"
-        value={values.projectId}
-        onChange={(e) => onChange({ ...values, projectId: Number(e.target.value) })}
-        style={fieldStyle}
-      >
-        <option value={0}>All projects</option>
-        {sortAlpha(projects, (p) => p.name).map((p) => (
-          <option key={p.id} value={p.id}>{p.name}</option>
-        ))}
-      </select>
+      <ProjectSwitcher projects={projects} value={String(values.projectId)} onChange={(id) => onChange({ ...values, projectId: Number(id) })} style={fieldStyle} allLabel="All projects" />
       <ServiceSelect value={values.service} onChange={(service) => onChange({ ...values, service })} range="24h" />
       <input
         aria-label="Span name"
