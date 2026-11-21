@@ -66,6 +66,7 @@ for i in "${!sharded_paths[@]}"; do
 		tests+=("$t")
 	done < <(go test -list '.*' -race "$pkg" | grep -E '^(Test|Example|Fuzz)')
 	[ "${#tests[@]}" -gt 0 ] || { echo "race-test: no tests listed in $pkg" >&2; exit 1; }
+	echo "${#tests[@]}" >"$OUT/expected_${label//\//_}"
 	for ((s = 0; s < shards; s++)); do
 		pattern=""
 		for ((j = s; j < ${#tests[@]}; j += shards)); do
@@ -104,6 +105,21 @@ for i in "${!pids[@]}"; do
 	if [ "$name" != others ]; then
 		echo "--- $name: slowest tests"
 		slowest "$log"
+	fi
+done
+
+# A split that drops a test is a false green. Each split package must report
+# a top-level result for every test the listing named, summed over its shards.
+echo "=== coverage of the shards"
+for i in "${!sharded_labels[@]}"; do
+	key="${sharded_labels[$i]//\//_}"
+	want="$(cat "$OUT/expected_$key")"
+	ran="$(cat "$OUT/${key}"_*.log | grep -cE '^--- (PASS|FAIL|SKIP): ' || true)"
+	if [ "$ran" -eq "$want" ]; then
+		echo "${sharded_labels[$i]}: $ran of $want listed tests ran in ${sharded_shards[$i]} shards"
+	else
+		echo "::error::${sharded_labels[$i]}: $ran tests ran, $want listed"
+		failed=1
 	fi
 done
 [ "$failed" -eq 0 ] || { echo "::error::race tests failed"; exit 1; }

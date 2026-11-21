@@ -45,7 +45,9 @@ if [ "$1" = test ] && [ "$2" = -list ]; then
 fi
 echo "$*" >> "$STUB_LOG"
 case " $* " in
-*" -v "*) cat "$STUB_VERBOSE" ;;
+*" -v "*)
+	pat=$(echo "$*" | sed -E 's/.*-run \\^\\((.*)\\)\\$.*/\\1/')
+	awk -v pat="|$pat|" '/^=== RUN/ {{keep = index(pat, "|" $3 "|") > 0}} /^(PASS|ok)/ {{print; next}} keep' "$STUB_VERBOSE" ;;
 esac
 case "$*" in
 *"$STUB_FAIL"*) [ -n "$STUB_FAIL" ] && exit 1 ;;
@@ -63,7 +65,7 @@ VERBOSE = "".join(
 SLOWEST = [t for t in reversed(TESTS)][:10]
 
 
-def run(fail: str = "") -> tuple[subprocess.CompletedProcess, list[str]]:
+def run(fail: str = "", script: Path = SCRIPT) -> tuple[subprocess.CompletedProcess, list[str]]:
     with tempfile.TemporaryDirectory() as tmp:
         stub = Path(tmp) / "go"
         stub.write_text(STUB)
@@ -81,7 +83,7 @@ def run(fail: str = "") -> tuple[subprocess.CompletedProcess, list[str]]:
             RUNNER_TEMP=tmp,
             RACE_SHARDED="./internal/repository:4 ./internal/api:2",
         )
-        result = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, env=env, timeout=60)
+        result = subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env, timeout=60)
         return result, log.read_text().splitlines()
 
 
@@ -126,12 +128,29 @@ class RaceTestScriptTest(unittest.TestCase):
         self.assertNotIn("chatter", result.stdout)
         section = result.stdout.split("=== repository#0: ok\n", 1)[1]
         self.assertTrue(section.startswith(f"ok  \t{MOD}/internal/repository"), section)
-        listed = section.split("--- repository#0: slowest tests\n", 1)[1].splitlines()[:11]
-        names = [line.split()[1] for line in listed[:10]]
-        self.assertEqual(names, SLOWEST)
+        listed = section.split("--- repository#0: slowest tests\n", 1)[1].splitlines()[:5]
+        names = [line.split()[1] for line in listed[:4]]
+        self.assertEqual(names, [TESTS[i] for i in (12, 8, 4, 0)])
         self.assertEqual(listed[0].split()[0], "12.50s")
-        self.assertNotIn("/sub", " ".join(listed[:10]))
-        self.assertTrue(listed[10].startswith("=== "), listed[10])
+        self.assertNotIn("/sub", " ".join(listed[:4]))
+        self.assertTrue(listed[4].startswith("=== "), listed[4])
+
+    def test_the_run_reports_that_the_shards_cover_every_listed_test(self):
+        result, _ = run()
+        self.assertIn(f"repository: {len(TESTS)} of {len(TESTS)} listed tests ran in 4 shards", result.stdout)
+        self.assertIn(f"api: {len(TESTS)} of {len(TESTS)} listed tests ran in 2 shards", result.stdout)
+
+    def test_a_shard_that_drops_a_test_fails_the_run(self):
+        # The stub prints a result for every test named in -run; one that
+        # the script never put in a pattern shows up as a count mismatch.
+        text = SCRIPT.read_text().replace("j < ${#tests[@]}; j += shards", "j < ${#tests[@]} - 1; j += shards")
+        self.assertNotEqual(text, SCRIPT.read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            mutated = Path(tmp) / "race-test.sh"
+            mutated.write_text(text)
+            result, _ = run(script=mutated)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("tests ran", result.stdout)
 
     def test_a_failing_shard_prints_its_whole_log(self):
         result, _ = run(fail="TestCase01")
