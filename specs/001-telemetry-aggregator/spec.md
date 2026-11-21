@@ -195,6 +195,7 @@ Each requirement names the issue that asked for it and the test that proves it. 
 - **NFR-003**: Memory stays under 100 MB at baseline and 500 MB under sustained load. Source: `internal/config/config.go` sizes the ingest buffers against a 448 MiB `GOMEMLIMIT` and `BenchmarkOTLPIngestMemory`.
 - **NFR-004**: A malformed span is logged and skipped and never blocks the pipeline; the spool dead-letters after 3 failed attempts. Source: CLAUDE.md, "Key Patterns". [inferred]
 - **NFR-005**: Spool-based ingest survives restarts. Source: `internal/spool/spool_test.go::TestSpoolCursor`.
+- **NFR-006**: The writer, reader and standalone pods report where their memory sits as self-metrics: the Go runtime classes (`spanbarn.mem.go_total_bytes`, `go_heap_objects_bytes`, `go_heap_free_bytes`, `go_heap_released_bytes`) and the cgroup split (`spanbarn.mem.cgroup_anon_bytes`, `cgroup_file_bytes`, `cgroup_file_mapped_bytes`, `cgroup_current_bytes`, absent outside a cgroup v2 container). Anon minus the Go total is the memory held outside the Go runtime, such as SQLite page caches. Source: `cmd/spanbarn/memory_metrics_test.go`.
 
 ## Key Entities
 

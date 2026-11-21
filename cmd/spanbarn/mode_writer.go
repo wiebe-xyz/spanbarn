@@ -144,6 +144,7 @@ func runWriterMode(cfg config.Config, logger *slog.Logger) error {
 	// Complete self-metrics wiring: rollup callback + queue depth gauges + reporter.
 	metricAccumulator.SetOnPersist(writerSelfRec.AddRollups)
 	registerQueueDepthGauges(ctx, writerSelfRec, writeQueue)
+	registerMemoryGauges(writerSelfRec)
 	startSelfMetrics(ctx, cfg, &wg, writerSelfRec, logger)
 
 	workerCtx, workerCancel := context.WithCancel(ctx)

@@ -149,6 +149,7 @@ func runReaderMode(cfg config.Config, logger *slog.Logger) error {
 	})
 	registerQueueDepthGauges(readerCtx, readerSelfRec, writeQueue)
 	registerTraceBufferGauges(readerSelfRec, traceBuffer)
+	registerMemoryGauges(readerSelfRec)
 	apiServer.SetSelfMetricsRecorder(readerSelfRec)
 	startSelfMetrics(readerCtx, cfg, &wg, readerSelfRec, logger)
 
