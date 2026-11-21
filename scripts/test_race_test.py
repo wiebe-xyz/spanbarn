@@ -1,11 +1,11 @@
 """Gate: the sharded race run.
 
-race-test.sh splits the slowest package into shards. A split is only safe if
+race-test.sh splits the slowest packages into shards. A split is only safe if
 every test still runs exactly once and a failure in any shard fails the run,
 so this test drives the script with a stub `go` that records each call:
 
-  - every listed test lands in exactly one shard's -run pattern
-  - the other packages run once, without the sharded package
+  - every listed test lands in exactly one shard's -run pattern, per package
+  - the other packages run once, without the sharded packages, at a capped -p
   - a failing shard, or a failing run of the other packages, exits non-zero
   - each shard lists its slowest top-level tests, slowest first
   - the deploy workflow runs the race tests through the script
@@ -32,20 +32,22 @@ TESTS = [f"TestCase{i:02d}" for i in range(11)] + ["ExampleThing", "FuzzParse"]
 STUB = f"""#!/bin/sh
 if [ "$1" = list ]; then
 	if [ "$2" = ./... ]; then
-		printf '%s\\n' {MOD}/a {MOD}/internal/repository {MOD}/b
+		printf '%s\\n' {MOD}/a {MOD}/internal/repository {MOD}/internal/api {MOD}/b
 	else
-		echo {MOD}/internal/repository
+		echo {MOD}/${{2#./}}
 	fi
 	exit 0
 fi
 if [ "$1" = test ] && [ "$2" = -list ]; then
 	printf '%s\\n' {" ".join(TESTS)}
-	echo "ok  	{MOD}/internal/repository	0.1s"
+	echo "ok  	{MOD}/pkg	0.1s"
 	exit 0
 fi
 echo "$*" >> "$STUB_LOG"
 case " $* " in
-*" -v "*) cat "$STUB_VERBOSE" ;;
+*" -v "*)
+	pat=$(echo "$*" | sed -E 's/.*-run \\^\\((.*)\\)\\$.*/\\1/')
+	awk -v pat="|$pat|" '/^=== RUN/ {{keep = index(pat, "|" $3 "|") > 0}} /^(PASS|ok)/ {{print; next}} keep' "$STUB_VERBOSE" ;;
 esac
 case "$*" in
 *"$STUB_FAIL"*) [ -n "$STUB_FAIL" ] && exit 1 ;;
@@ -63,7 +65,7 @@ VERBOSE = "".join(
 SLOWEST = [t for t in reversed(TESTS)][:10]
 
 
-def run(fail: str = "") -> tuple[subprocess.CompletedProcess, list[str]]:
+def run(fail: str = "", script: Path = SCRIPT) -> tuple[subprocess.CompletedProcess, list[str]]:
     with tempfile.TemporaryDirectory() as tmp:
         stub = Path(tmp) / "go"
         stub.write_text(STUB)
@@ -79,30 +81,31 @@ def run(fail: str = "") -> tuple[subprocess.CompletedProcess, list[str]]:
             STUB_FAIL=fail,
             STUB_VERBOSE=str(verbose),
             RUNNER_TEMP=tmp,
-            RACE_SHARDS="4",
+            RACE_SHARDED="./internal/repository:4 ./internal/api:2",
         )
-        result = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, env=env, timeout=60)
+        result = subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env, timeout=60)
         return result, log.read_text().splitlines()
 
 
 class RaceTestScriptTest(unittest.TestCase):
-    def test_every_test_runs_in_exactly_one_shard(self):
+    def test_every_test_runs_in_exactly_one_shard_of_each_package(self):
         result, calls = run()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         shards = [c for c in calls if "-run" in c]
-        self.assertEqual(len(shards), 4)
-        seen: list[str] = []
-        for call in shards:
-            pattern = re.search(r"-run \^\((.*)\)\$", call).group(1)
-            seen += pattern.split("|")
-            self.assertTrue(call.endswith("./internal/repository"), call)
-            self.assertIn("-race", call)
-        self.assertEqual(sorted(seen), sorted(TESTS))
+        self.assertEqual(len(shards), 6)
+        for pkg, count in (("internal/repository", 4), ("internal/api", 2)):
+            mine = [c for c in shards if c.endswith(f"{MOD}/{pkg}")]
+            self.assertEqual(len(mine), count, shards)
+            seen: list[str] = []
+            for call in mine:
+                seen += re.search(r"-run \^\((.*)\)\$", call).group(1).split("|")
+                self.assertIn("-race", call)
+            self.assertEqual(sorted(seen), sorted(TESTS))
 
-    def test_other_packages_run_once_without_the_sharded_one(self):
+    def test_other_packages_run_once_without_the_sharded_ones(self):
         _, calls = run()
         others = [c for c in calls if "-run" not in c]
-        self.assertEqual(others, [f"test -race -count=1 {MOD}/a {MOD}/b"])
+        self.assertEqual(others, [f"test -race -count=1 -p 2 {MOD}/a {MOD}/b"])
 
     def test_a_failing_shard_fails_the_run(self):
         result, _ = run(fail="TestCase01")
@@ -123,14 +126,31 @@ class RaceTestScriptTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("=== RUN", result.stdout)
         self.assertNotIn("chatter", result.stdout)
-        section = result.stdout.split("=== shard0: ok\n", 1)[1]
+        section = result.stdout.split("=== repository#0: ok\n", 1)[1]
         self.assertTrue(section.startswith(f"ok  \t{MOD}/internal/repository"), section)
-        listed = section.split("--- shard0: slowest tests\n", 1)[1].splitlines()[:11]
-        names = [line.split()[1] for line in listed[:10]]
-        self.assertEqual(names, SLOWEST)
+        listed = section.split("--- repository#0: slowest tests\n", 1)[1].splitlines()[:5]
+        names = [line.split()[1] for line in listed[:4]]
+        self.assertEqual(names, [TESTS[i] for i in (12, 8, 4, 0)])
         self.assertEqual(listed[0].split()[0], "12.50s")
-        self.assertNotIn("/sub", " ".join(listed[:10]))
-        self.assertTrue(listed[10].startswith("=== "), listed[10])
+        self.assertNotIn("/sub", " ".join(listed[:4]))
+        self.assertTrue(listed[4].startswith("=== "), listed[4])
+
+    def test_the_run_reports_that_the_shards_cover_every_listed_test(self):
+        result, _ = run()
+        self.assertIn(f"repository: {len(TESTS)} of {len(TESTS)} listed tests ran in 4 shards", result.stdout)
+        self.assertIn(f"api: {len(TESTS)} of {len(TESTS)} listed tests ran in 2 shards", result.stdout)
+
+    def test_a_shard_that_drops_a_test_fails_the_run(self):
+        # The stub prints a result for every test named in -run; one that
+        # the script never put in a pattern shows up as a count mismatch.
+        text = SCRIPT.read_text().replace("j < ${#tests[@]}; j += shards", "j < ${#tests[@]} - 1; j += shards")
+        self.assertNotEqual(text, SCRIPT.read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            mutated = Path(tmp) / "race-test.sh"
+            mutated.write_text(text)
+            result, _ = run(script=mutated)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("tests ran", result.stdout)
 
     def test_a_failing_shard_prints_its_whole_log(self):
         result, _ = run(fail="TestCase01")
