@@ -74,7 +74,7 @@ for i in "${!sharded_paths[@]}"; do
 		done
 		[ -n "$pattern" ] || continue
 		name="${label//\//_}#$s"
-		go test -race -count=1 -v -run "^(${pattern})\$" "$pkg" >"$OUT/${name//#/_}.log" 2>&1 &
+		go test -race -count=1 -v -run "^(${pattern})\$" "$pkg" >"$OUT/${name//#/.}.log" 2>&1 &
 		pids+=($!)
 		names+=("$name")
 	done
@@ -95,7 +95,7 @@ for i in "${!pids[@]}"; do
 		failed=1
 	fi
 	name="${names[$i]}"
-	log="$OUT/${name//#/_}.log"
+	log="$OUT/${name//#/.}.log"
 	echo "=== $name: $status"
 	if [ "$name" = others ] || [ "$status" = FAILED ]; then
 		cat "$log"
@@ -114,7 +114,7 @@ echo "=== coverage of the shards"
 for i in "${!sharded_labels[@]}"; do
 	key="${sharded_labels[$i]//\//_}"
 	want="$(cat "$OUT/expected_$key")"
-	ran="$(cat "$OUT/${key}"_*.log | grep -cE '^--- (PASS|FAIL|SKIP): ' || true)"
+	ran="$(cat "$OUT/${key}".*.log | grep -cE '^--- (PASS|FAIL|SKIP): ' || true)"
 	if [ "$ran" -eq "$want" ]; then
 		echo "${sharded_labels[$i]}: $ran of $want listed tests ran in ${sharded_shards[$i]} shards"
 	else
