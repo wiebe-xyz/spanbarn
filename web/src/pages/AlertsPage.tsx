@@ -433,8 +433,8 @@ export function AlertsPage(): ReactElement {
                     value={form.type}
                     onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as AlertType }))}
                   >
-                    <option value="latency">Latency (p99)</option>
                     <option value="error_rate">Error rate</option>
+                    <option value="latency">Latency (p99)</option>
                     <option value="metric_threshold">Metric threshold</option>
                   </select>
                 </div>
@@ -459,10 +459,10 @@ export function AlertsPage(): ReactElement {
                           value={form.metricAgg}
                           onChange={(e) => setForm((f) => ({ ...f, metricAgg: e.target.value }))}
                         >
-                          <option value="last">Last value</option>
                           <option value="avg">Average</option>
-                          <option value="rate">Rate /s (counters)</option>
+                          <option value="last">Last value</option>
                           <option value="p95">p95 (histograms)</option>
+                          <option value="rate">Rate /s (counters)</option>
                         </select>
                       </div>
                     </div>

@@ -34,6 +34,7 @@ export type FilterNode = Condition | Group
 
 export type FilterExpr = { match: Match; filters: FilterNode[] }
 
+// Natural order: grouped by kind (equality, comparison, text, existence, list), the order a filter reads.
 export const OPERATORS: { op: FilterOp; label: string }[] = [
   { op: '=', label: 'is' },
   { op: '!=', label: 'is not' },

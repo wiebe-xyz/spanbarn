@@ -6,6 +6,7 @@ import { formatCount } from '../utils/format'
 import { sortAlpha } from '../utils/sortAlpha'
 
 /** The server caps the range at 7 days and samples above 24h. */
+// Natural order: shortest range to longest.
 const RANGES = [
   { value: '1h', label: 'Last 1 hour', hours: 1 },
   { value: '24h', label: 'Last 1 day', hours: 24 },
@@ -13,6 +14,7 @@ const RANGES = [
   { value: '7d', label: 'Last 7 days', hours: 168 },
 ] as const
 
+// Natural order: automatic first, then exact, then coarser sampling.
 const SAMPLES = [
   { value: '', label: 'Sampling: automatic' },
   { value: '1', label: 'Exact (every span)' },

@@ -34,6 +34,7 @@ export function formatCalc(wire: string, v: number): string {
 }
 
 /** The group-by ranges. The API limits a range to 30 days. */
+// Natural order: shortest range to longest.
 export const RANGES = [
   { value: '1h', label: 'Last 1 hour', hours: 1 },
   { value: '24h', label: 'Last 1 day', hours: 24 },
@@ -43,6 +44,7 @@ export const RANGES = [
 
 export type RangeValue = (typeof RANGES)[number]['value']
 
+// Natural order: automatic first, then exact, then coarser sampling.
 export const SAMPLES = [
   { value: '', label: 'Sampling: automatic' },
   { value: '1', label: 'Exact (every span)' },
@@ -51,6 +53,7 @@ export const SAMPLES = [
 ] as const
 
 export const MAX_GROUP_BY = 4
+// Natural order: ascending numeric steps.
 export const LIMITS = [10, 20, 50, 100]
 
 export type QueryState = {

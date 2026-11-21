@@ -19,6 +19,7 @@ import {
   type QueryState,
 } from '../analyze/model'
 import { formatCount } from '../utils/format'
+import { sortAlpha } from '../utils/sortAlpha'
 
 type Project = { id: number; name: string }
 type Window = { fromMs: number; toMs: number }
@@ -196,7 +197,7 @@ function Results(p: ResultsProps): ReactElement {
         ))}
         {state.view === 'chart' && (
           <select aria-label="Chart calculation" value={p.chartCalc} onChange={(e) => p.onChartCalc(e.target.value)} style={selectStyle}>
-            {state.calcs.map((c) => <option key={c} value={c}>{calcLabel(c)}</option>)}
+            {sortAlpha(state.calcs, calcLabel).map((c) => <option key={c} value={c}>{calcLabel(c)}</option>)}
           </select>
         )}
       </div>

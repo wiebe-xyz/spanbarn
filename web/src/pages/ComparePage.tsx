@@ -8,6 +8,7 @@ import { COMPARE_RANGES } from '../filters/compareLink'
 import { hasFilters, parseFilter, serializeFilter, type FilterExpr } from '../filters/model'
 import { sortAlpha } from '../utils/sortAlpha'
 
+// Natural order: automatic first, then exact, then coarser sampling.
 const SAMPLES = [
   { value: '', label: 'Sampling: automatic' },
   { value: '1', label: 'Exact (every span)' },

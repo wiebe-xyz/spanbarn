@@ -71,8 +71,8 @@ export function DashboardFilters({ values, onChange }: DashboardFiltersProps): R
         style={fieldStyle}
       >
         <option value="">Any status</option>
-        <option value="ok">ok</option>
         <option value="error">error</option>
+        <option value="ok">ok</option>
         <option value="unset">unset</option>
       </select>
     </div>

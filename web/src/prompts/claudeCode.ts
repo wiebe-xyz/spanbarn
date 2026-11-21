@@ -11,9 +11,9 @@ export const CLAUDE_METRICS = [
 ] as const
 
 export const GROUP_KEYS = [
-  { key: 'session.id', label: 'Session' },
-  { key: 'repo', label: 'Repo' },
   { key: 'host.name', label: 'Host' },
+  { key: 'repo', label: 'Repo' },
+  { key: 'session.id', label: 'Session' },
 ] as const
 
 export function formatCount(v: number): string {

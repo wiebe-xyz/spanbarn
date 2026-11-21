@@ -5,6 +5,7 @@ export type DashboardRange = {
 }
 
 /** The dashboard reads raw spans, so the widest range is 48h. */
+// Natural order: shortest range to longest.
 export const DASHBOARD_RANGES: DashboardRange[] = [
   { value: '1h', label: 'Last 1 hour', hours: 1 },
   { value: '4h', label: 'Last 4 hours', hours: 4 },
