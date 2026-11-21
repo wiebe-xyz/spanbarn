@@ -17,7 +17,7 @@ const card: CSSProperties = { background: 'var(--surface)', border: '1px solid v
 export function ClaudeCodePage(): ReactElement {
   const { range, setRange } = useTimeRange()
   const [projectId, setProjectId] = useState<number | null>(null)
-  const [groupKey, setGroupKey] = useState<string>(GROUP_KEYS[0].key)
+  const [groupKey, setGroupKey] = useState<string>('session.id')
   const [byMetric, setByMetric] = useState<Record<string, MetricTotal[]>>({})
   const [loading, setLoading] = useState(true)
   const [tools, setTools] = useState<ToolSpanStat[]>([])
