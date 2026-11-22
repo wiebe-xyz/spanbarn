@@ -9,7 +9,7 @@ const RESERVED_NAME_MESSAGE = 'Name must be 1-64 characters and not "setup"'
 
 /** What the page shows for a failed request: the server's reason when it gave one. */
 function errorText(e: unknown): string {
-  if (e instanceof ApiError && e.details) return `${e.message}: ${e.details}`
+  if (e instanceof ApiError && e.details) return e.details
   return String(e)
 }
 
