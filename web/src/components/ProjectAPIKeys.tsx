@@ -1,6 +1,17 @@
 import { useState, useEffect, useCallback, type ReactElement } from 'react'
 import { Key, ChevronDown, ChevronRight } from 'lucide-react'
-import { fetchJSON } from '../api/client'
+import { ApiError, fetchJSON } from '../api/client'
+
+// The API refuses this name: the setup flow's key owns it. Same wording as the
+// server's detail, so the inline hint and a refused request read alike.
+const RESERVED_KEY_NAME = 'setup'
+const RESERVED_NAME_MESSAGE = 'Name must be 1-64 characters and not "setup"'
+
+/** What the page shows for a failed request: the server's reason when it gave one. */
+function errorText(e: unknown): string {
+  if (e instanceof ApiError && e.details) return `${e.message}: ${e.details}`
+  return String(e)
+}
 
 type APIKey = {
   id: number
@@ -73,13 +84,14 @@ export function ProjectAPIKeys({ projectId }: { projectId: number }): ReactEleme
   const [confirmRevoke, setConfirmRevoke] = useState<number | null>(null)
 
   const base = `/api/v1/projects/${projectId}/apikeys`
+  const reserved = name.trim() === RESERVED_KEY_NAME
 
   const fetchKeys = useCallback(async () => {
     try {
       const data = await fetchJSON<APIKey[]>(base)
       setKeys(data ?? [])
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
       setKeys([])
     }
   }, [base])
@@ -98,7 +110,7 @@ export function ProjectAPIKeys({ projectId }: { projectId: number }): ReactEleme
       await action()
       await fetchKeys()
     } catch (e) {
-      setError(String(e))
+      setError(errorText(e))
     } finally {
       setBusy(false)
     }
@@ -183,8 +195,10 @@ export function ProjectAPIKeys({ projectId }: { projectId: number }): ReactEleme
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="key name"
+              placeholder="e.g. my-project-ingest"
               aria-label="New key name"
+              aria-invalid={reserved}
+              aria-describedby={reserved ? 'key-name-reserved' : undefined}
               maxLength={64}
               style={{ ...fieldStyle, flex: 1, minWidth: 0 }}
             />
@@ -192,10 +206,15 @@ export function ProjectAPIKeys({ projectId }: { projectId: number }): ReactEleme
               <option value="ingest">ingest</option>
               <option value="read">read</option>
             </select>
-            <button type="submit" className="btn btn-sm" disabled={busy || name.trim() === ''}>
+            <button type="submit" className="btn btn-sm" disabled={busy || name.trim() === '' || reserved}>
               Create key
             </button>
           </form>
+          {reserved && (
+            <div id="key-name-reserved" role="alert" style={{ fontSize: '0.75rem', color: 'var(--error, #ef4444)' }}>
+              {RESERVED_NAME_MESSAGE}
+            </div>
+          )}
           {error && <div style={{ fontSize: '0.75rem', color: 'var(--error, #ef4444)' }}>{error}</div>}
         </div>
       )}
