@@ -11,7 +11,7 @@ import type {
 import { TraceStructureBadges } from '../components/TraceStructureBadges'
 import { formatCount } from '../utils/format'
 import { truncateId } from '../traces/spanTree'
-import { sortAlpha } from '../utils/sortAlpha'
+import { ProjectSwitcher } from '../components/ProjectSwitcher'
 
 /** The queries join spans back to themselves, so the server caps the range at 7 days. */
 // Natural order: shortest range to longest.
@@ -30,7 +30,7 @@ const TABS = [
 ] as const
 
 type Tab = (typeof TABS)[number]['value']
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 type TabData =
   | { tab: 'orphans'; rows: OrphanSpanGroup[] }
   | { tab: 'rootless'; data: RootlessTraces }
@@ -63,7 +63,7 @@ export function TraceHealthPage(): ReactElement {
   const projectId = Number(params.get('project')) || projects[0]?.id || 0
 
   useEffect(() => {
-    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name }) => ({ id, name })))).catch(() => {})
+    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name, slug }) => ({ id, name, slug })))).catch(() => {})
   }, [])
 
   const update = (changes: Record<string, string>) =>
@@ -111,16 +111,7 @@ export function TraceHealthPage(): ReactElement {
       </p>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
-        <select
-          aria-label="Project"
-          value={projectId}
-          onChange={(e) => update({ project: e.target.value })}
-          style={fieldStyle}
-        >
-          {sortAlpha(projects, (p) => p.name).map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
+        <ProjectSwitcher projects={projects} value={String(projectId)} onChange={(id) => update({ project: id })} style={fieldStyle} />
         <select
           aria-label="Time range"
           value={range.value}

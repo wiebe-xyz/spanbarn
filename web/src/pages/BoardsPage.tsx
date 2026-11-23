@@ -4,9 +4,9 @@ import { api } from '../api/client'
 import type { Board } from '../api/types'
 import { errorStyle, inputStyle, mutedText, primaryButton, selectStyle } from '../components/boards/styles'
 import { BOARD_RANGES } from '../boards/model'
-import { sortAlpha } from '../utils/sortAlpha'
+import { ProjectSwitcher } from '../components/ProjectSwitcher'
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 
 /** The boards of a project, and a form to start a new one. */
 export function BoardsPage(): ReactElement {
@@ -20,7 +20,7 @@ export function BoardsPage(): ReactElement {
   const projectId = Number(params.get('project')) || projects[0]?.id || 0
 
   useEffect(() => {
-    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name }) => ({ id, name })))).catch(() => {})
+    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name, slug }) => ({ id, name, slug })))).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -53,14 +53,7 @@ export function BoardsPage(): ReactElement {
       </p>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16 }}>
-        <select
-          aria-label="Project"
-          value={projectId}
-          onChange={(e) => { setBoards(null); setParams({ project: e.target.value }) }}
-          style={selectStyle}
-        >
-          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        <ProjectSwitcher projects={projects} value={String(projectId)} onChange={(id) => { setBoards(null); setParams({ project: id }) }} style={selectStyle} />
         <form onSubmit={create} style={{ display: 'flex', gap: 6 }}>
           <input aria-label="New board name" placeholder="New board name" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} style={{ ...inputStyle, width: 220 }} />
           <button type="submit" style={primaryButton} disabled={!name.trim() || !projectId}>Create board</button>

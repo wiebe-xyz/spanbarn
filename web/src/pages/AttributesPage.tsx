@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { AttributeDiscovery, AttributeKey, AttributeValue, SpanNameSummary } from '../api/types'
 import { formatCount } from '../utils/format'
 import { sortAlpha } from '../utils/sortAlpha'
+import { ProjectSwitcher } from '../components/ProjectSwitcher'
 
 /** The server caps the range at 7 days and samples above 24h. */
 // Natural order: shortest range to longest.
@@ -23,7 +24,7 @@ const SAMPLES = [
   { value: '100', label: '1 in 100 spans' },
 ] as const
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 
 /** Which attribute keys exist for a project, how many spans set them and what values they hold. */
 export function AttributesPage(): ReactElement {
@@ -41,7 +42,7 @@ export function AttributesPage(): ReactElement {
   const sample = SAMPLES.find((s) => s.value === params.get('sample'))?.value ?? ''
 
   useEffect(() => {
-    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name }) => ({ id, name })))).catch(() => {})
+    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name, slug }) => ({ id, name, slug })))).catch(() => {})
   }, [])
 
   const update = (changes: Record<string, string>) => {
@@ -107,9 +108,7 @@ export function AttributesPage(): ReactElement {
       </p>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
-        <select aria-label="Project" value={projectId} onChange={(e) => update({ project: e.target.value })} style={fieldStyle}>
-          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        <ProjectSwitcher projects={projects} value={String(projectId)} onChange={(id) => update({ project: id })} style={fieldStyle} />
         <select aria-label="Time range" value={range.value} onChange={(e) => update({ range: e.target.value })} style={fieldStyle}>
           {RANGES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
         </select>

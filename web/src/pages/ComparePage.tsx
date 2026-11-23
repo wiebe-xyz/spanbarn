@@ -6,7 +6,7 @@ import { FilterBuilder } from '../components/filter/FilterBuilder'
 import { CompareResults } from '../components/compare/CompareResults'
 import { COMPARE_RANGES } from '../filters/compareLink'
 import { hasFilters, parseFilter, serializeFilter, type FilterExpr } from '../filters/model'
-import { sortAlpha } from '../utils/sortAlpha'
+import { ProjectSwitcher } from '../components/ProjectSwitcher'
 
 // Natural order: automatic first, then exact, then coarser sampling.
 const SAMPLES = [
@@ -17,7 +17,7 @@ const SAMPLES = [
   { value: '100', label: '1 in 100 spans' },
 ] as const
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 
 /**
  * Explains why a selection of spans differs from a baseline: the attributes
@@ -41,7 +41,7 @@ export function ComparePage(): ReactElement {
   const ready = hasFilters(selection)
 
   useEffect(() => {
-    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name }) => ({ id, name })))).catch(() => {})
+    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name, slug }) => ({ id, name, slug })))).catch(() => {})
   }, [])
 
   const update = (changes: Record<string, string>) =>
@@ -97,9 +97,7 @@ export function ComparePage(): ReactElement {
       </p>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
-        <select aria-label="Project" value={projectId} onChange={(e) => update({ project: e.target.value })} style={fieldStyle}>
-          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        <ProjectSwitcher projects={projects} value={String(projectId)} onChange={(id) => update({ project: id })} style={fieldStyle} />
         <select aria-label="Time range" value={range.value} onChange={(e) => update({ range: e.target.value })} style={fieldStyle}>
           {COMPARE_RANGES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
         </select>

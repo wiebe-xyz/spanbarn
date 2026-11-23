@@ -3,9 +3,9 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { calculatedFieldsApi, type CalculatedField, type CalculatedFieldSample } from '../api/calculatedFields'
 import { buttonStyle, errorStyle, inputStyle, mutedText, primaryButton, selectStyle } from '../components/boards/styles'
-import { sortAlpha } from '../utils/sortAlpha'
+import { ProjectSwitcher } from '../components/ProjectSwitcher'
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 
 /** How long the editor waits after a keystroke before it asks for a preview. */
 const PREVIEW_DELAY_MS = 300
@@ -147,7 +147,7 @@ export function CalculatedFieldsPage(): ReactElement {
   const projectId = Number(params.get('project')) || projects[0]?.id || 0
 
   useEffect(() => {
-    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name }) => ({ id, name })))).catch(() => {})
+    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name, slug }) => ({ id, name, slug })))).catch(() => {})
   }, [])
 
   const load = useCallback(() => {
@@ -181,14 +181,7 @@ export function CalculatedFieldsPage(): ReactElement {
       </p>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16 }}>
-        <select
-          aria-label="Project"
-          value={projectId}
-          onChange={(e) => { setFields(null); setEditor(null); setParams({ project: e.target.value }) }}
-          style={selectStyle}
-        >
-          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        <ProjectSwitcher projects={projects} value={String(projectId)} onChange={(id) => { setFields(null); setEditor(null); setParams({ project: id }) }} style={selectStyle} />
         {!editor && (
           <button type="button" style={primaryButton} disabled={!projectId} onClick={() => setEditor({ editing: null })}>
             New field

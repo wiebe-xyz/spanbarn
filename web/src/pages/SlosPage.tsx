@@ -6,9 +6,9 @@ import { AutoRefresh } from '../components/AutoRefresh'
 import { errorStyle, mutedText, primaryButton, selectStyle } from '../components/boards/styles'
 import { SloCard } from '../components/slo/SloCard'
 import { SloForm } from '../components/slo/SloForm'
-import { sortAlpha } from '../utils/sortAlpha'
+import { ProjectSwitcher } from '../components/ProjectSwitcher'
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 type Row = { slo: Slo; status: SloStatus | null; alerts: BurnAlert[] }
 
 async function loadRows(projectId: number): Promise<Row[]> {
@@ -36,7 +36,7 @@ export function SlosPage(): ReactElement {
   const projectId = Number(params.get('project')) || projects[0]?.id || 0
 
   useEffect(() => {
-    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name }) => ({ id, name })))).catch(() => {})
+    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name, slug }) => ({ id, name, slug })))).catch(() => {})
   }, [])
 
   const refresh = useCallback(() => {
@@ -63,14 +63,7 @@ export function SlosPage(): ReactElement {
       </p>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16 }}>
-        <select
-          aria-label="Project"
-          value={projectId}
-          onChange={(e) => { setRows(null); setForm(null); setParams({ project: e.target.value }) }}
-          style={selectStyle}
-        >
-          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        <ProjectSwitcher projects={projects} value={String(projectId)} onChange={(id) => { setRows(null); setForm(null); setParams({ project: id }) }} style={selectStyle} />
         <button type="button" style={primaryButton} disabled={!projectId} onClick={() => setForm('new')}>New SLO</button>
         <AutoRefresh value={refreshSeconds} onChange={setRefreshSeconds} onRefresh={refresh} />
       </div>

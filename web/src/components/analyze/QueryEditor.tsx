@@ -15,8 +15,9 @@ import {
   type RangeValue,
 } from '../../analyze/model'
 import { sortAlpha } from '../../utils/sortAlpha'
+import { ProjectSwitcher } from '../ProjectSwitcher'
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 
 type Props = {
   value: QueryState
@@ -61,14 +62,7 @@ export function QueryEditor({ value, projects, onChange, onRun, running }: Props
       </datalist>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-        <select
-          aria-label="Project"
-          value={value.projectId}
-          onChange={(e) => set({ projectId: Number(e.target.value) })}
-          style={inputStyle}
-        >
-          {sortAlpha(projects, (p) => p.name).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        <ProjectSwitcher projects={projects} value={String(value.projectId)} onChange={(id) => set({ projectId: Number(id) })} style={inputStyle} />
         <select
           aria-label="Time range"
           value={value.range}

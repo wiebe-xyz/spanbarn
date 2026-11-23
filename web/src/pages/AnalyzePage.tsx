@@ -21,7 +21,7 @@ import {
 import { formatCount } from '../utils/format'
 import { sortAlpha } from '../utils/sortAlpha'
 
-type Project = { id: number; name: string }
+type Project = { id: number; name: string; slug: string }
 type Window = { fromMs: number; toMs: number }
 
 const CHART_GROUPS = 8
@@ -72,7 +72,7 @@ export function AnalyzePage(): ReactElement {
   }, [params])
 
   useEffect(() => {
-    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name }) => ({ id, name })))).catch(() => {})
+    api.listProjects().then((p) => setProjects((p ?? []).map(({ id, name, slug }) => ({ id, name, slug })))).catch(() => {})
   }, [])
 
   useEffect(() => {
