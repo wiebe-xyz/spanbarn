@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"testing"
@@ -30,6 +31,46 @@ func (m *mockLogsRepo) totalInserted() int {
 		n += len(c)
 	}
 	return n
+}
+
+// flakyLogsRepo fails its first failures inserts and stores the rest.
+type flakyLogsRepo struct {
+	mockLogsRepo
+	failures int
+}
+
+func (f *flakyLogsRepo) InsertLogs(ctx context.Context, recs []model.LogRecord) error {
+	f.mu.Lock()
+	if f.failures > 0 {
+		f.failures--
+		f.mu.Unlock()
+		return errors.New("queue: lpush logs: i/o timeout")
+	}
+	f.mu.Unlock()
+	return f.mockLogsRepo.InsertLogs(ctx, recs)
+}
+
+// A flush that times out keeps its records for the next flush (#594).
+func TestLogsHandlerKeepsRecordsOfAFailedFlush(t *testing.T) {
+	repo := &flakyLogsRepo{failures: 2}
+	h := NewLogsHandler(repo, slog.Default())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); h.Run(ctx) }()
+
+	h.Enqueue(makeTestLogBatch(7))
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && repo.totalInserted() < 7 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	wg.Wait()
+
+	if got := repo.totalInserted(); got != 7 {
+		t.Errorf("want 7 records stored after two failed flushes, got %d", got)
+	}
 }
 
 func makeTestLogBatch(n int) []model.LogRecord {
