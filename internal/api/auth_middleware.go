@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -239,6 +241,11 @@ func SessionMiddleware(sessions *session.Service) func(http.Handler) http.Handle
 			}
 
 			res, err := sessions.Authenticate(r.Context(), token)
+			if errors.Is(err, session.ErrStoreUnavailable) {
+				slog.Default().Warn("session lookup failed", "error", err)
+				writeError(w, http.StatusServiceUnavailable, "session lookup failed, retry", "")
+				return
+			}
 			if err != nil {
 				writeError(w, http.StatusUnauthorized, "invalid or expired session", "")
 				return

@@ -2,6 +2,8 @@ package repository
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
@@ -49,8 +51,8 @@ func (r *Repository) CreateWebSession(ws WebSession) error {
 	})
 }
 
-// GetWebSessionByIDHash loads a session row. Returns sql.ErrNoRows when the
-// handle is unknown (revoked, expired-and-pruned, or forged).
+// GetWebSessionByIDHash loads a session row. Returns an error matching
+// ErrNotFound and sql.ErrNoRows when the handle is unknown (revoked, expired-and-pruned, or forged).
 func (r *Repository) GetWebSessionByIDHash(idHash string) (WebSession, error) {
 	var ws WebSession
 	var idpSub, idpSid, idToken, accessToken, refreshToken, claimsJSON sql.NullString
@@ -65,6 +67,9 @@ func (r *Repository) GetWebSessionByIDHash(idHash string) (WebSession, error) {
 		&idToken, &accessToken, &refreshToken, &accessExpiresAt,
 		&claimsJSON, &ws.CreatedAt, &ws.AbsoluteExpiresAt,
 		&lastRefreshAt, &refreshFailingSince)
+	if errors.Is(err, sql.ErrNoRows) {
+		return WebSession{}, fmt.Errorf("%w: %w", ErrNotFound, err)
+	}
 	if err != nil {
 		return WebSession{}, err
 	}
