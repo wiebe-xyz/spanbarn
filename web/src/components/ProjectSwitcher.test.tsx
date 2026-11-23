@@ -41,7 +41,7 @@ describe('ProjectSwitcher', () => {
     const onChange = mount()
     fireEvent.change(screen.getByLabelText('Search projects'), { target: { value: 'e' } })
     fireEvent.keyDown(screen.getByLabelText('Search projects'), { key: 'Enter' })
-    expect(onChange).toHaveBeenCalledWith('3')
+    expect(onChange).toHaveBeenCalledWith('2')
     expect(screen.queryByLabelText('Search projects')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Project' }))

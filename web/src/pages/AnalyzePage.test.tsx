@@ -82,7 +82,7 @@ beforeEach(() => {
 describe('AnalyzePage', () => {
   it('runs nothing until asked, then shows a table with an other row', async () => {
     renderPage()
-    await screen.findByRole('option', { name: 'Profotograaf' })
+    await screen.findByRole('button', { name: 'Project' })
     expect(analyze).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: '+ Add group by' }))
@@ -164,7 +164,7 @@ describe('AnalyzePage', () => {
 
   it('offers to save a result to a board, and not before there is one', async () => {
     renderPage()
-    await screen.findByRole('option', { name: 'Profotograaf' })
+    await screen.findByRole('button', { name: 'Project' })
     expect(screen.queryByRole('button', { name: 'Save to board' })).not.toBeInTheDocument()
     cleanup()
     renderPage('/analyze?run=1&project=7&group_by=url.path&calc=count')
@@ -173,7 +173,7 @@ describe('AnalyzePage', () => {
 
   it('adds a distinct count calculation from the attribute box', async () => {
     renderPage()
-    await screen.findByRole('option', { name: 'Profotograaf' })
+    await screen.findByRole('button', { name: 'Project' })
     fireEvent.change(screen.getByLabelText('Distinct values of'), { target: { value: 'user.id' } })
     fireEvent.click(screen.getByRole('button', { name: 'Run query' }))
     await waitFor(() => expect(analyze).toHaveBeenCalled())

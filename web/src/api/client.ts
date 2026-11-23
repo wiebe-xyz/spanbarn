@@ -63,6 +63,8 @@ export class ApiError extends Error {
   status: number
   /** How long the server asked the client to wait before retrying. */
   retryAfterMs?: number
+  /** The server's explanation of a refusal, when it sent one. */
+  details?: string
 
   constructor(status: number, message: string) {
     super(message)
@@ -111,13 +113,16 @@ async function fetchJSONOnce<T>(
 
   if (!res.ok) {
     let msg = `HTTP ${res.status}`
+    let details: string | undefined
     try {
       const body = await res.json()
       if (body.error) msg = body.error
+      if (typeof body.details === 'string' && body.details) details = body.details
     } catch {
       // ignore parse errors
     }
     const err = new ApiError(res.status, msg)
+    err.details = details
     const retryAfter = Number(res.headers?.get('Retry-After'))
     if (retryAfter > 0) err.retryAfterMs = retryAfter * 1000
     throw err

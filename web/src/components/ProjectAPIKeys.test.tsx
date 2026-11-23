@@ -68,4 +68,37 @@ describe('ProjectAPIKeys', () => {
     fireEvent.click(screen.getByText('Create key'))
     await waitFor(() => expect(screen.getByText(/invalid api key request/)).toBeDefined())
   })
+
+  it('shows the server detail when a name is refused', async () => {
+    mockFetch
+      .mockImplementationOnce(() => reply(200, []))
+      .mockImplementationOnce(() =>
+        reply(400, { error: 'invalid api key request', details: 'invalid api key request: name must be 1-64 characters and not "setup"' }),
+      )
+      .mockImplementationOnce(() => reply(200, []))
+    render(<ProjectAPIKeys projectId={3} />)
+    fireEvent.click(screen.getByText('API Keys'))
+    await screen.findByText('No API keys')
+    fireEvent.change(screen.getByLabelText('New key name'), { target: { value: 'x'.repeat(64) } })
+    fireEvent.click(screen.getByText('Create key'))
+    await screen.findByText(/name must be 1-64 characters and not "setup"/)
+  })
+
+  it('rejects the reserved name inline before any request', async () => {
+    mockFetch.mockImplementationOnce(() => reply(200, []))
+    render(<ProjectAPIKeys projectId={3} />)
+    fireEvent.click(screen.getByText('API Keys'))
+    await screen.findByText('No API keys')
+    const input = screen.getByLabelText('New key name')
+    expect(input).toHaveAttribute('placeholder', 'e.g. my-project-ingest')
+
+    fireEvent.change(input, { target: { value: ' setup ' } })
+    expect(screen.getByRole('alert')).toHaveTextContent('Name must be 1-64 characters and not "setup"')
+    expect(screen.getByText('Create key')).toBeDisabled()
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    fireEvent.change(input, { target: { value: 'Setup' } })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText('Create key')).toBeEnabled()
+  })
 })
