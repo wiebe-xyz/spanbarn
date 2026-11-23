@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,9 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
+	"github.com/wiebe-xyz/spanbarn/internal/repository"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
+	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
 func TestAPIKeyMiddleware(t *testing.T) {
@@ -347,5 +351,30 @@ func TestSessionMiddlewareForgedToken(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401 for forged token, got %d", rec.Code)
+	}
+}
+
+// lockedSessionStore fails every session lookup the way a busy database does.
+type lockedSessionStore struct{ *repository.Repository }
+
+func (lockedSessionStore) GetWebSessionByIDHash(string) (service.WebSession, error) {
+	return service.WebSession{}, errors.New("database is locked")
+}
+
+// A session lookup that fails answers 503. A 401 would send the SPA to the
+// login page and drop a working session.
+func TestSessionMiddlewareAnswers503WhenTheLookupFails(t *testing.T) {
+	_, repo := newTestSessions(t)
+	svc := session.NewService(lockedSessionStore{repo}, 3600, 3600, nil)
+	handler := SessionMiddleware(svc)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("handler should not be called")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: "some-token"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rec.Code)
 	}
 }

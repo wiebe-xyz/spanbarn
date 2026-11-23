@@ -9,6 +9,7 @@ import (
 	"github.com/wiebe-xyz/spanbarn/internal/auth"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 	"github.com/wiebe-xyz/spanbarn/internal/repository/engine"
+	"github.com/wiebe-xyz/spanbarn/internal/service"
 	"github.com/wiebe-xyz/spanbarn/internal/session"
 )
 
@@ -95,5 +96,31 @@ func TestRevokeByIdpSidAndSub(t *testing.T) {
 		if _, err := svc.Authenticate(context.Background(), token); !errors.Is(err, session.ErrInvalid) {
 			t.Fatalf("revoked session still valid: %v", err)
 		}
+	}
+}
+
+// lockedStore fails every session lookup the way a busy database does.
+type lockedStore struct{ *repository.Repository }
+
+func (lockedStore) GetWebSessionByIDHash(string) (service.WebSession, error) {
+	return service.WebSession{}, errors.New("database is locked")
+}
+
+// A lookup that fails is not an unknown session: the caller must not log the
+// browser out (the SPA treats every 401 as a login redirect).
+func TestFailedLookupIsNotAnInvalidSession(t *testing.T) {
+	db, err := engine.NewDB(":memory:")
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := engine.MigrateSingleFile(context.Background(), db.DB); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	svc := session.NewService(lockedStore{repository.NewRepository(db.DB)}, 3600, 3600, nil)
+
+	_, err = svc.Authenticate(context.Background(), "some-token")
+	if !errors.Is(err, session.ErrStoreUnavailable) || errors.Is(err, session.ErrInvalid) {
+		t.Fatalf("want ErrStoreUnavailable and not ErrInvalid, got %v", err)
 	}
 }

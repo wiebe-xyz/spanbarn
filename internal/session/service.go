@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -35,6 +36,26 @@ type Store interface {
 // absolute expiry, dead refresh token, or grace exhausted. Callers answer 401
 // without distinguishing — the fix is always a fresh login.
 var ErrInvalid = errors.New("session invalid")
+
+// ErrStoreUnavailable reports a session lookup that failed for a reason other
+// than an unknown handle (a busy or timed-out database). The session may be
+// valid, so callers answer 503: a 401 sends the browser to the login page and
+// drops a working session.
+var ErrStoreUnavailable = errors.New("session store unavailable")
+
+// lookup loads a session row. A handle that is not there is ErrInvalid; any
+// other failure is ErrStoreUnavailable.
+func (s *Service) lookup(idHash string) (service.WebSession, error) {
+	ws, err := s.store.GetWebSessionByIDHash(idHash)
+	switch {
+	case err == nil:
+		return ws, nil
+	case errors.Is(err, service.ErrNotFound):
+		return service.WebSession{}, ErrInvalid
+	default:
+		return service.WebSession{}, fmt.Errorf("%w: %w", ErrStoreUnavailable, err)
+	}
+}
 
 // ErrRefreshUnavailable reports a refresh that could not be performed right
 // now (transient IdP failure, or a read-only replica that must not spend the
@@ -207,9 +228,9 @@ func (s *Service) load(token string) (service.WebSession, error) {
 	if token == "" || s.store == nil {
 		return service.WebSession{}, ErrInvalid
 	}
-	ws, err := s.store.GetWebSessionByIDHash(auth.HashSessionToken(token))
+	ws, err := s.lookup(auth.HashSessionToken(token))
 	if err != nil {
-		return service.WebSession{}, ErrInvalid
+		return service.WebSession{}, err
 	}
 	if s.now().Unix() >= ws.AbsoluteExpiresAt {
 		if !s.store.ReadOnly() {
@@ -280,9 +301,9 @@ func (s *Service) RefreshNow(ctx context.Context, token, staleAccessToken string
 //     (invalid_grant) or the session vanished — the row is deleted.
 func (s *Service) refreshSession(ctx context.Context, idHash, staleAccessToken string) (service.WebSession, error) {
 	v, err, _ := s.refresh.Do(idHash, func() (any, error) {
-		cur, gerr := s.store.GetWebSessionByIDHash(idHash)
+		cur, gerr := s.lookup(idHash)
 		if gerr != nil {
-			return nil, ErrInvalid
+			return nil, gerr
 		}
 		if cur.AccessToken != staleAccessToken {
 			// Rotated by a concurrent request while we waited on the flight
