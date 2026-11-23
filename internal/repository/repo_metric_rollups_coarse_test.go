@@ -202,3 +202,37 @@ func TestOldestRollupBucketEmpty(t *testing.T) {
 		t.Error("an empty tier has no oldest bucket")
 	}
 }
+
+// TestQueryCoarseRollupsBoundsAreInclusive pins the contract of the metric read
+// window: a bucket that starts exactly at from or at to is part of the result.
+// Two adjacent windows therefore share the bucket on their common edge, and a
+// caller that adds up per-window totals of a delta series counts it twice (#591).
+func TestQueryCoarseRollupsBoundsAreInclusive(t *testing.T) {
+	repo := setupTestDB(t)
+	ctx := context.Background()
+	start := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+
+	var rows []MetricRollup
+	for i := 0; i < 3; i++ {
+		rows = append(rows, coarseRow(3600, start.Add(time.Duration(i)*time.Hour), 10))
+	}
+	if err := repo.UpsertCoarseRollups(ctx, rows); err != nil {
+		t.Fatalf("UpsertCoarseRollups: %v", err)
+	}
+
+	read := func(from, to time.Time) int {
+		got, err := repo.QueryCoarseRollups(ctx, CoarseRollupFilter{
+			ProjectID: 1, Name: "reqs", StepSeconds: 3600, From: from, To: to,
+		})
+		if err != nil {
+			t.Fatalf("QueryCoarseRollups: %v", err)
+		}
+		return len(got)
+	}
+
+	first := read(start, start.Add(time.Hour))
+	second := read(start.Add(time.Hour), start.Add(2*time.Hour))
+	if first != 2 || second != 2 {
+		t.Fatalf("windows [h0,h1] and [h1,h2] hold %d and %d buckets, want 2 and 2", first, second)
+	}
+}
