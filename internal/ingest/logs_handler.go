@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -12,6 +13,11 @@ const (
 	logsChannelSize   = 256
 	logsFlushSize     = 500
 	logsFlushInterval = 100 * time.Millisecond
+	// logsPendingMax bounds the records a failed flush keeps for the next one.
+	// A queue that times out for a second or two holds back at most this many
+	// records; a longer outage drops the oldest beyond it, and that drop is the
+	// ERROR line.
+	logsPendingMax = 10000
 )
 
 // LogsRepository is the write-side subset needed by LogsHandler.
@@ -20,7 +26,10 @@ type LogsRepository interface {
 }
 
 // LogsHandler buffers incoming OTLP log records and writes them to SQLite in
-// batches. No spool — losing a flush on crash is acceptable.
+// batches. No spool: a crash loses the buffered records. A flush that fails
+// keeps its records for the next flush, up to logsPendingMax, so one queue
+// timeout loses nothing. A timed-out push may have landed, so a retry can store
+// a record twice; a duplicate log line costs less than a lost one.
 type LogsHandler struct {
 	ch     chan []model.LogRecord
 	repo   LogsRepository
@@ -60,6 +69,7 @@ func (h *LogsHandler) Run(ctx context.Context) {
 	defer ticker.Stop()
 
 	var pending []model.LogRecord
+	retained := false
 	failures := flushFailures{logger: h.logger, msg: "logs insert failed"}
 	defer func() { failures.report(time.Now(), true) }()
 
@@ -69,7 +79,16 @@ func (h *LogsHandler) Run(ctx context.Context) {
 			return
 		}
 		if err := h.repo.InsertLogs(context.Background(), pending); err != nil {
-			failures.add(len(pending), err, time.Now())
+			retained = true
+			if over := len(pending) - logsPendingMax; over > 0 {
+				failures.add(over, err, time.Now())
+				pending = append(pending[:0], pending[over:]...)
+			}
+			return
+		}
+		if retained {
+			h.logger.Warn("logs insert recovered after a failed flush", "count", len(pending))
+			retained = false
 		}
 		pending = pending[:0]
 	}
@@ -90,6 +109,9 @@ func (h *LogsHandler) Run(ctx context.Context) {
 					pending = append(pending, recs...)
 				default:
 					flush()
+					if len(pending) > 0 {
+						failures.add(len(pending), errors.New("flush failed at shutdown"), time.Now())
+					}
 					return
 				}
 			}

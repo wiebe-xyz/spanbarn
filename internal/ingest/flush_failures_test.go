@@ -86,11 +86,14 @@ func TestLogsHandlerCapsTheFailedFlushLine(t *testing.T) {
 	var logs bytes.Buffer
 	store := newFailingStore(flushes)
 	h := NewLogsHandler(store, slog.New(slog.NewTextHandler(&logs, nil)))
+	// Batches twice the pending bound over the run, so records are dropped
+	// before shutdown and the first drop is the first ERROR line.
+	const batch = 2 * logsPendingMax / flushes
 	for i := 0; i < flushes; i++ {
-		h.Enqueue(make([]model.LogRecord, logsFlushSize))
+		h.Enqueue(make([]model.LogRecord, batch))
 	}
 	runUntilFlushes(t, store, flushes, h.Run)
-	assertCappedFailureLog(t, logs.String(), flushes*logsFlushSize)
+	assertCappedFailureLog(t, logs.String(), flushes*batch)
 }
 
 func TestMetricsHandlerCapsTheFailedFlushLine(t *testing.T) {
