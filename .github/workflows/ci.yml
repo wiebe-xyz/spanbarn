@@ -136,8 +136,10 @@ jobs:
         # The runners share one host with every other repo's CI. vitest's
         # default of one fork per core let worker start-up time out (60s,
         # hardcoded in vitest) when the host was at 0% idle (run 38996476179).
+        # Two workers still timed out on 2026-11-25 (run 45589020241, load
+        # above 40 on 10 cores), so one worker runs the files in turn.
         env:
-          VITEST_MAX_WORKERS: '2'
+          VITEST_MAX_WORKERS: '1'
         run: |
           set -euo pipefail
           # This runner is shared with other repos' jobs. `corepack enable`
