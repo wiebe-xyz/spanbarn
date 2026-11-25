@@ -244,23 +244,29 @@ func TestRefreshTraceStructurePlanSeeksTraceIndex(t *testing.T) {
 }
 
 // Ingesting many one-span traces in 500-span batches stays linear. Before the
-// index pin each trace's refresh scanned the project, and 5500 spans took
-// minutes under -race.
+// index pin each trace's refresh scanned the project, so batch n cost n times
+// the first and 5500 spans took minutes under -race. The check compares the last
+// batches with the first ones, so a loaded host slows both alike and passes,
+// while a scan that grows with the table fails at any speed.
 func TestInsertSpansManyTracesStaysFast(t *testing.T) {
 	repo := setupTestDB(t)
-	start := time.Now()
 	const total, chunk = 5500, 500
+	var took []time.Duration
 	for i := 0; i < total; i += chunk {
 		batch := make([]Span, 0, chunk)
 		for j := i; j < i+chunk && j < total; j++ {
 			batch = append(batch, tsSpan(fmt.Sprintf("fast-%d", j), fmt.Sprintf("s%d", j), "", "op", "svc", "ok", 1, 10))
 		}
+		start := time.Now()
 		if err := repo.InsertSpans(batch); err != nil {
 			t.Fatal(err)
 		}
+		took = append(took, time.Since(start))
 	}
-	if d := time.Since(start); d > 60*time.Second {
-		t.Errorf("ingesting %d spans took %s", total, d)
+	first := took[0] + took[1] + took[2]
+	last := took[len(took)-1] + took[len(took)-2] + took[len(took)-3]
+	if last > 8*first {
+		t.Errorf("the last 3 batches took %s against %s for the first 3: ingest cost grows with the table", last, first)
 	}
 }
 
