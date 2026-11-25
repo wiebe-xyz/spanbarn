@@ -279,3 +279,30 @@ func TestTailStartIsBounded(t *testing.T) {
 		t.Errorf("unaligned end: tail starts at %s, want %s", got, want)
 	}
 }
+
+// A totals read over an hour that only a day bucket covers reads nothing, and a
+// window holding the whole day bucket reads it, with to one second before the
+// next midnight. Without this 24 hourly windows each returned the day (#591).
+func TestReadInputTotalsTakeOnlyCoarseBucketsInsideTheWindow(t *testing.T) {
+	day := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+	row := MetricRollup{Name: "c", Type: "sum", Temporality: "delta", Bucket: day, StepSeconds: tier.StepDay, Sum: 631, Count: 1}
+	repo := &readRepo{coarse: map[int64][]MetricRollup{tier.StepDay: {row}}}
+	svc := NewMetricsService(repo)
+	read := func(from, to time.Time) int {
+		got, err := svc.ReadInput(context.Background(), MetricInputRequest{Name: "c", From: from, To: to, Totals: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(got.Points)
+	}
+
+	for _, h := range []int{0, 5, 12} {
+		from := day.Add(time.Duration(h) * time.Hour)
+		if n := read(from, from.Add(time.Hour-time.Second)); n != 0 {
+			t.Errorf("hour %d read %d day points, want none", h, n)
+		}
+	}
+	if n := read(day, day.Add(24*time.Hour-time.Second)); n != 1 {
+		t.Errorf("the whole day read %d points, want the day bucket once", n)
+	}
+}
