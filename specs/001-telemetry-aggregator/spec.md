@@ -193,6 +193,7 @@ Each requirement names the issue that asked for it and the test that proves it. 
 - **FR-041**: A log flush that fails keeps its records for the next flush, up to 10000 records; only records beyond that bound are dropped, and the drop is the error line. A retried flush can store a record twice when the failed push had landed. Issue #594.
 - **FR-042**: A session lookup that fails for any reason other than an unknown handle (a busy or timed-out database) answers 503 and keeps the session; only an unknown, expired or revoked session answers 401, because the web app signs the user out on every 401.
 - **FR-043**: A metric read window is closed at both ends: `from` and `to` each include a bucket that starts exactly there. Two adjacent windows share the bucket on their common edge, so a client that adds per-window totals of a delta series counts that bucket twice. A client that tiles a range uses `to` one bucket step before the next `from`. Issue #591.
+- **FR-044**: A totals read answered from a tier coarser than an hour counts only the buckets that lie inside the window, with a bucket ending up to one second after `to` counting as inside. A window narrower than the coarse bucket that holds its data reads nothing from that tier, so 24 hourly windows of a day never add up to more than the day window. Issue #591.
 
 ## Non-Functional Requirements
 

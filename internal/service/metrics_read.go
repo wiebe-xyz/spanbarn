@@ -157,12 +157,33 @@ func (s *MetricsService) rollupInput(ctx context.Context, req MetricInputRequest
 		if err != nil {
 			return MetricInput{}, err
 		}
+		if req.Totals && step > tier.StepHour {
+			rows = bucketsInsideWindow(rows, step, req.From, req.To)
+		}
 		if len(rows) == 0 {
 			continue
 		}
 		return rollupRowsInput(rows, step), nil
 	}
 	return MetricInput{}, nil
+}
+
+// bucketsInsideWindow keeps the coarse buckets of a totals read that lie inside
+// the window. The read starts at the bucket holding from, so that a chart over a
+// narrow range still finds a bucket, but a total over an hour that only a day
+// bucket covers would otherwise return the whole day: 24 hourly windows of a day
+// whose finer tiers had expired added up to 24 times its total (#591). A bucket
+// ending up to a second after to counts as inside, because callers tile ranges
+// with to one second before the next from.
+func bucketsInsideWindow(rows []MetricRollup, step int64, from, to time.Time) []MetricRollup {
+	width := time.Duration(step) * time.Second
+	kept := rows[:0:0]
+	for _, row := range rows {
+		if !row.Bucket.Before(from) && !row.Bucket.Add(width).After(to.Add(time.Second)) {
+			kept = append(kept, row)
+		}
+	}
+	return kept
 }
 
 // rollupRowsInput maps rollup buckets read at step to derivation input. A delta
