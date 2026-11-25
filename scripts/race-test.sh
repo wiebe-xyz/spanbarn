@@ -9,6 +9,8 @@
 #        RACE_OTHERS_P packages the unsplit remainder builds and runs at once
 #                      (default 2)
 #        RACE_SLOWEST  slowest tests listed per shard (default 10)
+#        RACE_JOBS     go test processes running at once (default 4)
+#        RACE_TIMEOUT  go test -timeout of each process (default 20m)
 #
 # A package runs its tests one after another, so under -race a big one is a
 # single core for minutes on an idle host and past Go's 10 minute package
@@ -17,6 +19,13 @@
 # at host load above 200. Each shard is its own `go test` process with its own
 # timeout, so a shard has the full 10 minutes for a fraction of the tests.
 # Tests are dealt round-robin by name, so every test runs in exactly one shard.
+#
+# On 2026-11-25 the 11 processes started together shared a 10-core host with
+# other repos' jobs at load 44 to 80; two repository shards, cmd/spanbarn and
+# internal/auth ran 100 times slower than on a quiet host and hit the 10 minute
+# limit with no failing test. At most RACE_JOBS processes run at once, so a
+# process is not starved by its own siblings, and RACE_TIMEOUT keeps the
+# process limit inside the 30 minute job budget.
 #
 # The shards run with -v so each one can list its slowest tests. A passing
 # shard prints only its result line and that list; a failing one prints its
@@ -27,6 +36,8 @@ set -euo pipefail
 SHARDED="${RACE_SHARDED:-./internal/repository:4 ./internal/api:4 ./internal/metricrollup:2 ./internal/repository/engine:2}"
 OTHERS_P="${RACE_OTHERS_P:-2}"
 SLOWEST="${RACE_SLOWEST:-10}"
+JOBS="${RACE_JOBS:-4}"
+TIMEOUT="${RACE_TIMEOUT:-20m}"
 OUT="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/race-test.XXXXXX")"
 
 sharded_paths=()
@@ -49,9 +60,17 @@ while IFS= read -r p; do
 	[ "$skip" -eq 1 ] || others+=("$p")
 done < <(go list ./...)
 
+# throttle waits until fewer than JOBS of this script's processes are running.
+throttle() {
+	while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$JOBS" ]; do
+		sleep 1
+	done
+}
+
 pids=()
 names=()
-go test -race -count=1 -p "$OTHERS_P" "${others[@]}" >"$OUT/others.log" 2>&1 &
+throttle
+go test -race -count=1 -timeout "$TIMEOUT" -p "$OTHERS_P" "${others[@]}" >"$OUT/others.log" 2>&1 &
 pids+=($!)
 names+=(others)
 
@@ -74,7 +93,8 @@ for i in "${!sharded_paths[@]}"; do
 		done
 		[ -n "$pattern" ] || continue
 		name="${label//\//_}#$s"
-		go test -race -count=1 -v -run "^(${pattern})\$" "$pkg" >"$OUT/${name//#/.}.log" 2>&1 &
+		throttle
+		go test -race -count=1 -timeout "$TIMEOUT" -v -run "^(${pattern})\$" "$pkg" >"$OUT/${name//#/.}.log" 2>&1 &
 		pids+=($!)
 		names+=("$name")
 	done

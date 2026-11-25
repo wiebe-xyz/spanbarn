@@ -44,6 +44,11 @@ if [ "$1" = test ] && [ "$2" = -list ]; then
 	exit 0
 fi
 echo "$*" >> "$STUB_LOG"
+if [ -n "$STUB_SLEEP" ]; then
+	echo + >> "$STUB_CONC"
+	sleep "$STUB_SLEEP"
+	echo - >> "$STUB_CONC"
+fi
 case " $* " in
 *" -v "*)
 	pat=$(echo "$*" | sed -E 's/.*-run \\^\\((.*)\\)\\$.*/\\1/')
@@ -65,7 +70,12 @@ VERBOSE = "".join(
 SLOWEST = [t for t in reversed(TESTS)][:10]
 
 
-def run(fail: str = "", script: Path = SCRIPT) -> tuple[subprocess.CompletedProcess, list[str]]:
+PEAK = [0]
+
+
+def run(
+    fail: str = "", script: Path = SCRIPT, extra: dict | None = None
+) -> tuple[subprocess.CompletedProcess, list[str]]:
     with tempfile.TemporaryDirectory() as tmp:
         stub = Path(tmp) / "go"
         stub.write_text(STUB)
@@ -81,9 +91,18 @@ def run(fail: str = "", script: Path = SCRIPT) -> tuple[subprocess.CompletedProc
             STUB_FAIL=fail,
             STUB_VERBOSE=str(verbose),
             RUNNER_TEMP=tmp,
+            STUB_CONC=str(Path(tmp) / "conc"),
             RACE_SHARDED="./internal/repository:4 ./internal/api:2 ./internal/repository/engine:2",
+            **(extra or {}),
         )
         result = subprocess.run(["bash", str(script)], capture_output=True, text=True, env=env, timeout=60)
+        conc = Path(tmp) / "conc"
+        if conc.exists():
+            running = peak = 0
+            for mark in conc.read_text().split():
+                running += 1 if mark == "+" else -1
+                peak = max(peak, running)
+            PEAK[0] = peak
         return result, log.read_text().splitlines()
 
 
@@ -105,7 +124,17 @@ class RaceTestScriptTest(unittest.TestCase):
     def test_other_packages_run_once_without_the_sharded_ones(self):
         _, calls = run()
         others = [c for c in calls if "-run" not in c]
-        self.assertEqual(others, [f"test -race -count=1 -p 2 {MOD}/a {MOD}/b"])
+        self.assertEqual(others, [f"test -race -count=1 -timeout 20m -p 2 {MOD}/a {MOD}/b"])
+
+    def test_every_process_gets_the_timeout_that_fits_the_job(self):
+        _, calls = run()
+        self.assertTrue(calls and all(" -timeout 20m " in c for c in calls), calls)
+
+    def test_no_more_processes_run_at_once_than_the_cap(self):
+        result, calls = run(extra={"STUB_SLEEP": "0.4", "RACE_JOBS": "2"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 9)
+        self.assertEqual(PEAK[0], 2)
 
     def test_a_failing_shard_fails_the_run(self):
         result, _ = run(fail="TestCase01")
