@@ -58,3 +58,40 @@ func TestMemoryGaugesReportGoClasses(t *testing.T) {
 		t.Errorf("go memory classes = %v", got)
 	}
 }
+
+func TestReadPressureAvg10(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "io")
+	psi := "some avg10=67.34 avg60=62.77 avg300=61.20 total=704129913667\nfull avg10=37.66 avg60=33.79 avg300=35.87 total=436634964989\n"
+	if err := os.WriteFile(p, []byte(psi), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := readPressureAvg10(p); !ok || got != 67.34 {
+		t.Errorf("avg10 = %v %v, want the some line's 67.34", got, ok)
+	}
+	if _, ok := readPressureAvg10(p + ".none"); ok {
+		t.Error("a host without PSI must read as absent")
+	}
+}
+
+func TestCacheCountersOnlyWhereTheCgroupReportsThem(t *testing.T) {
+	dir := t.TempDir()
+	stat := "anon 1\nworkingset_refault_file 9000000\npgmajfault 142000\n"
+	if err := os.WriteFile(filepath.Join(dir, "memory.stat"), []byte(stat), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := selfmetrics.NewRecorder()
+	registerCacheCounters(rec, dir)
+	got := map[string]float64{}
+	for _, r := range rec.Readings() {
+		got[r.Name] = r.Value
+	}
+	if got["spanbarn.mem.file_refaults"] != 9000000 || got["spanbarn.mem.major_faults"] != 142000 {
+		t.Errorf("cache counters = %v", got)
+	}
+
+	bare := selfmetrics.NewRecorder()
+	registerCacheCounters(bare, t.TempDir())
+	if n := len(bare.Readings()); n != 0 {
+		t.Errorf("%d counters exported without a memory.stat, want none", n)
+	}
+}
