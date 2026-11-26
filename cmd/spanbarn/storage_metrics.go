@@ -26,6 +26,12 @@ func registerStorageMetrics(rec *selfmetrics.Recorder, stats func() retention.St
 		measured(func(s retention.Stats) float64 { return float64(s.Tier) }))
 	rec.RegisterOptionalGauge("spanbarn.disk.used_pct", nil,
 		measured(func(s retention.Stats) float64 { return s.VolumeUsedFraction * 100 }))
+	rec.RegisterOptionalGauge("spanbarn.disk.volume_bytes", nil,
+		measured(func(s retention.Stats) float64 { return float64(s.VolumeBytes) }))
+	rec.RegisterOptionalGauge("spanbarn.disk.free_bytes", nil,
+		measured(func(s retention.Stats) float64 { return float64(s.VolumeFreeBytes) }))
+	rec.RegisterOptionalGauge("spanbarn.disk.used_bytes", nil,
+		measured(func(s retention.Stats) float64 { return float64(s.VolumeBytes - s.VolumeFreeBytes) }))
 	rec.RegisterOptionalGauge("spanbarn.db.bytes", nil,
 		measured(func(s retention.Stats) float64 { return float64(s.DBFileBytes) }))
 	rec.RegisterOptionalGauge("spanbarn.db.wal_bytes", nil,

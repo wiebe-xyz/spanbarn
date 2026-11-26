@@ -29,6 +29,9 @@ func selfBoards() []service.BoardSpec {
 			Refresh:   300,
 			Panels: []service.PanelRequest{
 				metricPanel("Volume used (%)", "spanbarn.disk.used_pct"),
+				metricPanel("Volume free (bytes)", "spanbarn.disk.free_bytes"),
+				metricPanel("Volume used (bytes)", "spanbarn.disk.used_bytes"),
+				metricPanel("Volume size (bytes)", "spanbarn.disk.volume_bytes"),
 				metricPanel("Disk pressure tier (0 normal, 1 elevated, 2 critical)", "spanbarn.disk.tier"),
 				metricPanel("Database file size (bytes)", "spanbarn.db.bytes"),
 				metricPanel("WAL size (bytes)", "spanbarn.db.wal_bytes"),

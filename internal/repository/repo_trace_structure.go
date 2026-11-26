@@ -275,7 +275,7 @@ func (r *Repository) DeleteSpansByMaxIDRefreshing(ctx context.Context, maxID int
 	if err != nil {
 		return 0, err
 	}
-	n, err := r.DeleteSpansByMaxID(maxID)
+	n, err := r.deleteSpansByMaxID(ctx, maxID)
 	if err != nil {
 		return n, err
 	}
