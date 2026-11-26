@@ -12,13 +12,19 @@ spec:
           # and one cold dashboard or trace-group scan took 20 s to over 45 s.
           # The limit is raised to 2 cores and 1Gi; the request stays low, so
           # scheduling is unchanged (layer7 ran at 22% CPU).
+          # On 2026-11-26 every raw-span dashboard read hit the 10 s budget for
+          # an hour. The reader held a 780 MiB Go heap inside the 1Gi limit,
+          # leaving 180 MiB of file cache for a volume read through the page
+          # cache: it refaulted about 5000 pages a second and the node's I/O
+          # pressure sat at 60 to 70%. The limit is 2Gi and GOMEMLIMIT 1200MiB,
+          # which leaves about 800 MiB for the cache. The request stays low.
           env:
             - name: GOMEMLIMIT
-              value: "900MiB"
+              value: "1200MiB"
           resources:
             requests:
               cpu: 50m
               memory: 128Mi
             limits:
               cpu: "2"
-              memory: 1Gi
+              memory: 2Gi
