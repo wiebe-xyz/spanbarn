@@ -34,7 +34,9 @@ vi.mock('recharts', () => ({
   ReferenceArea: () => <span data-testid="brush-area" />,
   ReferenceLine: () => null,
   Line: ({ name }: { name: string }) => <span data-testid="line">{name}</span>,
-  XAxis: () => null,
+  XAxis: ({ domain, allowDataOverflow }: { domain: [number, number]; allowDataOverflow?: boolean }) => (
+    <span data-testid="x-axis" data-domain={domain.join(',')} data-clip={String(allowDataOverflow === true)} />
+  ),
   YAxis: () => null,
   Tooltip: () => null,
   CartesianGrid: () => null,
@@ -138,6 +140,67 @@ describe('DashboardPage', () => {
     expect(Date.now() - Date.parse(filter.to)).toBeGreaterThanOrEqual(8 * 3600_000 - 5000)
     expect(screen.getByRole('combobox', { name: 'Span status' })).toHaveValue('error')
     expect(screen.getByRole('textbox', { name: 'Span name' })).toHaveValue('GET /')
+  })
+
+  const PANELS = [
+    'Trace Counts by Service',
+    'Trace Counts by HTTP Status Code',
+    'Trace Duration Heatmap',
+    'Duration Heatmap',
+    'Duration by Service',
+    'Duration by Name',
+  ]
+
+  function allRequests() {
+    return [...counts.mock.calls.map(([f]) => f), ...percentiles.mock.calls.map(([f]) => f), ...heatmap.mock.calls.map(([f]) => f)]
+  }
+
+  it.each([['1h', 1], ['4h', 4], ['24h', 24]])('sends the %s window to all six cards', async (range, hours) => {
+    renderPage(`/?range=${range}`)
+    await waitFor(() => expect(allRequests()).toHaveLength(6))
+    const first = allRequests()[0]
+    expect(Date.parse(first.to) - Date.parse(first.from)).toBe(hours * 3600_000)
+    for (const f of allRequests()) expect([f.from, f.to]).toEqual([first.from, first.to])
+  })
+
+  it('sends the project, service, span name and status filters to all six cards', async () => {
+    renderPage('/?range=1h&project=3&service=web&name=GET%20%2F&status=error')
+    await waitFor(() => expect(allRequests()).toHaveLength(6))
+    for (const f of allRequests()) {
+      expect(f).toMatchObject({ projectId: 3, service: 'web', name: 'GET /', status: 'error' })
+    }
+  })
+
+  it('draws every series chart on the selected window and clips points outside it', async () => {
+    renderPage('/?range=1h')
+    await waitFor(() => expect(allRequests()).toHaveLength(6))
+    const { from, to } = allRequests()[0]
+    for (const title of PANELS.filter((t) => !t.includes('Heatmap'))) {
+      await waitFor(() => expect(within(card(title)).getAllByTestId('x-axis').length).toBeGreaterThan(0))
+      for (const axis of within(card(title)).getAllByTestId('x-axis')) {
+        expect(axis).toHaveAttribute('data-domain', `${Date.parse(from)},${Date.parse(to)}`)
+        expect(axis).toHaveAttribute('data-clip', 'true')
+      }
+    }
+  })
+
+  it('refetches all six cards on the new window when the range changes', async () => {
+    renderPage('/?range=24h')
+    await waitFor(() => expect(allRequests()).toHaveLength(6))
+    vi.clearAllMocks()
+    fireEvent.change(screen.getByRole('combobox', { name: 'Time range' }), { target: { value: '1h' } })
+    await waitFor(() => expect(allRequests()).toHaveLength(6))
+    for (const f of allRequests()) expect(Date.parse(f.to) - Date.parse(f.from)).toBe(3600_000)
+  })
+
+  it('refetches all six cards when the previous window arrow is pressed', async () => {
+    renderPage('/?range=1h')
+    await waitFor(() => expect(allRequests()).toHaveLength(6))
+    const live = Date.parse(allRequests()[0].to)
+    vi.clearAllMocks()
+    fireEvent.click(screen.getByRole('button', { name: 'Previous window' }))
+    await waitFor(() => expect(allRequests()).toHaveLength(6))
+    for (const f of allRequests()) expect(Date.parse(f.to)).toBeLessThanOrEqual(live - 3600_000 + 5000)
   })
 
   it('refetches every card when a filter changes', async () => {

@@ -23,7 +23,11 @@ type SeriesChartProps = {
 
 const tick = { fontSize: 11, fill: 'var(--text-muted)' }
 
-/** One line per group over a fixed time window, so empty stretches stay empty. */
+/**
+ * One line per group over a fixed time window, so empty stretches stay empty.
+ * A point outside the window (the rollup bucket that starts before `from`, or a
+ * late bucket) is clipped instead of widening the axis.
+ */
 export function SeriesChart({ series, fromMs, toMs, label, formatValue, byStatus, height = 200, markers, onBrush, onSelectGroup }: SeriesChartProps): ReactElement {
   const span = toMs - fromMs
   const brush = useBrush((r) => onBrush?.(...xRange(r)))
@@ -53,6 +57,7 @@ export function SeriesChart({ series, fromMs, toMs, label, formatValue, byStatus
             type="number"
             scale="time"
             domain={[fromMs, toMs]}
+            allowDataOverflow
             tick={tick}
             tickFormatter={(v: number) => formatAxisTime(v, span)}
           />
