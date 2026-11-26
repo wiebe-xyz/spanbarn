@@ -39,6 +39,8 @@ func TestStorageMetricsWaitForFirstMeasurement(t *testing.T) {
 		Measured:           true,
 		Tier:               retention.TierElevated,
 		VolumeUsedFraction: 0.42,
+		VolumeBytes:        10 << 30,
+		VolumeFreeBytes:    6 << 30,
 		DBFileBytes:        4 << 30,
 		Deleted:            map[string]int64{"prompt_records": 20000},
 		Backlog:            map[string]bool{"prompt_records": true},
@@ -47,6 +49,9 @@ func TestStorageMetricsWaitForFirstMeasurement(t *testing.T) {
 	checks := map[string]float64{
 		"spanbarn.disk.tier":                         1,
 		"spanbarn.disk.used_pct":                     42,
+		"spanbarn.disk.volume_bytes":                 10 << 30,
+		"spanbarn.disk.free_bytes":                   6 << 30,
+		"spanbarn.disk.used_bytes":                   4 << 30,
 		"spanbarn.db.bytes":                          4 << 30,
 		"spanbarn.retention.deleted{prompt_records}": 20000,
 		"spanbarn.retention.backlog{prompt_records}": 1,

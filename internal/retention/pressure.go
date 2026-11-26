@@ -178,6 +178,7 @@ func (w *RetentionWorker) applyDiskPressure(ctx context.Context, cfg Config) Con
 	tier := TierFor(used, cfg.Watermarks)
 	w.pressured.Store(tier == TierCritical)
 	w.recordSpace(space, tier)
+	w.reportLowFree(space)
 
 	if tier == TierNormal {
 		// Keep the reserve topped up while things are calm — that is the only

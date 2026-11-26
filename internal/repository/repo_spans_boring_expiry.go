@@ -20,8 +20,10 @@ import (
 // about 366 traces on prod, so that job ran some 1,400 summary statements
 // beside the delete, and one held the spans writer for 5.6 s (2026-10-28).
 
-// boringExpiryChunk is how many expired spans one delete job removes.
-const boringExpiryChunk = retentionDeleteBatch
+// boringExpiryChunk is how many expired spans one delete job removes. It is a
+// quarter of retentionDeleteBatch: 1000-span jobs took 2 to 5 s on prod volume
+// pressure and cold dashboard reads queued behind them (#611).
+const boringExpiryChunk = 250
 
 // boringExpiryLabel keeps the label the batched delete had, so slow writes
 // before and after the change group under one op.
@@ -60,13 +62,17 @@ const deleteBoringRowsSQL = `DELETE FROM spans
 func (r *Repository) DeleteExpiredBoringSpans(ctx context.Context, now time.Time) (int64, error) {
 	cutoff := now.UTC()
 	var total int64
+	var took time.Duration
 	for first := true; ; first = false {
-		if !first && !r.yieldBetweenBatches(ctx) {
-			return total, ctx.Err()
+		if !first {
+			if err := r.yieldAfterBatch(ctx, took); err != nil {
+				return total, err
+			}
 		}
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
+		started := time.Now()
 		ids, keys, err := r.boringVictims(ctx, cutoff)
 		if err != nil || len(ids) == 0 {
 			return total, err
@@ -76,6 +82,7 @@ func (r *Repository) DeleteExpiredBoringSpans(ctx context.Context, now time.Time
 		if err != nil || n == 0 || len(ids) < boringExpiryChunk {
 			return total, err
 		}
+		took = time.Since(started)
 	}
 }
 

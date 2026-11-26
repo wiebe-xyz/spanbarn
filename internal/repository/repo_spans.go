@@ -182,8 +182,10 @@ func (r *Repository) DeleteSpansByIDs(ids []int64) (int64, error) {
 
 // spanDeleteChunk is how many spans one write job of DeleteSpansByMaxID
 // deletes. spans carries 16 indexes on prod, and one DELETE of a whole
-// retention batch (6,297 rows) held the write slot 10.2s on 2026-10-28.
-const spanDeleteChunk = 1000
+// retention batch (6,297 rows) held the write slot 10.2s on 2026-10-28. A chunk
+// of 1000 still took 2 to 5 s there on 2026-11-26 and a cold dashboard read
+// queued behind it (#611), so the chunk is 250: well under a second a job.
+const spanDeleteChunk = 250
 
 // spanDeleteLabel names every chunk's write job, so slow writes group under
 // the label the single DELETE had.
@@ -194,8 +196,18 @@ var spanDeleteLabel = "DeleteSpansByMaxID:" + engine.FamilySpans.String()
 // run between them. Ids only grow, so no span with id <= maxID arrives while
 // it runs, and the chunks delete what one DELETE would.
 func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
+	return r.deleteSpansByMaxID(context.Background(), maxID)
+}
+
+// deleteSpansByMaxID is DeleteSpansByMaxID with a pause after every full chunk
+// (yieldAfterBatch: the longer of the configured yield and the chunk's own
+// time), so the deletes hold the volume at most half the time and reads get
+// the rest. A cancelled ctx ends the pause and the delete with the rows
+// deleted so far.
+func (r *Repository) deleteSpansByMaxID(ctx context.Context, maxID int64) (int64, error) {
 	return deleteInChunks(spanDeleteChunk, func() (int64, error) {
-		return r.submitRows(engine.FamilySpans, writescheduler.Low, spanDeleteLabel, func(db *sql.DB) (int64, error) {
+		started := time.Now()
+		n, err := r.submitRows(engine.FamilySpans, writescheduler.Low, spanDeleteLabel, func(db *sql.DB) (int64, error) {
 			res, e := db.Exec(`DELETE FROM spans WHERE id IN
 				(SELECT id FROM spans WHERE id <= ? ORDER BY id LIMIT ?)`, maxID, spanDeleteChunk)
 			if e != nil {
@@ -204,6 +216,10 @@ func (r *Repository) DeleteSpansByMaxID(maxID int64) (int64, error) {
 			n, _ := res.RowsAffected()
 			return n, nil
 		})
+		if err != nil || n < spanDeleteChunk {
+			return n, err
+		}
+		return n, r.yieldAfterBatch(ctx, time.Since(started))
 	})
 }
 

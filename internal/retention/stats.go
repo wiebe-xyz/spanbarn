@@ -18,9 +18,14 @@ type Stats struct {
 	Measured           bool
 	Tier               Tier
 	VolumeUsedFraction float64
-	DBFileBytes        int64
-	WALBytes           int64
-	FreelistBytes      int64
+	// VolumeBytes and VolumeFreeBytes are the writer volume's size and the
+	// space still available to the process, the raw numbers behind the used
+	// percentage.
+	VolumeBytes     int64
+	VolumeFreeBytes int64
+	DBFileBytes     int64
+	WALBytes        int64
+	FreelistBytes   int64
 
 	// Deleted is the cumulative rows deleted per table, keyed by RetentionTables.
 	Deleted map[string]int64
@@ -46,6 +51,7 @@ type statsState struct {
 	measured bool
 	tier     Tier
 	space    engine.Space
+	lowFree  bool
 	deleted  map[string]int64
 	backlog  map[string]bool
 }
@@ -60,6 +66,8 @@ func (w *RetentionWorker) Stats() Stats {
 		Measured:           s.measured,
 		Tier:               s.tier,
 		VolumeUsedFraction: s.space.UsedFraction(),
+		VolumeBytes:        s.space.VolumeBytes,
+		VolumeFreeBytes:    s.space.VolumeFreeBytes,
 		DBFileBytes:        s.space.FileBytes,
 		WALBytes:           s.space.WALBytes,
 		FreelistBytes:      s.space.ReusableBytes(),
@@ -81,6 +89,41 @@ func (w *RetentionWorker) recordSpace(space engine.Space, tier Tier) {
 	s.mu.Lock()
 	s.measured, s.space, s.tier = true, space, tier
 	s.mu.Unlock()
+}
+
+// LowFreeBytes is the free space under which retention reports the writer
+// volume at ERROR, which reaches BugBarn. The report clears again once free
+// space is back above LowFreeClearBytes, so one episode is one report.
+const (
+	LowFreeBytes      = 5 << 30
+	LowFreeClearBytes = 6 << 30
+)
+
+// reportLowFree logs once per episode when the writer volume has less than
+// LowFreeBytes free. Only ERROR reaches BugBarn, and the ladder's WARN does
+// not, so a volume that fills in silence had no alert before this.
+func (w *RetentionWorker) reportLowFree(space engine.Space) {
+	if space.VolumeBytes == 0 {
+		return
+	}
+	free := int64(space.VolumeFreeBytes)
+	s := &w.stats
+	s.mu.Lock()
+	report := !s.lowFree && free < LowFreeBytes
+	switch {
+	case report:
+		s.lowFree = true
+	case s.lowFree && free >= LowFreeClearBytes:
+		s.lowFree = false
+	}
+	s.mu.Unlock()
+	if report {
+		w.logger.Error("retention: writer volume free space is under 5 GiB",
+			"volume_free_bytes", free,
+			"volume_bytes", int64(space.VolumeBytes),
+			"db_file_bytes", space.FileBytes,
+			"reusable_bytes", space.ReusableBytes())
+	}
 }
 
 // recordCycle adds one completed cycle's deletes to the running totals and

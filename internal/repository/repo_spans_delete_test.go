@@ -1,9 +1,11 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 )
 
 // The chunked delete removes exactly the spans with id <= maxID, as the
@@ -76,5 +78,40 @@ func TestDeleteInChunksStops(t *testing.T) {
 				t.Errorf("calls %d total %d err %v; want %d, %d, %v", calls, total, err, c.wantCalls, c.wantTotal, c.err)
 			}
 		})
+	}
+}
+
+// A chunk is a quarter of the old 1000 and the delete pauses between full
+// chunks, so a cancelled context stops it after the first chunk instead of
+// draining the range (#611).
+func TestDeleteSpansByMaxIDStopsBetweenChunksOnCancel(t *testing.T) {
+	repo := setupTestDB(t)
+	repo.SetDeleteBatchYield(time.Hour)
+	const total = 3 * spanDeleteChunk
+	spans := make([]Span, total)
+	for i := range spans {
+		spans[i] = tsSpan(fmt.Sprintf("t%d", i/5), fmt.Sprintf("s%d", i), "", "op", "web", "ok", 1, 10)
+	}
+	if err := repo.InsertSpans(spans); err != nil {
+		t.Fatal(err)
+	}
+	var maxID int64
+	if err := repo.DB().QueryRow(`SELECT max(id) FROM spans`).Scan(&maxID); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	n, err := repo.deleteSpansByMaxID(ctx, maxID)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if n != spanDeleteChunk {
+		t.Errorf("deleted %d spans before stopping, want one chunk of %d", n, spanDeleteChunk)
+	}
+}
+
+func TestSpanDeleteChunksAreSmallerThanTheOldBatch(t *testing.T) {
+	if spanDeleteChunk > 250 || boringExpiryChunk > 250 {
+		t.Fatalf("span delete chunks are %d and %d, want at most 250 (#611)", spanDeleteChunk, boringExpiryChunk)
 	}
 }
