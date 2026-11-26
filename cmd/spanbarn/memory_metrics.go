@@ -51,6 +51,61 @@ func registerMemoryGauges(rec *selfmetrics.Recorder) {
 	rec.RegisterOptionalGauge("spanbarn.mem.cgroup_current_bytes", nil, func() (float64, bool) {
 		return readCgroupFile(cgroupMemoryDir + "/memory.current")
 	})
+	rec.RegisterOptionalGauge("spanbarn.mem.cgroup_limit_bytes", nil, func() (float64, bool) {
+		return readCgroupFile(cgroupMemoryDir + "/memory.max")
+	})
+	registerCacheCounters(rec, cgroupMemoryDir)
+	rec.RegisterOptionalGauge("spanbarn.io.pressure_some_pct", nil, func() (float64, bool) {
+		return readPressureAvg10(procPressureIO)
+	})
+}
+
+const procPressureIO = "/proc/pressure/io"
+
+// cacheCounters are cumulative memory.stat counts. File refaults are pages the
+// container evicted from its file cache and then read from disk again: a
+// squeezed page cache shows there (about 5000 a second on 2026-11-26, when
+// every raw-span read hit its 10 s budget) well before reads fail.
+var cacheCounters = []struct{ field, name string }{
+	{"workingset_refault_file", "spanbarn.mem.file_refaults"},
+	{"pgmajfault", "spanbarn.mem.major_faults"},
+}
+
+// registerCacheCounters exports the cacheCounters the cgroup reports. A host
+// without cgroup v2 memory.stat exports none, instead of a flat zero.
+func registerCacheCounters(rec *selfmetrics.Recorder, dir string) {
+	for _, c := range cacheCounters {
+		field := c.field
+		if _, ok := readCgroupMemory(dir, field); !ok {
+			continue
+		}
+		rec.RegisterCounter(c.name, nil, func() float64 {
+			v, _ := readCgroupMemory(dir, field)
+			return v
+		})
+	}
+}
+
+// readPressureAvg10 returns the 10 s average of the "some" line of a PSI file
+// (the share of time at least one task waited), in percent.
+func readPressureAvg10(path string) (float64, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		rest, ok := strings.CutPrefix(line, "some ")
+		if !ok {
+			continue
+		}
+		for _, f := range strings.Fields(rest) {
+			if v, ok := strings.CutPrefix(f, "avg10="); ok {
+				n, err := strconv.ParseFloat(v, 64)
+				return n, err == nil
+			}
+		}
+	}
+	return 0, false
 }
 
 func readGoMemory(name string) float64 {

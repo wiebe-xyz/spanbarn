@@ -20,7 +20,7 @@ func metricPanel(title, name string, groupBy ...string) service.PanelRequest {
 }
 
 // selfBoards are the boards over SpanBarn's own self-metrics: storage (#240)
-// and the ingest path.
+// the volume and memory board, and the ingest path.
 func selfBoards() []service.BoardSpec {
 	return []service.BoardSpec{
 		{
@@ -29,15 +29,29 @@ func selfBoards() []service.BoardSpec {
 			Refresh:   300,
 			Panels: []service.PanelRequest{
 				metricPanel("Volume used (%)", "spanbarn.disk.used_pct"),
-				metricPanel("Volume free (bytes)", "spanbarn.disk.free_bytes"),
-				metricPanel("Volume used (bytes)", "spanbarn.disk.used_bytes"),
-				metricPanel("Volume size (bytes)", "spanbarn.disk.volume_bytes"),
 				metricPanel("Disk pressure tier (0 normal, 1 elevated, 2 critical)", "spanbarn.disk.tier"),
 				metricPanel("Database file size (bytes)", "spanbarn.db.bytes"),
 				metricPanel("WAL size (bytes)", "spanbarn.db.wal_bytes"),
 				metricPanel("Free pages inside the database (bytes)", "spanbarn.db.freelist_bytes"),
 				metricPanel("Rows deleted by retention per second, per table", "spanbarn.retention.deleted", "table"),
 				metricPanel("Retention backlog left after a cycle (1 = rows left), per table", "spanbarn.retention.backlog", "table"),
+			},
+		},
+		{
+			Name:      "SpanBarn volume and memory",
+			TimeRange: "7d",
+			Refresh:   300,
+			Panels: []service.PanelRequest{
+				metricPanel("Writer volume free (bytes)", "spanbarn.disk.free_bytes"),
+				metricPanel("Writer volume used (bytes)", "spanbarn.disk.used_bytes"),
+				metricPanel("Writer volume size (bytes)", "spanbarn.disk.volume_bytes"),
+				metricPanel("Container memory in use (bytes)", "spanbarn.mem.cgroup_current_bytes"),
+				metricPanel("Container memory limit (bytes)", "spanbarn.mem.cgroup_limit_bytes"),
+				metricPanel("Heap and other anonymous memory (bytes)", "spanbarn.mem.cgroup_anon_bytes"),
+				metricPanel("File cache (bytes)", "spanbarn.mem.cgroup_file_bytes"),
+				metricPanel("File cache refaults per second (a squeezed page cache)", "spanbarn.mem.file_refaults"),
+				metricPanel("Major page faults per second", "spanbarn.mem.major_faults"),
+				metricPanel("I/O pressure, share of time waiting (%)", "spanbarn.io.pressure_some_pct"),
 			},
 		},
 		{

@@ -194,7 +194,7 @@ A panel with view `metric` draws an OTLP metric instead of a span query. Its def
 {"metric":{"name":"spanbarn.retention.deleted","groupBy":["table"]}}
 ```
 
-A metric panel cannot switch to `table` or `chart`, and a span panel cannot switch to `metric`. The writer creates two boards on its self-reporting project at startup, "SpanBarn storage" and "SpanBarn ingest", when that project has no board of the same name. It never changes an existing board, so edits made in the UI stay; deleting one brings it back on the next writer start.
+A metric panel cannot switch to `table` or `chart`, and a span panel cannot switch to `metric`. The writer creates three boards on its self-reporting project at startup, "SpanBarn storage", "SpanBarn volume and memory" and "SpanBarn ingest", when that project has no board of the same name. It never changes an existing board, so edits made in the UI stay; deleting one brings it back on the next writer start.
 
 - "Save to board" (`POST /api/v1/boards/{id}/panels`) inserts the `saved_queries` row and the `board_panels` row in one transaction, and the query takes the board's project. Rows from before migration 037 keep `definition = ''` and are plain trace filters.
 - Deleting a panel or a board also deletes the board queries (`definition != ''`) that no panel uses any more. A plain trace filter is never deleted this way. Deleting a saved query deletes the panels that point at it. Deleting a project deletes its panels, boards, releases and saved queries.
