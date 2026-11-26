@@ -338,6 +338,7 @@ func (r *Repository) batchedDeleteLimited(ctx context.Context, f engine.Family, 
 		}
 
 		var n int64
+		started := time.Now()
 		if err := r.submit(f, writescheduler.Low, label, func(db *sql.DB) error {
 			var e error
 			n, e = exec(db, batch)
@@ -350,15 +351,37 @@ func (r *Repository) batchedDeleteLimited(ctx context.Context, f engine.Family, 
 		if n < batch {
 			return total, false, nil // tail reached
 		}
-		if r.deleteBatchYield > 0 {
-			select {
-			case <-ctx.Done():
-				return total, true, ctx.Err()
-			case <-time.After(r.deleteBatchYield):
-			}
+		if err := r.yieldAfterBatch(ctx, time.Since(started)); err != nil {
+			return total, true, err
 		}
 	}
 	return total, true, nil
+}
+
+// yieldAfterBatch pauses a batched retention delete between batches: the longer
+// of deleteBatchYield and the batch's own duration. A fixed pause is a rounding
+// error against a batch that takes seconds on a slow volume (#611: 1000-row
+// batches of 2 to 5 s behind a 200 ms pause kept the volume busy about 90% of
+// the time and dashboard reads ran out of their budget). Matching the pause to
+// the batch caps the delete duty cycle at one half whatever the volume's speed,
+// while a fast volume still deletes at full pace under the fixed pause.
+// Nothing is waited when deleteBatchYield is 0, which tests rely on.
+func (r *Repository) yieldAfterBatch(ctx context.Context, ran time.Duration) error {
+	if r.deleteBatchYield <= 0 {
+		return nil
+	}
+	pause := r.deleteBatchYield
+	if ran > pause {
+		pause = ran
+	}
+	t := time.NewTimer(pause)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // deleteOlderThanPerProjectLimited is deleteOlderThanPerProject under a row
@@ -408,6 +431,7 @@ func (r *Repository) batchedDelete(ctx context.Context, f engine.Family, exec fu
 			return total, err
 		}
 		var n int64
+		started := time.Now()
 		if err := r.submit(f, writescheduler.Low, label, func(db *sql.DB) error {
 			var e error
 			n, e = exec(db)
@@ -419,12 +443,8 @@ func (r *Repository) batchedDelete(ctx context.Context, f engine.Family, exec fu
 		if n < retentionDeleteBatch {
 			return total, nil
 		}
-		if r.deleteBatchYield > 0 {
-			select {
-			case <-ctx.Done():
-				return total, ctx.Err()
-			case <-time.After(r.deleteBatchYield):
-			}
+		if err := r.yieldAfterBatch(ctx, time.Since(started)); err != nil {
+			return total, err
 		}
 	}
 }
