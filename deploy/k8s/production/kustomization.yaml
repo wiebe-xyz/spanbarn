@@ -33,6 +33,7 @@ patches:
           value: "__VERSION__"
   - path: patch-resources.yaml
   - path: patch-resources-ingest.yaml
+  - path: patch-ssd2.yaml
   - path: configmap-retention-patch.yaml
   - path: configmap-brandtrace-patch.yaml
   - path: configmap-oidc-patch.yaml
