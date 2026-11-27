@@ -62,3 +62,32 @@ func TestClientErrorAttributesCapCount(t *testing.T) {
 		t.Fatalf("empty input should give nil")
 	}
 }
+
+func TestClientErrorGroupingNamesMethodRouteAndStatus(t *testing.T) {
+	var buf bytes.Buffer
+	s := &Server{logger: slog.New(slog.NewJSONHandler(&buf, nil))}
+	post := func(body string) {
+		rec := httptest.NewRecorder()
+		s.handleClientError(rec, httptest.NewRequest(http.MethodPost, "/api/v1/client-errors", strings.NewReader(body)))
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("expected 202, got %d", rec.Code)
+		}
+	}
+	post(`{"message":"HTTP 503 GET /api/v1/dashboard/counts?from=2026-11-26T20%3A32%3A24.315Z&to=x","type":"Error","attributes":{"type":"http_error","status":"503"}}`)
+	logged := buf.String()
+	for _, want := range []string{`"http.method":"GET"`, `"http.route":"/api/v1/dashboard/counts"`, `"http.status_code":"503"`} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("missing %s in %s", want, logged)
+		}
+	}
+	if strings.Contains(logged, `"http.route":"/api/v1/dashboard/counts?`) {
+		t.Errorf("route carries the query string: %s", logged)
+	}
+
+	buf.Reset()
+	post(`{"message":"HTTP 503 GET /api/v1/x","type":"Error","attributes":{"type":"unhandledrejection"}}`)
+	post(`{"message":"boom","type":"Error","attributes":{"type":"http_error"}}`)
+	if strings.Contains(buf.String(), "http.route") {
+		t.Errorf("a report that is not a parsed http_error got grouping attributes: %s", buf.String())
+	}
+}

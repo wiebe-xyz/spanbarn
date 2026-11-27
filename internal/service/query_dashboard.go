@@ -8,6 +8,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -314,31 +315,49 @@ func (s *QueryService) dashboardHeatmapUncached(ctx context.Context, q Dashboard
 	return out, nil
 }
 
+// dashboardWarmEnvironments are the environment scopes the landing view is
+// warmed for. The web app sends environment=production until the viewer picks
+// another (#558), and the scope is part of the cache key, so a warm of the
+// unscoped view alone left every viewer's first read of the day on the cold
+// scan (SPA-75: 24h counts by status, 7 s cold, 58 ms cached). "" is the view
+// over every environment, which the selector's "all" and the CLI read.
+var dashboardWarmEnvironments = []string{filter.ProductionEnvironment, ""}
+
 // WarmDashboard fills the cache for the dashboard's landing view: the default
-// 24h window over all projects, every card the page requests. Viewers inside
-// the same grain then read cached results instead of paying the cold scans.
-// It is a no-op for a result another process already cached.
+// 24h window over all projects, every card the page requests, for each scope of
+// dashboardWarmEnvironments. Viewers inside the same grain then read cached
+// results instead of paying the cold scans. It is a no-op for a result another
+// process already cached.
 func (s *QueryService) WarmDashboard(ctx context.Context, now time.Time) error {
 	q := DashboardQuery{From: now.Add(-24 * time.Hour), To: now}
 	var errs []error
-	note := func(err error) {
-		if err != nil {
-			errs = append(errs, err)
+	for _, env := range dashboardWarmEnvironments {
+		scoped := filter.WithEnvironmentScope(ctx, env)
+		for _, call := range s.dashboardLandingReads(q) {
+			if err := call(scoped); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
-	_, err := s.GetDashboardCounts(ctx, q, "service", true)
-	note(err)
-	_, err = s.GetDashboardCounts(ctx, q, "http_status", true)
-	note(err)
-	_, err = s.GetDashboardHeatmap(ctx, q, true)
-	note(err)
-	_, err = s.GetDashboardHeatmap(ctx, q, false)
-	note(err)
-	_, err = s.GetDashboardPercentiles(ctx, q, "service")
-	note(err)
-	_, err = s.GetDashboardPercentiles(ctx, q, "name")
-	note(err)
 	return errors.Join(errs...)
+}
+
+// dashboardLandingReads are the reads of the cards the dashboard page requests
+// on load.
+func (s *QueryService) dashboardLandingReads(q DashboardQuery) []func(context.Context) error {
+	counts := func(group string) func(context.Context) error {
+		return func(ctx context.Context) error { _, err := s.GetDashboardCounts(ctx, q, group, true); return err }
+	}
+	heatmap := func(rootOnly bool) func(context.Context) error {
+		return func(ctx context.Context) error { _, err := s.GetDashboardHeatmap(ctx, q, rootOnly); return err }
+	}
+	percentiles := func(group string) func(context.Context) error {
+		return func(ctx context.Context) error { _, err := s.GetDashboardPercentiles(ctx, q, group); return err }
+	}
+	return []func(context.Context) error{
+		counts("service"), counts("http_status"), heatmap(true), heatmap(false),
+		percentiles("service"), percentiles("name"),
+	}
 }
 
 // servicesWarmWindows are the services page ranges wide enough to snap to the

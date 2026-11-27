@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wiebe-xyz/spanbarn/internal/cache"
+	"github.com/wiebe-xyz/spanbarn/internal/filter"
 	"github.com/wiebe-xyz/spanbarn/internal/repository"
 )
 
@@ -138,5 +139,50 @@ func TestWarmServicesFillsTheWindowAndThePreviousOne(t *testing.T) {
 	}
 	if _, err := svc.ListServices(context.Background(), 0, viewer.Add(-time.Hour), viewer, true); !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("a window nobody warmed: err = %v, want the expired timeout", err)
+	}
+}
+
+// The web app sends environment=production until the viewer picks another
+// (#558), and the scope is part of the cache key. The warm has to fill that
+// key, or the first viewer of every period pays the cold scan (SPA-75).
+func TestWarmDashboardFillsTheProductionScopedView(t *testing.T) {
+	repo := setupTestRepo(t)
+	seedDashboardSpans(t, repo)
+	svc := NewQueryService(repo, nil, nil)
+	svc.SetCache(cache.New(cache.NewMemoryStore(), time.Minute))
+
+	base := time.Now().UTC().Add(16 * time.Minute).Truncate(dashboardCoarseGrain)
+	if err := svc.WarmDashboard(context.Background(), base.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.InsertSpans([]repository.Span{
+		{ProjectID: 1, TraceID: "c", SpanID: "c1", Name: "GET /", Service: "web", Kind: "server", Status: "ok", DurationUs: 100, Attributes: "{}", Events: "[]"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	viewer := base.Add(10 * time.Minute)
+	q := DashboardQuery{From: viewer.Add(-24 * time.Hour), To: viewer}
+	ctx := filter.WithEnvironmentScope(context.Background(), filter.ProductionEnvironment)
+	for name, call := range map[string]func() error{
+		"counts by service": func() error { _, e := svc.GetDashboardCounts(ctx, q, "service", true); return e },
+		"counts by status":  func() error { _, e := svc.GetDashboardCounts(ctx, q, "http_status", true); return e },
+		"heatmap root":      func() error { _, e := svc.GetDashboardHeatmap(ctx, q, true); return e },
+		"percentiles name":  func() error { _, e := svc.GetDashboardPercentiles(ctx, q, "name"); return e },
+	} {
+		if err := call(); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	counts, err := svc.GetDashboardCounts(ctx, q, "service", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var total int64
+	for _, p := range counts.Points {
+		total += p.Count
+	}
+	if total != 2 {
+		t.Errorf("production-scoped root span total = %d, want the warmed 2 (the span inserted after the warm must not show)", total)
 	}
 }

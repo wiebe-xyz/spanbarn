@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -68,6 +70,34 @@ func truncate(v string, max int) string {
 	return strings.ToValidUTF8(v[:max], "")
 }
 
+// httpErrorMessage is the message the web app writes for a failed read:
+// "HTTP <status> <method> <url>".
+var httpErrorMessage = regexp.MustCompile(`^HTTP (\d{3}) ([A-Z]+) (\S+)`)
+
+// clientErrorGrouping returns the log attributes BugBarn groups by for a
+// browser HTTP error: method, route without its query string and status. Every
+// browser report logs under the same message, so without them a 503 on the
+// dashboard counts, a 503 on the heatmap and a 500 on the trace list share one
+// issue (SPA-75). Reports of any other type return nil and keep their grouping.
+func clientErrorGrouping(payload clientErrorPayload) []any {
+	if payload.Attributes["type"] != "http_error" {
+		return nil
+	}
+	m := httpErrorMessage.FindStringSubmatch(payload.Message)
+	if m == nil {
+		return nil
+	}
+	route := m[3]
+	if u, err := url.Parse(route); err == nil {
+		route = u.Path
+	}
+	return []any{
+		"http.method", m[2],
+		"http.route", truncate(route, maxClientErrorShort),
+		"http.status_code", m[1],
+	}
+}
+
 func (s *Server) handleClientError(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -85,14 +115,15 @@ func (s *Server) handleClientError(w http.ResponseWriter, r *http.Request) {
 		errType = "Error"
 	}
 	errType = truncate(errType, maxClientErrorShort)
-	s.logger.Error("client "+errType,
+	args := []any{
 		"error.type", truncate(payload.Type, maxClientErrorShort),
 		"error.message", truncate(payload.Message, maxClientErrorMessage),
 		"error.stack", truncate(payload.Stack, maxClientErrorStack),
 		"error.url", truncate(payload.URL, maxClientErrorMessage),
 		"error.attributes", clientErrorAttributes(payload.Attributes),
 		"source", "browser",
-	)
+	}
+	s.logger.Error("client "+errType, append(args, clientErrorGrouping(payload)...)...)
 
 	w.WriteHeader(http.StatusAccepted)
 }
