@@ -1,0 +1,64 @@
+# Production runs on ssd2 (k3s-infra#213). Every pod that mounts the data
+# volume carries the remote toleration and the wan link selector, and mounts the
+# ssd2 claim in place of the layer7 one. The claim is a plain directory on
+# ssd2, created and bound by k3s-infra (spanbarn-fast-ssd2, 25Gi, ssd2-local,
+# Retain). The layer7 claim spanbarn-data and its volume stay as they are, so a
+# revert of this file puts the pods back on them.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spanbarn
+spec:
+  template:
+    spec:
+      nodeSelector:
+        topology.wiebe.xyz/link: wan
+      tolerations:
+        - key: node-role.wiebe.xyz/remote
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      volumes:
+        - name: spanbarn-data
+          persistentVolumeClaim:
+            claimName: spanbarn-fast-ssd2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spanbarn-ingest
+spec:
+  template:
+    spec:
+      nodeSelector:
+        topology.wiebe.xyz/link: wan
+      tolerations:
+        - key: node-role.wiebe.xyz/remote
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      volumes:
+        - name: spanbarn-data
+          persistentVolumeClaim:
+            claimName: spanbarn-fast-ssd2
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: spanbarn-settings-snapshot
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            topology.wiebe.xyz/link: wan
+          tolerations:
+            - key: node-role.wiebe.xyz/remote
+              operator: Equal
+              value: "true"
+              effect: NoSchedule
+          volumes:
+            - name: spanbarn-data
+              persistentVolumeClaim:
+                claimName: spanbarn-fast-ssd2
